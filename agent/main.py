@@ -102,10 +102,8 @@ Current memory:
                 continue
 
         if response.strip().endswith("DONE"):
-            print(response)
             break
 
-        print(response)
         follow = input("Next (or 'done'): ")
         if follow.lower() == "done":
             break
