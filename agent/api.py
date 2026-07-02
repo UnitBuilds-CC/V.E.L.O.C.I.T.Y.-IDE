@@ -12,17 +12,16 @@ if env_path.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-# We support Cloudflare's OpenAI-compatible Workers AI endpoint
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
 CF_API_TOKEN = os.getenv("CF_API_TOKEN")
 
-# Fallback to general environment variables if custom ones are needed
-API_URL = os.getenv("CF_API_URL")
-if not API_URL and CF_ACCOUNT_ID:
-    API_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
-
 # Default model, customizable via CF_MODEL or CLOUDFLARE_MODEL env variables
 MODEL = os.getenv("CF_MODEL") or os.getenv("CLOUDFLARE_MODEL") or "@cf/moonshotai/kimi-k2.7-code"
+
+# Use the direct execution URL format for Workers AI
+API_URL = os.getenv("CF_API_URL")
+if not API_URL and CF_ACCOUNT_ID:
+    API_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{MODEL}"
 
 def call_kimi(messages, tools=None):
     if not API_URL or not CF_API_TOKEN:
@@ -35,17 +34,17 @@ def call_kimi(messages, tools=None):
         "Authorization": f"Bearer {CF_API_TOKEN}",
         "Content-Type": "application/json"
     }
+    # Direct execution endpoint does not use/need the "model" field or "tools" in payload
     payload = {
-        "model": MODEL,
         "messages": messages,
         "temperature": 0.2,
     }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
 
     r = requests.post(API_URL, headers=headers, json=payload)
+    if r.status_code != 200:
+        import sys
+        print(f"Cloudflare API Error Response: {r.text}", file=sys.stderr)
     r.raise_for_status()
     
-    # Cloudflare OpenAI-compatible endpoint returns standard OpenAI payload
-    return r.json()["choices"][0]["message"]["content"]
+    # Returns standard OpenAI response wrapped under "result"
+    return r.json()["result"]["choices"][0]["message"]["content"]
