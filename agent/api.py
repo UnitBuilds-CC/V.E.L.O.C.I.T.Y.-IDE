@@ -1,6 +1,16 @@
 # agent/api.py
 import os
+from pathlib import Path
 import requests
+
+# Load .env if it exists
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
 
 # We support Cloudflare's OpenAI-compatible Workers AI endpoint
 CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
