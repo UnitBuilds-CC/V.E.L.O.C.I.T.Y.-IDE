@@ -25,7 +25,7 @@ def main():
     messages = [
         {"role": "system", "content": f"""You are Kimi K2.7, an autonomous coding agent.
 You operate inside a self-contained workspace. You have tools. Use them.
-Always reason briefly, then act. When done, reply exactly with: DONE.
+CRITICAL: Keep your internal reasoning extremely brief (under 2 sentences) and act immediately. Large thoughts cause Cloudflare API timeouts.
 
 To call a tool, use the XML format inside a markdown block or raw text:
 <tool>
@@ -40,8 +40,11 @@ Current memory:
 
     while True:
         try:
+            print("\r[Kimi] Thinking...", end="", flush=True)
             response = call_kimi(messages, tools=TOOLS)
+            print("\r\033[K", end="", flush=True)  # Clear the "Thinking..." line
         except Exception as e:
+            print("\r\033[K", end="", flush=True)
             print(f"API Error: {e}", file=sys.stderr)
             break
 
