@@ -11,6 +11,24 @@ from schemas import TOOLS
 WORKSPACE = Path(__file__).resolve().parent.parent
 MEMORY = WORKSPACE / "memory"
 
+def safe_json_loads(raw: str) -> dict:
+    """Parse a JSON string that may contain literal (unescaped) newlines inside
+    string values — a common quirk in Kimi's native tool call output."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    # Escape literal control characters that appear inside JSON string values.
+    # Strategy: walk character by character tracking whether we are inside a
+    # JSON string and escape bare newlines / carriage returns found there.
+    import re
+    sanitized = re.sub(
+        r'(?<=[^\\])([\n\r\t])',   # unescaped newline/cr/tab
+        lambda m: {"\n": "\\n", "\r": "\\r", "\t": "\\t"}[m.group(1)],
+        raw
+    )
+    return json.loads(sanitized)
+
 def load_memory():
     blocks = []
     for name in ["project.md", "scratchpad.md", "todos.md"]:
@@ -59,7 +77,7 @@ Current memory:
         if "<tool>" in response:
             try:
                 block = response.split("<tool>")[1].split("</tool>")[0].strip()
-                call = json.loads(block)
+                call = safe_json_loads(block)
                 name = call["name"]
                 args = call.get("args", {})
                 has_tool = True
@@ -73,7 +91,7 @@ Current memory:
             try:
                 # Parse args block
                 block = response.split("<|tool_call_argument_begin|>")[1].split("<|tool_call_end|>")[0].strip()
-                args = json.loads(block)
+                args = safe_json_loads(block)
                 
                 # Extract tool name from tag prefix
                 name_block = response.split("<|tool_call_begin|>")[1].split("<|tool_call_argument_begin|>")[0].strip()
