@@ -47,22 +47,53 @@ Current memory:
 
         messages.append({"role": "assistant", "content": response})
 
-        # Parse tool calls from simple XML format
+        # Parse tool calls from simple XML format or native formatting
+        has_tool = False
+        call = None
+        
         if "<tool>" in response:
             try:
                 block = response.split("<tool>")[1].split("</tool>")[0].strip()
                 call = json.loads(block)
-                result = run_tool(call["name"], call.get("args", {}))
-                messages.append({"role": "user", "content": f"<result>{json.dumps(result)}</result>"})
-                print(f"[{call['name']}] {call.get('args', {})}")
-                # Print result status
+                has_tool = True
+            except Exception as e:
+                print(f"Failed to parse XML tool call: {e}")
+        elif "<|tool_call_argument_begin|>" in response:
+            try:
+                block = response.split("<|tool_call_argument_begin|>")[1].split("<|tool_call_end|>")[0].strip()
+                call = json.loads(block)
+                has_tool = True
+            except Exception as e:
+                print(f"Failed to parse native tool call: {e}")
+
+        if has_tool and call:
+            try:
+                name = call["name"]
+                args = call.get("args", {})
+                
+                # Map native tool names to workspace tools
+                if name == "shell":
+                    name = "run_command"
+                elif name == "view_file":
+                    name = "read_file"
+                    
+                result = run_tool(name, args)
+                
+                # Format the response back to Kimi in its native format or standard format
+                if "<|tool_call_argument_begin|>" in response:
+                    content_resp = f"<|tool_response_begin|><|tool_response_content_begin|>{json.dumps(result)}<|tool_response_content_end|><|tool_response_end|>"
+                else:
+                    content_resp = f"<result>{json.dumps(result)}</result>"
+                    
+                messages.append({"role": "user", "content": content_resp})
+                print(f"[{name}] {args}")
                 if "error" in result:
                     print(f"-> Error: {result['error']}")
                 else:
                     print("-> Success")
                 continue
             except Exception as e:
-                error_msg = f"Failed to parse or execute tool call: {e}"
+                error_msg = f"Failed to execute tool call: {e}"
                 messages.append({"role": "user", "content": f"<result>{json.dumps({'error': error_msg})}</result>"})
                 print(f"-> {error_msg}")
                 continue
