@@ -7,18 +7,24 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent.parent
 
 def read_file(path: str, offset: int = 0, limit: int = 200) -> str:
-    p = WORKSPACE / path
+    p = Path(path)
+    if not p.is_absolute():
+        p = WORKSPACE / p
     lines = p.read_text(encoding="utf-8").splitlines()
     return "\n".join(lines[offset:offset+limit])
 
 def write_file(path: str, content: str) -> dict:
-    p = WORKSPACE / path
+    p = Path(path)
+    if not p.is_absolute():
+        p = WORKSPACE / p
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return {"ok": True, "path": str(p), "bytes": len(content)}
 
 def edit_file(path: str, old: str, new: str) -> dict:
-    p = WORKSPACE / path
+    p = Path(path)
+    if not p.is_absolute():
+        p = WORKSPACE / p
     text = p.read_text(encoding="utf-8")
     if old not in text:
         return {"error": "old string not found"}
@@ -97,6 +103,21 @@ def memory_read(key: str) -> str:
 def run_tool(name: str, args: dict) -> dict:
     import inspect
     try:
+        # Standardize alternative argument names from native tool calls
+        args = dict(args)  # shallow copy to avoid mutating the original dict if needed
+        if "file_path" in args:
+            args["path"] = args["file_path"]
+        elif "filepath" in args:
+            args["path"] = args["filepath"]
+
+        if "old_string" in args:
+            args["old"] = args["old_string"]
+        if "new_string" in args:
+            args["new"] = args["new_string"]
+
+        if "text" in args and name == "write_file":
+            args["content"] = args["text"]
+
         func = None
         if name == "read_file":
             func = read_file
