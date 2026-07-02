@@ -95,30 +95,52 @@ def memory_read(key: str) -> str:
     return p.read_text(encoding="utf-8")
 
 def run_tool(name: str, args: dict) -> dict:
+    import inspect
     try:
+        func = None
         if name == "read_file":
-            return {"content": read_file(**args)}
+            func = read_file
         elif name == "write_file":
-            return write_file(**args)
+            func = write_file
         elif name == "edit_file":
-            return edit_file(**args)
+            func = edit_file
         elif name == "run_command":
-            return run_command(**args)
+            func = run_command
         elif name == "search":
-            return search(**args)
+            func = search
         elif name == "list_dir":
-            return list_dir(**args)
+            func = list_dir
         elif name == "git_status":
             return {"status": git_status()}
         elif name == "git_diff":
             return {"diff": git_diff()}
         elif name == "git_commit":
-            return git_commit(**args)
+            func = git_commit
         elif name == "memory_write":
-            return memory_write(**args)
+            func = memory_write
         elif name == "memory_read":
-            return {"content": memory_read(**args)}
-        else:
+            func = memory_read
+        
+        if func is None:
             return {"error": f"Tool '{name}' not found"}
+            
+        # Inspect function parameters and filter args to match
+        sig = inspect.signature(func)
+        filtered_args = {}
+        for param_name, param in sig.parameters.items():
+            if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+                if param_name in args:
+                    filtered_args[param_name] = args[param_name]
+            elif param.kind == inspect.Parameter.VAR_KEYWORD:
+                filtered_args.update(args)
+                break
+                
+        # Call the target function with matching arguments
+        result = func(**filtered_args)
+        
+        # Ensure result is formatted as dict/string for the model
+        if isinstance(result, str):
+            return {"content": result}
+        return result
     except Exception as e:
         return {"error": str(e)}
