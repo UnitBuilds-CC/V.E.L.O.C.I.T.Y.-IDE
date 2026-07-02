@@ -22,7 +22,7 @@ if not API_URL and CF_ACCOUNT_ID:
     API_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
 
 # Default model, customizable via CF_MODEL or CLOUDFLARE_MODEL env variables
-MODEL = os.getenv("CF_MODEL") or os.getenv("CLOUDFLARE_MODEL") or "@cf/meta/llama-3.1-70b-instruct"
+MODEL = os.getenv("CF_MODEL") or os.getenv("CLOUDFLARE_MODEL") or "@cf/moonshotai/kimi-k2.7-code"
 
 def call_kimi(messages, tools=None):
     if not API_URL or not CF_API_TOKEN:
