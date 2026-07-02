@@ -55,6 +55,7 @@ Current memory:
         name = ""
         args = {}
         
+        # 1. Try parsing XML format first
         if "<tool>" in response:
             try:
                 block = response.split("<tool>")[1].split("</tool>")[0].strip()
@@ -62,15 +63,19 @@ Current memory:
                 name = call["name"]
                 args = call.get("args", {})
                 has_tool = True
-            except Exception as e:
-                print(f"Failed to parse XML tool call: {e}")
-        elif "<|tool_call_argument_begin|>" in response:
+            except Exception:
+                # If XML parsing fails (e.g. Kimi was discussing '<tool>' in thought block),
+                # we do not set has_tool and will try parsing native format below.
+                pass
+                
+        # 2. Try parsing native format if XML was not found or failed to parse
+        if not has_tool and "<|tool_call_argument_begin|>" in response:
             try:
-                # 1. Parse args block
+                # Parse args block
                 block = response.split("<|tool_call_argument_begin|>")[1].split("<|tool_call_end|>")[0].strip()
                 args = json.loads(block)
                 
-                # 2. Extract tool name from tag prefix
+                # Extract tool name from tag prefix
                 name_block = response.split("<|tool_call_begin|>")[1].split("<|tool_call_argument_begin|>")[0].strip()
                 if name_block.startswith("functions."):
                     name_block = name_block[10:]
@@ -82,7 +87,7 @@ Current memory:
         if has_tool and name:
             try:
                 # Map native tool names to workspace tools
-                if name == "shell":
+                if name in ("shell", "bash"):
                     name = "run_command"
                 elif name == "view_file":
                     name = "read_file"
