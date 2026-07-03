@@ -283,7 +283,7 @@ def context_trim(messages: list) -> list:
 
     # Re-summarize if the summary itself is getting bloated
     if len(updated_summary) > MAX_SUMMARY_CHARS:
-        _, api_token, api_url = _resolve_profile(_active_profile)
+        _, api_token, api_url = _resolve_profile()
         compress_start = _dt.datetime.utcnow()
 
         print(
