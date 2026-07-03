@@ -145,15 +145,15 @@ class StatusBar(Static):
     """
 
     def watch_status(self, status: str) -> None:
-        self._render()
+        self.update_text()
 
     def watch_branch(self, branch: str) -> None:
-        self._render()
+        self.update_text()
 
     def watch_mode(self, mode: str) -> None:
-        self._render()
+        self.update_text()
 
-    def _render(self) -> None:
+    def update_text(self) -> None:
         self.update(
             f" | [b]Mode:[/b] {self.mode} "
             f"| [b]Git:[/b] {self.branch} "
