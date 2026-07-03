@@ -1,4 +1,0 @@
-requests
-textual>=0.52.0
-watchdog>=4.0.0
-pyperclip>=1.8.0

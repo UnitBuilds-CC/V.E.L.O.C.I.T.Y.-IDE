@@ -111,18 +111,27 @@ Current memory:
             except Exception as e:
                 print(f"Failed to parse native tool call: {e}")
 
-        # Normalise all known tool name aliases
+        # Normalise all known tool name aliases to actual tool function names
         TOOL_NAME_MAP = {
-            "shell": "run_command",
-            "bash": "run_command",
-            "execute": "run_command",
-            "execute_command": "run_command",
-            "view_file": "read_file",
-            "open_file": "read_file",
-            "write_file": "create_file",
-            "patch_file": "edit_file",
-            "str_replace": "edit_file",
+            # shell execution
+            "shell":           "run_command",
+            "bash":            "run_command",
+            "execute":         "run_command",
+            "execute_command":  "run_command",
+            # reading
+            "view_file":       "read_file",
+            "open_file":       "read_file",
+            "cat":             "read_file",
+            # writing / creating  (write_file exists in tools.py)
+            "create_file":     "write_file",
+            "save_file":       "write_file",
+            "insert_content":  "write_file",
+            "append_file":     "write_file",
+            # editing
+            "patch_file":      "edit_file",
+            "str_replace":     "edit_file",
             "str_replace_editor": "edit_file",
+            "replace":         "edit_file",
         }
 
         if has_tool and name:
