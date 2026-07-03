@@ -59,7 +59,7 @@ class VelocityIDE(App):
     }
     """
 
-    MODES = {"default", "command"}
+
 
     BINDINGS = [
         ("q", "quit", "Quit"),
