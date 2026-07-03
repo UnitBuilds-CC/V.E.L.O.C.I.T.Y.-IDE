@@ -2,6 +2,7 @@
 import os
 import json
 import sys
+import time
 from pathlib import Path
 import requests
 
@@ -78,10 +79,38 @@ def call_kimi(messages, tools=None):
         "stream": True
     }
 
-    r = requests.post(api_url, headers=headers, json=payload, stream=True)
-    if r.status_code != 200:
+    MAX_RETRIES = 5
+    delay = 5  # seconds between retries
+
+    for attempt in range(MAX_RETRIES + 1):
+        r = requests.post(api_url, headers=headers, json=payload, stream=True)
+
+        if r.status_code == 200:
+            break  # success — proceed to stream
+
+        # Parse the error code from the response body
+        try:
+            err_body = r.json()
+            err_code = (err_body.get("errors") or [{}])[0].get("code", 0)
+        except Exception:
+            err_code = 0
+
+        if err_code == 4006:
+            # Quota exhausted — no point retrying
+            print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
+            r.raise_for_status()
+
+        if err_code == 3040 and attempt < MAX_RETRIES:
+            # Transient capacity error — wait and retry
+            print(f"\r[api] Capacity exceeded, retrying in {delay}s (attempt {attempt+1}/{MAX_RETRIES})...",
+                  end="", flush=True, file=sys.stderr)
+            time.sleep(delay)
+            delay = min(delay * 2, 60)  # exponential backoff, cap at 60s
+            continue
+
+        # Any other error
         print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
-    r.raise_for_status()
+        r.raise_for_status()
     
     full_response = ""
     

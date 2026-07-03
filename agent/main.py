@@ -91,25 +91,43 @@ Current memory:
             try:
                 # Parse args block
                 block = response.split("<|tool_call_argument_begin|>")[1].split("<|tool_call_end|>")[0].strip()
-                args = safe_json_loads(block)
-                
-                # Extract tool name from tag prefix
-                name_block = response.split("<|tool_call_begin|>")[1].split("<|tool_call_argument_begin|>")[0].strip()
-                if name_block.startswith("functions."):
-                    name_block = name_block[10:]
-                name = name_block.split(":")[0].strip()
+                payload = safe_json_loads(block)
+
+                # Kimi may embed the tool name inside the JSON body:
+                # {"name": "shell", "args": {...}}
+                # In that case the prefix tag holds a random call-ID (e.g. toolu_01X5m4a7n2m1...)
+                if "name" in payload:
+                    name = payload["name"]
+                    args = payload.get("args", {})
+                else:
+                    # Older format: name is in the prefix tag, JSON IS the args
+                    args = payload
+                    name_block = response.split("<|tool_call_begin|>")[1].split("<|tool_call_argument_begin|>")[0].strip()
+                    if name_block.startswith("functions."):
+                        name_block = name_block[10:]
+                    name = name_block.split(":")[0].strip()
+
                 has_tool = True
             except Exception as e:
                 print(f"Failed to parse native tool call: {e}")
 
+        # Normalise all known tool name aliases
+        TOOL_NAME_MAP = {
+            "shell": "run_command",
+            "bash": "run_command",
+            "execute": "run_command",
+            "execute_command": "run_command",
+            "view_file": "read_file",
+            "open_file": "read_file",
+            "write_file": "create_file",
+            "patch_file": "edit_file",
+            "str_replace": "edit_file",
+            "str_replace_editor": "edit_file",
+        }
+
         if has_tool and name:
+            name = TOOL_NAME_MAP.get(name, name)
             try:
-                # Map native tool names to workspace tools
-                if name in ("shell", "bash"):
-                    name = "run_command"
-                elif name == "view_file":
-                    name = "read_file"
-                    
                 result = run_tool(name, args)
                 
                 # Format the response back to Kimi in its native format or standard format
