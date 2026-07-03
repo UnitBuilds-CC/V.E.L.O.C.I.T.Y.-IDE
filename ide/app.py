@@ -111,31 +111,22 @@ class VelocityIDE(App):
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-                self.call_from_thread(
-                    lambda: shell.log_output("Command timed out", "bold red")
-                )
+                shell.log_output("Command timed out", "bold red")
                 return
             if worker.is_cancelled:
                 return
             text_out = stdout.decode("utf-8", errors="ignore")
             text_err = stderr.decode("utf-8", errors="ignore")
 
-            def _update_ui():
-                if text_out:
-                    shell.log_output(text_out)
-                if text_err:
-                    shell.log_output(text_err, "bold red")
-                shell.log_output(f"[exit {proc.returncode}]", "dim")
-                status.status = "ready"
-
-            self.call_from_thread(_update_ui)
+            if text_out:
+                shell.log_output(text_out)
+            if text_err:
+                shell.log_output(text_err, "bold red")
+            shell.log_output(f"[exit {proc.returncode}]", "dim")
+            status.status = "ready"
         except Exception as exc:
-
-            def _error_ui():
-                shell.log_output(f"Error: {exc}", "bold red")
-                status.status = "ready"
-
-            self.call_from_thread(_error_ui)
+            shell.log_output(f"Error: {exc}", "bold red")
+            status.status = "ready"
 
     def action_refresh(self) -> None:
         self.query_one("#todos-panel", TodosPanel).refresh_todos()
