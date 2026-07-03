@@ -1,21 +1,31 @@
-import sys, os
+import sys, os, requests
 sys.path.insert(0, "agent")
 import api
 
-def test(profile):
-    import requests
-    _, token, url = api._resolve_profile(profile)
-    # Use non-streaming run endpoint to keep test fast
-    run_url = url.replace("/v1/chat/completions", "").rstrip("/")
-    run_url = f"https://api.cloudflare.com/client/v4/accounts/{os.getenv(f'CF_ACCOUNT_ID_{profile.upper()}') or os.getenv('CF_ACCOUNT_ID')}/ai/run/@cf/meta/llama-3.1-8b-instruct"
-    r = requests.post(run_url, headers={"Authorization": f"Bearer {token}"},
-                      json={"messages": [{"role": "user", "content": "Say hi"}]})
-    status = "OK" if r.status_code == 200 else f"FAIL {r.status_code}"
-    errors = r.json().get("errors") or []
-    msg = errors[0]["message"][:80] if errors else (r.json().get("result") or {}).get("response", "")[:60]
-    print(f"  [{profile}] {status}  {msg}")
+# Load .env
+from pathlib import Path
+for line in Path(".env").read_text().splitlines():
+    line = line.strip()
+    if line and "=" in line and not line.startswith("#"):
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k, v)
 
-print("Testing profiles...")
-test("primary")
-test("secondary")
-test("tertiary")
+accounts = api._load_accounts()
+state    = api._load_state()
+
+print(f"Registered accounts ({len(accounts)} total):")
+for acct in accounts:
+    exhausted = str(acct["n"]) in state
+    test_url = f"https://api.cloudflare.com/client/v4/accounts/{acct['id']}/ai/run/@cf/meta/llama-3.1-8b-instruct"
+    r = requests.post(
+        test_url,
+        headers={"Authorization": f"Bearer {acct['token']}"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    ok = r.status_code == 200
+    err = "" if ok else (r.json().get("errors") or [{}])[0].get("message", "")[:60]
+    tag = "[EXHAUSTED]" if exhausted else ("[OK]" if ok else "[FAIL]")
+    print(f"  #{acct['n']} {acct['label']:12} tier={acct['tier']:4}  {tag}  {err}")
+
+active = api._pick_account(accounts, state)
+print(f"\nAuto-selected: {active['label'] if active else 'NONE — all exhausted'}")

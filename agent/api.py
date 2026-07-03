@@ -17,46 +17,115 @@ if env_path.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 # ---------------------------------------------------------------------------
-# Multi-account profile resolution
+# Dynamic account registry
 # ---------------------------------------------------------------------------
-# Set CF_PROFILE=primary or CF_PROFILE=secondary in .env (or environment).
-# Falls back gracefully to bare CF_ACCOUNT_ID / CF_API_TOKEN for backwards compat.
+# Add accounts in .env as:
+#   CF_ACCOUNT_1_ID=...
+#   CF_ACCOUNT_1_TOKEN=...
+#   CF_ACCOUNT_1_TIER=free        # free | paid  (default: free)
+#   CF_ACCOUNT_1_LABEL=MyAcc      # optional human label
+#
+# Add as many as needed (2, 3, 4, ...).  CF_PROFILE is no longer needed.
+# Selection order: all free accounts first (in numbered order), then paid.
+# When an account hits daily quota (4006) it is marked exhausted in
+# memory/.account_state.json and skipped for the rest of the UTC day.
 
-def _resolve_profile(profile: str | None = None):
-    """Return (account_id, api_token, api_url) for the requested profile."""
-    p = (profile or os.getenv("CF_PROFILE", "primary")).lower()
-    suffix = p.upper()
-    account_id = (
-        os.getenv(f"CF_ACCOUNT_ID_{suffix}")
-        or os.getenv("CF_ACCOUNT_ID")
-    )
-    api_token = (
-        os.getenv(f"CF_API_TOKEN_{suffix}")
-        or os.getenv("CF_API_TOKEN")
-    )
-    api_url = os.getenv("CF_API_URL")
-    if not api_url and account_id:
-        api_url = (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{account_id}/ai/v1/chat/completions"
+_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+_STATE_FILE     = _WORKSPACE_ROOT / "memory" / ".account_state.json"
+
+
+def _load_accounts() -> list[dict]:
+    """Parse all CF_ACCOUNT_N_* entries from the environment, sorted free-first."""
+    accounts = []
+    n = 1
+    while True:
+        acct_id = os.getenv(f"CF_ACCOUNT_{n}_ID")
+        token   = os.getenv(f"CF_ACCOUNT_{n}_TOKEN")
+        if not acct_id or not token:
+            break
+        tier  = os.getenv(f"CF_ACCOUNT_{n}_TIER",  "free").lower()
+        label = os.getenv(f"CF_ACCOUNT_{n}_LABEL", f"account-{n}")
+        url   = (
+            os.getenv(f"CF_ACCOUNT_{n}_URL")
+            or f"https://api.cloudflare.com/client/v4/accounts/{acct_id}/ai/v1/chat/completions"
         )
-    return account_id, api_token, api_url
+        accounts.append({"n": n, "id": acct_id, "token": token,
+                         "tier": tier, "label": label, "url": url})
+        n += 1
 
-# Active profile — can be overridden at runtime via set_profile()
-_active_profile: str | None = None
+    # Free accounts first, then paid; preserve numbered order within each tier
+    accounts.sort(key=lambda a: (0 if a["tier"] == "free" else 1, a["n"]))
+    return accounts
 
-def set_profile(profile: str):
-    """Switch the active Cloudflare account profile ('primary' or 'secondary')."""
-    global _active_profile
-    _active_profile = profile.lower()
-    _, _, url = _resolve_profile(_active_profile)
-    print(f"[api] Switched to profile '{_active_profile}' → {url}", file=sys.stderr)
+
+def _load_state() -> dict:
+    """Load per-account exhaustion state, discarding stale entries from previous UTC days."""
+    today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    if not _STATE_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+        # Keep only entries from today
+        return {k: v for k, v in raw.items() if v.get("date") == today}
+    except Exception:
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _mark_exhausted(n: int) -> None:
+    """Persist that account N is quota-exhausted for today."""
+    state = _load_state()
+    state[str(n)] = {
+        "date":         _dt.datetime.utcnow().strftime("%Y-%m-%d"),
+        "exhausted_at": _dt.datetime.utcnow().isoformat() + "Z",
+    }
+    _save_state(state)
+    print(f"[api] Account {n} marked exhausted for today.", file=sys.stderr)
+
+
+def _pick_account(accounts: list[dict], state: dict) -> dict | None:
+    """Return the first non-exhausted account, or None if all are spent."""
+    exhausted_ids = set(state.keys())
+    for acct in accounts:
+        if str(acct["n"]) not in exhausted_ids:
+            return acct
+    return None
+
 
 def current_profile() -> str:
-    return _active_profile or os.getenv("CF_PROFILE", "primary")
+    """Return a human-readable label for the currently active account."""
+    accounts = _load_accounts()
+    state    = _load_state()
+    acct     = _pick_account(accounts, state)
+    return acct["label"] if acct else "none"
+
+
+# Legacy shim — kept so any code that calls set_profile() doesn't crash
+def set_profile(profile: str) -> None:  # noqa: ARG001
+    print("[api] set_profile() is deprecated; account selection is now automatic.",
+          file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compat helper used by context_trim / _kimi_resummary
+# ---------------------------------------------------------------------------
+def _resolve_profile(profile=None):  # noqa: ARG001
+    """Return (account_id, token, url) for the currently active account."""
+    accounts = _load_accounts()
+    state    = _load_state()
+    acct     = _pick_account(accounts, state)
+    if acct:
+        return acct["id"], acct["token"], acct["url"]
+    return None, None, None
+
 
 # Default model, customizable via CF_MODEL or CLOUDFLARE_MODEL env variables
 MODEL = os.getenv("CF_MODEL") or os.getenv("CLOUDFLARE_MODEL") or "@cf/moonshotai/kimi-k2.7-code"
+
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +207,7 @@ def _extract_events(messages: list) -> str:
             # Tool result injected by harness
             if "<result>" in content or "<|tool_response_begin|>" in content:
                 snippet = _re.sub(r"<[^>]+>", " ", content).strip()
-                lines.append(f"  RESULT: {snippet[:120].replace(chr(10), ' ')}")
+                lines.append(f"  RESULT: {snippet[:800].replace(chr(10), ' ')}")
 
     return "\n".join(lines)
 
@@ -249,61 +318,97 @@ def context_trim(messages: list) -> list:
 
 
 def call_kimi(messages, tools=None):
-    account_id, api_token, api_url = _resolve_profile(_active_profile)
-
-    if not api_url or not api_token:
+    accounts = _load_accounts()
+    if not accounts:
         raise ValueError(
-            "Missing Cloudflare API configuration. "
-            "Please ensure CF_ACCOUNT_ID and CF_API_TOKEN environment variables are set."
+            "No Cloudflare accounts configured. "
+            "Add CF_ACCOUNT_1_ID / CF_ACCOUNT_1_TOKEN to your .env file."
         )
 
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
+    trimmed_messages = context_trim(messages)
 
-    payload = {
-        "model": MODEL,
-        "messages": context_trim(messages),  # <-- trim before sending
-        "temperature": 0.2,
-        "stream": True
-    }
+    # Outer loop: try each non-exhausted account in priority order
+    while True:
+        state = _load_state()
+        acct  = _pick_account(accounts, state)
 
+        if acct is None:
+            raise RuntimeError(
+                "All Cloudflare accounts are quota-exhausted for today. "
+                "Accounts will reset tomorrow (UTC midnight)."
+            )
 
-    MAX_RETRIES = 5
-    delay = 5  # seconds between retries
+        api_url   = acct["url"]
+        api_token = acct["token"]
+        label     = acct["label"]
 
-    for attempt in range(MAX_RETRIES + 1):
-        r = requests.post(api_url, headers=headers, json=payload, stream=True)
+        headers = {
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type":  "application/json",
+        }
+        payload = {
+            "model":       MODEL,
+            "messages":    trimmed_messages,
+            "temperature": 0.2,
+            "stream":      True,
+        }
 
-        if r.status_code == 200:
-            break  # success — proceed to stream
+        # Inner loop: transient-error retry on the same account
+        MAX_RETRIES = 5
+        delay       = 5
 
-        # Parse the error code from the response body
-        try:
-            err_body = r.json()
-            err_code = (err_body.get("errors") or [{}])[0].get("code", 0)
-        except Exception:
-            err_code = 0
+        for attempt in range(MAX_RETRIES + 1):
+            r = requests.post(api_url, headers=headers, json=payload, stream=True)
 
-        if err_code == 4006:
-            # Quota exhausted — no point retrying
-            print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
+            if r.status_code == 200:
+                break  # success — fall through to streaming
+
+            # Parse Cloudflare error code
+            try:
+                err_body = r.json()
+                err_code = (err_body.get("errors") or [{}])[0].get("code", 0)
+            except Exception:
+                err_code = 0
+
+            if err_code == 4006:
+                # Quota exhausted — mark and hot-swap to next account
+                print(
+                    f"\n[api] Account '{label}' quota exhausted — "
+                    "hot-swapping to next account...",
+                    file=sys.stderr,
+                )
+                _mark_exhausted(acct["n"])
+                break  # break inner → outer loop picks next account
+
+            # Transient errors (capacity / 5xx) — backoff + retry same account
+            is_transient = (err_code == 3040) or (r.status_code >= 500)
+            if is_transient and attempt < MAX_RETRIES:
+                print(
+                    f"\r[api] [{label}] Transient {r.status_code}/{err_code}, "
+                    f"retry in {delay}s ({attempt+1}/{MAX_RETRIES})...",
+                    end="", flush=True, file=sys.stderr,
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 60)
+                continue
+
+            # Any other non-retryable error
+            print(f"[api] [{label}] Error: {r.text}", file=sys.stderr)
             r.raise_for_status()
 
-        # Transient errors: capacity (3040) or any 5xx — retry with backoff
-        is_transient = (err_code == 3040) or (r.status_code >= 500)
-        if is_transient and attempt < MAX_RETRIES:
-            print(f"\r[api] Transient error {r.status_code}/{err_code}, retrying in {delay}s (attempt {attempt+1}/{MAX_RETRIES})...",
-                  end="", flush=True, file=sys.stderr)
-            time.sleep(delay)
-            delay = min(delay * 2, 60)  # exponential backoff, cap at 60s
-            continue
+        else:
+            # Inner loop exhausted all retries without a 200 or a quota event
+            print(f"[api] [{label}] Max retries exceeded.", file=sys.stderr)
+            _mark_exhausted(acct["n"])
+            continue  # try next account
 
-        # Any other error — fail immediately
-        print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
-        r.raise_for_status()
-    
+        # If we got a 200, r is ready to stream — exit the outer loop
+        if r.status_code == 200:
+            print(f"[api] Using account: {label} (tier={acct['tier']})", file=sys.stderr)
+            break
+        # Otherwise inner loop hit a 4006 break — continue outer to pick next account
+
+
     full_response = ""
     
     # Iterate over the server-sent events stream

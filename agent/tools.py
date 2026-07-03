@@ -6,12 +6,23 @@ from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 
-def read_file(path: str, offset: int = 0, limit: int = 200) -> str:
+def read_file(path: str, offset: int = 0, limit: int = 500) -> dict:
+    """Read a file. Use offset+limit to paginate large files.
+    Returns {content, total_lines, offset, limit} so the caller knows
+    whether there are more lines to fetch.
+    """
     p = Path(path)
     if not p.is_absolute():
         p = WORKSPACE / p
     lines = p.read_text(encoding="utf-8").splitlines()
-    return "\n".join(lines[offset:offset+limit])
+    chunk = lines[offset:offset + limit]
+    return {
+        "content":     "\n".join(chunk),
+        "total_lines": len(lines),
+        "offset":      offset,
+        "limit":       limit,
+        "has_more":    (offset + limit) < len(lines),
+    }
 
 def write_file(path: str, content: str) -> dict:
     p = Path(path)
@@ -37,10 +48,15 @@ def run_command(command: str, cwd: str = ".", timeout: int = 60) -> dict:
         capture_output=True, text=True, timeout=timeout,
         encoding="utf-8", errors="ignore"
     )
+    stdout = result.stdout
+    stderr = result.stderr
+    # Keep the first 8000 chars of stdout (beginning matters for file reads);
+    # keep the last 2000 chars of stderr (tail matters for error messages).
     return {
-        "returncode": result.returncode,
-        "stdout": result.stdout[-4000:],
-        "stderr": result.stderr[-4000:],
+        "returncode":      result.returncode,
+        "stdout":          stdout[:8000] + ("...truncated" if len(stdout) > 8000 else ""),
+        "stdout_bytes":    len(stdout),
+        "stderr":          stderr[-2000:],
     }
 
 def search(pattern: str, path: str = ".", glob: str = "*") -> dict:
