@@ -125,8 +125,8 @@ def action_complete_todo(app, index: int) -> None:
 def action_run_agent(app, instruction: str = "Continue the current plan.") -> None:
     """Run the agent harness with an instruction."""
     _log(app, f"[bold yellow]Running agent:[/bold yellow] {instruction}")
-    safe = instruction.replace("'", "'\"'\"'")
-    app.run_shell_command(f"{sys.executable} -m agent.main '{safe}'")
+    app.run_agent_process(instruction)
+
 
 
 # ---------------------------------------------------------------------------

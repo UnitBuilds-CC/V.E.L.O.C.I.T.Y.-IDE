@@ -215,6 +215,25 @@ class VelocityIDE(App):
         """Launch the Kimi agent harness to process the instruction."""
         run_dashboard_action(self, "run_agent", instruction)
 
+    def run_agent_process(self, instruction: str, timeout: int = 600) -> None:
+        """Launch the Kimi agent by passing the instruction as a direct argv element.
+
+        Uses create_subprocess_exec (not shell=True) so no quoting or escaping
+        is needed — the instruction string is handed directly to the process.
+        """
+        shell = self.query_one("#shell-pane", ShellPane)
+        status = self.query_one("#status-bar", StatusBar)
+        status.status = "agent: thinking"
+        shell.log_output(f"[Kimi] ▶ {instruction}", "bold yellow")
+        self.run_worker(
+            self._execute_argv(
+                [sys.executable, "-m", "agent.main", instruction],
+                timeout=timeout,
+                is_agent=True,
+            ),
+            exclusive=False,
+        )
+
     def run_shell_command(self, command: str, display_command: str = None, timeout: int = 300) -> None:
         """Run a shell command in a background worker so the UI stays responsive."""
         shell = self.query_one("#shell-pane", ShellPane)
@@ -224,6 +243,88 @@ class VelocityIDE(App):
         disp = display_command or f"$ {command}"
         shell.log_output(disp, "bold cyan")
         self.run_worker(self._execute_command(command, timeout, is_agent=is_agent), exclusive=False)
+
+    async def _execute_argv(self, argv: list, timeout: int, is_agent: bool = True) -> None:
+        """Like _execute_command but spawns via exec (no shell) using a proper argv list."""
+        worker = get_current_worker()
+        shell = self.query_one("#shell-pane", ShellPane)
+        status = self.query_one("#status-bar", StatusBar)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        spinner_running = True
+        async def _spin():
+            while spinner_running:
+                frame = next(_SPINNER)
+                current = status.status
+                label = current.lstrip("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ")
+                status.status = f"{frame} {label}"
+                await asyncio.sleep(0.12)
+
+        spin_task = asyncio.ensure_future(_spin())
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=WORKSPACE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+
+            async def read_stdout():
+                while not worker.is_cancelled:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="ignore").rstrip("\r\n")
+                    if not text:
+                        continue
+                    if text.startswith("[Kimi] Thinking"):
+                        shell.log_output(text, "bold yellow")
+                        status.status = "⠿ agent: thinking"
+                    elif text.startswith("[Kimi] Calling tool"):
+                        tool_name = text.split("'")[1] if "'" in text else "tool"
+                        shell.log_output(text, "bold cyan")
+                        status.status = f"⠿ agent: {tool_name}"
+                    elif text.startswith("->"):
+                        ok = "Error" not in text
+                        shell.log_output(text, "green" if ok else "bold red")
+                    else:
+                        shell.log_output(text)
+
+            async def read_stderr():
+                while not worker.is_cancelled:
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="ignore").rstrip("\r\n")
+                    if text:
+                        shell.log_output(text, "bold red")
+
+            await asyncio.wait_for(
+                asyncio.gather(read_stdout(), read_stderr()),
+                timeout=timeout,
+            )
+            await proc.wait()
+
+            rc = proc.returncode
+            shell.log_output(f"[exit {rc}]", "dim green" if rc == 0 else "dim red")
+            status.status = "agent: done ✓" if is_agent else "ready"
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            shell.log_output("Agent timed out", "bold red")
+            status.status = "timed out"
+        except Exception as exc:
+            shell.log_output(f"Error: {exc}", "bold red")
+            status.status = "error"
+        finally:
+            spinner_running = False
+            spin_task.cancel()
 
     async def _execute_command(self, command: str, timeout: int, is_agent: bool = False) -> None:
         worker = get_current_worker()
