@@ -58,6 +58,38 @@ def current_profile() -> str:
 MODEL = os.getenv("CF_MODEL") or os.getenv("CLOUDFLARE_MODEL") or "@cf/moonshotai/kimi-k2.7-code"
 
 
+# ---------------------------------------------------------------------------
+# Context management
+# ---------------------------------------------------------------------------
+# Kimi's reasoning chains are verbose. After many tool turns the conversation
+# exceeds the model's practical context window, causing 500 errors.
+# We keep: system message + original user request + last MAX_HISTORY messages.
+
+MAX_HISTORY = 30  # tunable: number of recent messages to preserve
+
+
+def context_trim(messages: list) -> list:
+    """Return a pruned copy of messages safe to send to the API."""
+    if len(messages) <= MAX_HISTORY + 2:
+        return messages  # nothing to trim yet
+
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    # First user message is the original task — always keep it
+    first_user = next((m for m in messages if m.get("role") == "user"), None)
+    tail = messages[-(MAX_HISTORY):]
+
+    pruned = system_msgs[:]
+    if first_user and first_user not in tail:
+        pruned.append(first_user)
+    pruned.extend(tail)
+
+    trimmed = len(messages) - len(pruned)
+    if trimmed > 0:
+        print(f"[api] Context trimmed: dropped {trimmed} old messages to stay within limits.",
+              file=sys.stderr)
+    return pruned
+
+
 def call_kimi(messages, tools=None):
     account_id, api_token, api_url = _resolve_profile(_active_profile)
 
@@ -71,13 +103,14 @@ def call_kimi(messages, tools=None):
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
-    
+
     payload = {
         "model": MODEL,
-        "messages": messages,
+        "messages": context_trim(messages),  # <-- trim before sending
         "temperature": 0.2,
         "stream": True
     }
+
 
     MAX_RETRIES = 5
     delay = 5  # seconds between retries
@@ -100,15 +133,16 @@ def call_kimi(messages, tools=None):
             print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
             r.raise_for_status()
 
-        if err_code == 3040 and attempt < MAX_RETRIES:
-            # Transient capacity error — wait and retry
-            print(f"\r[api] Capacity exceeded, retrying in {delay}s (attempt {attempt+1}/{MAX_RETRIES})...",
+        # Transient errors: capacity (3040) or any 5xx — retry with backoff
+        is_transient = (err_code == 3040) or (r.status_code >= 500)
+        if is_transient and attempt < MAX_RETRIES:
+            print(f"\r[api] Transient error {r.status_code}/{err_code}, retrying in {delay}s (attempt {attempt+1}/{MAX_RETRIES})...",
                   end="", flush=True, file=sys.stderr)
             time.sleep(delay)
             delay = min(delay * 2, 60)  # exponential backoff, cap at 60s
             continue
 
-        # Any other error
+        # Any other error — fail immediately
         print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
         r.raise_for_status()
     
