@@ -14,26 +14,60 @@ if env_path.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
-CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID")
-CF_API_TOKEN = os.getenv("CF_API_TOKEN")
+# ---------------------------------------------------------------------------
+# Multi-account profile resolution
+# ---------------------------------------------------------------------------
+# Set CF_PROFILE=primary or CF_PROFILE=secondary in .env (or environment).
+# Falls back gracefully to bare CF_ACCOUNT_ID / CF_API_TOKEN for backwards compat.
+
+def _resolve_profile(profile: str | None = None):
+    """Return (account_id, api_token, api_url) for the requested profile."""
+    p = (profile or os.getenv("CF_PROFILE", "primary")).lower()
+    suffix = p.upper()
+    account_id = (
+        os.getenv(f"CF_ACCOUNT_ID_{suffix}")
+        or os.getenv("CF_ACCOUNT_ID")
+    )
+    api_token = (
+        os.getenv(f"CF_API_TOKEN_{suffix}")
+        or os.getenv("CF_API_TOKEN")
+    )
+    api_url = os.getenv("CF_API_URL")
+    if not api_url and account_id:
+        api_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/"
+            f"{account_id}/ai/v1/chat/completions"
+        )
+    return account_id, api_token, api_url
+
+# Active profile — can be overridden at runtime via set_profile()
+_active_profile: str | None = None
+
+def set_profile(profile: str):
+    """Switch the active Cloudflare account profile ('primary' or 'secondary')."""
+    global _active_profile
+    _active_profile = profile.lower()
+    _, _, url = _resolve_profile(_active_profile)
+    print(f"[api] Switched to profile '{_active_profile}' → {url}", file=sys.stderr)
+
+def current_profile() -> str:
+    return _active_profile or os.getenv("CF_PROFILE", "primary")
 
 # Default model, customizable via CF_MODEL or CLOUDFLARE_MODEL env variables
 MODEL = os.getenv("CF_MODEL") or os.getenv("CLOUDFLARE_MODEL") or "@cf/moonshotai/kimi-k2.7-code"
 
-# Use Cloudflare's OpenAI-compatible completions endpoint which has solid streaming support
-API_URL = os.getenv("CF_API_URL")
-if not API_URL and CF_ACCOUNT_ID:
-    API_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
 
 def call_kimi(messages, tools=None):
-    if not API_URL or not CF_API_TOKEN:
+    account_id, api_token, api_url = _resolve_profile(_active_profile)
+
+    if not api_url or not api_token:
         raise ValueError(
             "Missing Cloudflare API configuration. "
             "Please ensure CF_ACCOUNT_ID and CF_API_TOKEN environment variables are set."
         )
 
     headers = {
-        "Authorization": f"Bearer {CF_API_TOKEN}",
+        "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
@@ -44,9 +78,9 @@ def call_kimi(messages, tools=None):
         "stream": True
     }
 
-    r = requests.post(API_URL, headers=headers, json=payload, stream=True)
+    r = requests.post(api_url, headers=headers, json=payload, stream=True)
     if r.status_code != 200:
-        print(f"Cloudflare API Error Response: {r.text}", file=sys.stderr)
+        print(f"[profile:{current_profile()}] Cloudflare API Error Response: {r.text}", file=sys.stderr)
     r.raise_for_status()
     
     full_response = ""
