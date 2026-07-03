@@ -18,3 +18,4 @@ def test(profile):
 print("Testing profiles...")
 test("primary")
 test("secondary")
+test("tertiary")
