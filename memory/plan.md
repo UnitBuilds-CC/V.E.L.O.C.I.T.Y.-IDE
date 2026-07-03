@@ -12,18 +12,19 @@ unified view of the workspace, files, shell, todos, plan, and git state.
 - [x] Add `ide/widgets.py` with reusable panels (file tree, editor, shell, status).
 
 ### Phase 2 — Layout
-- [ ] Three-pane layout: sidebar (files + todos), main (editor/viewer), footer (shell + status).
-- [ ] Bind keys for navigation and common actions.
+- [x] Three-pane layout: sidebar (files + todos + plan), main (editor/viewer), footer (shell + status).
+- [x] Bind keys for navigation and common actions.
+- [x] Add plan viewer tab and improve sidebar organization.
 
 ### Phase 3 — Integration
-- [ ] Read workspace files through existing `agent/state.py` helpers.
-- [ ] Execute shell commands via `agent/tools.py` and stream output.
-- [ ] Display git status, branch, and recent commits in status bar.
+- [x] Read workspace files through existing `agent/state.py` helpers.
+- [x] Execute shell commands via `agent/tools.py` and stream output.
+- [x] Display git status, branch, and recent commits in status bar.
 
 ### Phase 4 — Polish
-- [ ] Command palette for quick file open, search, and git actions.
-- [ ] Theme and styling consistent with V.E.L.O.C.I.T.Y. branding.
-- [ ] Update `requirements.txt` and add a run script.
+- [x] Command palette for quick file open, search, and git actions.
+- [x] Theme and styling consistent with V.E.L.O.C.I.T.Y. branding.
+- [x] Update `requirements.txt` and add a run script.
 
 ## Current Focus
-Implementing the Textual dashboard UI (`ide/app.py`).
+Polishing the Textual dashboard UI and wiring remaining dashboard actions into the agent tool registry.

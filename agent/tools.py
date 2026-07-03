@@ -565,6 +565,13 @@ def todo_complete(index: int) -> dict:
 
 
 @registry.register()
+def todo_toggle(index: int) -> dict:
+    """Toggle the completion state of a todo item by its 0-based index."""
+    from state import toggle_todo
+    return toggle_todo(index)
+
+
+@registry.register()
 def todo_list() -> dict:
     """Return the current todo list as structured data."""
     return {"todos": load_todos()}

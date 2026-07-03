@@ -193,12 +193,10 @@ def main():
 
     while True:
         try:
-            print("\r[Kimi] Thinking...", end="", flush=True)
+            print("[Kimi] Thinking...", flush=True)
             response = call_kimi(messages, tools=TOOLS)
-            print("\r\033[K", end="", flush=True)
         except Exception as e:
-            print("\r\033[K", end="", flush=True)
-            print(f"API Error: {e}", file=sys.stderr)
+            print(f"API Error: {e}", file=sys.stderr, flush=True)
             break
 
         messages.append({"role": "assistant", "content": response})
@@ -210,9 +208,11 @@ def main():
             for raw_name, args in tool_calls:
                 name = TOOL_NAME_MAP.get(raw_name, raw_name)
                 try:
+                    # Print before calling so the user sees immediate action
+                    print(f"[Kimi] Calling tool '{name}'...", flush=True)
                     result = run_tool(name, args)
                     safe_print_call(name, args)
-                    print(f"-> {'Error: ' + result['error'] if 'error' in result else 'Success'}")
+                    print(f"-> {'Error: ' + result['error'] if 'error' in result else 'Success'}", flush=True)
                 except Exception as e:
                     result = {"error": f"Failed to execute '{name}': {e}"}
                     print(f"-> {result['error']}")

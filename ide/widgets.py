@@ -15,6 +15,14 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 class FileTree(DirectoryTree):
     """Workspace file tree that posts FileSelected messages on selection."""
 
+    DEFAULT_CSS = """
+    FileTree {
+        width: 100%;
+        height: 100%;
+        border: none;
+    }
+    """
+
     class FileSelected(Message):
         """Emitted when a file is selected in the tree."""
 
@@ -24,6 +32,9 @@ class FileTree(DirectoryTree):
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         self.post_message(self.FileSelected(event.path))
+
+    def reload_tree(self) -> None:
+        self.reload(str(WORKSPACE))
 
 
 class Editor(Static):
@@ -92,6 +103,9 @@ class ShellPane(Static):
         else:
             log.write(text_strip)
 
+    def focus_input(self) -> None:
+        self.query_one("#shell-input", Input).focus()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "shell-input":
             return
@@ -104,6 +118,14 @@ class ShellPane(Static):
 
 class TodosPanel(Static):
     """Displays the current todo backlog from memory/todos.md."""
+
+    DEFAULT_CSS = """
+    TodosPanel {
+        height: 1fr;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    """
 
     todos: reactive[list[dict]] = reactive([])
 
@@ -127,6 +149,37 @@ class TodosPanel(Static):
                 text = stripped.split("]", 1)[1].strip()
                 parsed.append({"done": done, "text": text})
         self.todos = parsed
+
+
+class PlanPanel(Static):
+    """Displays the current plan from memory/plan.md."""
+
+    DEFAULT_CSS = """
+    PlanPanel {
+        height: 1fr;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    """
+
+    content: reactive[str] = reactive("")
+
+    def watch_content(self, content: str) -> None:
+        if not content.strip():
+            self.update("[dim]No plan loaded.[/dim]")
+            return
+        lines = content.splitlines()
+        # Hide the title if present to save space
+        if lines and lines[0].startswith("#"):
+            lines = lines[1:]
+        self.update("\n".join(lines).strip() or content)
+
+    def refresh_plan(self) -> None:
+        plan_path = WORKSPACE / "memory" / "plan.md"
+        if not plan_path.exists():
+            self.content = ""
+            return
+        self.content = plan_path.read_text(encoding="utf-8")
 
 
 class StatusBar(Static):

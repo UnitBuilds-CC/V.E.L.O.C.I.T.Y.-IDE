@@ -3,21 +3,23 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.worker import Worker, get_current_worker
-from textual.widgets import Footer, Header, Static
+from textual.widgets import ContentSwitcher, Footer, Header, Static, TabbedContent, TabPane
+from textual.worker import get_current_worker
+
 
 # Ensure agent/ is importable when running the IDE directly
 _AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
 if str(_AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENT_DIR))
 
-from ide.widgets import Editor, FileTree, ShellPane, StatusBar, TodosPanel
+from ide.actions import DASHBOARD_COMMANDS, run_dashboard_action
+from ide.screens import CommandPalette, PromptScreen
+from ide.widgets import Editor, FileTree, PlanPanel, ShellPane, StatusBar, TodosPanel
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 
@@ -33,9 +35,12 @@ class VelocityIDE(App):
         height: 1fr;
     }
     #sidebar {
-        width: 30%;
-        max-width: 50;
+        width: 32;
+        max-width: 40;
         border: solid $primary;
+    }
+    #sidebar-tabs {
+        height: 1fr;
     }
     #editor-pane {
         width: 1fr;
@@ -50,19 +55,40 @@ class VelocityIDE(App):
     }
     """
 
+    MODES = {"default", "command"}
+
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
         ("g", "git_status", "Git status"),
+        ("d", "git_diff", "Git diff"),
+        ("l", "git_log", "Git log"),
         ("s", "run_agent", "Run agent"),
+        ("ctrl+o", "command_open_file", "Open file"),
+        ("ctrl+shift+f", "command_search_files", "Search"),
+        ("ctrl+p", "command_palette", "Command palette"),
+        ("ctrl+t", "command_run_agent", "Run agent"),
+        ("ctrl+b", "focus_sidebar", "Focus sidebar"),
+        ("ctrl+e", "focus_editor", "Focus editor"),
+        ("ctrl+slash", "focus_shell", "Focus shell"),
+        ("f5", "refresh", "Refresh"),
     ]
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.workspace = WORKSPACE
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="main-layout"):
             with Vertical(id="sidebar"):
-                yield TodosPanel(id="todos-panel")
-                yield FileTree(str(WORKSPACE), id="file-tree")
+                with TabbedContent(id="sidebar-tabs"):
+                    with TabPane("Files", id="tab-files"):
+                        yield FileTree(str(WORKSPACE), id="file-tree")
+                    with TabPane("Todos", id="tab-todos"):
+                        yield TodosPanel(id="todos-panel")
+                    with TabPane("Plan", id="tab-plan"):
+                        yield PlanPanel(id="plan-panel")
             with Vertical(id="editor-pane"):
                 yield Editor(id="editor")
         yield ShellPane(id="shell-pane")
@@ -73,9 +99,14 @@ class VelocityIDE(App):
         self.title = "V.E.L.O.C.I.T.Y. IDE"
         self.sub_title = str(WORKSPACE)
         self.query_one("#todos-panel", TodosPanel).refresh_todos()
+        self.query_one("#plan-panel", PlanPanel).refresh_plan()
         self.query_one("#status-bar", StatusBar).refresh_branch()
         self.query_one("#status-bar", StatusBar).status = "ready"
+        self.query_one("#file-tree", FileTree).focus()
 
+    # ------------------------------------------------------------------
+    # Widget events
+    # ------------------------------------------------------------------
     def on_file_tree_file_selected(self, event: FileTree.FileSelected) -> None:
         if event.path.is_file():
             self.query_one("#editor", Editor).open_file(event.path)
@@ -90,12 +121,95 @@ class VelocityIDE(App):
             # Run as instruction to Kimi agent
             self.run_agent_instruction(cmd)
 
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+    def action_refresh(self) -> None:
+        self.query_one("#todos-panel", TodosPanel).refresh_todos()
+        self.query_one("#plan-panel", PlanPanel).refresh_plan()
+        self.query_one("#file-tree", FileTree).reload_tree()
+        self.query_one("#status-bar", StatusBar).refresh_branch()
+        self.query_one("#status-bar", StatusBar).status = "refreshed"
+
+    def action_git_diff(self) -> None:
+        run_dashboard_action(self, "git_diff")
+
+    def action_git_log(self) -> None:
+        run_dashboard_action(self, "git_log")
+
+    def action_focus_sidebar(self) -> None:
+        self.query_one("#file-tree", FileTree).focus()
+
+    def action_focus_editor(self) -> None:
+        self.query_one("#editor", Editor).focus()
+
+    def action_focus_shell(self) -> None:
+        self.query_one("#shell-pane", ShellPane).focus_input()
+
+    def action_git_status(self) -> None:
+        run_dashboard_action(self, "git_status")
+
+    def action_run_agent(self) -> None:
+        run_dashboard_action(self, "run_agent")
+
+    def action_command_palette(self) -> None:
+        self.push_screen(CommandPalette(DASHBOARD_COMMANDS), self._on_palette_select)
+
+    def action_command_open_file(self) -> None:
+        self.push_screen(PromptScreen("Open file:"), self._on_open_file)
+
+    def action_command_search_files(self) -> None:
+        self.push_screen(PromptScreen("Search pattern:"), self._on_search_files)
+
+    def action_command_run_agent(self) -> None:
+        self.push_screen(PromptScreen("Agent instruction:", "Continue the current plan."), self._on_run_agent)
+
+    def _on_palette_select(self, key: str | None) -> None:
+        if key is None:
+            return
+        if key in {"open_file", "search_files", "git_commit", "add_todo", "complete_todo", "run_agent"}:
+            # These need an argument; prompt for it.
+            prompts = {
+                "open_file": "Open file:",
+                "search_files": "Search pattern:",
+                "git_commit": "Commit message:",
+                "add_todo": "Todo text:",
+                "complete_todo": "Todo index:",
+                "run_agent": "Agent instruction:",
+            }
+            defaults = {
+                "run_agent": "Continue the current plan.",
+                "git_commit": "checkpoint",
+            }
+            self.push_screen(
+                PromptScreen(prompts[key], defaults.get(key, "")),
+                lambda value: self._run_action_with_arg(key, value),
+            )
+        else:
+            run_dashboard_action(self, key)
+
+    def _run_action_with_arg(self, key: str, value: str | None) -> None:
+        if value is None:
+            return
+        run_dashboard_action(self, key, value)
+
+    def _on_open_file(self, value: str | None) -> None:
+        if value:
+            run_dashboard_action(self, "open_file", value)
+
+    def _on_search_files(self, value: str | None) -> None:
+        if value:
+            run_dashboard_action(self, "search_files", value)
+
+    def _on_run_agent(self, value: str | None) -> None:
+        run_dashboard_action(self, "run_agent", value or "Continue the current plan.")
+
+    # ------------------------------------------------------------------
+    # Execution helpers
+    # ------------------------------------------------------------------
     def run_agent_instruction(self, instruction: str) -> None:
         """Launch the Kimi agent harness to process the instruction."""
-        # Quote the instruction safely for command execution
-        safe_instruction = instruction.replace("'", "'\"'\"'")
-        cmd = f"{sys.executable} -m agent.main '{safe_instruction}'"
-        self.run_shell_command(cmd, display_command=f"Chat to Kimi: {instruction}")
+        run_dashboard_action(self, "run_agent", instruction)
 
     def run_shell_command(self, command: str, display_command: str = None, timeout: int = 300) -> None:
         """Run a shell command in a background worker so the UI stays responsive."""
@@ -157,19 +271,6 @@ class VelocityIDE(App):
         except Exception as exc:
             shell.log_output(f"Error: {exc}", "bold red")
             status.status = "ready"
-
-    def action_refresh(self) -> None:
-        self.query_one("#todos-panel", TodosPanel).refresh_todos()
-        self.query_one("#status-bar", StatusBar).refresh_branch()
-        self.query_one("#status-bar", StatusBar).status = "refreshed"
-
-    def action_git_status(self) -> None:
-        self.run_shell_command("git status -sb")
-
-    def action_run_agent(self) -> None:
-        shell = self.query_one("#shell-pane", ShellPane)
-        shell.log_output("Launching agent harness...", "bold yellow")
-        self.run_shell_command(f"{sys.executable} -m agent.main 'Continue the current plan.'")
 
 
 def main() -> None:
