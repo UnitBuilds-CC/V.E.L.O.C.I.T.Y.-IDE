@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import os
 import sys
 from pathlib import Path
@@ -10,6 +11,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ContentSwitcher, Footer, Header, Static, TabbedContent, TabPane
 from textual.worker import get_current_worker
+
+# Spinner frames for the status bar
+_SPINNER = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
 
 
 # Ensure agent/ is importable when running the IDE directly
@@ -215,17 +219,35 @@ class VelocityIDE(App):
         """Run a shell command in a background worker so the UI stays responsive."""
         shell = self.query_one("#shell-pane", ShellPane)
         status = self.query_one("#status-bar", StatusBar)
-        status.status = "running shell"
+        is_agent = "agent.main" in command
+        status.status = "agent: thinking" if is_agent else "running shell"
         disp = display_command or f"$ {command}"
         shell.log_output(disp, "bold cyan")
-        self.run_worker(self._execute_command(command, timeout), exclusive=False)
+        self.run_worker(self._execute_command(command, timeout, is_agent=is_agent), exclusive=False)
 
-    async def _execute_command(self, command: str, timeout: int) -> None:
+    async def _execute_command(self, command: str, timeout: int, is_agent: bool = False) -> None:
         worker = get_current_worker()
         shell = self.query_one("#shell-pane", ShellPane)
         status = self.query_one("#status-bar", StatusBar)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
+
+        # Spinner task: pulses the status bar label while the command runs
+        spinner_running = True
+        async def _spin():
+            while spinner_running:
+                frame = next(_SPINNER)
+                if is_agent:
+                    current = status.status
+                    # Keep the descriptive part, just prepend the spinner
+                    label = current.lstrip("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ")
+                    status.status = f"{frame} {label}"
+                else:
+                    status.status = f"{frame} running…"
+                await asyncio.sleep(0.12)
+
+        spin_task = asyncio.ensure_future(_spin())
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
@@ -240,16 +262,33 @@ class VelocityIDE(App):
                     line = await proc.stdout.readline()
                     if not line:
                         break
-                    text = line.decode("utf-8", errors="ignore")
-                    shell.log_output(text)
+                    text = line.decode("utf-8", errors="ignore").rstrip("\r\n")
+                    if not text:
+                        continue
+                    # Style [Kimi] status lines distinctly
+                    if text.startswith("[Kimi] Thinking"):
+                        shell.log_output(text, "bold yellow")
+                        if is_agent:
+                            status.status = "⠿ agent: thinking"
+                    elif text.startswith("[Kimi] Calling tool"):
+                        tool_name = text.split("'")[1] if "'" in text else "tool"
+                        shell.log_output(text, "bold cyan")
+                        if is_agent:
+                            status.status = f"⠿ agent: {tool_name}"
+                    elif text.startswith("->"):
+                        ok = "Error" not in text
+                        shell.log_output(text, "green" if ok else "bold red")
+                    else:
+                        shell.log_output(text)
 
             async def read_stderr():
                 while not worker.is_cancelled:
                     line = await proc.stderr.readline()
                     if not line:
                         break
-                    text = line.decode("utf-8", errors="ignore")
-                    shell.log_output(text, "bold red")
+                    text = line.decode("utf-8", errors="ignore").rstrip("\r\n")
+                    if text:
+                        shell.log_output(text, "bold red")
 
             # Read both streams concurrently in real-time
             await asyncio.wait_for(
@@ -258,8 +297,9 @@ class VelocityIDE(App):
             )
             await proc.wait()
 
-            shell.log_output(f"[exit {proc.returncode}]", "dim")
-            status.status = "ready"
+            rc = proc.returncode
+            shell.log_output(f"[exit {rc}]", "dim green" if rc == 0 else "dim red")
+            status.status = "agent: done ✓" if is_agent else "ready"
         except asyncio.TimeoutError:
             try:
                 proc.kill()
@@ -267,10 +307,13 @@ class VelocityIDE(App):
             except Exception:
                 pass
             shell.log_output("Command timed out", "bold red")
-            status.status = "ready"
+            status.status = "timed out"
         except Exception as exc:
             shell.log_output(f"Error: {exc}", "bold red")
-            status.status = "ready"
+            status.status = "error"
+        finally:
+            spinner_running = False
+            spin_task.cancel()
 
 
 def main() -> None:
