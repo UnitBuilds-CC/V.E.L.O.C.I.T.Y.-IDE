@@ -78,17 +78,19 @@ class ShellPane(Static):
 
     def compose(self):
         yield RichLog(highlight=True, markup=True, wrap=True, id="shell-log")
-        yield Input(placeholder="Type a shell command and press Enter...", id="shell-input")
+        yield Input(placeholder="Ask Kimi something (or prefix with ! for shell command)...", id="shell-input")
 
     def on_mount(self) -> None:
         self.query_one("#shell-log", RichLog).write("[bold green]>[/bold green] Shell ready.")
 
     def log_output(self, text: str, style: str = "") -> None:
         log = self.query_one("#shell-log", RichLog)
+        # Remove trailing newline from command output if it exists to avoid extra spaces
+        text_strip = text.rstrip("\r\n")
         if style:
-            log.write(f"[{style}]{text}[/{style}]")
+            log.write(f"[{style}]{text_strip}[/{style}]")
         else:
-            log.write(text)
+            log.write(text_strip)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "shell-input":
@@ -96,7 +98,6 @@ class ShellPane(Static):
         command = event.value.strip()
         if not command:
             return
-        self.log_output(f"$ {command}", "bold cyan")
         event.input.value = ""
         self.post_message(self.CommandSubmitted(command))
 

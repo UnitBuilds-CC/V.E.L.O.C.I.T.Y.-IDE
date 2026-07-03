@@ -82,14 +82,28 @@ class VelocityIDE(App):
             self.query_one("#status-bar", StatusBar).status = f"opened {event.path.name}"
 
     def on_shell_pane_command_submitted(self, event: ShellPane.CommandSubmitted) -> None:
-        self.run_shell_command(event.command)
+        cmd = event.command.strip()
+        if cmd.startswith("!"):
+            # Run raw shell command
+            self.run_shell_command(cmd[1:].strip())
+        else:
+            # Run as instruction to Kimi agent
+            self.run_agent_instruction(cmd)
 
-    def run_shell_command(self, command: str, timeout: int = 300) -> None:
+    def run_agent_instruction(self, instruction: str) -> None:
+        """Launch the Kimi agent harness to process the instruction."""
+        # Quote the instruction safely for command execution
+        safe_instruction = instruction.replace("'", "'\"'\"'")
+        cmd = f"{sys.executable} -m agent.main '{safe_instruction}'"
+        self.run_shell_command(cmd, display_command=f"Chat to Kimi: {instruction}")
+
+    def run_shell_command(self, command: str, display_command: str = None, timeout: int = 300) -> None:
         """Run a shell command in a background worker so the UI stays responsive."""
         shell = self.query_one("#shell-pane", ShellPane)
         status = self.query_one("#status-bar", StatusBar)
         status.status = "running shell"
-        shell.log_output(f"$ {command}", "bold cyan")
+        disp = display_command or f"$ {command}"
+        shell.log_output(disp, "bold cyan")
         self.run_worker(self._execute_command(command, timeout), exclusive=False)
 
     async def _execute_command(self, command: str, timeout: int) -> None:
@@ -106,23 +120,39 @@ class VelocityIDE(App):
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
+
+            async def read_stdout():
+                while not worker.is_cancelled:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="ignore")
+                    shell.log_output(text)
+
+            async def read_stderr():
+                while not worker.is_cancelled:
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="ignore")
+                    shell.log_output(text, "bold red")
+
+            # Read both streams concurrently in real-time
+            await asyncio.wait_for(
+                asyncio.gather(read_stdout(), read_stderr()),
+                timeout=timeout,
+            )
+            await proc.wait()
+
+            shell.log_output(f"[exit {proc.returncode}]", "dim")
+            status.status = "ready"
+        except asyncio.TimeoutError:
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-                shell.log_output("Command timed out", "bold red")
-                return
-            if worker.is_cancelled:
-                return
-            text_out = stdout.decode("utf-8", errors="ignore")
-            text_err = stderr.decode("utf-8", errors="ignore")
-
-            if text_out:
-                shell.log_output(text_out)
-            if text_err:
-                shell.log_output(text_err, "bold red")
-            shell.log_output(f"[exit {proc.returncode}]", "dim")
+            except Exception:
+                pass
+            shell.log_output("Command timed out", "bold red")
             status.status = "ready"
         except Exception as exc:
             shell.log_output(f"Error: {exc}", "bold red")
