@@ -37,6 +37,14 @@ from state import (
     write_memory,
 )
 
+# Optional tree-sitter AST support (graceful fallback if not installed)
+try:
+    from tree_sitter import Language, Parser
+    from tree_sitter_python import language as PYTHON_LANGUAGE
+    _TS_AVAILABLE = True
+except Exception:
+    _TS_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Tool registry
@@ -765,3 +773,87 @@ def run_tool(name: str, args: dict) -> dict:
         pass
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# AST / code intelligence
+# ---------------------------------------------------------------------------
+@registry.register(aliases=["ast", "code_outline"])
+def parse_python_ast(path: str) -> dict:
+    """Parse a Python file and return its top-level definitions (classes,
+    functions, methods) with line numbers. Falls back to a regex outline if
+    tree-sitter is unavailable."""
+    p = _resolve_path(path)
+    if not p.exists():
+        return {"error": f"File not found: {p}"}
+    try:
+        source = p.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return {"error": f"Could not read {p}: {exc}"}
+
+    if _TS_AVAILABLE:
+        try:
+            parser = Parser(Language(PYTHON_LANGUAGE))
+            tree = parser.parse(bytes(source, "utf-8"))
+            root = tree.root_node
+            defs: list[dict] = []
+
+            def _visit(node, depth=0):
+                if node.type in ("function_definition", "class_definition"):
+                    name_node = node.child_by_field_name("name")
+                    name = name_node.text.decode("utf-8") if name_node else "<anonymous>"
+                    kind = "class" if node.type == "class_definition" else "function"
+                    defs.append({
+                        "name": name,
+                        "kind": kind,
+                        "line": node.start_point[0] + 1,
+                        "depth": depth,
+                    })
+                    # Visit children so methods are captured inside classes
+                    for child in node.children:
+                        _visit(child, depth + 1)
+                else:
+                    for child in node.children:
+                        _visit(child, depth)
+
+            _visit(root)
+            return {"definitions": defs, "engine": "tree-sitter"}
+        except Exception as exc:
+            return {"error": f"tree-sitter parse failed: {exc}"}
+
+    # Fallback regex outline
+    defs = []
+    for i, line in enumerate(source.splitlines(), 1):
+        stripped = line.lstrip()
+        if stripped.startswith("class ") or stripped.startswith("def "):
+            kind = "class" if stripped.startswith("class ") else "function"
+            name = stripped.split()[1].split("(")[0].split(":")[0]
+            depth = (len(line) - len(stripped)) // 4
+            defs.append({"name": name, "kind": kind, "line": i, "depth": max(depth, 0)})
+    return {"definitions": defs, "engine": "regex"}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard integration tools
+# ---------------------------------------------------------------------------
+@registry.register(aliases=["ide", "dashboard"])
+def launch_ide(file: str | None = None) -> dict:
+    """Launch the V.E.L.O.C.I.T.Y. terminal IDE dashboard. Optionally open a
+    file on startup. Returns immediately; the IDE runs in a subprocess."""
+    ide_main = WORKSPACE / "ide" / "__main__.py"
+    if not ide_main.exists():
+        return {"error": f"IDE entry point not found: {ide_main}"}
+    cmd = [sys.executable, "-m", "ide"]
+    if file:
+        cmd.extend(["--file", str(_resolve_path(file))])
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=WORKSPACE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+        return {"ok": True, "pid": proc.pid, "command": " ".join(cmd)}
+    except Exception as exc:
+        return {"error": f"Failed to launch IDE: {exc}"}

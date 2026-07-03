@@ -30,11 +30,15 @@ class FileTree(DirectoryTree):
             self.path = path
             super().__init__()
 
+    def on_mount(self) -> None:
+        self.root.expand()
+
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         self.post_message(self.FileSelected(event.path))
 
     def reload_tree(self) -> None:
-        self.reload(str(WORKSPACE))
+        self.reload()
+        self.root.expand()
 
 
 class Editor(Static):

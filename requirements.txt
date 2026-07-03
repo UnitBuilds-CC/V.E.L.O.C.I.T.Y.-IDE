@@ -1,2 +1,4 @@
 requests>=2.31.0
 textual>=0.52.0
+tree-sitter>=0.20.0
+tree-sitter-python>=0.20.0

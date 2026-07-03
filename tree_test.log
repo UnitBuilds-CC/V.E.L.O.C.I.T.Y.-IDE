@@ -1,0 +1,19 @@
+compose
+on_mount
+before expand: children=14
+after expand: children=14
+CHECK: expanded=True, children=14
+  child: .git
+  child: agent
+  child: bin
+  child: ide
+  child: memory
+  child: .env
+  child: .gitignore
+  child: Dockerfile
+  child: requirements.txt
+  child: test_api.py
+  child: test_tree_expand.py
+  child: test_tree_headless.py
+  child: test_tree_tabbed.py
+  child: tree_test.log

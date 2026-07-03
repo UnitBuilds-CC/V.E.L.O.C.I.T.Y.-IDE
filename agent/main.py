@@ -233,7 +233,15 @@ def main():
         if response.strip().endswith("DONE"):
             break
 
-        follow = input("Next (or 'done'): ")
+        # If run with a command-line argument (e.g. from the TUI), exit immediately
+        # after the final text response instead of prompting for interactive input.
+        if len(sys.argv) > 1:
+            break
+
+        try:
+            follow = input("Next (or 'done'): ")
+        except EOFError:
+            break
         if follow.lower() == "done":
             break
         messages.append({"role": "user", "content": follow})
@@ -241,3 +249,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
