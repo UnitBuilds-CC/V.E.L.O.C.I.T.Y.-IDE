@@ -8,3 +8,7 @@ ENV/
 .env
 .env.local
 .DS_Store
+memory/.account_state.json
+memory/session.jsonl
+memory/summaries/
+memory/snapshots/

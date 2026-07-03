@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # agent/main.py
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -17,8 +16,7 @@ from schemas import TOOLS
 
 
 def safe_json_loads(raw: str) -> dict:
-    """Parse a JSON string that may contain literal (unescaped) newlines inside
-    string values — a common quirk in Kimi's native tool call output."""
+    """Parse a JSON string that may contain literal unescaped newlines."""
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -27,13 +25,13 @@ def safe_json_loads(raw: str) -> dict:
     sanitized = re.sub(
         r'(?<=[^\\])([\n\r\t])',
         lambda m: {"\n": "\\n", "\r": "\\r", "\t": "\\t"}[m.group(1)],
-        raw
+        raw,
     )
     return json.loads(sanitized)
 
 
 # ---------------------------------------------------------------------------
-# TOOL_NAME_MAP — kept in sync with tools._NAME_ALIASES
+# TOOL_NAME_MAP — kept in sync with tools.registry._aliases
 # ---------------------------------------------------------------------------
 TOOL_NAME_MAP = {
     "shell":              "run_command",
@@ -58,82 +56,131 @@ TOOL_NAME_MAP = {
     "ls":                 "list_dir",
     "dir":                "list_dir",
     "tree":               "file_tree",
+    "py":                 "run_python",
+    "python":             "run_python",
+    "snapshot":           "checkpoint_save",
 }
 
 SYSTEM_PROMPT = """\
 You are Kimi K2.7, an autonomous coding agent.
-You operate inside a self-contained workspace. You have tools. Use them immediately.
+You are running DIRECTLY ON THE HOST MACHINE (not containerized). Be careful with destructive commands.
 CRITICAL: Keep reasoning extremely brief (1-2 sentences max). Long thoughts cause API timeouts.
+You may emit MULTIPLE <tool> blocks in a single response — all will be executed in order.
+
+IMPORTANT: If a previous action failed, was interrupted, or if you detect a connection reset/hot-swap from the recent events log, always use `read_file` or check `git_diff`/`git_status` to verify that your last edited files were written fully and are not truncated or corrupted.
 
 ## Tool call format
 <tool>
-{{"name": "tool_name", "args": {{"arg": "value"}}}}
+{"name": "tool_name", "args": {"arg": "value"}}
 </tool>
 
 ## Available tools
 ### Files
 - read_file(path, offset=0, limit=500, line_numbers=false)
-  → {{content, total_lines, has_more}}  — paginate with offset+=500 when has_more=true
+  → {content, total_lines, has_more}  paginate with offset+=500 when has_more=true
 - write_file(path, content)       → create or overwrite a file
 - edit_file(path, old, new)       → replace first occurrence of `old` with `new`
-- insert_file(path, anchor, new, after=true) → insert text before/after anchor
-- delete_lines(path, start, end)  → delete 1-based inclusive line range
+- insert_file(path, anchor, new, after=true)
+- delete_lines(path, start, end)
 - apply_patch(path, patch)        → apply unified diff patch
 
 ### Search
-- grep(pattern, path=".", glob="*")   → regex search (uses ripgrep if available)
+- grep(pattern, path=".", glob="*")   → regex search (ripgrep if available)
 - search(pattern, path=".", glob="*") → literal substring search
-- file_tree(path=".", max_depth=5)    → directory tree
-- list_dir(path=".")                  → flat directory listing
+- file_tree(path=".", max_depth=5)
+- list_dir(path=".")
 
-### Shell
+### Shell & Python
 - run_command(command, cwd=".", timeout=60)
-  → {{returncode, stdout[first 8000 chars], stderr}}
+  → {returncode, stdout[first 8000 chars], stderr}
+- run_python(code, timeout=30) → {returncode, stdout, stderr}
 
 ### Git
 - git_status() / git_diff() / git_log(n=10)
 - git_branch() / git_checkout(branch, create=false)
 - git_commit(message)
 
+### Plans & checkpoints
+- plan_read() / plan_write(content)
+- checkpoint_save(name) → git tag or memory snapshot
+- checkpoint_list()
+
 ### Memory & state
 - memory_write(key, content) / memory_read(key) / memory_append(key, content)
+- memory_list()
 - scratchpad_append(entry)
 - todo_add(text) / todo_complete(index) / todo_list()
+- session_events(n=50)
+- state_info()
 
 ### Interaction
-- ask_user(prompt) → {{answer}}
+- ask_user(prompt) → {answer}
+- think(thought)   → logs thought to session, returns ok
 """
 
 
-def _parse_tool_call(response: str) -> tuple[str, dict, bool]:
-    """Extract (name, args, found) from an assistant response."""
-    # 1. XML <tool> format
-    if "<tool>" in response:
+# ---------------------------------------------------------------------------
+# Multi-call parser — extracts ALL tool calls from one response
+# ---------------------------------------------------------------------------
+def _parse_all_tool_calls(response: str) -> list[tuple[str, dict]]:
+    """Return [(name, args), ...] for every tool call in the response."""
+    calls: list[tuple[str, dict]] = []
+
+    # 1. XML <tool>...</tool> blocks
+    parts = response.split("<tool>")
+    for part in parts[1:]:
+        if "</tool>" not in part:
+            continue
+        block = part.split("</tool>")[0].strip()
         try:
-            block = response.split("<tool>")[1].split("</tool>")[0].strip()
             call = safe_json_loads(block)
-            return call["name"], call.get("args", {}), True
+            calls.append((call["name"], call.get("args", {})))
         except Exception:
             pass
 
-    # 2. Native <|tool_call_...|> format
-    if "<|tool_call_argument_begin|>" in response:
-        try:
-            block = response.split("<|tool_call_argument_begin|>")[1].split("<|tool_call_end|>")[0].strip()
-            payload = safe_json_loads(block)
-            if "name" in payload:
-                return payload["name"], payload.get("args", {}), True
-            # Older format: name in prefix tag
-            args = payload
-            name_block = response.split("<|tool_call_begin|>")[1].split("<|tool_call_argument_begin|>")[0].strip()
-            if name_block.startswith("functions."):
-                name_block = name_block[10:]
-            name = name_block.split(":")[0].strip()
-            return name, args, True
-        except Exception as e:
-            print(f"Failed to parse native tool call: {e}")
+    if calls:
+        return calls
 
-    return "", {}, False
+    # 2. Native <|tool_call_begin|>...<|tool_call_end|> blocks
+    segments = response.split("<|tool_call_begin|>")
+    for seg in segments[1:]:
+        if "<|tool_call_argument_begin|>" not in seg:
+            continue
+        try:
+            prefix   = seg.split("<|tool_call_argument_begin|>")[0].strip()
+            raw_args = seg.split("<|tool_call_argument_begin|>")[1].split("<|tool_call_end|>")[0].strip()
+            payload  = safe_json_loads(raw_args)
+            if "name" in payload:
+                calls.append((payload["name"], payload.get("args", {})))
+            else:
+                name_block = prefix
+                if name_block.startswith("functions."):
+                    name_block = name_block[10:]
+                name = name_block.split(":")[0].strip()
+                calls.append((name, payload))
+        except Exception as e:
+            print(f"[harness] Failed to parse native tool call segment: {e}")
+
+    return calls
+
+
+def safe_print_call(name: str, args: dict):
+    """Safely print a tool call, truncating long arguments and handling encoding issues."""
+    parts = []
+    for k, v in args.items():
+        v_str = str(v)
+        if len(v_str) > 120:
+            v_str = v_str[:120] + "..."
+        parts.append(f"{k}={repr(v_str)}")
+    text = f"[{name}] {', '.join(parts)}"
+    try:
+        # Encode to terminal encoding with backslashreplace to prevent crashes on Windows CP1252
+        enc = sys.stdout.encoding or "utf-8"
+        sys.stdout.buffer.write((text + "\n").encode(enc, errors="backslashreplace"))
+        sys.stdout.flush()
+    except Exception:
+        # Fallback if standard streams don't support buffer write (e.g. testing or redirected)
+        print(f"[{name}] (arguments too long or contain special chars)")
 
 
 def main():
@@ -156,31 +203,32 @@ def main():
 
         messages.append({"role": "assistant", "content": response})
 
-        name, args, has_tool = _parse_tool_call(response)
+        tool_calls = _parse_all_tool_calls(response)
 
-        if has_tool and name:
-            name = TOOL_NAME_MAP.get(name, name)
-            try:
-                result = run_tool(name, args)
-                # Mirror the response format Kimi used
-                if "<|tool_call_argument_begin|>" in response:
-                    content_resp = (
-                        f"<|tool_response_begin|><|tool_response_content_begin|>"
-                        f"{json.dumps(result)}"
-                        f"<|tool_response_content_end|><|tool_response_end|>"
-                    )
-                else:
-                    content_resp = f"<result>{json.dumps(result)}</result>"
+        if tool_calls:
+            all_results = []
+            for raw_name, args in tool_calls:
+                name = TOOL_NAME_MAP.get(raw_name, raw_name)
+                try:
+                    result = run_tool(name, args)
+                    safe_print_call(name, args)
+                    print(f"-> {'Error: ' + result['error'] if 'error' in result else 'Success'}")
+                except Exception as e:
+                    result = {"error": f"Failed to execute '{name}': {e}"}
+                    print(f"-> {result['error']}")
+                all_results.append({"tool": name, "result": result})
 
-                messages.append({"role": "user", "content": content_resp})
-                print(f"[{name}] {args}")
-                print(f"-> {'Error: ' + result['error'] if 'error' in result else 'Success'}")
-                continue
-            except Exception as e:
-                error_msg = f"Failed to execute tool call: {e}"
-                messages.append({"role": "user", "content": f"<result>{json.dumps({'error': error_msg})}</result>"})
-                print(f"-> {error_msg}")
-                continue
+            if "<|tool_call_argument_begin|>" in response:
+                content_resp = (
+                    f"<|tool_response_begin|><|tool_response_content_begin|>"
+                    f"{json.dumps(all_results)}"
+                    f"<|tool_response_content_end|><|tool_response_end|>"
+                )
+            else:
+                content_resp = f"<result>{json.dumps(all_results)}</result>"
+
+            messages.append({"role": "user", "content": content_resp})
+            continue
 
         if response.strip().endswith("DONE"):
             break

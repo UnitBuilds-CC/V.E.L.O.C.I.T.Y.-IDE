@@ -1,5 +1,9 @@
 # agent/tools.py
-"""Core tool implementations for the V.E.L.O.C.I.T.Y. agent workspace."""
+"""Core tool implementations for the V.E.L.O.C.I.T.Y. agent workspace.
+
+Tools are registered in a central registry so the dispatcher and the model
+schemas are always derived from the same source of truth.
+"""
 from __future__ import annotations
 
 import inspect
@@ -11,18 +15,116 @@ import subprocess
 import sys
 from difflib import unified_diff
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from state import (
     WORKSPACE,
+    EXECUTION_MODE,
     append_memory,
     append_scratchpad,
-    load_memory_block,
-    load_scratchpad,
+    complete_todo,
+    add_todo,
+    load_plan,
+    load_session_events,
+    load_todos,
     log_event,
     read_memory,
+    save_plan,
+    snapshot_memory,
+    list_snapshots,
+    list_memory,
+    workspace_info,
     write_memory,
 )
+
+
+# ---------------------------------------------------------------------------
+# Tool registry
+# ---------------------------------------------------------------------------
+class ToolRegistry:
+    """Lightweight registry that maps canonical tool names (and aliases) to
+    functions and can derive OpenAI-style JSON schemas from type hints."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, Callable] = {}
+        self._aliases: dict[str, str] = {}
+
+    def register(
+        self,
+        name: str | None = None,
+        aliases: list[str] | None = None,
+    ) -> Callable:
+        """Decorator that registers a function as a tool."""
+        def decorator(func: Callable) -> Callable:
+            canonical = name or func.__name__
+            self._tools[canonical] = func
+            for alias in (aliases or []):
+                self._aliases[alias] = canonical
+            return func
+        return decorator
+
+    def get(self, name: str) -> Callable | None:
+        canonical = self._aliases.get(name, name)
+        return self._tools.get(canonical)
+
+    def names(self) -> list[str]:
+        return list(self._tools.keys())
+
+    @property
+    def aliases(self) -> dict[str, str]:
+        return dict(self._aliases)
+
+    def _python_type_to_json(self, value: Any) -> tuple[str, list[str] | None]:
+        """Map a Python value/annotation to a JSON-schema type."""
+        if isinstance(value, bool):
+            return "boolean", None
+        if isinstance(value, int):
+            return "integer", None
+        if isinstance(value, str):
+            return "string", None
+        if isinstance(value, list):
+            return "array", None
+        if isinstance(value, dict):
+            return "object", None
+        return "string", None
+
+    def schema_for(self, name: str) -> dict | None:
+        func = self._tools.get(name)
+        if func is None:
+            return None
+        sig = inspect.signature(func)
+        properties: dict[str, dict] = {}
+        required: list[str] = []
+        for param_name, param in sig.parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            default = param.default
+            if default is inspect.Parameter.empty:
+                required.append(param_name)
+                json_type, enum = self._python_type_to_json("")
+            else:
+                json_type, enum = self._python_type_to_json(default)
+            prop: dict = {"type": json_type}
+            if enum is not None:
+                prop["enum"] = enum
+            properties[param_name] = prop
+
+        description = (func.__doc__ or "").split("\n")[0].strip()
+        return {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            },
+        }
+
+    def schemas(self) -> list[dict]:
+        return [self.schema_for(name) for name in sorted(self._tools.keys())]
+
+
+registry = ToolRegistry()
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +138,7 @@ def _resolve_path(path: str) -> Path:
 # ---------------------------------------------------------------------------
 # File operations
 # ---------------------------------------------------------------------------
+@registry.register(aliases=["view_file", "open_file", "cat"])
 def read_file(path: str, offset: int = 0, limit: int = 500, line_numbers: bool = False) -> dict:
     """Read a file with optional pagination and line numbers."""
     p = _resolve_path(path)
@@ -60,6 +163,7 @@ def read_file(path: str, offset: int = 0, limit: int = 500, line_numbers: bool =
     }
 
 
+@registry.register(aliases=["create_file", "save_file", "insert_content", "append_file"])
 def write_file(path: str, content: str) -> dict:
     """Write or overwrite a file, creating parent directories as needed."""
     p = _resolve_path(path)
@@ -68,6 +172,7 @@ def write_file(path: str, content: str) -> dict:
     return {"ok": True, "path": str(p), "bytes": len(content)}
 
 
+@registry.register(aliases=["str_replace", "str_replace_editor", "replace"])
 def edit_file(path: str, old: str, new: str) -> dict:
     """Replace the first occurrence of `old` with `new` in a file."""
     p = _resolve_path(path)
@@ -80,6 +185,7 @@ def edit_file(path: str, old: str, new: str) -> dict:
     return {"ok": True, "path": str(p)}
 
 
+@registry.register(aliases=["insert"])
 def insert_file(path: str, anchor: str, new: str, after: bool = True) -> dict:
     """Insert `new` text immediately before or after the first `anchor`."""
     p = _resolve_path(path)
@@ -96,6 +202,7 @@ def insert_file(path: str, anchor: str, new: str, after: bool = True) -> dict:
     return {"ok": True, "path": str(p)}
 
 
+@registry.register(aliases=["delete"])
 def delete_lines(path: str, start: int, end: int | None = None) -> dict:
     """Delete 1-based inclusive line range [start, end]."""
     p = _resolve_path(path)
@@ -110,17 +217,9 @@ def delete_lines(path: str, start: int, end: int | None = None) -> dict:
     return {"ok": True, "path": str(p), "deleted": end - start + 1}
 
 
+@registry.register(aliases=["patch_file"])
 def apply_patch(path: str, patch: str) -> dict:
-    """Apply a unified-diff style patch to a file.
-
-    Supports patches produced by `diff -u` or the model's own block format:
-        --- old
-        +++ new
-        @@ ... @@
-         context
-        -removed
-        +added
-    """
+    """Apply a unified-diff style patch to a file."""
     p = _resolve_path(path)
     if not p.exists():
         return {"error": f"File not found: {p}"}
@@ -217,6 +316,7 @@ def _apply_unified_patch(p: Path, original: str, patch: str) -> dict:
 # ---------------------------------------------------------------------------
 # Search & navigation
 # ---------------------------------------------------------------------------
+@registry.register(aliases=["rg"])
 def grep(pattern: str, path: str = ".", glob: str = "*") -> dict:
     """Fast regex search using ripgrep when available, otherwise Python."""
     root = _resolve_path(path)
@@ -250,8 +350,9 @@ def grep(pattern: str, path: str = ".", glob: str = "*") -> dict:
     return {"matches": matches, "engine": "python"}
 
 
+@registry.register(aliases=["find"])
 def search(pattern: str, path: str = ".", glob: str = "*") -> dict:
-    """Literal substring search (kept for backwards compatibility)."""
+    """Literal substring search across files."""
     root = _resolve_path(path)
     matches = []
     for p in root.rglob(glob):
@@ -269,8 +370,9 @@ def search(pattern: str, path: str = ".", glob: str = "*") -> dict:
     return {"matches": matches}
 
 
+@registry.register(aliases=["tree"])
 def file_tree(path: str = ".", max_depth: int = 5) -> dict:
-    """Return a recursive directory tree as a list of indented strings."""
+    """Return a recursive directory tree as a formatted string."""
     root = _resolve_path(path)
     lines: list[str] = [str(root.relative_to(WORKSPACE) if root != WORKSPACE else ".")]
 
@@ -295,7 +397,9 @@ def file_tree(path: str = ".", max_depth: int = 5) -> dict:
     return {"tree": "\n".join(lines)}
 
 
+@registry.register(aliases=["ls", "dir"])
 def list_dir(path: str = ".") -> dict:
+    """List all files and folders in the given workspace directory."""
     p = _resolve_path(path)
     return {
         "entries": [
@@ -308,6 +412,7 @@ def list_dir(path: str = ".") -> dict:
 # ---------------------------------------------------------------------------
 # Shell execution
 # ---------------------------------------------------------------------------
+@registry.register(aliases=["shell", "bash", "execute", "execute_command"])
 def run_command(command: str, cwd: str = ".", timeout: int = 60) -> dict:
     """Run a shell command inside the workspace."""
     result = subprocess.run(
@@ -327,6 +432,29 @@ def run_command(command: str, cwd: str = ".", timeout: int = 60) -> dict:
         "stdout": stdout[:8000] + ("...truncated" if len(stdout) > 8000 else ""),
         "stdout_bytes": len(stdout),
         "stderr": stderr[-2000:],
+        "mode": EXECUTION_MODE,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Python execution
+# ---------------------------------------------------------------------------
+@registry.register(aliases=["py", "python"])
+def run_python(code: str, timeout: int = 30) -> dict:
+    """Execute a Python snippet in a fresh subprocess and return its output."""
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        encoding="utf-8",
+        errors="ignore",
+    )
+    return {
+        "returncode": proc.returncode,
+        "stdout": proc.stdout[:8000] + ("...truncated" if len(proc.stdout) > 8000 else ""),
+        "stderr": proc.stderr[-2000:],
     }
 
 
@@ -337,22 +465,30 @@ def _git(cmd: str, timeout: int = 15) -> dict:
     return run_command(f"git {cmd}", timeout=timeout)
 
 
+@registry.register()
 def git_status() -> dict:
+    """Retrieve the current git status of the workspace."""
     r = _git("status", timeout=10)
     return {"status": r.get("stdout", "") + "\n" + r.get("stderr", "")}
 
 
+@registry.register()
 def git_diff() -> dict:
+    """Retrieve the current uncommitted git diff of the workspace."""
     r = _git("diff", timeout=10)
     return {"diff": r.get("stdout", "") + "\n" + r.get("stderr", "")}
 
 
+@registry.register()
 def git_branch() -> dict:
+    """List local and remote git branches."""
     r = _git("branch -a", timeout=10)
     return {"branches": r.get("stdout", "").splitlines()}
 
 
+@registry.register()
 def git_checkout(branch: str, create: bool = False) -> dict:
+    """Switch to a git branch, optionally creating it."""
     flag = "-b" if create else ""
     r = _git(f"checkout {flag} {branch}".strip(), timeout=15)
     return {
@@ -362,12 +498,16 @@ def git_checkout(branch: str, create: bool = False) -> dict:
     }
 
 
+@registry.register()
 def git_log(n: int = 10) -> dict:
+    """Show recent git commits in one-line format."""
     r = _git(f'log --oneline -n {n}', timeout=10)
     return {"log": r.get("stdout", "").splitlines()}
 
 
+@registry.register()
 def git_commit(message: str) -> dict:
+    """Stage all workspace changes and commit them with the given message."""
     add_result = _git("add .", timeout=10)
     if add_result.get("returncode", 0) != 0:
         return {"error": "git add failed", "details": add_result}
@@ -382,41 +522,137 @@ def git_commit(message: str) -> dict:
 # ---------------------------------------------------------------------------
 # Memory / state tools
 # ---------------------------------------------------------------------------
+@registry.register()
 def memory_write(key: str, content: str) -> dict:
+    """Save or overwrite a markdown block in the memory directory."""
     return write_memory(key, content)
 
 
+@registry.register()
 def memory_read(key: str) -> dict:
+    """Read a saved markdown block from the memory directory by its key."""
     return {"content": read_memory(key)}
 
 
+@registry.register()
 def memory_append(key: str, content: str) -> dict:
+    """Append content to an existing memory block (creates it if missing)."""
     return append_memory(key, content)
 
 
+@registry.register()
+def memory_list() -> dict:
+    """List all files currently stored in memory/."""
+    return {"memory_files": list_memory()}
+
+
+@registry.register()
 def scratchpad_append(entry: str) -> dict:
+    """Append a timestamped entry to the scratchpad."""
     return append_scratchpad(entry)
 
 
+@registry.register()
 def todo_add(text: str) -> dict:
-    from state import add_todo
+    """Add a new todo item to the backlog."""
     return add_todo(text)
 
 
+@registry.register()
 def todo_complete(index: int) -> dict:
-    from state import complete_todo
+    """Mark a todo item as complete by its 0-based index."""
     return complete_todo(index)
 
 
+@registry.register()
 def todo_list() -> dict:
-    from state import load_todos
+    """Return the current todo list as structured data."""
     return {"todos": load_todos()}
+
+
+@registry.register()
+def plan_read() -> dict:
+    """Read the current agent plan from memory/plan.md."""
+    return {"content": load_plan()}
+
+
+@registry.register()
+def plan_write(content: str) -> dict:
+    """Write or overwrite the agent plan in memory/plan.md."""
+    return save_plan(content)
+
+
+@registry.register(aliases=["snapshot"])
+def checkpoint_save(name: str) -> dict:
+    """Save a checkpoint. Uses a git tag if available, otherwise a memory snapshot."""
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=WORKSPACE,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if git_dir.returncode == 0:
+            tag = f"velocity-checkpoint-{name}"
+            r = subprocess.run(
+                ["git", "tag", "-a", tag, "-m", f"Velocity checkpoint {name}"],
+                cwd=WORKSPACE,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if r.returncode == 0:
+                return {"ok": True, "checkpoint": tag, "type": "git-tag"}
+    except Exception:
+        pass
+    return snapshot_memory(name)
+
+
+@registry.register()
+def checkpoint_list() -> dict:
+    """List saved checkpoints (git tags and memory snapshots)."""
+    tags: list[str] = []
+    try:
+        r = subprocess.run(
+            ["git", "tag", "-l", "velocity-checkpoint-*"],
+            cwd=WORKSPACE,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if r.returncode == 0:
+            tags = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    except Exception:
+        pass
+    return {"git_tags": tags, "snapshots": list_snapshots()}
+
+
+@registry.register()
+def session_events(n: int = 50) -> dict:
+    """Return the most recent session events from the event log."""
+    return {"events": load_session_events(n)}
+
+
+@registry.register()
+def state_info() -> dict:
+    """Return workspace and execution-mode metadata."""
+    return workspace_info()
+
+
+@registry.register()
+def think(thought: str) -> dict:
+    """Log a reasoning step to the session event log."""
+    log_event("think", {"thought": thought})
+    return {"ok": True, "logged": thought[:200]}
 
 
 # ---------------------------------------------------------------------------
 # User interaction
 # ---------------------------------------------------------------------------
+@registry.register()
 def ask_user(prompt: str) -> dict:
+    """Prompt the user for input and return their answer."""
     try:
         answer = input(f"{prompt}\n> ")
     except EOFError:
@@ -450,6 +686,9 @@ _NAME_ALIASES = {
     "ls": "list_dir",
     "dir": "list_dir",
     "tree": "file_tree",
+    "py": "run_python",
+    "python": "run_python",
+    "snapshot": "checkpoint_save",
 }
 
 
@@ -466,87 +705,56 @@ def _normalise_args(args: dict, name: str) -> dict:
         args["new"] = args.pop("new_string")
     if "text" in args and name == "write_file":
         args["content"] = args.pop("text")
-    if "content" in args and name == "memory_append":
-        args["content"] = args["content"]
     return args
 
 
-def run_tool(name: str, args: dict) -> dict:
-    import inspect
-
-    name = _NAME_ALIASES.get(name, name)
-    args = _normalise_args(args, name)
-
-    func: Any | None = None
-    if name == "read_file":
-        func = read_file
-    elif name == "write_file":
-        func = write_file
-    elif name == "edit_file":
-        func = edit_file
-    elif name == "insert_file":
-        func = insert_file
-    elif name == "delete_lines":
-        func = delete_lines
-    elif name == "apply_patch":
-        func = apply_patch
-    elif name == "run_command":
-        func = run_command
-    elif name == "search":
-        func = search
-    elif name == "grep":
-        func = grep
-    elif name == "list_dir":
-        func = list_dir
-    elif name == "file_tree":
-        func = file_tree
-    elif name == "git_status":
-        return git_status()
-    elif name == "git_diff":
-        return git_diff()
-    elif name == "git_branch":
-        return git_branch()
-    elif name == "git_checkout":
-        func = git_checkout
-    elif name == "git_log":
-        func = git_log
-    elif name == "git_commit":
-        func = git_commit
-    elif name == "memory_write":
-        func = memory_write
-    elif name == "memory_read":
-        func = memory_read
-    elif name == "memory_append":
-        func = memory_append
-    elif name == "scratchpad_append":
-        func = scratchpad_append
-    elif name == "todo_add":
-        func = todo_add
-    elif name == "todo_complete":
-        func = todo_complete
-    elif name == "todo_list":
-        func = todo_list
-    elif name == "ask_user":
-        func = ask_user
-
-    if func is None:
-        return {"error": f"Tool '{name}' not found"}
-
+def _filter_args(func: Callable, args: dict) -> dict:
+    """Pass only arguments that the function signature accepts."""
     sig = inspect.signature(func)
-    filtered_args: dict[str, Any] = {}
+    filtered: dict[str, Any] = {}
+    has_var_keyword = False
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            has_var_keyword = True
+            break
+    if has_var_keyword:
+        return args
     for param_name, param in sig.parameters.items():
         if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
             if param_name in args:
-                filtered_args[param_name] = args[param_name]
-        elif param.kind == inspect.Parameter.VAR_KEYWORD:
-            filtered_args.update(args)
-            break
+                filtered[param_name] = args[param_name]
+    return filtered
 
+
+def run_tool(name: str, args: dict) -> dict:
+    """Execute a tool by canonical name or alias and log the outcome."""
+    name = _NAME_ALIASES.get(name, name)
+    args = _normalise_args(args, name)
+
+    func = registry.get(name)
+    if func is None:
+        return {"error": f"Tool '{name}' not found"}
+
+    filtered_args = _filter_args(func, args)
     try:
         result = func(**filtered_args)
     except Exception as exc:
         return {"error": str(exc)}
 
-    if isinstance(result, str):
-        return {"content": result}
+    if not isinstance(result, dict):
+        result = {"content": result}
+
+    # Append a concise event to the session log.
+    try:
+        log_event(
+            "tool",
+            {
+                "name": name,
+                "args": {k: str(v)[:200] for k, v in args.items()},
+                "result": {k: str(v)[:200] for k, v in result.items()},
+            },
+        )
+    except Exception:
+        pass
+
     return result
