@@ -410,6 +410,8 @@ def call_kimi(messages, tools=None):
 
 
     full_response = ""
+    first_chat = True
+    first_thought = True
     
     # Iterate over the server-sent events stream
     for line in r.iter_lines():
@@ -433,29 +435,48 @@ def call_kimi(messages, tools=None):
                         # Handle reasoning content if emitted by Kimi
                         reasoning = delta.get("reasoning_content", "")
                         if reasoning:
-                            # Print reasoning content directly (e.g. thoughts)
-                            sys.stdout.write(reasoning)
+                            if first_thought:
+                                sys.stdout.write("[Kimi] Thought: ")
+                                first_thought = False
+                            reasoning_prefixed = reasoning.replace("\n", "\n[Kimi] Thought: ")
+                            sys.stdout.write(reasoning_prefixed)
                             sys.stdout.flush()
                             full_response += reasoning
                             
                         # Handle normal content
                         content = delta.get("content", "")
                         if content:
-                            sys.stdout.write(content)
+                            if first_chat:
+                                if not first_thought:
+                                    sys.stdout.write("\n")
+                                sys.stdout.write("[Kimi] Chat: ")
+                                first_chat = False
+                            content_prefixed = content.replace("\n", "\n[Kimi] Chat: ")
+                            sys.stdout.write(content_prefixed)
                             sys.stdout.flush()
                             full_response += content
                             
                     # Fallback to standard Cloudflare response field
                     elif "response" in data:
                         content = data["response"]
-                        sys.stdout.write(content)
-                        sys.stdout.flush()
-                        full_response += content
+                        if content:
+                            if first_chat:
+                                sys.stdout.write("[Kimi] Chat: ")
+                                first_chat = False
+                            content_prefixed = content.replace("\n", "\n[Kimi] Chat: ")
+                            sys.stdout.write(content_prefixed)
+                            sys.stdout.flush()
+                            full_response += content
                     elif "result" in data and isinstance(data["result"], dict) and "response" in data["result"]:
                         content = data["result"]["response"]
-                        sys.stdout.write(content)
-                        sys.stdout.flush()
-                        full_response += content
+                        if content:
+                            if first_chat:
+                                sys.stdout.write("[Kimi] Chat: ")
+                                first_chat = False
+                            content_prefixed = content.replace("\n", "\n[Kimi] Chat: ")
+                            sys.stdout.write(content_prefixed)
+                            sys.stdout.flush()
+                            full_response += content
                         
                 except Exception:
                     pass
@@ -463,3 +484,4 @@ def call_kimi(messages, tools=None):
     sys.stdout.write("\n")
     sys.stdout.flush()
     return full_response
+

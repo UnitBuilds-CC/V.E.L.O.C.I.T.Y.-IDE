@@ -857,3 +857,55 @@ def launch_ide(file: str | None = None) -> dict:
         return {"ok": True, "pid": proc.pid, "command": " ".join(cmd)}
     except Exception as exc:
         return {"error": f"Failed to launch IDE: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Workspace Utility Tools
+# ---------------------------------------------------------------------------
+@registry.register(aliases=["replace_all", "glob_replace"])
+def bulk_replace(pattern: str, replacement: str, file_pattern: str = "*.py") -> dict:
+    """Find and replace a string across multiple workspace files matching a pattern."""
+    changed_files = []
+    try:
+        # Use rglob for recursive globbing
+        for p in WORKSPACE.rglob(file_pattern):
+            # Ignore hidden directories like .git
+            if p.is_file() and not any(part.startswith('.') for part in p.parts):
+                try:
+                    content = p.read_text(encoding="utf-8", errors="replace")
+                    if pattern in content:
+                        new_content = content.replace(pattern, replacement)
+                        p.write_text(new_content, encoding="utf-8")
+                        changed_files.append(str(p.relative_to(WORKSPACE)))
+                except Exception:
+                    pass
+        return {"ok": True, "changed_files": changed_files, "count": len(changed_files)}
+    except Exception as exc:
+        return {"error": f"Bulk replacement failed: {exc}"}
+
+
+@registry.register(aliases=["diff_files", "compare"])
+def file_diff(path_a: str, path_b: str) -> dict:
+    """Compare two files in the workspace and return a unified diff."""
+    pa = _resolve_path(path_a)
+    pb = _resolve_path(path_b)
+    if not pa.exists() or not pb.exists():
+        return {"error": f"One or both files do not exist: {path_a}, {path_b}"}
+    try:
+        lines_a = pa.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        lines_b = pb.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        diff = "".join(unified_diff(lines_a, lines_b, fromfile=path_a, tofile=path_b))
+        return {"diff": diff or "Files are identical."}
+    except Exception as exc:
+        return {"error": f"Failed to diff files: {exc}"}
+
+
+@registry.register(aliases=["tui_action", "control_ide"])
+def ide_action(action: str, arg: str = "") -> dict:
+    """Send an action to the active V.E.L.O.C.I.T.Y. Terminal IDE.
+    Supported actions: 'open_file' (arg: filename), 'refresh' (no arg), 
+    'show_tab' (arg: 'files'|'todos'|'plan')."""
+    # Print a special marker to stdout. The TUI reads the stream and executes it.
+    print(f"\n[TUI_ACTION] {action}:{arg}", flush=True)
+    return {"ok": True, "message": f"TUI action '{action}' sent to IDE with argument '{arg}'."}
+

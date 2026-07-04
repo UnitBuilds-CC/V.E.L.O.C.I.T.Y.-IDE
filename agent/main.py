@@ -183,6 +183,33 @@ def safe_print_call(name: str, args: dict):
         print(f"[{name}] (arguments too long or contain special chars)")
 
 
+def _compress_context(messages: list[dict]) -> list[dict]:
+    """Compress older tool output messages to optimize token usage and avoid quota exhaustion."""
+    max_intact_tool_calls = 4
+    tool_indices = []
+    for idx, m in enumerate(messages):
+        role = m.get("role")
+        content = m.get("content", "")
+        if role == "tool" or (role == "user" and isinstance(content, str) and (content.startswith("<result>") or content.startswith("<|tool_response_begin|>"))):
+            tool_indices.append(idx)
+            
+    compressed = []
+    for idx, m in enumerate(messages):
+        m_copy = m.copy()
+        role = m_copy.get("role")
+        content = m_copy.get("content", "")
+        if role == "tool" or (role == "user" and isinstance(content, str) and (content.startswith("<result>") or content.startswith("<|tool_response_begin|>"))):
+            # Count how many tool outputs come after this one in history
+            remaining = sum(1 for i in tool_indices if i > idx)
+            if remaining >= max_intact_tool_calls and len(content) > 300:
+                if content.startswith("<|tool_response_begin|>"):
+                    m_copy["content"] = "<|tool_response_begin|><|tool_response_content_begin|>[Tool results compressed to save context/quota (processed in a previous turn)]<|tool_response_content_end|><|tool_response_end|>"
+                else:
+                    m_copy["content"] = "<result>[Tool results compressed to save context/quota (processed in a previous turn)]</result>"
+        compressed.append(m_copy)
+    return compressed
+
+
 def main():
     instruction = sys.argv[1] if len(sys.argv) > 1 else input("Task: ")
 
@@ -194,7 +221,9 @@ def main():
     while True:
         try:
             print("[Kimi] Thinking...", flush=True)
-            response = call_kimi(messages, tools=TOOLS)
+            # Apply cost/context compression before calling API
+            optimized = _compress_context(messages)
+            response = call_kimi(optimized, tools=TOOLS)
         except Exception as e:
             print(f"API Error: {e}", file=sys.stderr, flush=True)
             break
@@ -211,12 +240,42 @@ def main():
                     # Print before calling so the user sees immediate action
                     print(f"[Kimi] Calling tool '{name}'...", flush=True)
                     result = run_tool(name, args)
+                    
+                    # Post-write/edit self-correction check (syntax validation)
+                    if name in ("write_file", "edit_file", "insert_file", "apply_patch", "bulk_replace") and result.get("ok"):
+                        paths = []
+                        if "path" in args:
+                            paths.append(args["path"])
+                        elif "paths" in args:
+                            paths.extend(args["paths"])
+                        if "changed_files" in result:
+                            paths.extend(result["changed_files"])
+                            
+                        for path in paths:
+                            if path.endswith(".py"):
+                                p = Path(path) if Path(path).is_absolute() else _AGENT_DIR.parent / path
+                                if p.exists() and p.is_file():
+                                    import subprocess
+                                    comp = subprocess.run(
+                                        [sys.executable, "-m", "py_compile", str(p)],
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=5
+                                    )
+                                    if comp.returncode != 0:
+                                        # Syntax error! Set success to false and return compile errors to Kimi
+                                        err_msg = comp.stderr.strip()
+                                        result["ok"] = False
+                                        result["error"] = f"Warning: The file '{path}' contains Python syntax errors after this modification. Please correct the syntax immediately. Stderr:\n{err_msg}"
+                                        break
+
                     safe_print_call(name, args)
                     print(f"-> {'Error: ' + result['error'] if 'error' in result else 'Success'}", flush=True)
                 except Exception as e:
                     result = {"error": f"Failed to execute '{name}': {e}"}
                     print(f"-> {result['error']}")
                 all_results.append({"tool": name, "result": result})
+
 
             if "<|tool_call_argument_begin|>" in response:
                 content_resp = (

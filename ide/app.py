@@ -57,6 +57,16 @@ class VelocityIDE(App):
     #status-bar {
         dock: bottom;
     }
+    /* Highlight the border of focused panes with neon accent color */
+    #sidebar:focus-within {
+        border: double $accent;
+    }
+    #editor-pane:focus-within {
+        border: double $accent;
+    }
+    #shell-pane:focus-within {
+        border: double $accent;
+    }
     """
 
 
@@ -215,6 +225,26 @@ class VelocityIDE(App):
         """Launch the Kimi agent harness to process the instruction."""
         run_dashboard_action(self, "run_agent", instruction)
 
+    def handle_tui_action(self, action: str, arg: str) -> None:
+        """Execute a remote action requested by the agent process."""
+        if action == "open_file":
+            p = Path(arg)
+            if not p.is_absolute():
+                p = self.workspace / p
+            if p.exists() and p.is_file():
+                self.query_one("#editor", object).open_file(p)
+                self.query_one("#status-bar", object).status = f"opened {p.name}"
+        elif action == "refresh":
+            self.action_refresh()
+        elif action == "show_tab":
+            tabbed = self.query_one("#sidebar-tabs", object)
+            if arg == "files":
+                tabbed.active = "tab-files"
+            elif arg == "todos":
+                tabbed.active = "tab-todos"
+            elif arg == "plan":
+                tabbed.active = "tab-plan"
+
     def run_agent_process(self, instruction: str, timeout: int = 600) -> None:
         """Launch the Kimi agent by passing the instruction as a direct argv element.
 
@@ -280,16 +310,25 @@ class VelocityIDE(App):
                     text = line.decode("utf-8", errors="ignore").rstrip("\r\n")
                     if not text:
                         continue
-                    if text.startswith("[Kimi] Thinking"):
-                        shell.log_output(text, "bold yellow")
+                    if text.startswith("[TUI_ACTION]"):
+                        parts = text[12:].strip().split(":", 1)
+                        act = parts[0].strip()
+                        arg = parts[1].strip() if len(parts) > 1 else ""
+                        self.handle_tui_action(act, arg)
+                    elif text.startswith("[Kimi] Thought:"):
+                        shell.log_output("💭 " + text[15:], "italic rgb(180,180,100)")
+                    elif text.startswith("[Kimi] Chat:"):
+                        shell.log_output("🤖 " + text[12:], "bold white")
+                    elif text.startswith("[Kimi] Thinking"):
+                        shell.log_output("⠿ Thinking...", "bold yellow")
                         status.status = "⠿ agent: thinking"
                     elif text.startswith("[Kimi] Calling tool"):
                         tool_name = text.split("'")[1] if "'" in text else "tool"
-                        shell.log_output(text, "bold cyan")
+                        shell.log_output("🔧 " + text[7:], "bold cyan")
                         status.status = f"⠿ agent: {tool_name}"
                     elif text.startswith("->"):
                         ok = "Error" not in text
-                        shell.log_output(text, "green" if ok else "bold red")
+                        shell.log_output(("✔ " if ok else "✖ ") + text, "green" if ok else "bold red")
                     else:
                         shell.log_output(text)
 
@@ -366,19 +405,27 @@ class VelocityIDE(App):
                     text = line.decode("utf-8", errors="ignore").rstrip("\r\n")
                     if not text:
                         continue
-                    # Style [Kimi] status lines distinctly
-                    if text.startswith("[Kimi] Thinking"):
-                        shell.log_output(text, "bold yellow")
+                    if text.startswith("[TUI_ACTION]"):
+                        parts = text[12:].strip().split(":", 1)
+                        act = parts[0].strip()
+                        arg = parts[1].strip() if len(parts) > 1 else ""
+                        self.handle_tui_action(act, arg)
+                    elif text.startswith("[Kimi] Thought:"):
+                        shell.log_output("💭 " + text[15:], "italic rgb(180,180,100)")
+                    elif text.startswith("[Kimi] Chat:"):
+                        shell.log_output("🤖 " + text[12:], "bold white")
+                    elif text.startswith("[Kimi] Thinking"):
+                        shell.log_output("⠿ Thinking...", "bold yellow")
                         if is_agent:
                             status.status = "⠿ agent: thinking"
                     elif text.startswith("[Kimi] Calling tool"):
                         tool_name = text.split("'")[1] if "'" in text else "tool"
-                        shell.log_output(text, "bold cyan")
+                        shell.log_output("🔧 " + text[7:], "bold cyan")
                         if is_agent:
                             status.status = f"⠿ agent: {tool_name}"
                     elif text.startswith("->"):
                         ok = "Error" not in text
-                        shell.log_output(text, "green" if ok else "bold red")
+                        shell.log_output(("✔ " if ok else "✖ ") + text, "green" if ok else "bold red")
                     else:
                         shell.log_output(text)
 

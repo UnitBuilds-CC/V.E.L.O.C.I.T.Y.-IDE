@@ -42,7 +42,7 @@ class FileTree(DirectoryTree):
 
 
 class Editor(Static):
-    """Simple read-only file viewer with line numbers."""
+    """Simple read-only file viewer with line numbers and syntax highlighting."""
 
     path: reactive[Path | None] = reactive(None)
     content: reactive[str] = reactive("")
@@ -51,11 +51,44 @@ class Editor(Static):
         if not content:
             self.update("# No file open\nSelect a file from the sidebar.")
             return
-        lines = content.splitlines()
-        numbered = "\n".join(
-            f"{i:4d} | {line}" for i, line in enumerate(lines, 1)
+        
+        # Guess language from path suffix
+        lexer = "text"
+        if self.path:
+            ext = self.path.suffix.lower()
+            if ext == ".py":
+                lexer = "python"
+            elif ext in (".js", ".ts", ".jsx", ".tsx"):
+                lexer = "javascript"
+            elif ext in (".json", ".jsonl"):
+                lexer = "json"
+            elif ext == ".md":
+                lexer = "markdown"
+            elif ext in (".htm", ".html"):
+                lexer = "html"
+            elif ext == ".css":
+                lexer = "css"
+            elif ext in (".sh", ".bash", ".zsh", ".bat", ".ps1"):
+                lexer = "shell"
+            elif ext in (".xml", ".svg"):
+                lexer = "xml"
+            elif ext == ".toml":
+                lexer = "toml"
+            elif ext in (".yaml", ".yml"):
+                lexer = "yaml"
+            elif self.path.name.lower() == "dockerfile":
+                lexer = "dockerfile"
+
+        from rich.syntax import Syntax
+        syntax = Syntax(
+            content,
+            lexer,
+            theme="monokai",
+            line_numbers=True,
+            word_wrap=True,
         )
-        self.update(numbered)
+        self.update(syntax)
+
 
     def open_file(self, path: Path) -> None:
         self.path = path
