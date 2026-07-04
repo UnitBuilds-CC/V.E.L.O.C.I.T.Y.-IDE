@@ -12,3 +12,10 @@ memory/.account_state.json
 memory/session.jsonl
 memory/summaries/
 memory/snapshots/
+
+# Rust build artifacts
+target/
+**/*.exe
+**/*.pdb
+**/*.d
+
