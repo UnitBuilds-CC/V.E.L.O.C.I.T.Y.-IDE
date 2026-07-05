@@ -9,11 +9,13 @@ use crate::registry;
 pub enum UiToAgentMessage {
     UserPrompt(String),
     ApproveTool { id: String, tool_name: String, arguments: Value },
+    #[allow(dead_code)]
     RejectTool { id: String, tool_name: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum AgentToUiMessage {
+    #[allow(dead_code)]
     ThoughtToken(String),
     OutputToken(String),
     RequestToolApproval { id: String, tool_name: String, arguments: Value },
@@ -91,6 +93,177 @@ fn compress_history(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     compressed
 }
 
+fn pack_ndav(filename: &str, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"NDAV");
+    let size = payload.len() as u32;
+    buf.extend_from_slice(&size.to_le_bytes());
+    buf.extend_from_slice(filename.as_bytes());
+    buf.push(0);
+    buf.extend_from_slice(payload);
+    buf
+}
+
+fn unpack_ndav(data: &[u8]) -> Option<(String, Vec<u8>)> {
+    if data.len() < 9 || &data[0..4] != b"NDAV" {
+        return None;
+    }
+    let size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+    let mut name_end = 8;
+    while name_end < data.len() && data[name_end] != 0 {
+        name_end += 1;
+    }
+    if name_end >= data.len() {
+        return None;
+    }
+    let filename = String::from_utf8_lossy(&data[8..name_end]).to_string();
+    let payload_start = name_end + 1;
+    if payload_start + size > data.len() {
+        return None;
+    }
+    let payload = data[payload_start..payload_start + size].to_vec();
+    Some((filename, payload))
+}
+
+fn generate_sitemap_text(workspace_root: &std::path::Path) -> String {
+    let mut text = String::new();
+    text.push_str("V.E.L.O.C.I.T.Y. Codebase Sitemap Registry\n");
+    text.push_str("=========================================\n");
+    
+    fn scan_sitemap(dir: &std::path::Path, base: &std::path::Path, text: &mut String) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if file_name == ".git" || file_name == "target" || file_name == "node_modules" || file_name == ".velocity" {
+                    continue;
+                }
+                
+                if let Ok(meta) = entry.metadata() {
+                    let rel_path = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
+                    if meta.is_dir() {
+                        text.push_str(&format!("dir\t{}\n", rel_path));
+                        scan_sitemap(&path, base, text);
+                    } else {
+                        text.push_str(&format!("file\t{}\t{}\n", rel_path, meta.len()));
+                    }
+                }
+            }
+        }
+    }
+    
+    scan_sitemap(workspace_root, workspace_root, &mut text);
+    text
+}
+
+fn write_sitemap_nda(workspace_root: &std::path::Path) {
+    let sitemap_dir = workspace_root.join(".velocity");
+    let _ = std::fs::create_dir_all(&sitemap_dir);
+    let sitemap_text = generate_sitemap_text(workspace_root);
+    let nda_data = pack_ndav("sitemap.txt", sitemap_text.as_bytes());
+    let _ = std::fs::write(sitemap_dir.join("sitemap.nda"), nda_data);
+}
+
+fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage>> {
+    let nda_path = workspace_root.join(".velocity").join("chatlogs.nda");
+    if !nda_path.exists() {
+        return None;
+    }
+    let data = std::fs::read(&nda_path).ok()?;
+    let (_filename, payload) = unpack_ndav(&data)?;
+    let text = String::from_utf8_lossy(&payload);
+    let mut messages = Vec::new();
+    for msg_block in text.split("\n---\n") {
+        if msg_block.trim().is_empty() {
+            continue;
+        }
+        let lines: Vec<&str> = msg_block.lines().collect();
+        if lines.len() >= 2 {
+            let role = lines[0].to_string();
+            let mut content = lines[1..].join("\n");
+            let mut name = None;
+            let mut tool_call_id = None;
+            if role == "tool" {
+                if let Some(first_line) = lines.get(1) {
+                    let parts: Vec<&str> = first_line.split('\t').collect();
+                    if parts.len() == 2 {
+                        name = Some(parts[0].to_string());
+                        tool_call_id = Some(parts[1].to_string());
+                        content = lines[2..].join("\n");
+                    }
+                }
+            }
+            messages.push(ChatMessage {
+                role,
+                content,
+                name,
+                tool_call_id,
+                tool_calls: None,
+            });
+        }
+    }
+    if messages.is_empty() { None } else { Some(messages) }
+}
+
+fn save_chatlogs_nda(workspace_root: &std::path::Path, messages: &[ChatMessage]) {
+    let sitemap_dir = workspace_root.join(".velocity");
+    let _ = std::fs::create_dir_all(&sitemap_dir);
+    let mut text = String::new();
+    for (i, msg) in messages.iter().enumerate() {
+        if i > 0 {
+            text.push_str("\n---\n");
+        }
+        text.push_str(&msg.role);
+        text.push('\n');
+        if msg.role == "tool" {
+            let name = msg.name.as_deref().unwrap_or("unknown");
+            let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
+            text.push_str(&format!("{}\t{}\n", name, call_id));
+        }
+        text.push_str(&msg.content);
+    }
+    let nda_data = pack_ndav("chatlogs.txt", text.as_bytes());
+    let _ = std::fs::write(sitemap_dir.join("chatlogs.nda"), nda_data);
+}
+
+fn append_changelog_nda(workspace_root: &std::path::Path, file_path: &str, action: &str) {
+    let sitemap_dir = workspace_root.join(".velocity");
+    let _ = std::fs::create_dir_all(&sitemap_dir);
+    let changelog_path = sitemap_dir.join("changelog.nda");
+    
+    let mut current_changelog = String::new();
+    if changelog_path.exists() {
+        if let Ok(data) = std::fs::read(&changelog_path) {
+            if let Some((_filename, payload)) = unpack_ndav(&data) {
+                current_changelog = String::from_utf8_lossy(&payload).to_string();
+            }
+        }
+    }
+    
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let entry = format!("{}\t{}\t{}\n", now, file_path, action);
+    current_changelog.push_str(&entry);
+    
+    let nda_data = pack_ndav("changelog.txt", current_changelog.as_bytes());
+    let _ = std::fs::write(changelog_path, nda_data);
+}
+
+fn write_handover_nda(workspace_root: &std::path::Path, task_state: &str, last_active_turn: usize, build_status: &str, interrupted: bool) {
+    let sitemap_dir = workspace_root.join(".velocity");
+    let _ = std::fs::create_dir_all(&sitemap_dir);
+    let handover_path = sitemap_dir.join("handover.nda");
+    
+    let payload = format!(
+        "state: {}\nturn: {}\nbuild: {}\ninterrupted: {}\n",
+        task_state, last_active_turn, build_status, interrupted
+    );
+    let nda_data = pack_ndav("handover.txt", payload.as_bytes());
+    let _ = std::fs::write(handover_path, nda_data);
+}
+
 pub fn run_agent_thread(
     workspace_root: PathBuf,
     ui_rx: Receiver<UiToAgentMessage>,
@@ -100,15 +273,24 @@ pub fn run_agent_thread(
     let model = std::env::var("CF_MODEL")
         .unwrap_or_else(|_| "@cf/moonshotai/kimi-k2.7-code".to_string());
 
-    let mut message_history: Vec<ChatMessage> = vec![
-        ChatMessage {
-            role: "system".to_string(),
-            content: "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. You have access to local workspace files and execution sandboxes via tools. Help the user program the workspace. Always output concise, correct, and high-quality responses.".to_string(),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
+    let mut message_history = match load_chatlogs_nda(&workspace_root) {
+        Some(history) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate("Loaded previous chat session context.".to_string())).ok();
+            history
         }
-    ];
+        None => vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. You have access to local workspace files and execution sandboxes via tools. Help the user program the workspace. Always output concise, correct, and high-quality responses.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            }
+        ]
+    };
+
+    // Build the initial sitemap
+    write_sitemap_nda(&workspace_root);
 
     ui_tx.send(AgentToUiMessage::StatusUpdate("Agent thread initialized and idling.".to_string())).ok();
 
@@ -134,6 +316,59 @@ pub fn run_agent_thread(
             }
             _ => {}
         }
+    }
+}
+
+fn convert_jsonl_to_nda(workspace_root: &std::path::Path) {
+    let conv_id = "17bd30f6-be7a-4829-b5b9-023fa4dd8c59";
+    let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\visse".to_string());
+    let transcript_path = std::path::Path::new(&home)
+        .join(".gemini")
+        .join("antigravity")
+        .join("brain")
+        .join(conv_id)
+        .join(".system_generated")
+        .join("logs")
+        .join("transcript.jsonl");
+        
+    if let Ok(content) = std::fs::read(&transcript_path) {
+        let nda_payload = pack_ndav("transcript.txt", &content);
+        let nda_path = transcript_path.with_extension("nda");
+        let _ = std::fs::write(nda_path, &nda_payload);
+        
+        let workspace_nda = workspace_root.join(".velocity").join("transcript.nda");
+        let _ = std::fs::write(workspace_nda, &nda_payload);
+    }
+}
+
+fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String> {
+    let output = std::process::Command::new("cargo")
+        .arg("check")
+        .current_dir(workspace_root)
+        .output();
+        
+    match output {
+        Ok(out) => {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let mut errors = Vec::new();
+                for line in stderr.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.contains("error[E") || trimmed.contains("error:") || trimmed.starts_with("--> src/") {
+                        errors.push(trimmed.to_string());
+                    }
+                }
+                if errors.is_empty() {
+                    // Build failed but no parseable errors; return raw tail.
+                    let lines: Vec<&str> = stderr.lines().collect();
+                    let start = lines.len().saturating_sub(10);
+                    return Err(lines[start..].iter().map(|s| s.to_string()).collect::<Vec<_>>().join("\n"));
+                }
+                return Err(errors.join("\n"));
+            }
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to execute cargo check: {:?}", e))
     }
 }
 
@@ -328,6 +563,7 @@ fn run_agent_reasoning_loop(
                             if id == call_id {
                                 ui_tx.send(AgentToUiMessage::ToolExecutionStarted { tool_name: tool_name.clone() }).ok();
                                 
+                                let active_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.clone());
                                 // Execute tool in our native registry
                                 match registry::call_tool(&tool_name, &approved_args) {
                                     Ok(res) => {
@@ -335,18 +571,24 @@ fn run_agent_reasoning_loop(
                                         // If tool is writing/modifying a file, send direct buffer update to UI
                                         if tool_name == "write_file" {
                                             if let Some(rel_path) = approved_args["relativeFilePath"].as_str() {
-                                                let full_path = workspace_root.join(rel_path);
+                                                let full_path = active_dir.join(rel_path);
                                                 if let Some(content) = approved_args["content"].as_str() {
                                                     ui_tx.send(AgentToUiMessage::UpdateFileBuffer {
                                                         path: full_path,
                                                         content: content.to_string(),
                                                      }).ok();
                                                 }
+                                                // Log change to changelog
+                                                append_changelog_nda(&active_dir, rel_path, "write_file");
+                                                // Refresh codebase sitemap
+                                                write_sitemap_nda(&active_dir);
                                             }
                                         }
+                                        write_handover_nda(&active_dir, "executing", loop_count, "ok", false);
                                     }
                                     Err(e) => {
                                         tool_result = format!("Error executing tool: {:?}", e);
+                                        write_handover_nda(&active_dir, "tool_error", loop_count, &format!("{:?}", e), false);
                                     }
                                 }
                                 ui_tx.send(AgentToUiMessage::ToolExecutionFinished {
@@ -359,6 +601,8 @@ fn run_agent_reasoning_loop(
                         UiToAgentMessage::RejectTool { id, tool_name: _ } => {
                             if id == call_id {
                                 tool_result = "Error: Tool execution rejected by the user.".to_string();
+                                let active_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.clone());
+                                write_handover_nda(&active_dir, "tool_rejected", loop_count, "user_reject", false);
                                 break;
                             }
                         }
@@ -374,6 +618,10 @@ fn run_agent_reasoning_loop(
                     tool_call_id: Some(call_id),
                     tool_calls: None,
                 });
+                
+                // Save progress chatlogs
+                let active_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.clone());
+                save_chatlogs_nda(&active_dir, message_history);
             }
         } else {
             // No tool calls, we are done
@@ -381,6 +629,51 @@ fn run_agent_reasoning_loop(
         }
     }
     
+    let active_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.clone());
+    save_chatlogs_nda(&active_dir, message_history);
+    
+    // Perform compilation check
+    ui_tx.send(AgentToUiMessage::StatusUpdate("Running automatic compilation validation...".to_string())).ok();
+    match run_compilation_check(&active_dir) {
+        Ok(()) => {
+            write_handover_nda(&active_dir, "idle", loop_count, "compiler validated", false);
+            ui_tx.send(AgentToUiMessage::StatusUpdate("Compiler validation succeeded!".to_string())).ok();
+        }
+        Err(errors) => {
+            if loop_count < max_loops {
+                write_handover_nda(&active_dir, "self_correcting", loop_count, "compile_failed", false);
+                ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation failed! Self-correcting...".to_string())).ok();
+                
+                let error_prompt = format!(
+                    "[SYSTEM NOTIFICATION: compiler validation failed. Please fix the following build errors immediately]\n{}",
+                    errors
+                );
+                message_history.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: error_prompt,
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
+                
+                // Recursively self-correct
+                run_agent_reasoning_loop(
+                    workspace_root,
+                    accounts,
+                    model,
+                    message_history,
+                    ui_rx,
+                    ui_tx,
+                );
+                return;
+            } else {
+                write_handover_nda(&active_dir, "idle", loop_count, "compile_failed", false);
+                ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation validation failed (Max limits reached)".to_string())).ok();
+            }
+        }
+    }
+    
+    convert_jsonl_to_nda(&active_dir);
     ui_tx.send(AgentToUiMessage::StatusUpdate("Agent workflow finished. Idling.".to_string())).ok();
     ui_tx.send(AgentToUiMessage::AgentFinished).ok();
 }

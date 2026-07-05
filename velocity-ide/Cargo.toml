@@ -1,0 +1,50 @@
+[package]
+name        = "velocity-ide"
+version     = "0.1.0"
+edition     = "2021"
+description = "V.E.L.O.C.I.T.Y.-IDE — NDA-accelerated inference runtime"
+
+[lib]
+name = "velocity_ide"
+path = "src/lib.rs"
+
+[[bin]]
+name = "velocity_ide"
+path = "src/main.rs"
+
+[[bin]]
+name = "bench_nda_vs_rust"
+path = "src/bin/bench_nda_vs_rust.rs"
+
+[[bin]]
+name = "run_nda"
+path = "src/bin/run_nda.rs"
+
+[dependencies]
+anyhow     = "1"
+clap       = { version = "4", features = ["derive"] }
+serde      = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+indicatif  = "0.17"
+log        = "0.4"
+env_logger = "0.11"
+rayon      = "1.8"
+rand       = "0.8"
+sha2       = "0.10"
+ash        = "0.37.3"
+gpu-allocator = "0.25.0"
+syn        = { version = "2.0", features = ["full", "visit"] }
+ureq       = { version = "2.9", features = ["json"] }
+dotenvy    = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1  # inference is unusably slow at opt-level 0
+

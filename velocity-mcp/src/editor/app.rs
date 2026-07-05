@@ -1,579 +1,766 @@
+//! Main editor UI: dockable panels, theme, command palette.
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use crossbeam_channel::{Sender, Receiver};
-use serde_json::Value;
-use eframe::egui;
-use eframe::egui::Color32;
 
-use crate::editor::buffer::EditorBuffer;
-use crate::agent::{UiToAgentMessage, AgentToUiMessage};
+use egui::{Align, Color32, Frame, Id, Key, Layout, Stroke, TextEdit, TopBottomPanel, Ui, Vec2};
+use egui::{CentralPanel, SidePanel};
+use egui::{Align2, RichText, WidgetText};
+use egui_dock::{DockArea, DockState, NodeIndex, SurfaceIndex, TabViewer};
+
+use crate::agent::{AgentToUiMessage, UiToAgentMessage};
+
+use super::buffer::EditorBuffer;
+use super::code_editor::CodeEditor;
+use super::theme::{self, IdePalette};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabKind {
+    Editor,
+    Chat,
+    Output,
+    Diff,
+    Search,
+    Terminal,
+    Settings,
+}
+
+#[derive(Clone, Debug)]
+struct Tab {
+    title: String,
+    kind: TabKind,
+    buf_id: Option<usize>,
+}
+
+impl Tab {
+    fn editor(id: usize, path: Option<&Path>) -> Self {
+        Self {
+            title: path
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".to_string()),
+            kind: TabKind::Editor,
+            buf_id: Some(id),
+        }
+    }
+}
 
 pub struct VelocityApp {
-    workspace_root: PathBuf,
-    open_tabs: Vec<EditorBuffer>,
-    active_tab_idx: usize,
-    files_list: Vec<PathBuf>,
-    
-    // Chat & Agent variables
-    chat_messages: Vec<ChatMessageUi>,
-    current_chat_input: String,
-    is_thinking: bool,
-    agent_status: String,
-    pending_approval: Option<PendingApproval>,
-    auto_approve: bool,
-    
-    agent_tx: Sender<UiToAgentMessage>,
-    agent_rx: Receiver<AgentToUiMessage>,
-    
-    // Bottom panel terminal output
-    terminal_output: String,
-    
-    // File search modal (Ctrl+P)
-    show_search_modal: bool,
-    search_query: String,
-}
+    pub root_path: PathBuf,
+    open_tabs: Vec<Tab>,
+    active_tab: usize,
+    buffers: BTreeMap<usize, EditorBuffer>,
+    next_buf_id: usize,
+    file_tree: Vec<(PathBuf, bool)>, // path, is_dir
 
-struct ChatMessageUi {
-    role: String,
-    content: String,
-}
+    // Docking layout
+    dock_state: DockState<Tab>,
 
-struct PendingApproval {
-    id: String,
-    tool_name: String,
-    arguments: Value,
+    // Agent / compiler / tool state
+    pub chat_input: String,
+    pub chat_history: Vec<(String, String)>, // role, text
+    pub command_output: String,
+    pub status_message: String,
+    pub is_building: bool,
+    pub agent_tx: crossbeam_channel::Sender<UiToAgentMessage>,
+    pub agent_rx: crossbeam_channel::Receiver<AgentToUiMessage>,
+
+    // Toggles
+    pub show_sidebar: bool,
+    pub show_statusbar: bool,
+    pub show_minimap: bool,
+    pub show_command_palette: bool,
+
+    // Search
+    pub search_query: String,
+    pub replace_query: String,
+    pub case_sensitive: bool,
+    pub regex_mode: bool,
+
+    // Settings
+    pub font_size: f32,
+
+    // Command palette
+    palette_query: String,
+    palette_selected: usize,
 }
 
 impl VelocityApp {
     pub fn new(
         workspace_root: PathBuf,
-        agent_tx: Sender<UiToAgentMessage>,
-        agent_rx: Receiver<AgentToUiMessage>,
+        agent_tx: crossbeam_channel::Sender<UiToAgentMessage>,
+        agent_rx: crossbeam_channel::Receiver<AgentToUiMessage>,
     ) -> Self {
+        let open_tabs = vec![Tab::editor(0, None)];
+        let mut buffers = BTreeMap::new();
+        buffers.insert(0, EditorBuffer::new(None, String::new()));
+        let mut dock_state = DockState::new(open_tabs.clone());
+        let surface = SurfaceIndex::main();
+        let node = NodeIndex::root();
+        
+        let [_, chat_node] = dock_state.split(
+            (surface, node),
+            egui_dock::Split::Right,
+            0.75,
+            egui_dock::Node::leaf(Tab {
+                title: "Chat".to_string(),
+                kind: TabKind::Chat,
+                buf_id: None,
+            }),
+        );
+        dock_state.split(
+            (surface, chat_node),
+            egui_dock::Split::Below,
+            0.70,
+            egui_dock::Node::leaf(Tab {
+                title: "Output".to_string(),
+                kind: TabKind::Output,
+                buf_id: None,
+            }),
+        );
+
         let mut app = Self {
-            workspace_root,
-            open_tabs: Vec::new(),
-            active_tab_idx: 0,
-            files_list: Vec::new(),
-            chat_messages: Vec::new(),
-            current_chat_input: String::new(),
-            is_thinking: false,
-            agent_status: "Idling".to_string(),
-            pending_approval: None,
-            auto_approve: false,
+            root_path: workspace_root,
+            open_tabs,
+            active_tab: 0,
+            buffers,
+            next_buf_id: 1,
+            file_tree: Vec::new(),
+            dock_state,
+            chat_input: String::new(),
+            chat_history: vec![(
+                "assistant".to_string(),
+                "Welcome to V.E.L.O.C.I.T.Y. IDE. Ask me to explain, refactor, or generate code.".to_string(),
+            )],
+            command_output: "MCP server ready.".to_string(),
+            status_message: "Ready".to_string(),
+            is_building: false,
             agent_tx,
             agent_rx,
-            terminal_output: "V.E.L.O.C.I.T.Y. Execution Sandbox Terminal Initialized.\n".to_string(),
-            show_search_modal: false,
+            show_sidebar: true,
+            show_statusbar: true,
+            show_minimap: false,
+            show_command_palette: false,
             search_query: String::new(),
+            replace_query: String::new(),
+            case_sensitive: false,
+            regex_mode: false,
+            font_size: 14.0,
+            palette_query: String::new(),
+            palette_selected: 0,
         };
-        app.refresh_files();
-        
-        // Open README.md if it exists
-        let readme_path = app.workspace_root.join("README.md");
-        if readme_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&readme_path) {
-                app.open_tabs.push(EditorBuffer::new(Some(readme_path), content));
-            }
-        }
-        
+        app.refresh_file_tree();
         app
     }
-
-    fn refresh_files(&mut self) {
-        self.files_list.clear();
-        scan_dir_recursive(&self.workspace_root, &mut self.files_list);
+}
+impl VelocityApp {
+    fn send_chat(&mut self) {
+        let q = self.chat_input.trim().to_string();
+        if q.is_empty() {
+            return;
+        }
+        self.chat_history.push(("user".to_string(), q.clone()));
+        self.chat_input.clear();
+        if let Err(e) = self.agent_tx.send(crate::agent::UiToAgentMessage::UserPrompt(q)) {
+            self.chat_history.push((
+                "assistant".to_string(),
+                format!("[Error sending query: {:?}]", e),
+            ));
+        }
     }
 
-    fn active_buffer_mut(&mut self) -> Option<&mut EditorBuffer> {
-        self.open_tabs.get_mut(self.active_tab_idx)
-    }
-
-    fn handle_agent_messages(&mut self, ctx: &egui::Context) {
+    fn handle_agent_messages(&mut self) {
         while let Ok(msg) = self.agent_rx.try_recv() {
             match msg {
-                AgentToUiMessage::ThoughtToken(token) => {
-                    self.terminal_output.push_str(&token);
-                }
-                AgentToUiMessage::OutputToken(token) => {
-                    if self.chat_messages.is_empty() || self.chat_messages.last().unwrap().role != "assistant" {
-                        self.chat_messages.push(ChatMessageUi {
-                            role: "assistant".to_string(),
-                            content: String::new(),
-                        });
-                    }
-                    self.chat_messages.last_mut().unwrap().content.push_str(&token);
-                }
-                AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
-                    if self.auto_approve {
-                        self.agent_tx.send(UiToAgentMessage::ApproveTool {
-                            id: id.clone(),
-                            tool_name: tool_name.clone(),
-                            arguments: arguments.clone(),
-                        }).ok();
-                    } else {
-                        self.pending_approval = Some(PendingApproval { id, tool_name, arguments });
-                    }
-                }
-                AgentToUiMessage::ToolExecutionStarted { tool_name } => {
-                    self.terminal_output.push_str(&format!("\n[TOOL START] Executing tool: {}\n", tool_name));
-                }
-                AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
-                    self.terminal_output.push_str(&format!("[TOOL FINISH] Tool: {} completed.\nResult Summary:\n{}\n", tool_name, result));
-                }
-                AgentToUiMessage::StatusUpdate(status) => {
-                    self.agent_status = status;
-                }
-                AgentToUiMessage::AgentFinished => {
-                    self.is_thinking = false;
-                    self.agent_status = "Finished reasoning loop.".to_string();
-                }
-                AgentToUiMessage::UpdateFileBuffer { path, content } => {
-                    let mut found_idx = None;
-                    for (idx, tab) in self.open_tabs.iter().enumerate() {
-                        if tab.path.as_ref() == Some(&path) {
-                            found_idx = Some(idx);
-                            break;
+                crate::agent::AgentToUiMessage::ThoughtToken(_token) => {}
+                crate::agent::AgentToUiMessage::OutputToken(token) => {
+                    if let Some((role, text)) = self.chat_history.last_mut() {
+                        if role == "assistant" {
+                            text.push_str(&token);
+                        } else {
+                            self.chat_history.push(("assistant".to_string(), token));
                         }
-                    }
-                    if let Some(idx) = found_idx {
-                        self.open_tabs[idx].update_content(content);
-                        self.active_tab_idx = idx;
                     } else {
-                        self.open_tabs.push(EditorBuffer::new(Some(path), content));
-                        self.active_tab_idx = self.open_tabs.len() - 1;
+                        self.chat_history.push(("assistant".to_string(), token));
                     }
+                }
+                crate::agent::AgentToUiMessage::StatusUpdate(status) => {
+                    self.status_message = status;
+                }
+                crate::agent::AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
+                    self.agent_tx.send(crate::agent::UiToAgentMessage::ApproveTool { id, tool_name, arguments }).ok();
+                }
+                crate::agent::AgentToUiMessage::ToolExecutionStarted { tool_name } => {
+                    self.command_output.push_str(&format!("[Running {}...]\n", tool_name));
+                }
+                crate::agent::AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
+                    self.command_output.push_str(&format!("[Finished {}: {}]\n", tool_name, result));
+                }
+                crate::agent::AgentToUiMessage::UpdateFileBuffer { path, content } => {
+                    if let Some(buf) = self.buffers.values_mut().find(|b| b.path.as_ref() == Some(&path)) {
+                        buf.update_content(content);
+                    }
+                }
+                crate::agent::AgentToUiMessage::AgentFinished => {
+                    self.status_message = "Agent execution complete".to_string();
                 }
             }
-            ctx.request_repaint();
         }
     }
-}
 
-impl eframe::App for VelocityApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Customize visuals
-        let mut visuals = egui::Visuals::dark();
-        visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(20, 20, 24);
-        visuals.widgets.inactive.bg_fill = Color32::from_rgb(30, 30, 36);
-        visuals.widgets.hovered.bg_fill = Color32::from_rgb(45, 45, 54);
-        visuals.widgets.active.bg_fill = Color32::from_rgb(60, 60, 72);
-        visuals.selection.bg_fill = Color32::from_rgb(79, 70, 229); // Indigo selection
-        ctx.set_visuals(visuals);
-
-        self.handle_agent_messages(ctx);
-
-        if self.is_thinking {
-            ctx.request_repaint();
+    pub fn refresh_file_tree(&mut self) {
+        self.file_tree.clear();
+        fn visit(entries: &mut Vec<(PathBuf, bool)>, base: &Path) {
+            let _ = std::fs::read_dir(base).map(|entries_iter| {
+                let mut collected: Vec<_> = entries_iter.filter_map(|e| e.ok()).collect();
+                collected.sort_by(|a, b| {
+                    let a_dir = a.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                    let b_dir = b.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                    b_dir.cmp(&a_dir).then_with(|| a.file_name().cmp(&b.file_name()))
+                });
+                for entry in collected {
+                    let path = entry.path();
+                    let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+                    entries.push((path.clone(), is_dir));
+                    if is_dir {
+                        visit(entries, &path);
+                    }
+                }
+            });
         }
+        let root = self.root_path.clone();
+        visit(&mut self.file_tree, &root);
+    }
 
-        // Global hotkeys
-        if ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.command) {
-            self.show_search_modal = true;
-            self.search_query.clear();
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.command) {
-            let saved_path = if let Some(buf) = self.active_buffer_mut() {
-                let _ = buf.save();
-                buf.path.clone()
-            } else {
-                None
-            };
-            if let Some(path) = saved_path {
-                self.terminal_output.push_str(&format!("Saved: {:?}\n", path));
+    fn open_file(&mut self, path: &Path) {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let id = self.next_buf_id;
+        self.next_buf_id += 1;
+        let buf = EditorBuffer::new(Some(path.to_path_buf()), text);
+        self.buffers.insert(id, buf);
+        let tab = Tab::editor(id, Some(path));
+        self.open_tabs.push(tab.clone());
+        self.active_tab = self.open_tabs.len() - 1;
+        self.dock_state.push_to_focused_leaf(tab);
+        self.status_message = format!("Opened {}", path.display());
+    }
+
+    fn save_active(&mut self) {
+        if let Some(tab) = self.open_tabs.get(self.active_tab) {
+            if let Some(id) = tab.buf_id {
+                if let Some(buf) = self.buffers.get_mut(&id) {
+                    if let Err(e) = buf.save() {
+                        self.command_output.push_str(&format!("Error saving buffer: {}\n", e));
+                    } else {
+                        self.command_output.push_str("Saved active buffer.\n");
+                        self.status_message = "Saved".to_string();
+                    }
+                }
             }
         }
+    }
 
-        // Top Status Bar Panel
-        egui::TopBottomPanel::top("top_panel")
-            .frame(egui::Frame::none().fill(Color32::from_rgb(15, 15, 18)).inner_margin(8.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("⚡ V.E.L.O.C.I.T.Y. IDE");
-                    ui.label("|");
-                    ui.label(format!("Workspace: {}", self.workspace_root.to_string_lossy()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.is_thinking {
-                            ui.spinner();
-                        }
-                        ui.label(format!("Agent Status: {}", self.agent_status));
-                    });
+    fn build_active(&mut self) {
+        self.is_building = true;
+        self.command_output.push_str("Starting build...\n");
+        self.status_message = "Building...".to_string();
+        
+        let output = std::process::Command::new("cargo")
+            .arg("build")
+            .output();
+            
+        match output {
+            Ok(out) => {
+                self.command_output.push_str(&String::from_utf8_lossy(&out.stdout));
+                self.command_output.push_str(&String::from_utf8_lossy(&out.stderr));
+            }
+            Err(e) => {
+                self.command_output.push_str(&format!("Failed to execute cargo build: {:?}\n", e));
+            }
+        }
+        self.is_building = false;
+    }
+
+    fn run_active(&mut self) {
+        self.command_output.push_str("Running...\n");
+        self.status_message = "Running...".to_string();
+        
+        let output = std::process::Command::new("cargo")
+            .arg("run")
+            .output();
+            
+        match output {
+            Ok(out) => {
+                self.command_output.push_str(&String::from_utf8_lossy(&out.stdout));
+                self.command_output.push_str(&String::from_utf8_lossy(&out.stderr));
+            }
+            Err(e) => {
+                self.command_output.push_str(&format!("Failed to execute cargo run: {:?}\n", e));
+            }
+        }
+        self.status_message = "Run finished".to_string();
+    }
+
+    pub fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_agent_messages();
+        self.handle_global_keys(ctx);
+
+        TopBottomPanel::top("toolbar_panel").show(ctx, |ui| {
+            self.render_top_toolbar(ui);
+        });
+
+        if self.show_sidebar {
+            SidePanel::left("sidebar")
+                .resizable(true)
+                .default_width(220.0)
+                .width_range(160.0..=400.0)
+                .show(ctx, |ui| {
+                    self.render_sidebar(ui);
                 });
+        }
+
+        if self.show_statusbar {
+            TopBottomPanel::bottom("statusbar")
+                .resizable(false)
+                .default_height(26.0)
+                .show(ctx, |ui| {
+                    self.render_statusbar(ui);
+                });
+        }
+
+        CentralPanel::default().show(ctx, |ui| {
+            let mut dock_state = std::mem::replace(&mut self.dock_state, egui_dock::DockState::new(vec![]));
+            DockArea::new(&mut dock_state)
+                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                .show_add_buttons(true)
+                .show_inside(ui, &mut TabViewerImpl { app: self });
+            self.dock_state = dock_state;
+        });
+
+        if self.show_command_palette {
+            self.render_command_palette(ctx);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Panels
+    // ------------------------------------------------------------------
+
+    fn render_top_toolbar(&mut self, ui: &mut Ui) {
+        let p = IdePalette::default();
+        ui.horizontal(|ui| {
+            ui.style_mut().spacing.item_spacing = Vec2::new(8.0, 0.0);
+            ui.label(
+                RichText::new("V.E.L.O.C.I.T.Y.")
+                    .color(p.text_muted)
+                    .font(theme::ui_font_id(16.0)),
+            );
+            ui.separator();
+
+            if ui.button("📂 Open").clicked() {
+                self.status_message = "Open file dialog triggered".to_string();
+            }
+            if ui.button("💾 Save (Ctrl+S)").clicked() {
+                self.save_active();
+            }
+            if ui.button("🔨 Build (Ctrl+B)").clicked() {
+                self.build_active();
+            }
+            if ui.button("▶ Run (Ctrl+R)").clicked() {
+                self.run_active();
+            }
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.toggle_value(&mut self.show_command_palette, "⌘K Command Palette");
+                ui.toggle_value(&mut self.show_sidebar, " Sidebar");
+                ui.toggle_value(&mut self.show_minimap, " Minimap");
             });
+        });
+        ui.painter().hline(
+            ui.min_rect().x_range(),
+            ui.min_rect().max.y,
+            Stroke::new(1.0, p.border),
+        );
+    }
 
-        // Left Panel - File Explorer
-        egui::SidePanel::left("explorer_panel")
-            .width_range(180.0..=350.0)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label("📁 FILE EXPLORER");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("🔄").on_hover_text("Refresh Workspace").clicked() {
-                            self.refresh_files();
-                        }
-                    });
-                });
-                ui.separator();
-                
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut file_to_open = None;
-                    
-                    // Group files by top-level dir for a beautiful clean structure
-                    let mut root_files = Vec::new();
-                    let mut dirs = std::collections::BTreeMap::new();
-                    
-                    for f in &self.files_list {
-                        if let Ok(rel) = f.strip_prefix(&self.workspace_root) {
-                            let comps: Vec<_> = rel.components().collect();
-                            if comps.len() == 1 {
-                                root_files.push(f.clone());
-                            } else if comps.len() > 1 {
-                                let dir_name = comps[0].as_os_str().to_string_lossy().to_string();
-                                dirs.entry(dir_name).or_insert_with(Vec::new).push(f.clone());
-                            }
-                        }
-                    }
-
-                    // Render Directories
-                    for (dir, paths) in dirs {
-                        egui::CollapsingHeader::new(format!("📁 {}", dir))
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                for p in paths {
-                                    let filename = p.file_name().unwrap().to_string_lossy().to_string();
-                                    let is_active = self.open_tabs.get(self.active_tab_idx)
-                                        .and_then(|t| t.path.as_ref()) == Some(&p);
-                                    
-                                    let mut button_ui = ui.selectable_label(is_active, format!("📄 {}", filename));
-                                    if button_ui.clicked() {
-                                        file_to_open = Some(p.clone());
-                                    }
-                                }
-                            });
-                    }
-
-                    // Render Root Files
-                    for p in root_files {
-                        let filename = p.file_name().unwrap().to_string_lossy().to_string();
-                        let is_active = self.open_tabs.get(self.active_tab_idx)
-                            .and_then(|t| t.path.as_ref()) == Some(&p);
-                        
-                        let button_ui = ui.selectable_label(is_active, format!("📄 {}", filename));
-                        if button_ui.clicked() {
-                            file_to_open = Some(p.clone());
-                        }
-                    }
-
-                    if let Some(path) = file_to_open {
-                        let mut found = false;
-                        for (idx, tab) in self.open_tabs.iter().enumerate() {
-                            if tab.path.as_ref() == Some(&path) {
-                                self.active_tab_idx = idx;
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                self.open_tabs.push(EditorBuffer::new(Some(path), content));
-                                self.active_tab_idx = self.open_tabs.len() - 1;
-                            }
-                        }
-                    }
-                });
-            });
-
-        // Right Panel - Agent Chat Console
-        egui::SidePanel::right("chat_panel")
-            .width_range(300.0..=500.0)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.label("🤖 ANTIGRAVITY CO-PILOT");
-                ui.separator();
-
-                // Pending Tool Approvals Panel (Rendered at top so it is always visible)
-                if let Some(ref approval) = self.pending_approval {
-                    let call_id = approval.id.clone();
-                    let tool_name = approval.tool_name.clone();
-                    let arguments = approval.arguments.clone();
-                    
-                    egui::Frame::none()
-                        .fill(Color32::from_rgb(60, 48, 16))
-                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(217, 119, 6)))
-                        .inner_margin(8.0)
-                        .rounding(egui::Rounding::same(6.0))
-                        .show(ui, |ui| {
-                            ui.label("🛡️ TOOL APPROVAL REQUIRED:");
-                            ui.label(format!("Tool: {}", tool_name));
-                            ui.label(format!("Params: {}", serde_json::to_string(&arguments).unwrap_or_default()));
-                            
-                            ui.horizontal(|ui| {
-                                if ui.button("🟢 Approve").clicked() {
-                                    self.agent_tx.send(UiToAgentMessage::ApproveTool {
-                                        id: call_id.clone(),
-                                        tool_name: tool_name.clone(),
-                                        arguments: arguments.clone(),
-                                    }).ok();
-                                    self.pending_approval = None;
-                                }
-                                if ui.button("🔴 Reject").clicked() {
-                                    self.agent_tx.send(UiToAgentMessage::RejectTool {
-                                        id: call_id.clone(),
-                                        tool_name: tool_name.clone(),
-                                    }).ok();
-                                    self.pending_approval = None;
-                                }
-                            });
-                        });
-                    ui.add_space(8.0);
-                }
-
-                // Chat Messages Area
-                let messages_area_height = ui.available_height() - 80.0;
-                
-                egui::ScrollArea::vertical()
-                    .max_height(messages_area_height)
-                    .show(ui, |ui| {
-                        if self.chat_messages.is_empty() {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(20.0);
-                                ui.label("No active discussion.");
-                                ui.label("Type a query below to prompt the Agent.");
-                            });
-                        }
-                        
-                        for msg in &self.chat_messages {
-                            let is_user = msg.role == "user";
-                            let (bg_fill, border_color, text_color) = if is_user {
-                                (Color32::from_rgb(79, 70, 229), Color32::from_rgb(99, 102, 241), Color32::WHITE)
-                            } else {
-                                (Color32::from_rgb(33, 33, 40), Color32::from_rgb(45, 45, 54), Color32::from_rgb(220, 220, 225))
-                            };
-                            
-                            ui.horizontal(|ui| {
-                                if is_user {
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                        egui::Frame::none()
-                                            .fill(bg_fill)
-                                            .stroke(egui::Stroke::new(1.0, border_color))
-                                            .inner_margin(8.0)
-                                            .outer_margin(4.0)
-                                            .rounding(egui::Rounding::same(8.0))
-                                            .show(ui, |ui| {
-                                                ui.set_max_width(280.0);
-                                                ui.label(
-                                                    egui::RichText::new(&msg.content)
-                                                        .color(text_color)
-                                                        .size(13.0)
-                                                );
-                                            });
-                                    });
-                                } else {
-                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-                                        egui::Frame::none()
-                                            .fill(bg_fill)
-                                            .stroke(egui::Stroke::new(1.0, border_color))
-                                            .inner_margin(8.0)
-                                            .outer_margin(4.0)
-                                            .rounding(egui::Rounding::same(8.0))
-                                            .show(ui, |ui| {
-                                                ui.set_max_width(280.0);
-                                                ui.label(
-                                                    egui::RichText::new(&msg.content)
-                                                        .color(text_color)
-                                                        .size(13.0)
-                                                );
-                                            });
-                                    });
-                                }
-                            });
-                            ui.add_space(4.0);
-                        }
-                    });
-
-                // Chat Input bar
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.auto_approve, "🛡️ Auto-Approve Tools");
-                });
-                ui.horizontal(|ui| {
-                    let text_edit = ui.add(
-                        egui::TextEdit::multiline(&mut self.current_chat_input)
-                            .hint_text("Ask Antigravity... (Ctrl+Enter to send)")
-                            .desired_rows(2)
-                            .desired_width(ui.available_width() - 50.0)
-                    );
-                    
-                    let enter_pressed = text_edit.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
-                    
-                    if (ui.button("Send").clicked() || enter_pressed) && !self.current_chat_input.trim().is_empty() {
-                        let prompt = self.current_chat_input.trim().to_string();
-                        self.chat_messages.push(ChatMessageUi {
-                            role: "user".to_string(),
-                            content: prompt.clone(),
-                        });
-                        self.current_chat_input.clear();
-                        self.is_thinking = true;
-                        self.agent_tx.send(UiToAgentMessage::UserPrompt(prompt)).ok();
+    fn render_sidebar(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("EXPLORER")
+                        .color(IdePalette::default().text_muted)
+                        .font(theme::ui_font_id(11.0)),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("⟳").clicked() {
+                        self.refresh_file_tree();
                     }
                 });
             });
+            ui.add_space(4.0);
 
-        // Bottom Panel - Log & Terminal
-        egui::TopBottomPanel::bottom("terminal_panel")
-            .height_range(100.0..=300.0)
-            .show(ctx, |ui| {
-                ui.add_space(4.0);
-                ui.label("🖥️ EXECUTION CONSOLE");
-                ui.separator();
-                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.terminal_output)
-                            .font(egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY)
-                            .interactive(false)
-                    );
-                });
-            });
-
-        // Central Panel - Code Editor Workspace
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.open_tabs.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(60.0);
-                    ui.heading("⚡ V.E.L.O.C.I.T.Y. IDE - Native Workspace Editor");
-                    ui.add_space(10.0);
-                    ui.label("Extremely high performance. Zero allocations. Direct GPU rendering.");
-                    ui.add_space(20.0);
-                    ui.label("Keyboard Shortcuts:");
-                    ui.label("Ctrl + P  :  Search Files");
-                    ui.label("Ctrl + S  :  Save Active Buffer");
-                    ui.label("Ctrl + Enter  :  Send Chat Prompt");
-                });
-            } else {
-                // Tab Bar
-                ui.horizontal(|ui| {
-                    let mut tab_to_close = None;
-                    for (idx, tab) in self.open_tabs.iter().enumerate() {
-                        let filename = tab.path.as_ref()
-                            .and_then(|p| p.file_name())
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut file_to_open = None;
+                for (path, is_dir) in &self.file_tree {
+                    let depth = path
+                        .ancestors()
+                        .filter(|p| p != &self.root_path && p.starts_with(&self.root_path))
+                        .count();
+                    let indent = ui.spacing().indent * depth as f32;
+                    ui.horizontal(|ui| {
+                        ui.add_space(indent);
+                        let name = path
+                            .file_name()
                             .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| "Untitled".to_string());
-                        
-                        let name_formatted = format!("{}{}", filename, if tab.is_dirty { "*" } else { "" });
-                        let is_active = idx == self.active_tab_idx;
-                        
-                        ui.horizontal(|ui| {
-                            let select = ui.selectable_label(is_active, &name_formatted);
-                            if select.clicked() {
-                                self.active_tab_idx = idx;
-                            }
-                            if ui.button("x").clicked() {
-                                tab_to_close = Some(idx);
+                            .unwrap_or_default();
+                        let icon = if *is_dir { "📁" } else { "📄" };
+                        let label = ui.selectable_label(false, format!("{} {}", icon, name));
+                        if label.double_clicked() && !is_dir {
+                            file_to_open = Some(path.clone());
+                        }
+                    });
+                }
+                if let Some(path) = file_to_open {
+                    self.open_file(&path);
+                }
+            });
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("SEARCH")
+                        .color(IdePalette::default().text_muted)
+                        .font(theme::ui_font_id(11.0)),
+                );
+            });
+            ui.add_space(4.0);
+            ui.add(TextEdit::singleline(&mut self.search_query).hint_text("Find..."));
+            ui.add(TextEdit::singleline(&mut self.replace_query).hint_text("Replace..."));
+            ui.checkbox(&mut self.case_sensitive, "Match case");
+            ui.checkbox(&mut self.regex_mode, "Regex");
+        });
+    }
+
+    fn render_statusbar(&mut self, ui: &mut Ui) {
+        let p = IdePalette::default();
+        ui.horizontal(|ui| {
+            ui.style_mut().spacing.item_spacing = Vec2::new(12.0, 0.0);
+            ui.label(
+                RichText::new(&self.status_message)
+                    .color(p.text)
+                    .font(theme::ui_font_id(12.0)),
+            );
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if self.is_building {
+                    ui.spinner();
+                }
+                ui.label(
+                    RichText::new("UTF-8")
+                        .color(p.text_muted)
+                        .font(theme::ui_font_id(11.0)),
+                );
+                ui.label(
+                    RichText::new("Rust")
+                        .color(p.text_muted)
+                        .font(theme::ui_font_id(11.0)),
+                );
+                ui.label(
+                    RichText::new("Ln 0, Col 0")
+                        .color(p.text_muted)
+                        .font(theme::ui_font_id(11.0)),
+                );
+            });
+        });
+        ui.painter().hline(
+            ui.min_rect().x_range(),
+            ui.min_rect().min.y,
+            Stroke::new(1.0, p.border),
+        );
+    }
+
+    fn render_command_palette(&mut self, ctx: &egui::Context) {
+        let commands = self.command_list();
+        let filtered: Vec<_> = commands
+            .into_iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                c.0.to_lowercase()
+                    .contains(&self.palette_query.to_lowercase())
+            })
+            .collect();
+
+        egui::Area::new(Id::new("command_palette"))
+            .order(egui::Order::Foreground)
+            .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 80.0))
+            .show(ctx, |ui| {
+                let p = IdePalette::default();
+                let width = 560.0;
+                Frame::popup(ui.style())
+                    .fill(p.surface)
+                    .stroke(Stroke::new(1.0, p.border))
+                    .show(ui, |ui| {
+                        ui.set_width(width);
+                        ui.add(
+                            TextEdit::singleline(&mut self.palette_query)
+                                .hint_text("Type a command... (Esc to close)")
+                                .desired_width(width - 16.0),
+                        );
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                            for (idx, (name, _label, _)) in &filtered {
+                                let selected = *idx == self.palette_selected;
+                                let response =
+                                    ui.selectable_label(selected, format!("{}\n  {}", name, _label));
+                                if response.clicked() {
+                                    self.run_command_by_index(*idx);
+                                    self.show_command_palette = false;
+                                }
                             }
                         });
-                    }
-                    
-                    if let Some(close_idx) = tab_to_close {
-                        self.open_tabs.remove(close_idx);
-                        if self.open_tabs.is_empty() {
-                            self.active_tab_idx = 0;
-                        } else if self.active_tab_idx >= self.open_tabs.len() {
-                            self.active_tab_idx = self.open_tabs.len() - 1;
-                        }
-                    }
-                });
-                
-                ui.separator();
-                
-                // Code Editor TextArea
-                if let Some(buf) = self.active_buffer_mut() {
-                    let editor = egui::TextEdit::multiline(&mut buf.content)
-                        .font(egui::TextStyle::Monospace)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(38)
-                        .lock_focus(true);
-                    
-                    let response = ui.add(editor);
-                    if response.changed() {
-                        buf.is_dirty = true;
-                        buf.rope = ropey::Rope::from_str(&buf.content);
-                    }
+                    });
+            });
+
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.show_command_palette = false;
+        }
+        if ctx.input(|i| i.key_pressed(Key::ArrowDown)) {
+            self.palette_selected = (self.palette_selected + 1).min(filtered.len().saturating_sub(1));
+        }
+        if ctx.input(|i| i.key_pressed(Key::ArrowUp)) {
+            self.palette_selected = self.palette_selected.saturating_sub(1);
+        }
+        if ctx.input(|i| i.key_pressed(Key::Enter)) {
+            if let Some((idx, _)) = filtered.get(self.palette_selected) {
+                self.run_command_by_index(*idx);
+                self.show_command_palette = false;
+            }
+        }
+        if ctx.input(|i| i.key_pressed(Key::Tab)) {
+            if let Some((_, (name, _, _))) = filtered.get(self.palette_selected) {
+                self.palette_query = name.to_string();
+            }
+        }
+    }
+
+    fn command_list(&self) -> Vec<(&'static str, &'static str, Box<dyn Fn(&mut Self)>)> {
+        vec![
+            ("Open File", "Open an existing file from disk", Box::new(|app| app.status_message = "Open file dialog triggered".to_string())),
+            ("Save", "Save the active editor buffer", Box::new(|app| app.save_active())),
+            ("Build", "Compile the current project", Box::new(|app| app.build_active())),
+            ("Run", "Run the compiled result", Box::new(|app| app.run_active())),
+            ("Toggle Sidebar", "Show or hide the left sidebar", Box::new(|app| app.show_sidebar = !app.show_sidebar)),
+            ("Toggle Statusbar", "Show or hide the status bar", Box::new(|app| app.show_statusbar = !app.show_statusbar)),
+            ("Toggle Minimap", "Show or hide the minimap", Box::new(|app| app.show_minimap = !app.show_minimap)),
+            ("Refresh File Tree", "Rescan the workspace explorer", Box::new(|app| app.refresh_file_tree())),
+        ]
+    }
+
+    fn run_command_by_index(&mut self, index: usize) {
+        let commands = self.command_list();
+        if let Some((_, _, f)) = commands.into_iter().nth(index) {
+            f(self);
+        }
+    }
+
+    fn handle_global_keys(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            if i.modifiers.command && i.key_pressed(Key::P) {
+                self.show_command_palette = !self.show_command_palette;
+            }
+            if i.modifiers.command && i.key_pressed(Key::O) {
+                self.status_message = "Open file dialog triggered".to_string();
+            }
+            if i.modifiers.command && i.key_pressed(Key::S) {
+                self.save_active();
+            }
+            if i.modifiers.command && i.key_pressed(Key::B) {
+                self.build_active();
+            }
+            if i.modifiers.command && i.key_pressed(Key::R) {
+                self.run_active();
+            }
+            if i.modifiers.command && i.key_pressed(Key::K) {
+                self.show_command_palette = !self.show_command_palette;
+            }
+            if i.modifiers.ctrl && i.key_pressed(Key::W) {
+                // close active tab
+                if !self.open_tabs.is_empty() {
+                    self.open_tabs.remove(self.active_tab.min(self.open_tabs.len() - 1));
+                    self.active_tab = self.active_tab.min(self.open_tabs.len().saturating_sub(1));
                 }
             }
         });
+    }
 
-        // Search File Modal Dialog
-        if self.show_search_modal {
-            egui::Window::new("Quick Open File")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, -100.0])
-                .show(ctx, |ui| {
-                    let text_edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.search_query)
-                            .hint_text("Type file name...")
-                    );
-                    text_edit.request_focus();
-                    
-                    ui.separator();
-                    
-                    let query_lower = self.search_query.to_lowercase();
-                    let mut matches = Vec::new();
-                    
-                    for f in &self.files_list {
-                        let filename = f.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        if filename.to_lowercase().contains(&query_lower) {
-                            matches.push(f.clone());
-                            if matches.len() >= 8 {
-                                break;
-                            }
-                        }
-                    }
-                    
-                    for m in matches {
-                        let rel_path = m.strip_prefix(&self.workspace_root).unwrap_or(&m).to_string_lossy().to_string();
-                        if ui.selectable_label(false, &rel_path).clicked() {
-                            if let Ok(content) = std::fs::read_to_string(&m) {
-                                let mut found = false;
-                                for (idx, tab) in self.open_tabs.iter().enumerate() {
-                                    if tab.path.as_ref() == Some(&m) {
-                                        self.active_tab_idx = idx;
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if !found {
-                                    self.open_tabs.push(EditorBuffer::new(Some(m), content));
-                                    self.active_tab_idx = self.open_tabs.len() - 1;
-                                }
-                            }
-                            self.show_search_modal = false;
-                        }
-                    }
-                    
-                    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        self.show_search_modal = false;
-                    }
-                });
+    fn render_editor_tab(&mut self, ui: &mut Ui, tab: &Tab) {
+        let id = tab.buf_id.unwrap_or(0);
+        if let Some(buf) = self.buffers.get_mut(&id) {
+            let path = buf.path.clone();
+            let mut editor = CodeEditor::new(id, path.as_deref());
+            let _ = editor.show(ui, &mut buf.content);
         }
+    }
+
+    fn render_chat_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("AI Agent")
+                    .color(IdePalette::default().text)
+                    .font(theme::ui_font_id(14.0)),
+            );
+            ui.separator();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (role, text) in &self.chat_history {
+                    let color = if role == "user" {
+                        IdePalette::default().accent
+                    } else {
+                        IdePalette::default().text
+                    };
+                    ui.label(
+                        RichText::new(format!("{}: {}", role, text))
+                            .color(color)
+                            .font(theme::ui_font_id(13.0)),
+                    );
+                    ui.add_space(6.0);
+                }
+            });
+            ui.horizontal(|ui| {
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.chat_input)
+                        .hint_text("Ask the agent...")
+                        .desired_width(ui.available_width() - 60.0),
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    self.send_chat();
+                }
+                if ui.button("Send").clicked() {
+                    self.send_chat();
+                }
+            });
+        });
+    }
+
+    fn render_output_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Compiler Output")
+                    .color(IdePalette::default().text)
+                    .font(theme::ui_font_id(14.0)),
+            );
+            ui.separator();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut self.command_output)
+                        .font(theme::code_font_id(13.0))
+                        .code_editor()
+                        .desired_width(f32::INFINITY),
+                );
+            });
+        });
+    }
+
+    #[allow(dead_code)]
+    fn render_diff_tab(&mut self, ui: &mut Ui) {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                RichText::new("Diff view placeholder")
+                    .color(IdePalette::default().text_muted)
+                    .font(theme::ui_font_id(14.0)),
+            );
+        });
+    }
+
+    #[allow(dead_code)]
+    fn render_search_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Global Search")
+                    .color(IdePalette::default().text)
+                    .font(theme::ui_font_id(14.0)),
+            );
+            ui.separator();
+            ui.label("Search across workspace files is not yet implemented.");
+        });
+    }
+
+    #[allow(dead_code)]
+    fn render_terminal_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Terminal")
+                    .color(IdePalette::default().text)
+                    .font(theme::ui_font_id(14.0)),
+            );
+            ui.separator();
+            ui.label("Integrated terminal is not yet implemented.");
+        });
+    }
+
+    fn render_settings_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Settings")
+                    .color(IdePalette::default().text)
+                    .font(theme::ui_font_id(14.0)),
+            );
+            ui.separator();
+            ui.add(egui::Slider::new(&mut self.font_size, 8.0..=32.0).text("Editor font size"));
+            if ui.button("Apply Theme").clicked() {
+                 theme::setup_custom_style(ui.ctx());
+            }
+        });
     }
 }
 
-fn scan_dir_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.starts_with('.') || name == "node_modules" || name == "target" {
-                continue;
-            }
-            if path.is_dir() {
-                scan_dir_recursive(&path, files);
-            } else {
-                files.push(path);
-            }
+// ------------------------------------------------------------------
+// Tab viewer for egui_dock
+// ------------------------------------------------------------------
+struct TabViewerImpl<'a> {
+    app: &'a mut VelocityApp,
+}
+
+impl<'a> TabViewer for TabViewerImpl<'a> {
+    type Tab = Tab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        RichText::new(&tab.title).font(theme::ui_font_id(13.0)).into()
+    }
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        match tab.kind {
+            TabKind::Editor => self.app.render_editor_tab(ui, tab),
+            TabKind::Chat => self.app.render_chat_tab(ui),
+            TabKind::Output => self.app.render_output_tab(ui),
+            TabKind::Diff => self.app.render_diff_tab(ui),
+            TabKind::Search => self.app.render_search_tab(ui),
+            TabKind::Terminal => self.app.render_terminal_tab(ui),
+            TabKind::Settings => self.app.render_settings_tab(ui),
         }
+    }
+
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        _tab.kind != TabKind::Editor || self.app.open_tabs.len() > 1
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        if let Some(pos) = self.app.open_tabs.iter().position(|t| t.kind == tab.kind && t.title == tab.title) {
+            self.app.open_tabs.remove(pos);
+        }
+        true
+    }
+}
+
+// ------------------------------------------------------------------
+// eframe integration
+// ------------------------------------------------------------------
+impl eframe::App for VelocityApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.update(ctx, frame);
     }
 }
