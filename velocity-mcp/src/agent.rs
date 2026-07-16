@@ -1072,28 +1072,54 @@ fn run_agent_reasoning_loop(
         let ureq_response = match provider {
             AiProvider::OpenRouter => {
                 let key = openrouter_api_key();
-                match ureq::post("https://openrouter.ai/api/v1/chat/completions")
-                    .set("Authorization", &format!("Bearer {}", key))
-                    .set("HTTP-Referer", "https://velocity-ide.local")
-                    .set("X-Title", "Velocity Cognitive IDE")
-                    .set("Content-Type", "application/json")
-                    .send_json(&request_body)
-                {
-                    Ok(res) => Some(res),
-                    Err(ureq::Error::Status(code, resp)) => {
-                        let body = resp.into_string().unwrap_or_default();
-                        ui_tx.send(AgentToUiMessage::OutputToken(
-                            format!("\n\nOpenRouter error ({}): {}", code, body)
-                        )).ok();
-                        None
-                    }
-                    Err(e) => {
-                        ui_tx.send(AgentToUiMessage::OutputToken(
-                            format!("\n\nOpenRouter connection error: {:?}", e)
-                        )).ok();
-                        None
+                let mut final_res = None;
+                let max_attempts = 3;
+                let mut attempt = 0;
+                
+                while attempt < max_attempts {
+                    attempt += 1;
+                    match ureq::post("https://openrouter.ai/api/v1/chat/completions")
+                        .set("Authorization", &format!("Bearer {}", key))
+                        .set("HTTP-Referer", "https://velocity-ide.local")
+                        .set("X-Title", "Velocity Cognitive IDE")
+                        .set("Content-Type", "application/json")
+                        .send_json(&request_body)
+                    {
+                        Ok(res) => {
+                            final_res = Some(res);
+                            break;
+                        }
+                        Err(ureq::Error::Status(429, resp)) => {
+                            if attempt < max_attempts {
+                                let wait_secs = attempt * 2;
+                                ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                                    "OpenRouter rate limit (429). Retrying in {}s (Attempt {}/{})…",
+                                    wait_secs, attempt, max_attempts
+                                ))).ok();
+                                std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+                            } else {
+                                let body = resp.into_string().unwrap_or_default();
+                                ui_tx.send(AgentToUiMessage::OutputToken(
+                                    format!("\n\nOpenRouter rate limit error (429): {}", body)
+                                )).ok();
+                            }
+                        }
+                        Err(ureq::Error::Status(code, resp)) => {
+                            let body = resp.into_string().unwrap_or_default();
+                            ui_tx.send(AgentToUiMessage::OutputToken(
+                                format!("\n\nOpenRouter error ({}): {}", code, body)
+                            )).ok();
+                            break;
+                        }
+                        Err(e) => {
+                            ui_tx.send(AgentToUiMessage::OutputToken(
+                                format!("\n\nOpenRouter connection error: {:?}", e)
+                            )).ok();
+                            break;
+                        }
                     }
                 }
+                final_res
             }
             AiProvider::CloudflareWorkersAi => {
                 if accounts.is_empty() {
