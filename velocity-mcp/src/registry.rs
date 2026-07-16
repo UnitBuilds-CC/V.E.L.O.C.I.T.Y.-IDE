@@ -5,6 +5,7 @@ use std::process::{Command, Stdio, Child};
 use std::io::{Write, BufReader, BufRead};
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Tool {
@@ -100,11 +101,47 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["query"]
             }),
         },
+        Tool {
+            name: "run_command".to_string(),
+            description: "Run a shell command inside the current workspace directory and capture its combined stdout and stderr output.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "The command line string to execute." }
+                },
+                "required": ["command"]
+            }),
+        },
     ]
 }
 
-pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
+pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let root = root.canonicalize()?;
     match name {
+        "run_command" => {
+            let command_str = arguments["command"].as_str().ok_or("command is required")?;
+            let output = if cfg!(target_os = "windows") {
+                Command::new("cmd")
+                    .args(&["/C", command_str])
+                    .current_dir(&root)
+                    .output()
+            } else {
+                Command::new("sh")
+                    .args(&["-c", command_str])
+                    .current_dir(&root)
+                    .output()
+            };
+
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                    let combined = format!("{}{}", stdout, stderr);
+                    Ok(combined)
+                }
+                Err(e) => Err(format!("Failed to execute command: {:?}", e).into())
+            }
+        }
         "convert_to_nda" => {
             let _file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
             let _output_path = arguments["outputPath"].as_str().unwrap_or("");
@@ -120,7 +157,7 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>
         }
         "read_file" => {
             let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
-            let full_path = std::env::current_dir()?.join(rel_path);
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let content = std::fs::read_to_string(full_path)?;
             Ok(content)
         }
@@ -131,7 +168,7 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>
             // Run safety scanner warnings detection
             let scan_warning = scan_file_content(content);
             
-            let full_path = std::env::current_dir()?.join(rel_path);
+            let full_path = resolve_workspace_path(&root, rel_path, true)?;
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -149,9 +186,9 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>
         "list_dir" => {
             let rel_path = arguments["relativeDirPath"].as_str().ok_or("relativeDirPath is required")?;
             let target_dir = if rel_path == "." || rel_path.is_empty() {
-                std::env::current_dir()?
+                root.clone()
             } else {
-                std::env::current_dir()?.join(rel_path)
+                resolve_workspace_path(&root, rel_path, false)?
             };
             
             let mut entries_list = Vec::new();
@@ -166,7 +203,7 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>
         }
         "grep_search" => {
             let query = arguments["query"].as_str().ok_or("query is required")?;
-            let root_dir = std::env::current_dir()?;
+            let root_dir = root.clone();
             let mut matches = Vec::new();
             
             fn search_dir(dir: &std::path::Path, query: &str, matches: &mut Vec<String>, root: &std::path::Path) -> Result<(), Box<dyn Error>> {
@@ -206,6 +243,39 @@ pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>
     }
 }
 
+fn resolve_workspace_path(root: &Path, raw: &str, allow_missing: bool) -> Result<PathBuf, Box<dyn Error>> {
+    let candidate = Path::new(raw);
+    if candidate.is_absolute() {
+        return Err("workspace tool paths must be relative".into());
+    }
+    if candidate.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+        return Err("workspace tool path escapes the workspace".into());
+    }
+    let joined = root.join(candidate);
+    if allow_missing && !joined.exists() {
+        let mut existing_parent = joined.as_path();
+        while !existing_parent.exists() {
+            existing_parent = existing_parent
+                .parent()
+                .ok_or("workspace tool path has no existing parent")?;
+        }
+        if !existing_parent.canonicalize()?.starts_with(root) {
+            return Err("workspace tool path escapes the workspace".into());
+        }
+        return Ok(joined);
+    }
+    let canonical = joined.canonicalize()?;
+    if !canonical.starts_with(root) {
+        return Err("workspace tool path escapes the workspace".into());
+    }
+    Ok(canonical)
+}
+
+pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let root = std::env::current_dir()?;
+    call_tool_in_workspace(&root, name, arguments)
+}
+
 fn scan_file_content(content: &str) -> Option<&'static str> {
     if (content.contains("mysql ") || content.contains("mysqldump ") || content.contains("sqlcmd ")) && 
        (content.contains(" -p") || content.contains(" --password=")) {
@@ -219,6 +289,55 @@ fn scan_file_content(content: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::call_tool_in_workspace;
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn file_tools_use_explicit_workspace_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(
+            &root,
+            "write_file",
+            &json!({"relativeFilePath": "src/main.rs", "content": "fn main() {}"}),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}");
+    }
+
+    #[test]
+    fn file_tools_reject_parent_traversal() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let result = call_tool_in_workspace(
+            &root,
+            "write_file",
+            &json!({"relativeFilePath": "../outside.txt", "content": "nope"}),
+        );
+
+        assert!(result.is_err());
+        assert!(!temp.path().join("outside.txt").exists());
+    }
+
+    #[test]
+    fn command_runs_in_explicit_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let output = call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
+        assert!(output.to_lowercase().contains("project"));
+    }
 }
 
 struct SidecarDaemon {

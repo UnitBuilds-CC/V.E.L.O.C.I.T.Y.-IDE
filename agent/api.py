@@ -88,12 +88,14 @@ def _mark_exhausted(n: int) -> None:
 
 
 def _pick_account(accounts: list[dict], state: dict) -> dict | None:
-    """Return the first non-exhausted account, or None if all are spent."""
+    """Return a non-exhausted account, rotating/load-balancing among them to prevent 429 rate limiting."""
     exhausted_ids = set(state.keys())
-    for acct in accounts:
-        if str(acct["n"]) not in exhausted_ids:
-            return acct
-    return None
+    available = [a for a in accounts if str(a["n"]) not in exhausted_ids]
+    if not available:
+        return None
+    import time
+    idx = int(time.time() * 1000) % len(available)
+    return available[idx]
 
 
 def current_profile() -> str:

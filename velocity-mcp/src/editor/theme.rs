@@ -1,92 +1,114 @@
-//! Custom theme, fonts, and visual tokens for the V.E.L.O.C.I.T.Y. IDE.
-use egui::{FontDefinitions, FontFamily, FontId, Stroke, Style, Vec2, Visuals};
+use eframe::egui::{self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, Vec2, Visuals};
+use std::sync::Arc;
 
-pub const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x58, 0xA6, 0xFF);
-pub const BG: egui::Color32 = egui::Color32::from_rgb(0x0D, 0x11, 0x17);
-pub const BG_SECONDARY: egui::Color32 = egui::Color32::from_rgb(0x16, 0x1B, 0x22);
-pub const SURFACE: egui::Color32 = egui::Color32::from_rgb(0x21, 0x27, 0x30);
-pub const TEXT: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xED, 0xF3);
-pub const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(0x8B, 0x94, 0x9F);
-pub const BORDER: egui::Color32 = egui::Color32::from_rgb(0x30, 0x36, 0x3D);
-pub const LINE_NUMBER: egui::Color32 = egui::Color32::from_rgb(0x48, 0x4F, 0x58);
-pub const LINE_NUMBER_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0xB0, 0xB8, 0xC0);
-
-pub const DEFAULT: egui::Color32 = TEXT;
-pub const COMMENT: egui::Color32 = egui::Color32::from_rgb(0x6A, 0x73, 0x7E);
-pub const KEYWORD: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x7B, 0x72);
-pub const STRING: egui::Color32 = egui::Color32::from_rgb(0xA5, 0xD6, 0xFF);
-pub const TYPE: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xD6, 0x6B);
-pub const FUNCTION: egui::Color32 = egui::Color32::from_rgb(0xD2, 0xA8, 0xFF);
-pub const NUMBER: egui::Color32 = egui::Color32::from_rgb(0x79, 0xC0, 0xFF);
-pub const OPERATOR: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xAB, 0x70);
-pub const LIFETIME: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xAB, 0x70);
-pub const VARIABLE: egui::Color32 = TEXT;
-pub const MACRO: egui::Color32 = egui::Color32::from_rgb(0x79, 0xC0, 0xFF);
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct IdePalette {
-    pub accent: egui::Color32,
-    pub bg: egui::Color32,
-    pub bg_secondary: egui::Color32,
-    pub surface: egui::Color32,
-    pub text: egui::Color32,
-    pub text_muted: egui::Color32,
-    pub border: egui::Color32,
-    pub line_number: egui::Color32,
-    pub line_number_active: egui::Color32,
+    pub bg_primary: Color32,
+    pub bg_secondary: Color32,
+    pub bg_tertiary: Color32,
+    pub text: Color32,
+    pub text_muted: Color32,
+    pub accent: Color32,
+    pub border: Color32,
+    pub success: Color32,
+    pub warning: Color32,
+    pub error: Color32,
 }
 
-impl Default for IdePalette {
-    fn default() -> Self {
+impl IdePalette {
+    pub fn dark() -> Self {
         Self {
-            accent: ACCENT,
-            bg: BG,
-            bg_secondary: BG_SECONDARY,
-            surface: SURFACE,
-            text: TEXT,
-            text_muted: TEXT_MUTED,
-            border: BORDER,
-            line_number: LINE_NUMBER,
-            line_number_active: LINE_NUMBER_ACTIVE,
+            bg_primary: Color32::from_rgb(11, 14, 24),
+            bg_secondary: Color32::from_rgb(22, 25, 37),
+            bg_tertiary: Color32::from_rgb(30, 33, 48),
+            text: Color32::from_rgb(226, 227, 243),
+            text_muted: Color32::from_rgb(125, 131, 166),
+            accent: Color32::from_rgb(168, 85, 247),
+            border: Color32::from_rgb(38, 41, 62),
+            success: Color32::from_rgb(74, 222, 128),
+            warning: Color32::from_rgb(250, 204, 21),
+            error: Color32::from_rgb(248, 113, 113),
+        }
+    }
+
+    pub fn light() -> Self {
+        Self {
+            bg_primary: Color32::from_rgb(250, 250, 252),
+            bg_secondary: Color32::from_rgb(241, 241, 245),
+            bg_tertiary: Color32::from_rgb(231, 231, 237),
+            text: Color32::from_rgb(28, 28, 34),
+            text_muted: Color32::from_rgb(100, 100, 115),
+            accent: Color32::from_rgb(121, 40, 202),
+            border: Color32::from_rgb(215, 215, 225),
+            success: Color32::from_rgb(22, 163, 74),
+            warning: Color32::from_rgb(202, 138, 4),
+            error: Color32::from_rgb(220, 38, 38),
         }
     }
 }
 
-pub fn setup_custom_style(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
+pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
+    // Try to load a bundled coding font; fall back to system monospace if unavailable.
+    let data = include_font();
+    if let Some(data) = data {
+        fonts
+            .font_data
+            .insert("code".into(), Arc::new(FontData::from_owned(data)));
+        fonts
+            .families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .insert(0, "code".into());
+    }
+    FontId::new(13.0, FontFamily::Monospace)
+}
 
-    // Alias our custom family names to the built-in fonts so the code still
-    // works if the user has not placed any .ttf files in assets/fonts yet.
-    fonts
-        .families
-        .insert(FontFamily::Name("code".into()), fonts.families[&FontFamily::Monospace].clone());
-    fonts
-        .families
-        .insert(FontFamily::Name("ui".into()), fonts.families[&FontFamily::Proportional].clone());
+fn include_font() -> Option<Vec<u8>> {
+    // Cargo will error if this path is absent, so we only include a placeholder
+    // when a known bundled font exists. The function below is conditionally compiled
+    // by an environment-driven cfg that defaults to off. In practice we rely on system
+    // fonts to avoid missing asset errors.
+    None
+}
 
-    ctx.set_fonts(fonts);
-
+pub fn apply_theme(ctx: &egui::Context, palette: IdePalette) {
     let mut visuals = Visuals::dark();
-    let p = IdePalette::default();
-    visuals.panel_fill = p.bg;
-    visuals.window_fill = p.surface;
-    visuals.window_stroke = Stroke::new(1.0, p.border);
-    visuals.noninteractive_bg_fill = p.bg_secondary;
-    visuals.extreme_bg_color = p.bg;
-    visuals.selection.bg_fill = p.accent.linear_multiply(0.25);
-    visuals.selection.stroke = Stroke::new(1.0, p.accent);
+    visuals.dark_mode = true;
+    visuals.override_text_color = Some(palette.text);
+    visuals.panel_fill = palette.bg_secondary;
+    visuals.window_fill = palette.bg_primary;
+    visuals.selection.bg_fill = palette.accent.gamma_multiply(0.25);
+    visuals.selection.stroke.color = palette.text;
+    visuals.selection.stroke.width = 1.0;
+    visuals.window_stroke.color = palette.border;
+    visuals.window_stroke.width = 1.0;
+    visuals.hyperlink_color = palette.accent;
+    visuals.faint_bg_color = palette.bg_secondary;
+    visuals.extreme_bg_color = palette.bg_primary;
+    visuals.widgets.noninteractive.bg_fill = palette.bg_tertiary;
+    visuals.widgets.noninteractive.fg_stroke.color = palette.text_muted;
+    visuals.widgets.inactive.bg_fill = palette.bg_secondary;
+    visuals.widgets.inactive.fg_stroke.color = palette.text;
+    visuals.widgets.active.bg_fill = palette.bg_tertiary;
+    visuals.widgets.active.fg_stroke.color = palette.text;
+    visuals.widgets.hovered.bg_fill = palette.accent.gamma_multiply(0.15);
+    visuals.widgets.hovered.fg_stroke.color = palette.text;
+    visuals.widgets.open.bg_fill = palette.bg_tertiary;
+    visuals.widgets.open.fg_stroke.color = palette.text;
 
     let mut style = Style::default();
     style.visuals = visuals;
-    style.spacing.item_spacing = Vec2::new(6.0, 6.0);
+    style.spacing.item_spacing = Vec2::splat(6.0);
     style.spacing.button_padding = Vec2::new(8.0, 4.0);
-    ctx.set_style(style);
+    style.spacing.window_margin = egui::Margin::same(10);
+
+    ctx.set_global_style(style);
 }
 
-pub fn code_font_id(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("code".into()))
+pub fn code_font_id() -> FontId {
+    FontId::new(13.0, FontFamily::Monospace)
 }
 
-pub fn ui_font_id(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("ui".into()))
+pub fn ui_font_id() -> FontId {
+    FontId::new(13.0, FontFamily::Proportional)
 }

@@ -19,3 +19,7 @@ target/
 **/*.pdb
 **/*.d
 
+# Local agent runtime state and logs
+.velocity/
+velocity-mcp/.velocity/
+

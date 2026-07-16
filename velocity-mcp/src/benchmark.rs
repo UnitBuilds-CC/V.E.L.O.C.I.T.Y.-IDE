@@ -2,7 +2,7 @@ use std::time::Instant;
 use std::hint::black_box;
 use crate::protocol::nmcp_binary::NmcpBinaryFrame;
 use crate::ipc::shmem::SharedMemoryBuffer;
-use crate::compiler::driver::{VulkanDriver, VulkanGemv, VulkanQwenLayer, VulkanBitNetLayer, VulkanNdaBitNetLayer};
+use crate::compiler::driver::{VulkanDriver, VulkanQwenLayer, VulkanBitNetLayer, VulkanNdaBitNetLayer};
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -446,6 +446,13 @@ unsafe fn gemv_nda_sse2(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+unsafe fn gemv_nda_sse2(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32], weights_active: &[u32], weights_pos: &[u32], outputs: &mut [i32]) {
+    // stub for completeness; on x86_64 only the version above is used
+}
+
+#[cfg(not(target_arch = "x86_64"))]
 fn gemv_nda_scalar(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32], weights_active: &[u32], weights_pos: &[u32], outputs: &mut [i32]) {
     let num_col_groups_128 = k / 128;
     for row in 0..n {

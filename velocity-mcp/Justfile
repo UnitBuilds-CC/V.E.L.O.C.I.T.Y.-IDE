@@ -1,0 +1,40 @@
+# Justfile for V.E.L.O.C.I.T.Y.
+# Install `just` from https://github.com/casey/just
+
+set shell := ["sh", "-c"]
+
+# Default: run everything
+_default:
+    @just --list
+
+# Fast typecheck
+check:
+    cargo check --all-targets
+
+# Run tests
+test:
+    cargo test
+
+# Static analysis
+clippy:
+    cargo clippy -- -D warnings
+
+# Format code
+fmt:
+    cargo fmt
+
+# Run the IDE
+run:
+    cargo run -- --editor
+
+# Build release binary
+release:
+    cargo build --release
+
+# Validate current state (used by orchestrator)
+validate:
+    cargo check --all-targets && cargo test && cargo clippy -- -D warnings
+
+# Generate structured diagnostics JSON
+diag:
+    python3 scripts/check.py
