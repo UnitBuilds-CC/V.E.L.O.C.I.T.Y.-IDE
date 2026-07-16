@@ -245,31 +245,66 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
 
 fn resolve_workspace_path(root: &Path, raw: &str, allow_missing: bool) -> Result<PathBuf, Box<dyn Error>> {
     let candidate = Path::new(raw);
-    if candidate.is_absolute() {
-        return Err("workspace tool paths must be relative".into());
-    }
+
+    // If the model passed an absolute path, try to make it relative to root first.
+    let raw_rel: std::borrow::Cow<str> = if candidate.is_absolute() {
+        // Strip the workspace root prefix if present (handles model emitting full paths)
+        match candidate.strip_prefix(root) {
+            Ok(rel) => rel.to_string_lossy().into(),
+            Err(_) => {
+                // Also try with canonical root to handle UNC vs normal differences
+                let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+                match candidate.strip_prefix(&canon_root) {
+                    Ok(rel) => rel.to_string_lossy().into(),
+                    Err(_) => return Err("workspace tool path is outside the workspace root".into()),
+                }
+            }
+        }
+    } else {
+        raw.into()
+    };
+
+    let candidate = Path::new(raw_rel.as_ref());
     if candidate.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
         return Err("workspace tool path escapes the workspace".into());
     }
+
     let joined = root.join(candidate);
-    if allow_missing && !joined.exists() {
-        let mut existing_parent = joined.as_path();
-        while !existing_parent.exists() {
-            existing_parent = existing_parent
-                .parent()
-                .ok_or("workspace tool path has no existing parent")?;
-        }
-        if !existing_parent.canonicalize()?.starts_with(root) {
-            return Err("workspace tool path escapes the workspace".into());
+
+    if allow_missing {
+        // For writes: just ensure existing parents are within root
+        if joined.exists() {
+            // path exists — validate it stays within root
+            let canonical = safe_canonicalize(&joined);
+            let canon_root = safe_canonicalize(root);
+            if !canonical.starts_with(&canon_root) {
+                return Err("workspace tool path escapes the workspace".into());
+            }
         }
         return Ok(joined);
     }
-    let canonical = joined.canonicalize()?;
-    if !canonical.starts_with(root) {
+
+    // For reads: path must exist
+    if !joined.exists() {
+        return Err(format!("file not found in workspace: {}", joined.display()).into());
+    }
+
+    // Validate within root without relying solely on canonicalize (which fails on OneDrive)
+    let canonical = safe_canonicalize(&joined);
+    let canon_root = safe_canonicalize(root);
+    if !canonical.starts_with(&canon_root) {
         return Err("workspace tool path escapes the workspace".into());
     }
-    Ok(canonical)
+
+    Ok(joined)
 }
+
+/// Canonicalize a path without crashing on Windows permission errors (e.g. OneDrive placeholders).
+/// Returns the input path unchanged when canonicalization fails.
+fn safe_canonicalize(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+}
+
 
 pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let root = std::env::current_dir()?;

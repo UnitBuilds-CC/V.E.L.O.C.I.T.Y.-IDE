@@ -115,7 +115,11 @@ fn infer_model_info(id: String, item: &Value) -> Option<ModelInfo> {
         && !supports_tools;
     let supports_thinking = lower.contains("thinking")
         || lower.contains("reasoning")
-        || lower.contains("kimi-k2");
+        || lower.contains("kimi-k2")
+        || lower.contains("deepseek-r1")
+        || lower.contains("o1-")
+        || lower.contains("o3-")
+        || lower.contains("qwq");
     Some(ModelInfo {
         label: id.rsplit('/').next().unwrap_or(&id).to_string(),
         id,
@@ -217,7 +221,13 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
     }
     let name = item["name"].as_str().unwrap_or(&id).to_string();
     let label = name.clone();
-    let supports_thinking = lower.contains("think") || lower.contains("reason");
+    let supports_thinking = lower.contains("think")
+        || lower.contains("reason")
+        || lower.contains("kimi-k2")
+        || lower.contains("deepseek-r1")
+        || lower.contains("qwq")
+        || lower.contains("/o1")
+        || lower.contains("/o3");
     
     // Disable native tools for all OpenRouter models. This forces them to use our
     // highly reliable, pattern-matched inline tool calling system. This bypasses
@@ -292,12 +302,19 @@ fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
 }
 
 fn default_model_info(id: &str) -> ModelInfo {
+    let lower = id.to_lowercase();
     infer_model_info(id.to_string(), &Value::Null).unwrap_or(ModelInfo {
         id: id.to_string(),
         label: id.rsplit('/').next().unwrap_or(id).to_string(),
         api_style: ApiStyle::OpenAiChat,
         supports_tools: false,
-        supports_thinking: id.to_lowercase().contains("kimi-k2"),
+        supports_thinking: lower.contains("think")
+            || lower.contains("reason")
+            || lower.contains("kimi-k2")
+            || lower.contains("deepseek-r1")
+            || lower.contains("qwq")
+            || lower.contains("o1-")
+            || lower.contains("o3-"),
     })
 }
 
@@ -384,6 +401,7 @@ fn build_request(
     messages: &[ChatMessage],
     tools: &[Value],
     thinking: bool,
+    provider: AiProvider,
 ) -> Value {
     let mut request = json!({"model": model, "stream": true});
     match profile.api_style {
@@ -397,8 +415,18 @@ fn build_request(
             }
         }
     }
-    if profile.supports_thinking {
-        request["thinking"] = json!(thinking);
+    if profile.supports_thinking && thinking {
+        match provider {
+            AiProvider::CloudflareWorkersAi => {
+                request["thinking"] = json!(true);
+            }
+            AiProvider::OpenRouter => {
+                request["reasoning"] = json!({
+                    "effort": "high",
+                    "exclude": false
+                });
+            }
+        }
     }
     request
 }
@@ -1035,7 +1063,7 @@ fn run_agent_reasoning_loop(
 
         let compressed_history = compress_history(message_history, profile.supports_tools);
 
-        let request_body = build_request(profile, model, &compressed_history, &cf_tools, thinking);
+        let request_body = build_request(profile, model, &compressed_history, &cf_tools, thinking, provider);
         let _ = std::fs::create_dir_all(workspace_root.join(".velocity"));
         let _ = std::fs::write(workspace_root.join(".velocity").join("last_request.json"), serde_json::to_string_pretty(&request_body).unwrap_or_default());
 
@@ -1139,6 +1167,7 @@ fn run_agent_reasoning_loop(
         let mut line_buf = String::new();
 
         let mut assistant_content = String::new();
+        let mut reasoning_content = String::new();
         let mut accumulated_tools: Vec<ToolCallAccumulator> = Vec::new();
 
         // ── Streaming display: suppress <tool_call> blocks regardless of profile ──
@@ -1167,13 +1196,12 @@ fn run_agent_reasoning_loop(
                                 if let Some(first_choice) = choices.get(0) {
                                     let delta = &first_choice["delta"];
 
-                                    // Reasoning tokens — always forward immediately
+                                    // Reasoning tokens — always forward immediately to reasoning bubble
                                     if let Some(r) = delta["reasoning_content"].as_str()
                                         .or_else(|| delta["reasoning"].as_str())
                                     {
-                                        assistant_content.push_str(r);
-                                        streamed_len += r.len();
-                                        ui_tx.send(AgentToUiMessage::OutputToken(r.to_string())).ok();
+                                        reasoning_content.push_str(r);
+                                        ui_tx.send(AgentToUiMessage::ThoughtToken(r.to_string())).ok();
                                     }
 
                                     // Content tokens — suppress <tool_call> blocks
@@ -1427,16 +1455,23 @@ fn run_agent_reasoning_loop(
             None
         };
 
+        // Prepends reasoning content wrapped in <think> tags if any was received, matching standard format
+        let final_saved_content = if !reasoning_content.is_empty() {
+            format!("<think>\n{}\n</think>\n{}", reasoning_content, assistant_content)
+        } else {
+            assistant_content.clone()
+        };
+
         message_history.push(ChatMessage {
             role: "assistant".to_string(),
-            content: assistant_content.clone(),
+            content: final_saved_content,
             name: None,
             tool_call_id: None,
             tool_calls: final_tool_calls_value.clone(),
         });
 
         if let Some(account) = used_account {
-            let tokens_out = estimate_tokens(&assistant_content);
+            let tokens_out = estimate_tokens(&assistant_content) + estimate_tokens(&reasoning_content);
             usage_tracker.record_request(
                 account.n,
                 &account.label,
