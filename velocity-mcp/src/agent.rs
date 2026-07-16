@@ -1274,7 +1274,10 @@ fn run_agent_reasoning_loop(
                                                     suppressing = true;
                                                 } else {
                                                     let total = ac.len();
-                                                    let safe_end = total.saturating_sub(14); // len("[Calling tool") + 1
+                                                    let mut safe_end = total.saturating_sub(14); // len("[Calling tool") + 1
+                                                    while safe_end > streamed_len && !ac.is_char_boundary(safe_end) {
+                                                        safe_end -= 1;
+                                                    }
                                                     if safe_end > streamed_len {
                                                         let chunk = &ac[streamed_len..safe_end];
                                                         ui_tx.send(AgentToUiMessage::OutputToken(chunk.to_string())).ok();
@@ -1330,8 +1333,13 @@ fn run_agent_reasoning_loop(
         }
 
         // Flush any remaining clean content after stream ends
-        if !suppressing && streamed_len < assistant_content.len() {
-            let tail = &assistant_content[streamed_len..];
+        if !suppressing && streamed_len <= assistant_content.len() {
+            // Clamp streamed_len to a valid char boundary (guards against multibyte chars)
+            let mut flush_start = streamed_len;
+            while flush_start > 0 && !assistant_content.is_char_boundary(flush_start) {
+                flush_start -= 1;
+            }
+            let tail = &assistant_content[flush_start..];
             if !tail.is_empty() {
                 ui_tx.send(AgentToUiMessage::OutputToken(tail.to_string())).ok();
             }
