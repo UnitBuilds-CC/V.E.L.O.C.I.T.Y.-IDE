@@ -314,13 +314,12 @@ fn render_tool_controls(
     palette: IdePalette,
 ) {
     ui.horizontal(|ui| {
-        ui.add_enabled(
-            state.tools_supported,
-            egui::Checkbox::new(&mut state.auto_approve, "Auto-approve tools"),
-        );
+        // Always allow auto-approve — inline tool calling works for all models
+        // regardless of whether the model supports native OpenAI tool_calls.
+        ui.checkbox(&mut state.auto_approve, "Auto-approve tools");
         if !state.tools_supported {
             ui.label(
-                egui::RichText::new("tools unavailable for this model")
+                egui::RichText::new("(inline mode)")
                     .small()
                     .color(palette.text_muted),
             );

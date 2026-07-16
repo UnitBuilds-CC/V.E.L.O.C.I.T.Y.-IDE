@@ -217,20 +217,18 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
     }
     let name = item["name"].as_str().unwrap_or(&id).to_string();
     let label = name.clone();
-    let description = item["description"].as_str().unwrap_or("").to_lowercase();
-    let supports_tools = description.contains("function calling")
-        || description.contains("tool calling")
-        || lower.contains("tool")
-        || lower.contains("function");
     let supports_thinking = lower.contains("think") || lower.contains("reason");
+    
+    // Disable native tools for all OpenRouter models. This forces them to use our
+    // highly reliable, pattern-matched inline tool calling system. This bypasses
+    // all provider-specific unmarshalling, schema-mismatch, and empty-role errors
+    // on OpenRouter.
+    let supports_tools = false;
+
     Some(ModelInfo {
         label,
         id,
-        api_style: if supports_tools {
-            ApiStyle::OpenAiTools
-        } else {
-            ApiStyle::OpenAiChat
-        },
+        api_style: ApiStyle::OpenAiChat,
         supports_tools,
         supports_thinking,
     })
@@ -428,7 +426,7 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
     // History loaded from chatlogs.nda may have messages written by buggy prior
     // sessions with empty or missing roles.  Every provider rejects these.
     const VALID_ROLES: &[&str] = &["system", "user", "assistant", "tool", "function", "developer"];
-    let messages: Vec<ChatMessage> = messages.iter().filter_map(|m| {
+    let mut messages: Vec<ChatMessage> = messages.iter().filter_map(|m| {
         if m.role.trim().is_empty() {
             // Recover if content is meaningful, otherwise drop
             if !m.content.trim().is_empty() {
@@ -447,6 +445,22 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
             Some(m.clone())
         }
     }).collect();
+
+    // Dynamically update the system prompt in history to include/exclude the inline
+    // tool descriptions depending on the active model's tool capability mode.
+    // This handles cases where history was loaded from disk under one model but
+    // is now executing under another.
+    if let Some(sys_msg) = messages.iter_mut().find(|m| m.role == "system") {
+        if sys_msg.content.starts_with("You are Antigravity") {
+            let clean_base = "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. You have access to local workspace files and execution sandboxes via tools. Help the user program the workspace. Always output concise, correct, and high-quality responses.";
+            if !supports_tools {
+                sys_msg.content = format!("{}{}", clean_base, build_inline_tool_docs());
+            } else {
+                sys_msg.content = clean_base.to_string();
+            }
+        }
+    }
+
     let messages = messages.as_slice();
 
     // ── Step 1: per-message compression + tool flattening ────────────────────
@@ -765,11 +779,15 @@ pub fn run_agent_thread(
             history
         }
         None => {
+            // Build system prompt: include inline tool docs only for providers
+            // that cannot do native tool_calls (OpenRouter inline mode).
+            let use_inline_tools = provider == AiProvider::OpenRouter
+                || !selected_profile.supports_tools;
             let sys = format!(
                 "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
                 You have access to local workspace files and execution sandboxes via tools. \
                 Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
-                build_inline_tool_docs()
+                if use_inline_tools { build_inline_tool_docs() } else { String::new() }
             );
             vec![ChatMessage {
                 role: "system".to_string(),
@@ -870,13 +888,15 @@ pub fn run_agent_thread(
                 if new_root.is_dir() {
                     write_sitemap_nda(&new_root);
                     message_history = load_chatlogs_nda(&new_root).unwrap_or_else(|| {
+                        let use_inline = provider == AiProvider::OpenRouter
+                            || !selected_profile.supports_tools;
                         vec![ChatMessage {
                             role: "system".to_string(),
                             content: format!(
                                 "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
                                 You have access to local workspace files and execution sandboxes via tools. \
                                 Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
-                                build_inline_tool_docs()
+                                if use_inline { build_inline_tool_docs() } else { String::new() }
                             ),
                             name: None,
                             tool_call_id: None,
@@ -1359,7 +1379,7 @@ fn run_agent_reasoning_loop(
                     let args_marker = " with arguments '";
                     if let Some(args_start_rel) = after[name_end..].find(args_marker) {
                         let args_start = name_end + args_start_rel + args_marker.len();
-                        // args end at the closing ']' (search backwards from next bracket)
+                        // args end at the closing ']
                         let args_section = &after[args_start..];
                         let args_end = args_section.find("']").unwrap_or(args_section.len());
                         let args_str = &args_section[..args_end];
@@ -1371,15 +1391,18 @@ fn run_agent_reasoning_loop(
                             arguments: serde_json::to_string(&arguments)
                                 .unwrap_or_else(|_| "{}".to_string()),
                         });
-                        let consumed = start + marker.len() + args_start + args_end + "']".len();
-                        rest2 = &rest2[consumed.min(rest2.len())..];
+                        // Advance past the full match: marker + after[..args_start + args_end + "']".len()]
+                        let consumed_in_after = args_start + args_end + "']".len();
+                        rest2 = &rest2[start + marker.len() + consumed_in_after.min(after.len())..];
                     } else {
-                        // No args section found — keep remainder
+                        // No args section found — keep remainder as-is
                         clean2.push_str(&rest2[start..]);
+                        rest2 = &rest2[rest2.len()..];
                         break;
                     }
                 } else {
                     clean2.push_str(&rest2[start..]);
+                    rest2 = &rest2[rest2.len()..];
                     break;
                 }
             }

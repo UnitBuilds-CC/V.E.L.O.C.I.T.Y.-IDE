@@ -641,35 +641,46 @@ impl VelocityApp {
                     }
                     self.chat_history.push_str(&token);
                     self.status_message = token.chars().take(80).collect();
+                    self.chat.append_agent_token(&token);
                 }
-                AgentToUiMessage::ThoughtToken(_) => {}
+                AgentToUiMessage::ThoughtToken(token) => {
+                    self.chat.append_thought_token(&token);
+                }
                 AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
                     self.command_output.push_str(&format!("[tool-approval-request] {}: {:?}\n", tool_name, arguments));
-                    if self.auto_approve {
+                    let should_auto = self.chat.auto_approve || self.auto_approve;
+                    if should_auto {
                         let _ = self.agent_tx.send(UiToAgentMessage::ApproveTool {
                             id,
                             tool_name,
                             arguments,
                         });
                     } else {
-                        self.pending_approvals.push((id, tool_name, arguments));
+                        self.pending_approvals.push((id.clone(), tool_name.clone(), arguments.clone()));
+                        self.chat.pending_approvals.push((id, tool_name, arguments));
                     }
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     self.command_output.push_str(&format!("[tool-start] {}\n", tool_name));
+                    self.status_message = format!("Running tool: {}", tool_name);
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
                     self.command_output
                         .push_str(&format!("[tool-finish] {}: {}\n", tool_name, result));
+                    self.status_message = format!("Tool done: {}", tool_name);
+                    self.chat.agent_active = true;
                 }
                 AgentToUiMessage::StatusUpdate(message) => {
                     if message.to_lowercase().contains("model catalog") {
                         self.models_loading = false;
+                        self.chat.models_loading = false;
                     }
                     self.status_message = message;
                 }
                 AgentToUiMessage::AgentFinished => {
                     self.status_message = "Agent finished".into();
+                    self.agent_active = false;
+                    self.chat.agent_active = false;
                 }
                 AgentToUiMessage::UpdateFileBuffer { path, content } => {
                     self.open_editor(Some(path.clone()));
@@ -684,10 +695,17 @@ impl VelocityApp {
                         self.thinking_supported = model.supports_thinking;
                         self.tools_supported = model.supports_tools;
                     }
-                    self.available_models = models;
-                    self.selected_model = selected;
+                    self.available_models = models.clone();
+                    self.selected_model = selected.clone();
                     self.thinking_enabled = thinking;
                     self.models_loading = false;
+                    // Sync chat panel state
+                    self.chat.available_models = models;
+                    self.chat.selected_model = selected;
+                    self.chat.thinking_enabled = thinking;
+                    self.chat.thinking_supported = self.thinking_supported;
+                    self.chat.tools_supported = self.tools_supported;
+                    self.chat.models_loading = false;
                 }
                 AgentToUiMessage::ProviderChanged(new_provider) => {
                     self.provider = new_provider;
@@ -697,11 +715,12 @@ impl VelocityApp {
                     self.usage_date = date;
                 }
                 AgentToUiMessage::ChatHistoryRestored(history) => {
-                    for (role, content) in history {
+                    for (role, content) in &history {
                         if content.trim().is_empty() { continue; }
                         let prefix = if role == "user" { "You: " } else { "Agent: " };
                         self.chat_history.push_str(&format!("\n{}{}\n", prefix, content));
                     }
+                    self.chat.restore_history(history);
                 }
             }
         }
