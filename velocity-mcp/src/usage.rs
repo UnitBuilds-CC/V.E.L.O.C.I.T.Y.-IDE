@@ -42,6 +42,14 @@ pub struct CloudflareAccount {
 }
 
 #[derive(Debug, Clone)]
+pub struct OpenRouterAccount {
+    pub n: u32,
+    pub token: String,
+    pub tier: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct AccountUsageView {
     pub n: u32,
     pub label: String,
@@ -226,10 +234,95 @@ impl UsageTracker {
         self.save();
     }
 
-    pub fn build_views(&mut self, accounts: &[CloudflareAccount]) -> Vec<AccountUsageView> {
+    pub fn ensure_or_account(&mut self, n: u32, label: &str, tier: &str) -> &mut AccountStats {
+        let key = format!("or_{n}");
+        let daily_limit = std::env::var(format!("OPENROUTER_ACCOUNT_{n}_DAILY_LIMIT"))
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50);
+
+        self.data.accounts.entry(key.clone()).or_insert_with(|| AccountStats {
+            label: label.to_string(),
+            tier: tier.to_string(),
+            requests: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            exhausted: false,
+            exhausted_at: None,
+            daily_limit,
+        });
+        let stats = self.data.accounts.get_mut(&key).unwrap();
+        if stats.label.is_empty() {
+            stats.label = label.to_string();
+        }
+        if stats.tier.is_empty() {
+            stats.tier = tier.to_string();
+        }
+        stats
+    }
+
+    pub fn is_or_exhausted(&self, n: u32) -> bool {
+        self.data
+            .accounts
+            .get(&format!("or_{n}"))
+            .map(|s| s.exhausted)
+            .unwrap_or(false)
+    }
+
+    pub fn mark_or_exhausted(&mut self, n: u32, label: &str, tier: &str) {
+        let exhausted_at = format!("{}Z", chrono_now_iso());
+        {
+            let stats = self.ensure_or_account(n, label, tier);
+            stats.exhausted = true;
+            stats.exhausted_at = Some(exhausted_at.clone());
+        }
+        self.save();
+    }
+
+    pub fn record_or_request(
+        &mut self,
+        n: u32,
+        label: &str,
+        tier: &str,
+        tokens_in: u64,
+        tokens_out: u64,
+    ) {
+        {
+            let stats = self.ensure_or_account(n, label, tier);
+            stats.requests += 1;
+            stats.tokens_in += tokens_in;
+            stats.tokens_out += tokens_out;
+        }
+        self.save();
+    }
+
+    pub fn build_views(
+        &mut self,
+        accounts: &[CloudflareAccount],
+        or_accounts: &[OpenRouterAccount],
+    ) -> Vec<AccountUsageView> {
         let mut views = Vec::new();
         for acct in accounts {
             let stats = self.ensure_account(acct.n, &acct.label, &acct.tier);
+            let remaining = if stats.exhausted {
+                0
+            } else {
+                stats.daily_limit.saturating_sub(stats.requests)
+            };
+            views.push(AccountUsageView {
+                n: acct.n,
+                label: stats.label.clone(),
+                tier: stats.tier.clone(),
+                requests: stats.requests,
+                tokens_in: stats.tokens_in,
+                tokens_out: stats.tokens_out,
+                daily_limit: stats.daily_limit,
+                remaining,
+                exhausted: stats.exhausted,
+            });
+        }
+        for acct in or_accounts {
+            let stats = self.ensure_or_account(acct.n, &acct.label, &acct.tier);
             let remaining = if stats.exhausted {
                 0
             } else {
@@ -270,6 +363,22 @@ impl UsageTracker {
             % available.len();
         Some(available[idx])
     }
+
+    pub fn pick_or_account<'a>(&self, accounts: &'a [OpenRouterAccount]) -> Option<&'a OpenRouterAccount> {
+        let available: Vec<&OpenRouterAccount> = accounts
+            .iter()
+            .filter(|a| !self.is_or_exhausted(a.n))
+            .collect();
+        if available.is_empty() {
+            return None;
+        }
+        let idx = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as usize)
+            .unwrap_or(0)
+            % available.len();
+        Some(available[idx])
+    }
 }
 
 pub fn load_accounts_from_env() -> Vec<CloudflareAccount> {
@@ -299,6 +408,41 @@ pub fn load_accounts_from_env() -> Vec<CloudflareAccount> {
                 token,
                 tier: "free".into(),
                 label: "default".into(),
+            });
+        }
+    }
+    accounts.sort_by(|a, b| {
+        let tier_ord = |t: &str| if t == "free" { 0 } else { 1 };
+        (tier_ord(&a.tier), a.n).cmp(&(tier_ord(&b.tier), b.n))
+    });
+    accounts
+}
+
+pub fn load_openrouter_accounts_from_env() -> Vec<OpenRouterAccount> {
+    dotenvy::dotenv().ok();
+    let mut accounts = Vec::new();
+    for i in 1..=30u32 {
+        let key_var = format!("OPENROUTER_ACCOUNT_{i}_KEY");
+        if let Ok(key) = std::env::var(&key_var) {
+            let label = std::env::var(format!("OPENROUTER_ACCOUNT_{i}_LABEL"))
+                .unwrap_or_else(|_| format!("OR-Account-{i}"));
+            let tier = std::env::var(format!("OPENROUTER_ACCOUNT_{i}_TIER"))
+                .unwrap_or_else(|_| "free".to_string());
+            accounts.push(OpenRouterAccount {
+                n: i,
+                token: key,
+                tier: tier.to_lowercase(),
+                label,
+            });
+        }
+    }
+    if accounts.is_empty() {
+        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+            accounts.push(OpenRouterAccount {
+                n: 1,
+                token: key,
+                tier: "free".to_string(),
+                label: "OR-Default".to_string(),
             });
         }
     }

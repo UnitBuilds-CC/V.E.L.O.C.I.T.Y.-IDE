@@ -153,10 +153,15 @@ struct ToolCallAccumulator {
     arguments: String,
 }
 
-use crate::usage::{load_accounts_from_env, CloudflareAccount, UsageTracker};
+use crate::usage::{load_accounts_from_env, load_openrouter_accounts_from_env, CloudflareAccount, OpenRouterAccount, UsageTracker};
 
-fn send_usage_update(tracker: &mut UsageTracker, accounts: &[CloudflareAccount], ui_tx: &Sender<AgentToUiMessage>) {
-    let views = tracker.build_views(accounts);
+fn send_usage_update(
+    tracker: &mut UsageTracker,
+    accounts: &[CloudflareAccount],
+    or_accounts: &[OpenRouterAccount],
+    ui_tx: &Sender<AgentToUiMessage>,
+) {
+    let views = tracker.build_views(accounts, or_accounts);
     let date = tracker.current_date();
     ui_tx.send(AgentToUiMessage::AccountUsage { accounts: views, date }).ok();
 }
@@ -244,16 +249,47 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
     })
 }
 
-fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
-    let key = openrouter_api_key();
-    let response = ureq::get("https://openrouter.ai/api/v1/models")
-        .set("Authorization", &format!("Bearer {}", key))
-        .set("HTTP-Referer", "https://velocity-ide.local")
-        .set("X-Title", "Velocity Cognitive IDE")
-        .set("Accept", "application/json")
-        .call()
-        .map_err(|e| format!("OpenRouter model catalog request failed: {e}"))?;
-    let body: Value = response
+fn fetch_openrouter_models(or_accounts: &[OpenRouterAccount], usage_tracker: &UsageTracker) -> Result<Vec<ModelInfo>, String> {
+    let mut response = None;
+    let mut last_err = String::new();
+    
+    let start_idx = usage_tracker.pick_or_account(or_accounts)
+        .and_then(|picked| or_accounts.iter().position(|a| a.n == picked.n))
+        .unwrap_or(0);
+        
+    let loop_limit = or_accounts.len().max(1);
+    for idx in 0..loop_limit {
+        let current_key = if or_accounts.is_empty() {
+            openrouter_api_key()
+        } else {
+            let acct = &or_accounts[(start_idx + idx) % or_accounts.len()];
+            if usage_tracker.is_or_exhausted(acct.n) { continue; }
+            acct.token.clone()
+        };
+        
+        match ureq::get("https://openrouter.ai/api/v1/models")
+            .set("Authorization", &format!("Bearer {}", current_key))
+            .set("HTTP-Referer", "https://velocity-ide.local")
+            .set("X-Title", "Velocity Cognitive IDE")
+            .set("Accept", "application/json")
+            .call()
+        {
+            Ok(res) => {
+                response = Some(res);
+                break;
+            }
+            Err(e) => {
+                last_err = format!("OpenRouter model catalog request failed: {e}");
+            }
+        }
+    }
+    
+    let res_unwrapped = match response {
+        Some(r) => r,
+        None => return Err(if last_err.is_empty() { "No available OpenRouter accounts to fetch models.".to_string() } else { last_err }),
+    };
+
+    let body: Value = res_unwrapped
         .into_json()
         .map_err(|e| format!("OpenRouter model catalog response invalid: {e}"))?;
 
@@ -760,8 +796,9 @@ pub fn run_agent_thread(
     ui_tx: Sender<AgentToUiMessage>,
 ) {
     let accounts = load_accounts_from_env();
+    let or_accounts = load_openrouter_accounts_from_env();
     let mut usage_tracker = UsageTracker::new(&workspace_root);
-    send_usage_update(&mut usage_tracker, &accounts, &ui_tx);
+    send_usage_update(&mut usage_tracker, &accounts, &or_accounts, &ui_tx);
     let mut provider = match std::env::var("LLM_PROVIDER")
         .or_else(|_| std::env::var("AI_PROVIDER"))
         .map(|s| s.to_lowercase())
@@ -839,7 +876,7 @@ pub fn run_agent_thread(
             UiToAgentMessage::RefreshModels => {
                 let fetch_result = match provider {
                     AiProvider::CloudflareWorkersAi => fetch_model_catalog(&accounts),
-                    AiProvider::OpenRouter => fetch_openrouter_models(),
+                    AiProvider::OpenRouter => fetch_openrouter_models(&or_accounts, &usage_tracker),
                 };
                 match fetch_result {
                     Ok(models) => {
@@ -863,7 +900,7 @@ pub fn run_agent_thread(
                 };
             }
             UiToAgentMessage::RefreshUsage => {
-                send_usage_update(&mut usage_tracker, &accounts, &ui_tx);
+                send_usage_update(&mut usage_tracker, &accounts, &or_accounts, &ui_tx);
             }
             UiToAgentMessage::SetModel(selected) => {
                 if !selected.trim().is_empty() {
@@ -933,7 +970,7 @@ pub fn run_agent_thread(
                     });
                     workspace_root = new_root.clone();
                     usage_tracker = UsageTracker::new(&new_root);
-                    send_usage_update(&mut usage_tracker, &accounts, &ui_tx);
+                    send_usage_update(&mut usage_tracker, &accounts, &or_accounts, &ui_tx);
                     let restored: Vec<(String, String)> = message_history
                         .iter()
                         .filter(|m| m.role == "user" || m.role == "assistant")
@@ -957,6 +994,7 @@ pub fn run_agent_thread(
                 run_agent_reasoning_loop(
                     &workspace_root,
                     &accounts,
+                    &or_accounts,
                     &model,
                     &selected_profile,
                     provider,
@@ -1028,6 +1066,7 @@ fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String>
 fn run_agent_reasoning_loop(
     workspace_root: &PathBuf,
     accounts: &[CloudflareAccount],
+    or_accounts: &[OpenRouterAccount],
     model: &str,
     profile: &ModelInfo,
     provider: AiProvider,
@@ -1069,54 +1108,96 @@ fn run_agent_reasoning_loop(
 
         // --- Provider-forked API call ---
         let mut used_account: Option<&CloudflareAccount> = None;
+        let mut used_or_account: Option<&OpenRouterAccount> = None;
         let ureq_response = match provider {
             AiProvider::OpenRouter => {
-                let key = openrouter_api_key();
-                let mut final_res = None;
-                let max_attempts = 3;
-                let mut attempt = 0;
+                let start_idx = usage_tracker.pick_or_account(or_accounts)
+                    .and_then(|picked| or_accounts.iter().position(|a| a.n == picked.n))
+                    .unwrap_or(0);
                 
-                while attempt < max_attempts {
-                    attempt += 1;
-                    match ureq::post("https://openrouter.ai/api/v1/chat/completions")
-                        .set("Authorization", &format!("Bearer {}", key))
-                        .set("HTTP-Referer", "https://velocity-ide.local")
-                        .set("X-Title", "Velocity Cognitive IDE")
-                        .set("Content-Type", "application/json")
-                        .send_json(&request_body)
-                    {
-                        Ok(res) => {
-                            final_res = Some(res);
-                            break;
-                        }
-                        Err(ureq::Error::Status(429, resp)) => {
-                            if attempt < max_attempts {
-                                let wait_secs = attempt * 2;
-                                ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                    "OpenRouter rate limit (429). Retrying in {}s (Attempt {}/{})…",
-                                    wait_secs, attempt, max_attempts
-                                ))).ok();
-                                std::thread::sleep(std::time::Duration::from_secs(wait_secs));
-                            } else {
+                let mut final_res = None;
+                let loop_limit = or_accounts.len().max(1);
+                
+                for idx in 0..loop_limit {
+                    let mut active_acct = None;
+                    let current_key = if or_accounts.is_empty() {
+                        openrouter_api_key()
+                    } else {
+                        let acct = &or_accounts[(start_idx + idx) % or_accounts.len()];
+                        if usage_tracker.is_or_exhausted(acct.n) { continue; }
+                        active_acct = Some(acct);
+                        acct.token.clone()
+                    };
+
+                    let mut attempt = 0;
+                    let max_attempts = 3;
+                    let mut account_exhausted = false;
+
+                    while attempt < max_attempts {
+                        attempt += 1;
+                        match ureq::post("https://openrouter.ai/api/v1/chat/completions")
+                            .set("Authorization", &format!("Bearer {}", current_key))
+                            .set("HTTP-Referer", "https://velocity-ide.local")
+                            .set("X-Title", "Velocity Cognitive IDE")
+                            .set("Content-Type", "application/json")
+                            .send_json(&request_body)
+                        {
+                            Ok(res) => {
+                                used_or_account = active_acct;
+                                final_res = Some(res);
+                                break;
+                            }
+                            Err(ureq::Error::Status(429, resp)) => {
+                                let body = resp.into_string().unwrap_or_default();
+                                let body_lower = body.to_lowercase();
+                                if body_lower.contains("free-models-per-day") || body_lower.contains("quota") || body_lower.contains("credit") || body_lower.contains("limit exceeded") {
+                                    if let Some(acct) = active_acct {
+                                        usage_tracker.mark_or_exhausted(acct.n, &acct.label, &acct.tier);
+                                        send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
+                                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                                            "OpenRouter account '{}' quota exhausted — trying next…",
+                                            acct.label
+                                        ))).ok();
+                                    }
+                                    account_exhausted = true;
+                                    break;
+                                } else {
+                                    if attempt < max_attempts {
+                                        let wait_secs = attempt * 2;
+                                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                                            "OpenRouter rate limit (429) on '{}'. Retrying in {}s (Attempt {}/{})…",
+                                            active_acct.map(|a| a.label.as_str()).unwrap_or("default"),
+                                            wait_secs, attempt, max_attempts
+                                        ))).ok();
+                                        std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+                                    } else {
+                                        ui_tx.send(AgentToUiMessage::OutputToken(
+                                            format!("\n\nOpenRouter rate limit error (429): {}", body)
+                                        )).ok();
+                                    }
+                                }
+                            }
+                            Err(ureq::Error::Status(code, resp)) => {
                                 let body = resp.into_string().unwrap_or_default();
                                 ui_tx.send(AgentToUiMessage::OutputToken(
-                                    format!("\n\nOpenRouter rate limit error (429): {}", body)
+                                    format!("\n\nOpenRouter error ({}): {}", code, body)
                                 )).ok();
+                                break;
+                            }
+                            Err(e) => {
+                                ui_tx.send(AgentToUiMessage::OutputToken(
+                                    format!("\n\nOpenRouter connection error: {:?}", e)
+                                )).ok();
+                                break;
                             }
                         }
-                        Err(ureq::Error::Status(code, resp)) => {
-                            let body = resp.into_string().unwrap_or_default();
-                            ui_tx.send(AgentToUiMessage::OutputToken(
-                                format!("\n\nOpenRouter error ({}): {}", code, body)
-                            )).ok();
-                            break;
-                        }
-                        Err(e) => {
-                            ui_tx.send(AgentToUiMessage::OutputToken(
-                                format!("\n\nOpenRouter connection error: {:?}", e)
-                            )).ok();
-                            break;
-                        }
+                    }
+                    
+                    if final_res.is_some() {
+                        break;
+                    }
+                    if !account_exhausted {
+                        ui_tx.send(AgentToUiMessage::StatusUpdate("OpenRouter request failed, trying next account key…".to_string())).ok();
                     }
                 }
                 final_res
@@ -1154,7 +1235,7 @@ fn run_agent_reasoning_loop(
                             let body = resp.into_string().unwrap_or_default();
                             if is_quota_exhausted_error(&body) {
                                 usage_tracker.mark_exhausted(account.n, &account.label, &account.tier);
-                                send_usage_update(usage_tracker, accounts, ui_tx);
+                                send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
                                 ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
                                     "Account '{}' quota exhausted — trying next…",
                                     account.label
@@ -1513,14 +1594,36 @@ fn run_agent_reasoning_loop(
                 tokens_in,
                 tokens_out,
             );
-            send_usage_update(usage_tracker, accounts, ui_tx);
+            send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
             ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
                 "Using account: {} ({} req today)",
                 account.label,
                 usage_tracker
-                    .build_views(accounts)
+                    .build_views(accounts, or_accounts)
                     .iter()
-                    .find(|v| v.n == account.n)
+                    .find(|v| v.n == account.n && v.label == account.label)
+                    .map(|v| v.requests)
+                    .unwrap_or(0)
+            ))).ok();
+        }
+
+        if let Some(account) = used_or_account {
+            let tokens_out = estimate_tokens(&assistant_content) + estimate_tokens(&reasoning_content);
+            usage_tracker.record_or_request(
+                account.n,
+                &account.label,
+                &account.tier,
+                tokens_in,
+                tokens_out,
+            );
+            send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
+            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                "Using OpenRouter: {} ({} req today)",
+                account.label,
+                usage_tracker
+                    .build_views(accounts, or_accounts)
+                    .iter()
+                    .find(|v| v.label == account.label)
                     .map(|v| v.requests)
                     .unwrap_or(0)
             ))).ok();
@@ -1646,6 +1749,7 @@ fn run_agent_reasoning_loop(
                 run_agent_reasoning_loop(
                     workspace_root,
                     accounts,
+                    or_accounts,
                     model,
                     profile,
                     provider,
