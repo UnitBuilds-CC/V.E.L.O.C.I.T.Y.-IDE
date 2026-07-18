@@ -143,27 +143,10 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
     match name {
         "web_navigate" => {
             let url = arguments["url"].as_str().ok_or("url is required")?;
-            let concurrency = arguments["concurrency"].as_i64().unwrap_or(2);
-            let go_engine_path = root.join("browsing");
-            let output = Command::new("go")
-                .args(&[
-                    "run",
-                    "cmd/crawler_graph/main.go",
-                    "--url",
-                    url,
-                    "--concurrency",
-                    &concurrency.to_string(),
-                ])
-                .current_dir(&go_engine_path)
-                .env("SITEMAP_PATH", root.join(".velocity").join("site_map").to_string_lossy().as_ref())
-                .output();
-            match output {
-                Ok(out) => {
-                    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                    Ok(format!("Crawler finished.\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr))
-                }
-                Err(e) => Err(format!("Failed to execute crawler: {:?}", e).into())
+            let sitemap_path = root.join(".velocity").join("site_map");
+            match crate::editor::browser::crawl_and_sync_sitemap(url, &sitemap_path) {
+                Ok(res) => Ok(res),
+                Err(e) => Err(e.into()),
             }
         }
         "run_command" => {
@@ -505,6 +488,44 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_web_navigate_native_parser() {
+        use std::net::TcpListener;
+        use std::io::Write;
+        use velocity_ide::site_map::SiteMap;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::Read;
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+
+                let body = "<html><head><title>Egui Test</title></head><body><a href=\"/button\">Click Me</a></body></html>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let sitemap_path = temp.path().join("site_map");
+
+        let res = crate::editor::browser::crawl_and_sync_sitemap(&url, &sitemap_path).unwrap();
+        assert!(res.contains("Egui Test"));
+        assert!(res.contains("Interactive Elements: 1"));
+
+        let sm = SiteMap::open(&sitemap_path, 0).unwrap();
+        assert!(sm.len() > 0);
     }
 }
 

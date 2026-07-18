@@ -911,6 +911,47 @@ impl SiteMap {
         SiteMapStats { kv, nodes, programs, total_bytes, root: self.root }
     }
 
+    /// Register a string in the site map's dictionary.json.
+    /// Returns the string's u64 hash.
+    pub fn register_string(&self, s: &str) -> Result<u64> {
+        let hash = self.hash_string(s);
+        let dict_path = self.base.join("dictionary.json");
+        
+        let mut dict = if dict_path.exists() {
+            let raw = fs::read_to_string(&dict_path)?;
+            serde_json::from_str::<HashMap<String, String>>(&raw).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
+        let key = format!("{:016x}", hash);
+        if !dict.contains_key(&key) {
+            dict.insert(key, s.to_string());
+            let updated = serde_json::to_string_pretty(&dict)?;
+            fs::write(&dict_path, updated)?;
+        }
+        Ok(hash)
+    }
+
+    /// Resolve a u64 hash back to its raw string value, if present in the dictionary.
+    pub fn resolve_string(&self, hash: u64) -> Option<String> {
+        let dict_path = self.base.join("dictionary.json");
+        if !dict_path.exists() {
+            return None;
+        }
+        let raw = fs::read_to_string(dict_path).ok()?;
+        let dict = serde_json::from_str::<HashMap<String, String>>(&raw).ok()?;
+        let key = format!("{:016x}", hash);
+        dict.get(&key).cloned()
+    }
+
+    pub fn hash_string(&self, s: &str) -> u64 {
+        let mut hasher = Sha256::new();
+        hasher.update(s.as_bytes());
+        let digest = hasher.finalize();
+        u64::from_le_bytes(digest[0..8].try_into().unwrap())
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     fn recompute_root(&mut self) {
