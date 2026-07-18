@@ -89,6 +89,8 @@ func auditPage(target string) PageData {
 	var title string
 	_ = chromedp.Run(sess.Ctx, chromedp.Evaluate("document.title", &title))
 
+	_, _ = sess.GetAom(browser.AomConfig{})
+
 	return PageData{
 		URL:     target,
 		Title:   title,

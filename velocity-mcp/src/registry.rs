@@ -155,7 +155,7 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     &concurrency.to_string(),
                 ])
                 .current_dir(&go_engine_path)
-                .env("NEO4J_URI", root.join(".velocity").join("site_map").to_string_lossy().as_ref())
+                .env("SITEMAP_PATH", root.join(".velocity").join("site_map").to_string_lossy().as_ref())
                 .output();
             match output {
                 Ok(out) => {

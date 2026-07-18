@@ -37,9 +37,13 @@ func main() {
 	fmt.Println("Go Concurrent BFS Crawler (Robust Engine) starting (SiteMap/NDA Mode)...")
 
 	// 1. Setup local SiteMap database
-	uri := os.Getenv("NEO4J_URI")
-	if uri == "" || stringsContainsNeo4j(uri) {
-		uri = "sitemap_db"
+	uri := os.Getenv("SITEMAP_PATH")
+	if uri == "" {
+		if _, err := os.Stat("../.velocity/site_map"); err == nil {
+			uri = "../.velocity/site_map"
+		} else {
+			uri = "sitemap_db"
+		}
 	}
 	sm, err := sitemap.Open(uri)
 	if err != nil {
@@ -91,9 +95,7 @@ func main() {
 	fmt.Println("\nGo Concurrent BFS Crawler finished.")
 }
 
-func stringsContainsNeo4j(s string) bool {
-	return len(s) > 4 && (s[:4] == "bolt" || s[:4] == "neo4" || s[:4] == "http")
-}
+
 
 func (c *Crawler) runWorker(id int, allocCtx context.Context) {
 	fmt.Printf("[Worker %d] Started.\n", id)

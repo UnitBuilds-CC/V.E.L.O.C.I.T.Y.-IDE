@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 
 	"github.com/reclamation-admin/agentic-browser-go/pkg/sitemap"
 	"github.com/reclamation-admin/agentic-browser-go/pkg/swarm"
@@ -11,8 +12,16 @@ import (
 )
 
 func main() {
-	// Initialize local SiteMap database instead of Neo4j driver
-	sm, err := sitemap.Open("sitemap_db")
+	// Initialize local SiteMap database
+	basePath := os.Getenv("SITEMAP_PATH")
+	if basePath == "" {
+		if _, err := os.Stat("../.velocity/site_map"); err == nil {
+			basePath = "../.velocity/site_map"
+		} else {
+			basePath = "sitemap_db"
+		}
+	}
+	sm, err := sitemap.Open(basePath)
 	if err != nil {
 		fmt.Printf("Failed to open SiteMap database: %v\n", err)
 		return

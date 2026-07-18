@@ -33,19 +33,19 @@ type Client struct {
 
 // NewClient creates a new Client using the local SiteMap path.
 func NewClient() (*Client, error) {
-	basePath := os.Getenv("NEO4J_URI")
-	if basePath == "" || stringsContainsNeo4j(basePath) {
-		basePath = "sitemap_db"
+	basePath := os.Getenv("SITEMAP_PATH")
+	if basePath == "" {
+		if _, err := os.Stat("../.velocity/site_map"); err == nil {
+			basePath = "../.velocity/site_map"
+		} else {
+			basePath = "sitemap_db"
+		}
 	}
 	sm, err := sitemap.Open(basePath)
 	if err != nil {
 		return nil, err
 	}
 	return &Client{sm: sm}, nil
-}
-
-func stringsContainsNeo4j(s string) bool {
-	return len(s) > 4 && (s[:4] == "bolt" || s[:4] == "neo4" || s[:4] == "http")
 }
 
 // Close closes the client.
