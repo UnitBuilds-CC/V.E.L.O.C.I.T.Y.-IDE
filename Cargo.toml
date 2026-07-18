@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["velocity-mcp", "velocity-ide"]
+
+# Exclude legacy/deprecated dirs that are not Rust packages
+exclude = ["agent", "ide", "bin", "scratch", "memory", ".velocity"]
+
+[profile.dev]
+debug = 1 # Generates minimal line-table debug symbols, saving massive disk space and preventing MSVC linker errors
+

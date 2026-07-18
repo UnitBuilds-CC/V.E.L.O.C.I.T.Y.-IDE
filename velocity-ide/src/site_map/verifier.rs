@@ -65,10 +65,11 @@ pub enum NdaOpcode {
     RegInt      = 34,  // register hardware interrupt handler
     Cast        = 35,  // type casting
     GpuDispatch = 36,  // shader dispatch to UGAL
+    Triple      = 37,  // semantic graph subject-predicate-object triple
 }
 
 impl NdaOpcode {
-    pub const VOCAB_SIZE: usize = 37;
+    pub const VOCAB_SIZE: usize = 38;
 
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
@@ -109,6 +110,7 @@ impl NdaOpcode {
             34 => Some(Self::RegInt),
             35 => Some(Self::Cast),
             36 => Some(Self::GpuDispatch),
+            37 => Some(Self::Triple),
             _  => None,
         }
     }
@@ -153,6 +155,7 @@ impl NdaOpcode {
             Self::RegInt      => "REG_INT",
             Self::Cast        => "CAST",
             Self::GpuDispatch => "GPU_DISPATCH",
+            Self::Triple      => "TRIPLE",
         }
     }
 }
@@ -511,6 +514,11 @@ pub enum NdaNode {
         shader_hash: u64,
         args: Vec<NdaNode>,
     },
+    Triple {
+        subject_hash: u64,
+        predicate_id: u16,
+        object_hash: u64,
+    },
 }
 
 impl NdaNode {
@@ -707,6 +715,12 @@ impl NdaNode {
                 h.update(b"GPD");
                 h.update(shader_hash.to_le_bytes());
                 Self::hash_children(h, args);
+            }
+            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+                h.update(b"TPL");
+                h.update(subject_hash.to_le_bytes());
+                h.update(predicate_id.to_le_bytes());
+                h.update(object_hash.to_le_bytes());
             }
         }
     }

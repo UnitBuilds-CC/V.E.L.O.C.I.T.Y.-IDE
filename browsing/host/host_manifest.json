@@ -1,0 +1,9 @@
+{
+  "name": "com.ghost.bridge.relay",
+  "description": "Ghost Bridge Native Host",
+  "path": "E:\\LLM-Browser\\host\\ghost_bridge_host.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://jglogaakogkafedilomgolgcmahbolll/"
+  ]
+}

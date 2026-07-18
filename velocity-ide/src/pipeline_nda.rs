@@ -538,7 +538,7 @@ impl NdaPipeline {
                 NdaOpcode::Gemv | NdaOpcode::Dot | NdaOpcode::Syscall |
                 NdaOpcode::Spawn | NdaOpcode::Atomic | NdaOpcode::Alloc |
                 NdaOpcode::Free | NdaOpcode::RegInt | NdaOpcode::Cast |
-                NdaOpcode::GpuDispatch => {
+                NdaOpcode::GpuDispatch | NdaOpcode::Triple => {
                     // Reserved for direct .nda program execution.
                     // During model generation, skip.
                 }

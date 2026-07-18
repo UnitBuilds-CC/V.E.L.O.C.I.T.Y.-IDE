@@ -202,6 +202,12 @@ fn fast_hash_node(node: &NdaNode, state: &mut std::collections::hash_map::Defaul
                 fast_hash_node(arg, state);
             }
         }
+        NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+            state.write(b"TPL");
+            state.write_u64(*subject_hash);
+            state.write_u16(*predicate_id);
+            state.write_u64(*object_hash);
+        }
     }
 }
 

@@ -41,6 +41,8 @@ impl Tab {
             TabKind::Output => "Output".into(),
             TabKind::Orchestrator => "Orchestrator".into(),
             TabKind::Usage => "Usage".into(),
+            TabKind::Search => "Search".into(),
+            TabKind::Graph => "Merkle Graph".into(),
         }
     }
 
@@ -63,6 +65,8 @@ pub enum TabKind {
     Output,
     Orchestrator,
     Usage,
+    Search,
+    Graph,
 }
 
 struct Command {
@@ -118,7 +122,19 @@ pub struct VelocityApp {
     pub pending_open_path: Option<PathBuf>,
     pub pending_save_as_path: Option<PathBuf>,
     pub build_errors_count: usize,
+    pub gpu_name: String,
+    pub search_query: String,
+    pub search_hits: Vec<crate::editor::search::SearchHit>,
+    pub pending_cursor_line: Option<usize>,
+    pub file_tree: Option<FileNode>,
+    pub last_tree_update: std::time::Instant,
+    pub toasts: crate::editor::toast::ToastQueue,
+    pub orchestrator: crate::editor::orchestrator_panel::OrchestratorPanel,
 
+    pub mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    pub graph_view: crate::editor::graph_view::MerkleGraphView,
+    pub terminal_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub terminal_input: String,
     // Legacy inline chat state (used by chat_panel fn)
     pub chat_input: String,
     pub chat_history: String,
@@ -130,6 +146,8 @@ impl VelocityApp {
         workspace_root: PathBuf,
         agent_tx: Sender<UiToAgentMessage>,
         agent_rx: Receiver<AgentToUiMessage>,
+        gpu_name: String,
+        mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
     ) -> Self {
         let mut tab_counter = 0u64;
         let output = Tab {
@@ -144,7 +162,11 @@ impl VelocityApp {
             id: TabId::next(&mut tab_counter),
             kind: TabKind::Orchestrator,
         };
-        let tabs = vec![output.clone(), chat.clone(), orchestrator.clone()];
+        let graph = Tab {
+            id: TabId::next(&mut tab_counter),
+            kind: TabKind::Graph,
+        };
+        let tabs = vec![output.clone(), chat.clone(), orchestrator.clone(), graph.clone()];
 
         // Register default projects from nearby directories
         let mut projects = vec![workspace_root.clone()];
@@ -164,7 +186,7 @@ impl VelocityApp {
             tabs,
             active_tab: Some(output.id.clone()),
             buffers: HashMap::new(),
-            dock_state: Some(DockState::new(vec![output, chat, orchestrator])),
+            dock_state: Some(DockState::new(vec![output, chat, orchestrator, graph])),
             chat_input: String::new(),
             command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
             chat_history: String::new(),
@@ -199,6 +221,14 @@ impl VelocityApp {
             build_errors_count: 0,
             account_usage: Vec::new(),
             usage_date: String::new(),
+            gpu_name,
+            search_query: String::new(),
+            search_hits: Vec::new(),
+            pending_cursor_line: None,
+            file_tree: None,
+            last_tree_update: std::time::Instant::now(),
+            toasts: crate::editor::toast::ToastQueue::default(),
+            orchestrator: crate::editor::orchestrator_panel::OrchestratorPanel::new(),
             chat: crate::editor::chat_panel::ChatPanelState {
                 messages: Vec::new(),
                 input: String::new(),
@@ -213,6 +243,10 @@ impl VelocityApp {
                 models_loading: false,
                 show_thoughts: false,
             },
+            mediator,
+            graph_view: crate::editor::graph_view::MerkleGraphView::new(),
+            terminal_rx: None,
+            terminal_input: String::new(),
         };
         app.open_editor(None);
         let _ = app.agent_tx.send(UiToAgentMessage::RefreshModels);
@@ -233,6 +267,8 @@ impl VelocityApp {
             Command { label: "Toggle Output", action: |a| a.toggle_panel(TabKind::Output) },
             Command { label: "Toggle Chat", action: |a| a.toggle_panel(TabKind::Chat) },
             Command { label: "Toggle Orchestrator", action: |a| a.toggle_panel(TabKind::Orchestrator) },
+            Command { label: "Toggle Usage", action: |a| a.toggle_panel(TabKind::Usage) },
+            Command { label: "Toggle Search", action: |a| a.toggle_panel(TabKind::Search) },
         ]
     }
 
@@ -333,8 +369,15 @@ impl VelocityApp {
     fn save_buffer_to(&mut self, id: &TabId, path: &PathBuf) {
         if let Some(buf) = self.buffers.get(id) {
             match std::fs::write(path, buf.content()) {
-                Ok(_) => self.status_message = format!("Saved {}", path.display()),
-                Err(e) => self.status_message = format!("Error saving {}: {}", path.display(), e),
+                Ok(_) => {
+                    self.status_message = format!("Saved {}", path.display());
+                    let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    self.toasts.push(crate::editor::toast::Toast::success(format!("Saved {filename}")));
+                }
+                Err(e) => {
+                    self.status_message = format!("Error saving {}: {}", path.display(), e);
+                    self.toasts.push(crate::editor::toast::Toast::error(format!("Failed to save: {e}")));
+                }
             }
         }
     }
@@ -356,16 +399,26 @@ impl VelocityApp {
     }
 
     fn toggle_panel(&mut self, kind: TabKind) {
-        if self.tabs.iter().any(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind)) {
+        let is_active = self.active_tab.as_ref().map(|active_id| {
+            self.tabs.iter().any(|t| t.id == *active_id && std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind))
+        }).unwrap_or(false);
+
+        if is_active {
             self.tabs.retain(|t| std::mem::discriminant(&t.kind) != std::mem::discriminant(&kind));
             self.rebuild_dock();
             self.active_tab = self.tabs.first().map(|t| t.id.clone());
         } else {
-            let id = TabId::next(&mut self.tab_counter);
-            let tab = Tab { id, kind };
-            self.tabs.push(tab.clone());
-            if let Some(dock) = self.dock_state.as_mut() {
-                dock.push_to_focused_leaf(tab);
+            let maybe_existing = self.tabs.iter().find(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind)).cloned();
+            if let Some(existing) = maybe_existing {
+                self.active_tab = Some(existing.id);
+            } else {
+                let id = TabId::next(&mut self.tab_counter);
+                let tab = Tab { id: id.clone(), kind };
+                self.tabs.push(tab.clone());
+                if let Some(dock) = self.dock_state.as_mut() {
+                    dock.push_to_focused_leaf(tab);
+                }
+                self.active_tab = Some(id);
             }
         }
     }
@@ -375,91 +428,100 @@ impl VelocityApp {
     }
 
     fn build_active(&mut self) {
-        self.command_output.push_str("$ cargo check\n");
-        self.status_message = "Requested build via agent".into();
+        self.command_output.clear();
+        self.status_message = "Running local build...".into();
         self.agent_active = true;
-        let _ = self
-            .agent_tx
-            .send(UiToAgentMessage::UserPrompt("Please run `cargo check` and report any errors.".into()));
+        let _ = self.agent_tx.send(UiToAgentMessage::RunLocalBuild);
     }
 
     fn run_active(&mut self) {
-        self.command_output.push_str("$ cargo run\n");
-        self.status_message = "Requested run via agent".into();
+        self.command_output.clear();
+        self.status_message = "Running local execute...".into();
         self.agent_active = true;
-        let _ = self
-            .agent_tx
-            .send(UiToAgentMessage::UserPrompt("Please run `cargo run` and report the result.".into()));
+        let _ = self.agent_tx.send(UiToAgentMessage::RunLocalRun);
     }
 
     fn update_diagnostics(&mut self) {
         let diag = read_latest_diagnostics(&self.workspace_root);
-        self.build_errors_count = if diag.success { 0 } else { diag.errors.len() };
+        let count = if diag.success { 0 } else { diag.errors.len() };
+        if count != self.build_errors_count {
+            if count == 0 {
+                self.toasts.push(crate::editor::toast::Toast::success("Build succeeded!"));
+            } else {
+                self.toasts.push(crate::editor::toast::Toast::error(format!("Build failed with {} errors", count)));
+            }
+            self.build_errors_count = count;
+        }
     }
 }
 
 impl eframe::App for VelocityApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.apply_theme(&ctx);
+        crate::editor::theme::apply_theme(&ctx, IdePalette::dark());
         self.handle_agent_messages();
         self.handle_global_shortcuts(&ctx);
         self.update_diagnostics();
+
+        let now = std::time::Instant::now();
+        if self.file_tree.is_none() || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(3) {
+            self.file_tree = Some(build_file_tree(&self.workspace_root));
+            self.last_tree_update = now;
+        }
+
+        let mut cursor_pos = None;
+        if let Some(active_id) = &self.active_tab {
+            if let Some(buf) = self.buffers.get(active_id) {
+                let editor_id = egui::Id::new("code_editor");
+                if let Some(state) = egui::widgets::text_edit::TextEditState::load(&ctx, editor_id) {
+                    if let Some(cursor_range) = state.cursor.char_range() {
+                        cursor_pos = Some(get_cursor_pos(buf.content(), cursor_range.primary.index.into()));
+                    }
+                }
+            }
+        }
 
         // 1. Top Panel Toolbar with System Status & GPU Telemetry
         egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {
             ui.horizontal(|ui: &mut egui::Ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
 
-                ui.label(egui::RichText::new("⚡ VELOCITY").size(15.0).strong().color(egui::Color32::from_rgb(168, 85, 247)));
-                ui.label(egui::RichText::new("COGNITIVE IDE").size(11.0).color(egui::Color32::from_rgb(34, 211, 238)));
-                ui.separator();
 
-                let buttons: [(&str, fn(&mut VelocityApp)); 9] = [
+
+                let buttons: [(&str, fn(&mut VelocityApp)); 5] = [
                     ("➕ New", VelocityApp::open_editor_stub),
                     ("📂 Open", VelocityApp::open_file_dialog),
                     ("💾 Save", VelocityApp::save_active),
                     ("💾 Save As…", VelocityApp::save_active_as),
                     ("💾 Save All", VelocityApp::save_all),
-                    ("⚙️ Build", VelocityApp::build_active),
-                    ("▶ Run", VelocityApp::run_active),
-                    ("💬 Chat", VelocityApp::toggle_chat),
-                    ("🧠 Orchestrate", VelocityApp::toggle_orchestrator),
                 ];
                 for (label, action) in buttons {
                     if ui.button(label).clicked() {
                         action(self);
                     }
                 }
-
+                
+                if ui.button("⚙️ Build").clicked() {
+                    self.build_active();
+                }
+                if ui.button("▶ Run").clicked() {
+                    self.run_active();
+                }
+                if ui.button("💬 Chat").clicked() {
+                    self.toggle_chat();
+                }
+                if ui.button("🧠 Orchestrate").clicked() {
+                    self.toggle_panel(TabKind::Orchestrator);
+                }
+                if ui.button("🔍 Search").clicked() {
+                    self.toggle_panel(TabKind::Search);
+                }
+                if ui.button("📊 Graph").clicked() {
+                    self.toggle_panel(TabKind::Graph);
+                }
                 if ui.button("📺 Terminal").clicked() {
                     self.toggle_panel(TabKind::Output);
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("🟢 GPU ACTIVE: MX250").size(11.0).color(egui::Color32::from_rgb(34, 211, 238)).strong());
-                    ui.separator();
-                    ui.label(egui::RichText::new(format!("🤖 Agent: {}", self.status_message)).size(11.0).color(egui::Color32::from_rgb(168, 85, 247)).strong());
-                    
-                    if self.build_errors_count > 0 {
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(format!("⚠️ Build Errors: {}", self.build_errors_count))
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(239, 68, 68))
-                                .strong(),
-                        );
-                    } else {
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new("✨ Build: OK")
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(34, 197, 94))
-                                .strong(),
-                        );
-                    }
-                });
             });
         });
 
@@ -521,10 +583,108 @@ impl eframe::App for VelocityApp {
 
                     ui.label(egui::RichText::new("🌲 FILE EXPLORER").size(12.0).strong().color(egui::Color32::from_rgb(168, 85, 247)));
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        render_file_tree(ui, &self.workspace_root.clone(), self);
+                        if let Some(tree) = self.file_tree.take() {
+                            render_file_tree(ui, &tree, self);
+                            self.file_tree = Some(tree);
+                        }
                     });
                 });
             });
+
+        let mut active_symbol = None;
+        if let Some(active_id) = &self.active_tab {
+            if let Some(buf) = self.buffers.get(active_id) {
+                if let Some((line, _col)) = cursor_pos {
+                    active_symbol = get_active_symbol(buf.content(), line);
+                }
+            }
+        }
+
+        // 2c. Right Side Panel: Semantic History & Discourse Blame
+        egui::Panel::right("right_sidebar")
+            .resizable(true)
+            .default_size(280.0)
+            .show(ui, |ui: &mut egui::Ui| {
+                ui.add_space(4.0);
+                ui.vertical(|ui: &mut egui::Ui| {
+                    ui.label(egui::RichText::new("🧠 SEMANTIC HISTORY").size(12.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                    ui.separator();
+
+                    if let Some(symbol) = &active_symbol {
+                        ui.label(egui::RichText::new(format!("Symbol: {}()", symbol)).strong().color(egui::Color32::from_rgb(168, 85, 247)));
+                        
+                        let symbol_hash = hash_str(symbol);
+                        ui.label(egui::RichText::new(format!("Hash: {:016x}", symbol_hash)).size(10.0).weak());
+
+                        // Query SiteMap triples
+                        let sitemap_dir = self.workspace_root.join(".velocity").join("site_map");
+                        let weight_root = 0xDEAD; // Dummy or active root
+                        if let Ok(sm) = velocity_ide::site_map::SiteMap::open(&sitemap_dir, weight_root) {
+                            // Find callers
+                            let callers = sm.get_callers(symbol_hash);
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new("📞 CALLERS").size(11.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                            if callers.is_empty() {
+                                ui.label("No active callers found in graph.");
+                            } else {
+                                for caller in &callers {
+                                    ui.label(format!("• 0x{:016x}", caller));
+                                }
+                            }
+
+                            // Find dependencies
+                            let deps = sm.get_dependencies(symbol_hash);
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new("⚙️ DEPENDENCIES").size(11.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                            if deps.is_empty() {
+                                ui.label("No dependencies found.");
+                            } else {
+                                for dep in &deps {
+                                    ui.label(format!("• 0x{:016x}", dep));
+                                }
+                            }
+
+                            // Find intent conversations link
+                            let intent_triples = sm.find_triples(Some(symbol_hash), Some(3), None);
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new("💬 AI INTENT & TRANSCRIPTS").size(11.0).strong().color(egui::Color32::from_rgb(168, 85, 247)));
+                            if intent_triples.is_empty() {
+                                ui.label("No agent sessions linked to this symbol.");
+                            } else {
+                                for triple in &intent_triples {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("• Session: {:016x}", triple.object_hash));
+                                    });
+                                }
+                            }
+                        } else {
+                            ui.label("SiteMap index offline or empty.");
+                        }
+                    } else {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.label("Place cursor on a class or function declaration to view its Semantic Blame history.");
+                        });
+                    }
+                });
+            });
+
+        // 2b. Bottom Panel: Status Bar
+        let branch = get_git_branch(&self.workspace_root);
+        let build_ok = self.build_errors_count == 0;
+        let latency_us = crate::ipc::telemetry_share::TELEMETRY_LATENCY_US.load(std::sync::atomic::Ordering::Relaxed);
+        let status_info = if latency_us > 0 {
+            format!("{} | 🟢 GPU: {} | ⚡ ShMem: {}µs", self.status_message, self.gpu_name, latency_us)
+        } else {
+            format!("{} | 🟢 GPU: {} | ⚡ ShMem: active", self.status_message, self.gpu_name)
+        };
+        crate::editor::status_bar::StatusBar::show(
+            ui,
+            branch.as_deref(),
+            cursor_pos,
+            build_ok,
+            &status_info,
+        );
 
         // 3. Central Docking Panels
         egui::CentralPanel::default().show(ui, |ui| {
@@ -539,31 +699,23 @@ impl eframe::App for VelocityApp {
         self.command_palette_ui(&ctx);
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
+
+        self.toasts.ui(&ctx);
     }
 }
 
-fn render_file_tree(ui: &mut egui::Ui, path: &std::path::Path, app: &mut VelocityApp) {
-    if let Ok(entries) = std::fs::read_dir(path) {
-        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-        entries.sort_by_key(|e| (e.file_type().map(|t| !t.is_dir()).unwrap_or(true), e.file_name()));
-
-        for entry in entries {
-            let entry_path = entry.path();
-            let file_name = entry.file_name().to_string_lossy().to_string();
-
-            if file_name.starts_with('.') || file_name == "target" || file_name == "node_modules" {
-                continue;
-            }
-
-            if entry_path.is_dir() {
-                ui.collapsing(format!("📁 {}", file_name), |ui| {
-                    render_file_tree(ui, &entry_path, app);
+fn render_file_tree(ui: &mut egui::Ui, node: &FileNode, app: &mut VelocityApp) {
+    if let Some(children) = &node.children {
+        for child in children {
+            if child.is_dir {
+                ui.collapsing(format!("📁 {}", child.name), |ui| {
+                    render_file_tree(ui, child, app);
                 });
             } else {
                 ui.horizontal(|ui| {
                     ui.label("📄");
-                    if ui.selectable_label(false, &file_name).clicked() {
-                        app.open_editor(Some(entry_path));
+                    if ui.selectable_label(false, &child.name).clicked() {
+                        app.open_editor(Some(child.path.clone()));
                     }
                 });
             }
@@ -584,25 +736,67 @@ impl VelocityApp {
         self.toggle_panel(TabKind::Orchestrator);
     }
 
-    fn apply_theme(&mut self, ctx: &egui::Context) {
-        let palette = IdePalette::dark();
-        let mut visuals = egui::Visuals::dark();
-        visuals.dark_mode = true;
-        visuals.override_text_color = Some(palette.text);
-        visuals.panel_fill = palette.bg_secondary;
-        visuals.window_fill = palette.bg_primary;
-        visuals.selection.bg_fill = palette.accent.gamma_multiply(0.25);
-        visuals.selection.stroke.color = palette.text;
-        visuals.window_stroke.color = palette.border;
-        visuals.hyperlink_color = palette.accent;
-        visuals.faint_bg_color = palette.bg_secondary;
-
-        let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
-        style.visuals = visuals;
-        style.spacing.item_spacing = egui::Vec2::splat(6.0);
-        style.spacing.button_padding = egui::Vec2::new(8.0, 4.0);
-        ctx.set_global_style(style);
+    fn toggle_search(&mut self) {
+        self.toggle_panel(TabKind::Search);
     }
+
+    pub fn search_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.heading("🔍 Search Workspace");
+                ui.horizontal(|ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("Search query...")
+                            .desired_width(ui.available_width() - 80.0)
+                    );
+                    if response.changed() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.search_hits = crate::editor::search::project_search(
+                            &self.workspace_root,
+                            &self.search_query,
+                            100,
+                        );
+                    }
+                    if ui.button("Search").clicked() {
+                        self.search_hits = crate::editor::search::project_search(
+                            &self.workspace_root,
+                            &self.search_query,
+                            100,
+                        );
+                    }
+                });
+                ui.separator();
+                
+                let hits = self.search_hits.clone();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if hits.is_empty() {
+                        if self.search_query.is_empty() {
+                            ui.label("Type a query to search files.");
+                        } else {
+                            ui.label("No results found.");
+                        }
+                    } else {
+                        for hit in &hits {
+                            let icon = crate::editor::search::icon_for_path(&hit.path);
+                            let title = format!("{} {} : line {}", icon, hit.path.display(), hit.line);
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    if ui.link(title).clicked() {
+                                        let abs_path = self.workspace_root.join(&hit.path);
+                                        self.open_editor(Some(abs_path));
+                                        self.pending_cursor_line = Some(hit.line);
+                                    }
+                                });
+                                ui.label(egui::RichText::new(&hit.text).monospace().size(12.0));
+                            });
+                        }
+                    }
+                });
+            });
+        });
+    }
+
+
 
     fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
         if self.command_palette.open {
@@ -631,11 +825,36 @@ impl VelocityApp {
         });
     }
 
+    fn handle_terminal_messages(&mut self) {
+        if let Some(rx) = &self.terminal_rx {
+            while let Ok(out) = rx.try_recv() {
+                self.command_output.push_str(&out);
+            }
+        }
+    }
+
     fn handle_agent_messages(&mut self) {
+        self.handle_terminal_messages();
         while let Ok(msg) = self.agent_rx.try_recv() {
             match msg {
                 AgentToUiMessage::OutputToken(token) => {
-                    if self.agent_active {
+                    let mut last_you_idx = None;
+                    let mut last_agent_idx = None;
+                    for (idx, line) in self.chat_history.lines().enumerate() {
+                        if line.starts_with("You: ") {
+                            last_you_idx = Some(idx);
+                        } else if line.starts_with("Agent: ") || line.starts_with("Antigravity: ") || line.starts_with("Kimi: ") {
+                            last_agent_idx = Some(idx);
+                        }
+                    }
+
+                    let needs_prefix = match (last_you_idx, last_agent_idx) {
+                        (Some(y), Some(a)) => y > a,
+                        (Some(_), None) => true,
+                        _ => self.chat_history.is_empty() || self.agent_active,
+                    };
+
+                    if needs_prefix {
                         self.chat_history.push_str("\nAgent: ");
                         self.agent_active = false;
                     }
@@ -657,17 +876,20 @@ impl VelocityApp {
                         });
                     } else {
                         self.pending_approvals.push((id.clone(), tool_name.clone(), arguments.clone()));
-                        self.chat.pending_approvals.push((id, tool_name, arguments));
+                        self.chat.pending_approvals.push((id, tool_name.clone(), arguments));
+                        self.toasts.push(crate::editor::toast::Toast::warn(format!("Approval needed: {}", tool_name)));
                     }
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     self.command_output.push_str(&format!("[tool-start] {}\n", tool_name));
                     self.status_message = format!("Running tool: {}", tool_name);
+                    self.toasts.push(crate::editor::toast::Toast::info(format!("Running tool: {}", tool_name)));
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
                     self.command_output
                         .push_str(&format!("[tool-finish] {}: {}\n", tool_name, result));
                     self.status_message = format!("Tool done: {}", tool_name);
+                    self.toasts.push(crate::editor::toast::Toast::success(format!("Finished tool: {}", tool_name)));
                     self.chat.agent_active = true;
                 }
                 AgentToUiMessage::StatusUpdate(message) => {
@@ -730,11 +952,17 @@ impl VelocityApp {
     fn cap_logs(&mut self) {
         const MAX: usize = 32_000;
         if self.command_output.len() > MAX {
-            let cut = self.command_output.len() - MAX;
+            let mut cut = self.command_output.len() - MAX;
+            while cut < self.command_output.len() && !self.command_output.is_char_boundary(cut) {
+                cut += 1;
+            }
             self.command_output = self.command_output.split_off(cut);
         }
         if self.chat_history.len() > MAX {
-            let cut = self.chat_history.len() - MAX;
+            let mut cut = self.chat_history.len() - MAX;
+            while cut < self.chat_history.len() && !self.chat_history.is_char_boundary(cut) {
+                cut += 1;
+            }
             self.chat_history = self.chat_history.split_off(cut);
         }
     }
@@ -916,237 +1144,43 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match &mut tab.kind {
-            TabKind::Editor { buffer_id, .. } => {
+            TabKind::Editor { path, buffer_id } => {
                 if let Some(buf) = self.app.buffers.get_mut(buffer_id) {
                     egui::Frame::new().inner_margin(egui::Margin::same(4)).show(ui, |ui: &mut egui::Ui| {
                         let mut editor = CodeEditor::new("code_editor");
-                        editor.show(ui, buf.content_mut());
+                        let locks = path.as_deref()
+                            .map(|p| self.app.mediator.get_locks_for_file(p))
+                            .unwrap_or_default();
+                        editor.show(ui, buf.content_mut(), path.as_deref(), self.app.pending_cursor_line, &locks);
+                        if self.app.pending_cursor_line.is_some() {
+                            self.app.pending_cursor_line = None;
+                        }
                     });
                 }
             }
-            TabKind::Chat => self.chat_panel(ui),
+            TabKind::Chat => {
+                render_chat_panel(ui, &mut self.app.chat, &self.app.agent_tx);
+            }
             TabKind::Output => self.output_panel(ui),
             TabKind::Orchestrator => {
-                let mut panel = OrchestratorPanel::new();
-                panel.ui(ui);
+                self.app.orchestrator.ui(ui);
             }
             TabKind::Usage => {
                 render_usage_panel(ui, &self.app.account_usage, &self.app.usage_date, || {
                     let _ = self.app.agent_tx.send(UiToAgentMessage::RefreshUsage);
                 });
             }
+            TabKind::Search => {
+                self.app.search_panel(ui);
+            }
+            TabKind::Graph => {
+                self.app.graph_view.ui(ui, &self.app.workspace_root, &self.app.mediator);
+            }
         }
     }
 }
 
 impl<'a> TabViewerImpl<'a> {
-    fn chat_panel(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::new().inner_margin(egui::Margin::same(6)).show(ui, |ui: &mut egui::Ui| {
-            let mut messages = Vec::new();
-            let mut current_is_user = false;
-            let mut current_chunk = String::new();
-
-            for line in self.app.chat_history.lines() {
-                if line.starts_with("You: ") {
-                    if !current_chunk.trim().is_empty() {
-                        messages.push((current_is_user, current_chunk.clone()));
-                        current_chunk.clear();
-                    }
-                    current_is_user = true;
-                    current_chunk.push_str(&line["You: ".len()..]);
-                    current_chunk.push('\n');
-                } else if line.starts_with("Agent: ") || line.starts_with("Antigravity: ") || line.starts_with("Kimi: ") {
-                    if !current_chunk.trim().is_empty() {
-                        messages.push((current_is_user, current_chunk.clone()));
-                        current_chunk.clear();
-                    }
-                    current_is_user = false;
-                    current_chunk.push_str(line);
-                    current_chunk.push('\n');
-                } else {
-                    current_chunk.push_str(line);
-                    current_chunk.push('\n');
-                }
-            }
-            if !current_chunk.trim().is_empty() {
-                messages.push((current_is_user, current_chunk));
-            }
-
-            ui.vertical(|ui: &mut egui::Ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Agent Chat").strong().size(16.0));
-                    let state = if self.app.agent_active { "Working" } else { "Ready" };
-                    ui.label(egui::RichText::new(state).small().color(if self.app.agent_active {
-                        egui::Color32::from_rgb(250, 204, 21)
-                    } else {
-                        egui::Color32::from_rgb(74, 222, 128)
-                    }));
-                });
-                ui.horizontal_wrapped(|ui| {
-                    // --- Provider selector ---
-                    ui.label(egui::RichText::new("Provider").small().weak());
-                    let providers = [AiProvider::CloudflareWorkersAi, AiProvider::OpenRouter];
-                    let current_label = self.app.provider.label();
-                    egui::ComboBox::from_id_salt("agent_provider")
-                        .selected_text(current_label)
-                        .width(180.0)
-                        .show_ui(ui, |ui| {
-                            for p in providers {
-                                let selected = self.app.provider == p;
-                                if ui.selectable_label(selected, p.label()).clicked() && !selected {
-                                    let _ = self.app.agent_tx.send(UiToAgentMessage::SetProvider(p));
-                                    self.app.models_loading = true;
-                                    // Kick off model refresh for new provider
-                                    let _ = self.app.agent_tx.send(UiToAgentMessage::RefreshModels);
-                                }
-                            }
-                        });
-                    ui.separator();
-                    // --- Model selector ---
-                    ui.label(egui::RichText::new("Model").small().weak());
-                    let mut model_changed = false;
-                    egui::ComboBox::from_id_salt("agent_model")
-                        .selected_text(&self.app.selected_model)
-                        .width(300.0)
-                        .show_ui(ui, |ui| {
-                            for model in self.app.available_models.clone() {
-                                model_changed |= ui.selectable_value(&mut self.app.selected_model, model.id.clone(), model.label).changed();
-                            }
-                        });
-                    if model_changed {
-                        let _ = self.app.agent_tx.send(UiToAgentMessage::SetModel(self.app.selected_model.clone()));
-                    }
-                    if ui.button(if self.app.models_loading { "Loading…" } else { "↻ Models" }).clicked() && !self.app.models_loading {
-                        self.app.models_loading = true;
-                        let _ = self.app.agent_tx.send(UiToAgentMessage::RefreshModels);
-                    }
-                    let thinking_changed = ui
-                        .add_enabled(self.app.thinking_supported, egui::Checkbox::new(&mut self.app.thinking_enabled, "Thinking"))
-                        .changed();
-                    if thinking_changed {
-                        let _ = self.app.agent_tx.send(UiToAgentMessage::SetThinking(self.app.thinking_enabled));
-                    }
-                    if !self.app.thinking_supported {
-                        ui.label(egui::RichText::new("unsupported by model").small().weak());
-                    }
-                });
-                ui.separator();
-                let scroll_height = ui.available_height() - 150.0;
-                egui::ScrollArea::vertical()
-                    .max_height(scroll_height)
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui: &mut egui::Ui| {
-                        ui.spacing_mut().item_spacing.y = 10.0;
-                        for (is_user, text) in messages {
-                            let (bg_color, border_color, align) = if is_user {
-                                (
-                                    egui::Color32::from_rgb(45, 25, 78),
-                                    egui::Color32::from_rgb(168, 85, 247),
-                                    egui::Align::RIGHT,
-                                )
-                            } else {
-                                (
-                                    egui::Color32::from_rgb(20, 22, 34),
-                                    egui::Color32::from_rgb(38, 41, 62),
-                                    egui::Align::LEFT,
-                                )
-                            };
-
-                            ui.with_layout(egui::Layout::top_down(align), |ui: &mut egui::Ui| {
-                                egui::Frame::new()
-                                    .fill(bg_color)
-                                    .stroke(egui::Stroke::new(1.0, border_color))
-                                    .corner_radius(egui::CornerRadius::same(8))
-                                    .inner_margin(egui::Margin::symmetric(14, 10))
-                                    .show(ui, |ui: &mut egui::Ui| {
-                                        ui.set_max_width(ui.available_width() * 0.85);
-                                        ui.label(egui::RichText::new(text.trim()).size(13.0));
-                                    });
-                            });
-                        }
-                    });
-
-                ui.separator();
-
-                ui.horizontal(|ui: &mut egui::Ui| {
-                    // Auto-approve works for both structured and inline tool calls,
-                    // so always enable the checkbox regardless of tools_supported.
-                    ui.checkbox(&mut self.app.auto_approve, "Auto-approve tools");
-                    if !self.app.tools_supported {
-                        ui.label(egui::RichText::new("(inline tool calling)").small().weak());
-                    }
-                    ui.label(egui::RichText::new("Thinking is model-dependent").small().weak());
-                });
-
-                if !self.app.pending_approvals.is_empty() {
-                    egui::Frame::new()
-                        .fill(egui::Color32::from_rgb(12, 10, 20))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(234, 179, 8)))
-                        .corner_radius(egui::CornerRadius::same(6))
-                        .inner_margin(egui::Margin::same(8))
-                        .show(ui, |ui: &mut egui::Ui| {
-                            ui.vertical(|ui: &mut egui::Ui| {
-                                ui.colored_label(egui::Color32::from_rgb(234, 179, 8), "⚠️ Pending Tool Approvals");
-                                
-                                let pending = self.app.pending_approvals.clone();
-                                for (id, tool_name, arguments) in pending {
-                                    ui.group(|ui: &mut egui::Ui| {
-                                        ui.horizontal(|ui: &mut egui::Ui| {
-                                            ui.label(egui::RichText::new(format!("Tool: {}", tool_name)).strong().color(egui::Color32::LIGHT_BLUE));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.button("Decline ❌").clicked() {
-                                                    let _ = self.app.agent_tx.send(UiToAgentMessage::RejectTool {
-                                                        id: id.clone(),
-                                                        tool_name: tool_name.clone(),
-                                                    });
-                                                    self.app.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
-                                                }
-                                                if ui.button("Approve ✔️").clicked() {
-                                                    let _ = self.app.agent_tx.send(UiToAgentMessage::ApproveTool {
-                                                        id: id.clone(),
-                                                        tool_name: tool_name.clone(),
-                                                        arguments: arguments.clone(),
-                                                    });
-                                                    self.app.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
-                                                }
-                                            });
-                                        });
-                                        ui.label(egui::RichText::new(format!("Arguments: {}", arguments)).size(11.0));
-                                    });
-                                }
-                            });
-                        });
-                }
-
-                ui.separator();
-
-                ui.horizontal(|ui: &mut egui::Ui| {
-                    let input_width = ui.available_width() - 85.0;
-                    let response = ui.add(
-                        egui::TextEdit::multiline(&mut self.app.chat_input)
-                            .desired_width(input_width)
-                            .desired_rows(2)
-                            .hint_text("Type instructions for the agent…"),
-                    );
-                    
-                    let enter_pressed = response.lost_focus() && ui.input(|i: &egui::InputState| i.key_pressed(egui::Key::Enter));
-                    if ui.button("Send 🚀").clicked() || enter_pressed {
-                        let text = self.app.chat_input.clone();
-                        if !text.is_empty() {
-                            self.app.chat_history.push_str(&format!("\nYou: {}\n", text));
-                            self.app.chat_input.clear();
-                            self.app.agent_active = true;
-                            let _ = self
-                                .app
-                                .agent_tx
-                                .send(UiToAgentMessage::UserPrompt(text));
-                        }
-                    }
-                });
-            });
-        });
-    }
 
     fn output_panel(&mut self, ui: &mut egui::Ui) {
         egui::Frame::new()
@@ -1154,7 +1188,7 @@ impl<'a> TabViewerImpl<'a> {
             .fill(egui::Color32::from_rgb(7, 8, 12))
             .show(ui, |ui: &mut egui::Ui| {
                 ui.vertical(|ui: &mut egui::Ui| {
-                    let scroll_height = ui.available_height() - 35.0;
+                    let scroll_height = ui.available_height() - 75.0;
                     egui::ScrollArea::vertical()
                         .max_height(scroll_height)
                         .auto_shrink([false, false])
@@ -1172,6 +1206,22 @@ impl<'a> TabViewerImpl<'a> {
 
                     ui.separator();
 
+                    let mut run_command = false;
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("> ").monospace().color(egui::Color32::from_rgb(34, 211, 238)));
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.app.terminal_input)
+                                .font(egui::FontId::monospace(13.0))
+                                .desired_width(ui.available_width() - 120.0)
+                                .text_color(egui::Color32::from_rgb(226, 227, 243))
+                        );
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            run_command = true;
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
                     ui.horizontal(|ui: &mut egui::Ui| {
                         if ui.button("🗑 Clear Console").clicked() {
                             self.app.command_output.clear();
@@ -1180,7 +1230,138 @@ impl<'a> TabViewerImpl<'a> {
                             ui.label(egui::RichText::new(format!("Buffer: {} bytes", self.app.command_output.len())).small().weak());
                         });
                     });
+
+                    if run_command {
+                        let cmd_str = self.app.terminal_input.trim().to_string();
+                        if !cmd_str.is_empty() {
+                            self.app.command_output.push_str(&format!("> {}\n", cmd_str));
+                            self.app.terminal_input.clear();
+
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            self.app.terminal_rx = Some(rx);
+
+                            let workspace_root = self.app.workspace_root.clone();
+                            std::thread::spawn(move || {
+                                let mut cmd = if cfg!(target_os = "windows") {
+                                    let mut c = std::process::Command::new("cmd");
+                                    c.args(&["/C", &cmd_str]);
+                                    c
+                                } else {
+                                    let mut c = std::process::Command::new("sh");
+                                    c.args(&["-c", &cmd_str]);
+                                    c
+                                };
+                                cmd.current_dir(&workspace_root);
+                                if let Ok(output) = cmd.output() {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    let _ = tx.send(format!("{}{}", stdout, stderr));
+                                } else {
+                                    let _ = tx.send("Error: Command execution failed\n".to_string());
+                                }
+                            });
+                        }
+                    }
                 });
             });
     }
+}
+
+fn get_cursor_pos(text: &str, char_idx: usize) -> (usize, usize) {
+    let mut line = 0;
+    let mut col = 0;
+    for (i, c) in text.chars().enumerate() {
+        if i == char_idx {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn get_git_branch(workspace_root: &std::path::Path) -> Option<String> {
+    let head_path = workspace_root.join(".git/HEAD");
+    if let Ok(head_content) = std::fs::read_to_string(head_path) {
+        let trimmed = head_content.trim();
+        if trimmed.starts_with("ref: refs/heads/") {
+            return Some(trimmed["ref: refs/heads/".len()..].to_string());
+        } else if !trimmed.is_empty() {
+            return Some(trimmed.chars().take(7).collect());
+        }
+    }
+    None
+}
+
+#[derive(Clone, Debug)]
+pub struct FileNode {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub children: Option<Vec<FileNode>>,
+}
+
+fn build_file_tree(dir: &std::path::Path) -> FileNode {
+    let mut children = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| (e.file_type().map(|t| !t.is_dir()).unwrap_or(true), e.file_name()));
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            if path.is_dir() {
+                children.push(build_file_tree(&path));
+            } else {
+                children.push(FileNode {
+                    name,
+                    path,
+                    is_dir: false,
+                    children: None,
+                });
+            }
+        }
+    }
+    FileNode {
+        name: dir.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        path: dir.to_path_buf(),
+        is_dir: true,
+        children: Some(children),
+    }
+}
+
+fn hash_str(s: &str) -> u64 {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let d = h.finalize();
+    u64::from_le_bytes(d[..8].try_into().unwrap())
+}
+
+fn get_active_symbol(content: &str, cursor_line: usize) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    if cursor_line >= lines.len() {
+        return None;
+    }
+    for idx in (0..=cursor_line).rev() {
+        let line = lines[idx].trim();
+        if line.contains("fn ") || line.contains("void ") || line.contains("def ") || line.contains("class ") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            for (i, &word) in parts.iter().enumerate() {
+                if word == "fn" || word == "def" || word == "class" || word == "void" {
+                    if let Some(&name) = parts.get(i + 1) {
+                        let name_cleaned = name.split('(').next().unwrap_or(name);
+                        return Some(name_cleaned.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }

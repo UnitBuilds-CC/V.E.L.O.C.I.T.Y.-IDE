@@ -94,9 +94,11 @@ fn main() {
     if editor_mode {
         println!("Starting V.E.L.O.C.I.T.Y. Native IDE Editor...");
 
+        let mut gpu_name = "None".to_string();
         match compiler::driver::VulkanDriver::init() {
             Ok(driver) => {
                 let _ = driver.run_diagnostics();
+                gpu_name = driver.device_name();
                 let mock_weights = vec![1, -1, 0, 1, 1];
                 if let Ok(shader) = compiler::jit::JitCompiler::compile_inlined_weights(&mock_weights) {
                     println!("  - [OK] JIT weight-inlining compile test passed (Size: {} words).", shader.len());
@@ -112,24 +114,99 @@ fn main() {
         let workspace_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let workspace_root_agent = workspace_root.clone();
 
+        // Ensure the .velocity folder exists
+        let dot_velocity = workspace_root.join(".velocity");
+        std::fs::create_dir_all(&dot_velocity).ok();
+
+        // Initialize the MediatorArena
+        let mediator = std::sync::Arc::new(automation::MediatorArena::new());
+        let mediator_clone = mediator.clone();
+
+        // Spawn Telemetry Server on a Shared Memory segment
+        let shmem_path = dot_velocity.join("telemetry_shmem.bin");
+        let shmem_path_server = shmem_path.clone();
+        let shmem_path_watcher = shmem_path.clone();
+
+        // Open SiteMap for semantic queries inside telemetry callbacks
+        let sitemap_path = dot_velocity.join("site_map");
+        let weight_root = 0xDEAD; // Dummy/default weight root
+        let site_map = velocity_ide::site_map::SiteMap::open(&sitemap_path, weight_root).ok();
+
+        std::thread::spawn(move || {
+            if let Ok(mut server) = ipc::telemetry_share::TelemetryServer::open(&shmem_path_server) {
+                println!("[server] Telemetry Server listening on shared memory segment.");
+                let _ = server.listen(|req| {
+                    match req {
+                         ipc::telemetry_share::TelemetryRequest::AstUpdate { file_path, triples } => {
+                            let start_time = std::time::Instant::now();
+                            println!("[server] Received AST update for {}: {} triples", file_path, triples.len());
+                            
+                            let elapsed = start_time.elapsed().as_micros() as u64;
+                            ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
+
+                            ipc::telemetry_share::TelemetryResponse {
+                                success: true,
+                                warning: None,
+                            }
+                        }
+                        ipc::telemetry_share::TelemetryRequest::PresenceUpdate { cursor_line, cursor_col } => {
+                            let start_time = std::time::Instant::now();
+                            
+                            // Check for concurrency conflicts using MediatorArena
+                            let file_path = std::path::PathBuf::from("src/main.rs"); // Stub path for context
+                            let line_range = (cursor_line.saturating_sub(5), cursor_line.saturating_add(5));
+                            let agent_id = "Agent_Thread".to_string();
+
+                            let mut warning = None;
+                            if let Some(sm) = &site_map {
+                                if let Err(conflict) = mediator_clone.acquire_lock(file_path, line_range, agent_id, sm) {
+                                    let warning_msg = mediator_clone.resolve_conflict(&conflict);
+                                    println!("[mediator] Conflict detected! {}", warning_msg);
+                                    warning = Some(warning_msg);
+                                }
+                            }
+
+                            let elapsed = start_time.elapsed().as_micros() as u64;
+                            ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
+
+                            ipc::telemetry_share::TelemetryResponse {
+                                success: true,
+                                warning,
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        // Spawn AST File Watcher
+        automation::spawn_ast_watcher(workspace_root.clone(), shmem_path_watcher);
+
         std::thread::spawn(move || {
             agent::run_agent_thread(workspace_root_agent, ui_rx, ui_tx);
         });
 
         automation::spawn_build_watcher(workspace_root.clone(), 5);
 
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_title("V.E.L.O.C.I.T.Y. IDE - Native Workspace Editor")
+            .with_inner_size([1280.0, 768.0]);
+
+        if let Some(icon) = load_icon() {
+            viewport = viewport.with_icon(std::sync::Arc::new(icon));
+        }
+
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title("V.E.L.O.C.I.T.Y. IDE - Native Workspace Editor")
-                .with_inner_size([1280.0, 768.0]),
+            viewport,
             ..Default::default()
         };
 
+        let mediator_gui = mediator.clone();
         if let Err(e) = eframe::run_native(
             "velocity_ide",
             options,
             Box::new(move |_cc| {
-                Ok(Box::new(editor::app::VelocityApp::new(_cc, workspace_root, agent_tx, agent_rx)) as Box<dyn eframe::App>)
+                Ok(Box::new(editor::app::VelocityApp::new(_cc, workspace_root, agent_tx, agent_rx, gpu_name, mediator_gui)) as Box<dyn eframe::App>)
             }),
         ) {
             eprintln!("Failed to launch GUI editor: {:?}", e);
@@ -217,4 +294,19 @@ fn run_tokenizer_demo(prompt: &str) {
     println!("      Each token embedding requires exactly 750 bits (2 bits per parameter for 3200 dimensions),");
     println!("      resulting in a 10x memory savings compared to standard FP16 lookup tables.");
     println!("============================================================");
+}
+
+fn load_icon() -> Option<egui::IconData> {
+    let icon_bytes = include_bytes!("../assets/logo.png");
+    if let Ok(image) = image::load_from_memory(icon_bytes) {
+        let rgba = image.into_rgba8();
+        let (width, height) = rgba.dimensions();
+        Some(egui::IconData {
+            rgba: rgba.into_raw(),
+            width,
+            height,
+        })
+    } else {
+        None
+    }
 }

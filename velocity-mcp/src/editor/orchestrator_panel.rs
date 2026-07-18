@@ -3,15 +3,32 @@
 use crate::orchestrator::blueprint::{Task, TaskGraph};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
+use crate::orchestrator::worker::WorkerResult;
 use crate::orchestrator::TaskId;
 use eframe::egui;
 use egui::{ScrollArea, Ui};
+use std::time::{Duration, Instant};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OrchestratorPanel {
     pub graph: TaskGraph,
     pub registry: Option<OrchestratorRegistry>,
     pub expanded: bool,
+    // Simulation state
+    pub simulation_running: bool,
+    pub last_simulation_step: Option<Instant>,
+    // Builder form state
+    pub builder_title: String,
+    pub builder_desc: String,
+    pub builder_deps: String,
+    pub builder_scope: String,
+    pub next_task_id: u64,
+}
+
+impl Default for OrchestratorPanel {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OrchestratorPanel {
@@ -22,53 +39,412 @@ impl OrchestratorPanel {
             graph,
             registry: Some(registry),
             expanded: true,
+            simulation_running: false,
+            last_simulation_step: None,
+            builder_title: String::new(),
+            builder_desc: String::new(),
+            builder_deps: String::new(),
+            builder_scope: String::new(),
+            next_task_id: 10,
         }
     }
 
+    pub fn step_simulation(&mut self) {
+        if self.registry.is_none() {
+            self.registry = Some(OrchestratorRegistry::new(&self.graph));
+        }
+        let reg = self.registry.as_mut().unwrap();
+
+        // 1. Complete any tasks currently running
+        let mut completed_some = false;
+        let mut keys_to_update = Vec::new();
+        for (id, status) in &reg.statuses {
+            if matches!(status, TaskStatus::Running) {
+                keys_to_update.push(*id);
+            }
+        }
+
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        for id in keys_to_update {
+            completed_some = true;
+            // 90% chance of success, 10% failure
+            let is_success = (now_millis + id.0 as u128) % 10 != 0;
+            if is_success {
+                if let Some(task) = self.graph.tasks.get(&id) {
+                    let mut res = WorkerResult::new(task);
+                    res.duration = Duration::from_millis(500);
+                    reg.statuses.insert(id, TaskStatus::Done(res));
+                    
+                    let mut outputs = Vec::new();
+                    for scope_prefix in &task.scope {
+                        let clean = scope_prefix.trim_end_matches('/');
+                        if clean.contains('.') {
+                            outputs.push(clean.to_string());
+                        } else {
+                            outputs.push(format!("{}/mod.rs", clean));
+                            outputs.push(format!("{}/impl.rs", clean));
+                        }
+                    }
+                    reg.outputs.insert(id, outputs);
+                }
+            } else {
+                reg.statuses.insert(id, TaskStatus::Failed("Sub-agent process timeout".to_string()));
+            }
+        }
+
+        // 2. If no running tasks were completed, dispatch new ready tasks
+        if !completed_some {
+            let ready_ids = reg.ready_ids(&self.graph);
+            if ready_ids.is_empty() {
+                self.simulation_running = false;
+            } else {
+                for id in ready_ids {
+                    reg.statuses.insert(id, TaskStatus::Running);
+                }
+            }
+        }
+
+        self.last_simulation_step = Some(Instant::now());
+    }
+
     pub fn ui(&mut self, ui: &mut Ui) {
+        // Automatic simulator update
+        if self.simulation_running {
+            let now = Instant::now();
+            let should_step = self.last_simulation_step
+                .map(|t| now.duration_since(t) > Duration::from_millis(1500))
+                .unwrap_or(true);
+            if should_step {
+                self.step_simulation();
+            }
+            ui.ctx().request_repaint();
+        }
+
         ui.horizontal(|ui| {
-            ui.heading("Orchestrator");
-            let label = if self.expanded { "−" } else { "+" };
+            ui.heading("🧠 Live Orchestrator");
+            let label = if self.expanded { "− Less Details" } else { "+ More Details" };
             ui.toggle_value(&mut self.expanded, label);
         });
         ui.separator();
 
-        let plan = scheduler::plan(&self.graph);
+        // Cycle Warning
+        let has_cycle = scheduler::detect_cycle(&self.graph);
+        if has_cycle {
+            ui.group(|ui| {
+                ui.colored_label(egui::Color32::from_rgb(239, 68, 68), "❌ Dependency Loop Blocked Scheduling!");
+                ui.label("Topological sort is disabled until the loop is fixed.");
+            });
+        }
+
+        // Simulation Controls
+        ui.horizontal(|ui| {
+            if has_cycle {
+                ui.add_enabled_ui(false, |ui| {
+                    let _ = ui.button("▶ Start Simulation");
+                });
+            } else if self.simulation_running {
+                if ui.button("⏸ Pause").clicked() {
+                    self.simulation_running = false;
+                }
+            } else if ui.button("▶ Start Simulation").clicked() {
+                self.simulation_running = true;
+            }
+
+            if ui.button("⏭ Step").clicked() && !has_cycle {
+                self.step_simulation();
+            }
+
+            if ui.button("↻ Reset Sim").clicked() {
+                if let Some(reg) = &mut self.registry {
+                    for status in reg.statuses.values_mut() {
+                        *status = TaskStatus::Pending;
+                    }
+                    reg.outputs.clear();
+                }
+                self.simulation_running = false;
+            }
+
+            ui.separator();
+
+            if ui.button("⚠️ Inject Cycle").clicked() {
+                if let Some(t3) = self.graph.tasks.get_mut(&TaskId(3)) {
+                    if !t3.dependencies.contains(&TaskId(4)) {
+                        t3.dependencies.push(TaskId(4));
+                    }
+                }
+                if let Some(t4) = self.graph.tasks.get_mut(&TaskId(4)) {
+                    if !t4.dependencies.contains(&TaskId(3)) {
+                        t4.dependencies.push(TaskId(3));
+                    }
+                }
+                self.simulation_running = false;
+            }
+
+            if ui.button("Fix & Reset Graph").clicked() {
+                self.graph = TaskGraph::example_game();
+                self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                self.simulation_running = false;
+            }
+        });
+
+        ui.add_space(4.0);
+        let plan = if has_cycle {
+            scheduler::Plan::default()
+        } else {
+            scheduler::plan(&self.graph)
+        };
         ui.label(format!("Tasks: {} | Phases: {}", self.graph.tasks.len(), plan.phases.len()));
 
-        ScrollArea::vertical().show(ui, |ui| {
-            for (phase_idx, phase) in plan.phases.iter().enumerate() {
-                ui.group(|ui| {
-                    ui.label(format!("Phase {}", phase_idx + 1));
-                    for id in phase {
-                        if let Some(task) = self.graph.tasks.get(id) {
-                            self.task_row(ui, task);
+        ui.columns(2, |columns: &mut [Ui]| {
+            // Left column: Scroll area with lists and form
+            columns[0].vertical(|ui: &mut egui::Ui| {
+                ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
+                    if !has_cycle {
+                        for (phase_idx, phase) in plan.phases.iter().enumerate() {
+                            ui.group(|ui: &mut egui::Ui| {
+                                ui.label(egui::RichText::new(format!("Phase {}", phase_idx + 1)).strong());
+                                for id in phase {
+                                    if let Some(task) = self.graph.tasks.get(id) {
+                                        self.task_row(ui, task);
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0);
                         }
+                    } else {
+                        ui.group(|ui: &mut egui::Ui| {
+                            ui.label("Raw Tasks List (Unscheduled):");
+                            for task in self.graph.tasks.values() {
+                                self.task_row(ui, task);
+                            }
+                        });
                     }
+
+                    // Reconciler checks
+                    let outputs = self.registry.as_ref().map(|r| &r.outputs);
+                    let collisions = if let Some(outs) = outputs {
+                        crate::orchestrator::reconcile::detect_collisions(&self.graph, outs)
+                    } else {
+                        Vec::new()
+                    };
+                    let violations = if let Some(outs) = outputs {
+                        crate::orchestrator::reconcile::scope_violations(&self.graph, outs)
+                    } else {
+                        Vec::new()
+                    };
+
+                    if !collisions.is_empty() || !violations.is_empty() {
+                        ui.add_space(8.0);
+                        ui.group(|ui: &mut egui::Ui| {
+                            ui.label(egui::RichText::new("⚠️ Reconciler Warnings").strong().color(egui::Color32::from_rgb(234, 179, 8)));
+                            for c in &collisions {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(250, 204, 21),
+                                    format!("Conflict: tasks {} and {} both touch file '{}'", c.task_a, c.task_b, c.path),
+                                );
+                            }
+                            for v in &violations {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(248, 113, 113),
+                                    format!("Scope Violation: task {} wrote unauthorized path '{}'", v.0, v.1),
+                                );
+                            }
+                        });
+                    }
+
+                    // Task Builder Form
+                    ui.add_space(8.0);
+                    ui.collapsing("⚙️ Add Custom Task", |ui: &mut egui::Ui| {
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            ui.label("Title:");
+                            ui.text_edit_singleline(&mut self.builder_title);
+                        });
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            ui.label("Description:");
+                            ui.text_edit_singleline(&mut self.builder_desc);
+                        });
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            ui.label("Dependencies (comma-separated IDs, e.g. 1,2):");
+                            ui.text_edit_singleline(&mut self.builder_deps);
+                        });
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            ui.label("Scope Paths (comma-separated, e.g. crates/renderer):");
+                            ui.text_edit_singleline(&mut self.builder_scope);
+                        });
+                        if ui.button("➕ Add Task").clicked() {
+                            if !self.builder_title.is_empty() {
+                                let id = TaskId(self.next_task_id);
+                                self.next_task_id += 1;
+
+                                let mut deps = Vec::new();
+                                for d_str in self.builder_deps.split(',') {
+                                    if let Ok(d_id) = d_str.trim().parse::<u64>() {
+                                        deps.push(TaskId(d_id));
+                                    }
+                                }
+
+                                let scope: Vec<String> = self.builder_scope
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+
+                                self.graph.add(
+                                    id,
+                                    &self.builder_title,
+                                    &self.builder_desc,
+                                    scope,
+                                    deps,
+                                    None,
+                                );
+
+                                self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                                self.builder_title.clear();
+                                self.builder_desc.clear();
+                                self.builder_deps.clear();
+                                self.builder_scope.clear();
+                            }
+                        }
+                    });
                 });
-            }
+            });
+
+            // Right column: Canvas drawing the task graph pipeline
+            columns[1].vertical(|ui: &mut egui::Ui| {
+                ui.label(egui::RichText::new("📊 TASK FLOW PIPELINE").strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                self.draw_task_graph(ui, &plan, has_cycle);
+            });
         });
     }
 
+    fn draw_task_graph(&self, ui: &mut Ui, plan: &scheduler::Plan, has_cycle: bool) {
+        use std::collections::HashMap;
+
+        let mut canvas_size = ui.available_size();
+        if !canvas_size.x.is_finite() { canvas_size.x = 400.0; }
+        if !canvas_size.y.is_finite() { canvas_size.y = 300.0; }
+        canvas_size.y = canvas_size.y.min(350.0);
+
+        let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+
+        // Fill background
+        painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(8, 9, 14));
+
+        let mut node_positions = HashMap::new();
+
+        if !has_cycle {
+            // Compute positions based on Phase layout
+            let x_spacing = 160.0;
+            let y_spacing = 75.0;
+            let start_pos = rect.min + egui::vec2(60.0, 40.0);
+
+            for (phase_idx, phase) in plan.phases.iter().enumerate() {
+                let x = start_pos.x + phase_idx as f32 * x_spacing;
+                for (task_idx, &id) in phase.iter().enumerate() {
+                    let y = start_pos.y + task_idx as f32 * y_spacing;
+                    node_positions.insert(id, egui::pos2(x, y));
+                }
+            }
+        } else {
+            // Draw in a circle if there is a cycle
+            let center = rect.center();
+            let radius = (rect.width().min(rect.height()) * 0.3).max(80.0);
+            let tasks_vec: Vec<TaskId> = self.graph.tasks.keys().cloned().collect();
+            let count = tasks_vec.len();
+            for (idx, &id) in tasks_vec.iter().enumerate() {
+                let angle = (idx as f32 / count as f32) * 2.0 * std::f32::consts::PI;
+                let x = center.x + radius * angle.cos();
+                let y = center.y + radius * angle.sin();
+                node_positions.insert(id, egui::pos2(x, y));
+            }
+        }
+
+        // 1. Draw connecting dependency lines
+        for (&id, task) in &self.graph.tasks {
+            if let Some(&p_to) = node_positions.get(&id) {
+                for dep_id in &task.dependencies {
+                    if let Some(&p_from) = node_positions.get(dep_id) {
+                        painter.line_segment([p_from, p_to], egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 116, 139)));
+                    }
+                }
+            }
+        }
+
+        // 2. Draw Task Node boxes
+        for (&id, task) in &self.graph.tasks {
+            if let Some(&pos) = node_positions.get(&id) {
+                let status = self.registry.as_ref()
+                    .and_then(|r| r.statuses.get(&id))
+                    .cloned()
+                    .unwrap_or(TaskStatus::Pending);
+
+                let color = match status {
+                    TaskStatus::Pending => egui::Color32::from_rgb(55, 65, 81),    // Gray
+                    TaskStatus::Running => egui::Color32::from_rgb(59, 130, 246),  // Blue
+                    TaskStatus::Done(_) => egui::Color32::from_rgb(34, 197, 94),   // Green
+                    TaskStatus::Failed(_) => egui::Color32::from_rgb(239, 68, 68), // Red
+                };
+
+                let size = egui::vec2(130.0, 45.0);
+                let node_rect = egui::Rect::from_center_size(pos, size);
+                painter.rect(
+                    node_rect,
+                    6.0,
+                    color,
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(226, 227, 243)),
+                    egui::StrokeKind::Inside,
+                );
+
+                let truncated_title: String = task.title.chars().take(16).collect();
+                painter.text(
+                    pos,
+                    egui::Align2::CENTER_CENTER,
+                    format!("ID: {}\n{}", id.0, truncated_title),
+                    egui::FontId::monospace(10.0),
+                    egui::Color32::from_rgb(226, 227, 243),
+                );
+            }
+        }
+    }
+
+
+
     fn task_row(&self, ui: &mut Ui, task: &Task) {
-        let status_label = match self.registry.as_ref().and_then(|r| r.statuses.get(&task.id)) {
-            Some(TaskStatus::Pending) => "⏳ Pending",
-            Some(TaskStatus::Running) => "🔵 Running",
-            Some(TaskStatus::Done(_)) => "✅ Done",
-            Some(TaskStatus::Failed(_)) => "❌ Failed",
-            None => "⏳ Pending",
+        let status = self.registry.as_ref()
+            .and_then(|r| r.statuses.get(&task.id))
+            .cloned()
+            .unwrap_or(TaskStatus::Pending);
+
+        let (status_label, bg_color) = match status {
+            TaskStatus::Pending => ("⏳ Pending", egui::Color32::from_rgb(156, 163, 175)),
+            TaskStatus::Running => ("🔵 Running", egui::Color32::from_rgb(96, 165, 250)),
+            TaskStatus::Done(_) => ("✅ Done", egui::Color32::from_rgb(74, 222, 128)),
+            TaskStatus::Failed(_) => ("❌ Failed", egui::Color32::from_rgb(248, 113, 113)),
         };
 
         ui.horizontal(|ui| {
-            ui.label(status_label);
+            ui.label(egui::RichText::new(status_label).color(bg_color).strong());
+            ui.label(egui::RichText::new(format!("(ID: {})", task.id.0)).small().weak());
             ui.label(&task.title);
         });
 
-        let expanded = self.expanded;
-        if expanded {
+        if self.expanded {
             ui.horizontal_wrapped(|ui| {
+                ui.add_space(16.0);
                 ui.label(egui::RichText::new(&task.description).small().weak());
             });
+            if !task.scope.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(16.0);
+                    let scope_str = task.scope.join(", ");
+                    ui.label(egui::RichText::new(format!("Scope: {scope_str}")).small().color(egui::Color32::from_rgb(168, 85, 247)));
+                });
+            }
         }
     }
 }

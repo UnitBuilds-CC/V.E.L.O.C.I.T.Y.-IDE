@@ -39,6 +39,13 @@ pub use verifier::{MerkleVerifier, NdaNode, NdaOpcode, CmpOp, VecOpKind, Bitwise
 
 // ─── Entry types ──────────────────────────────────────────────────────────────
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VcTriple {
+    pub subject_hash: u64,
+    pub predicate_id: u16,
+    pub object_hash: u64,
+}
+
 /// Metadata record stored in index.json for one site-map entry.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SiteMapEntry {
@@ -647,10 +654,181 @@ impl SiteMap {
                     _ => anyhow::bail!("Unknown subtag R{}", sub),
                 }
             }
+            b'T' => {
+                if *offset + 18 > data.len() { anyhow::bail!("Truncated Triple"); }
+                let subject_hash = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
+                let predicate_id = u16::from_le_bytes(data[*offset+8..*offset+10].try_into().unwrap());
+                let object_hash = u64::from_le_bytes(data[*offset+10..*offset+18].try_into().unwrap());
+                *offset += 18;
+                Ok(NdaNode::Triple { subject_hash, predicate_id, object_hash })
+            }
             _ => anyhow::bail!("Unknown tag {}", tag),
         }
     }
 
+
+    /// Recursively extract all VcTriple nodes from an AST tree.
+    fn extract_triples_recursive(node: &NdaNode, triples: &mut Vec<VcTriple>) {
+        match node {
+            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+                triples.push(VcTriple {
+                    subject_hash: *subject_hash,
+                    predicate_id: *predicate_id,
+                    object_hash: *object_hash,
+                });
+            }
+            NdaNode::Scope { children } => {
+                for child in children {
+                    Self::extract_triples_recursive(child, triples);
+                }
+            }
+            NdaNode::Loop { body, .. } => {
+                for child in body {
+                    Self::extract_triples_recursive(child, triples);
+                }
+            }
+            NdaNode::While { cond, body } => {
+                Self::extract_triples_recursive(cond, triples);
+                for child in body {
+                    Self::extract_triples_recursive(child, triples);
+                }
+            }
+            NdaNode::If { cond, then_body, else_body } => {
+                Self::extract_triples_recursive(cond, triples);
+                for child in then_body {
+                    Self::extract_triples_recursive(child, triples);
+                }
+                if let Some(eb) = else_body {
+                    for child in eb {
+                        Self::extract_triples_recursive(child, triples);
+                    }
+                }
+            }
+            NdaNode::Compare { lhs, rhs, .. } => {
+                Self::extract_triples_recursive(lhs, triples);
+                Self::extract_triples_recursive(rhs, triples);
+            }
+            NdaNode::Let { init, .. } => {
+                Self::extract_triples_recursive(init, triples);
+            }
+            NdaNode::Store { value, .. } => {
+                Self::extract_triples_recursive(value, triples);
+            }
+            NdaNode::Add { lhs, rhs } => {
+                Self::extract_triples_recursive(lhs, triples);
+                Self::extract_triples_recursive(rhs, triples);
+            }
+            NdaNode::VecOp { operand, .. } => {
+                Self::extract_triples_recursive(operand, triples);
+            }
+            NdaNode::Print { source } => {
+                Self::extract_triples_recursive(source, triples);
+            }
+            NdaNode::Return { value } => {
+                Self::extract_triples_recursive(value, triples);
+            }
+            NdaNode::Bitwise { lhs, rhs, .. } => {
+                Self::extract_triples_recursive(lhs, triples);
+                if let Some(r) = rhs {
+                    Self::extract_triples_recursive(r, triples);
+                }
+            }
+            NdaNode::Math { lhs, rhs, .. } => {
+                Self::extract_triples_recursive(lhs, triples);
+                Self::extract_triples_recursive(rhs, triples);
+            }
+            NdaNode::MathFunc { operand, .. } => {
+                Self::extract_triples_recursive(operand, triples);
+            }
+            NdaNode::Peek { addr } => {
+                Self::extract_triples_recursive(addr, triples);
+            }
+            NdaNode::Poke { addr, value } => {
+                Self::extract_triples_recursive(addr, triples);
+                Self::extract_triples_recursive(value, triples);
+            }
+            NdaNode::Gemv { matrix, vector } => {
+                Self::extract_triples_recursive(matrix, triples);
+                Self::extract_triples_recursive(vector, triples);
+            }
+            NdaNode::Dot { lhs, rhs } => {
+                Self::extract_triples_recursive(lhs, triples);
+                Self::extract_triples_recursive(rhs, triples);
+            }
+            NdaNode::Syscall { args, .. } => {
+                for arg in args {
+                    Self::extract_triples_recursive(arg, triples);
+                }
+            }
+            NdaNode::Atomic { addr, val, .. } => {
+                Self::extract_triples_recursive(addr, triples);
+                Self::extract_triples_recursive(val, triples);
+            }
+            NdaNode::Alloc { size } => {
+                Self::extract_triples_recursive(size, triples);
+            }
+            NdaNode::Free { addr } => {
+                Self::extract_triples_recursive(addr, triples);
+            }
+            NdaNode::Cast { operand, .. } => {
+                Self::extract_triples_recursive(operand, triples);
+            }
+            NdaNode::GpuDispatch { args, .. } => {
+                for arg in args {
+                    Self::extract_triples_recursive(arg, triples);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Query the Triple Store.
+    pub fn find_triples(
+        &self,
+        subject: Option<u64>,
+        predicate: Option<u16>,
+        object: Option<u64>,
+    ) -> Vec<VcTriple> {
+        let mut all_triples = Vec::new();
+        for entry in self.index.values() {
+            if entry.kind == EntryKind::Node {
+                if let Some(node) = self.get_node(entry.hash) {
+                    Self::extract_triples_recursive(&node, &mut all_triples);
+                }
+            }
+        }
+        all_triples
+            .into_iter()
+            .filter(|t| {
+                if let Some(s) = subject {
+                    if t.subject_hash != s { return false; }
+                }
+                if let Some(p) = predicate {
+                    if t.predicate_id != p { return false; }
+                }
+                if let Some(o) = object {
+                    if t.object_hash != o { return false; }
+                }
+                true
+            })
+            .collect()
+    }
+
+    /// Query call-graph callers of a method.
+    pub fn get_callers(&self, method_hash: u64) -> Vec<u64> {
+        self.find_triples(None, Some(2), Some(method_hash))
+            .into_iter()
+            .map(|t| t.subject_hash)
+            .collect()
+    }
+
+    /// Query call-graph dependencies of a method.
+    pub fn get_dependencies(&self, method_hash: u64) -> Vec<u64> {
+        self.find_triples(Some(method_hash), None, None)
+            .into_iter()
+            .map(|t| t.object_hash)
+            .collect()
+    }
 
     /// Store a complete NDA program (by its root node hash).
     pub fn put_program(&mut self, root_node: &NdaNode) -> Result<u64> {
@@ -965,6 +1143,12 @@ impl SiteMap {
                     Self::write_node(arg, buf);
                 }
             }
+            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+                buf.push(b'T');
+                buf.extend_from_slice(&subject_hash.to_le_bytes());
+                buf.extend_from_slice(&predicate_id.to_le_bytes());
+                buf.extend_from_slice(&object_hash.to_le_bytes());
+            }
         }
     }
 }
@@ -1084,5 +1268,52 @@ mod tests {
         let s = sm.stats();
         println!("{s}");
         assert_eq!(s.kv, 0);
+    }
+
+    #[test]
+    fn round_trip_triple_node() {
+        let dir = TempDir::new().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+        let n = NdaNode::Triple {
+            subject_hash: 0xAAAA_BBBB_CCCC_DDDD,
+            predicate_id: 42,
+            object_hash: 0x1111_2222_3333_4444,
+        };
+        let hash = sm.put_node(&n).unwrap();
+        let n_decoded = sm.get_node(hash).unwrap();
+        match n_decoded {
+            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+                assert_eq!(subject_hash, 0xAAAA_BBBB_CCCC_DDDD);
+                assert_eq!(predicate_id, 42);
+                assert_eq!(object_hash, 0x1111_2222_3333_4444);
+            }
+            _ => panic!("Decoded node is not a Triple!"),
+        }
+    }
+
+    #[test]
+    fn test_graph_query_engine() {
+        let dir = TempDir::new().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+
+        let t1 = NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 2 };
+        let t2 = NdaNode::Triple { subject_hash: 2, predicate_id: 2, object_hash: 3 };
+        let t3 = NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 };
+
+        let program = NdaNode::Scope { children: vec![t1, t2, t3] };
+        sm.put_node(&program).unwrap();
+
+        let triples = sm.find_triples(Some(1), Some(2), None);
+        assert_eq!(triples.len(), 2);
+
+        let callers = sm.get_callers(3);
+        assert_eq!(callers.len(), 2);
+        assert!(callers.contains(&1));
+        assert!(callers.contains(&2));
+
+        let deps = sm.get_dependencies(1);
+        assert_eq!(deps.len(), 2);
+        assert!(deps.contains(&2));
+        assert!(deps.contains(&3));
     }
 }

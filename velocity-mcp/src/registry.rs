@@ -112,12 +112,60 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["command"]
             }),
         },
+        Tool {
+            name: "delete_file".to_string(),
+            description: "Delete a file in the workspace.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path relative to workspace root (e.g. \"temp.txt\")" }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "web_navigate".to_string(),
+            description: "Navigate, crawl, and analyze a website using the integrated agentic browser crawler. This extracts page titles, text, links, scripts, and cookies, compiling them directly into the local Merkle SiteMap database.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Absolute URL to navigate to and crawl." },
+                    "concurrency": { "type": "integer", "description": "Optional number of parallel crawler instances. Defaults to 2." }
+                },
+                "required": ["url"]
+            }),
+        },
     ]
 }
 
 pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let root = root.canonicalize()?;
     match name {
+        "web_navigate" => {
+            let url = arguments["url"].as_str().ok_or("url is required")?;
+            let concurrency = arguments["concurrency"].as_i64().unwrap_or(2);
+            let go_engine_path = root.join("browsing");
+            let output = Command::new("go")
+                .args(&[
+                    "run",
+                    "cmd/crawler_graph/main.go",
+                    "--url",
+                    url,
+                    "--concurrency",
+                    &concurrency.to_string(),
+                ])
+                .current_dir(&go_engine_path)
+                .env("NEO4J_URI", root.join(".velocity").join("site_map").to_string_lossy().as_ref())
+                .output();
+            match output {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                    Ok(format!("Crawler finished.\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr))
+                }
+                Err(e) => Err(format!("Failed to execute crawler: {:?}", e).into())
+            }
+        }
         "run_command" => {
             let command_str = arguments["command"].as_str().ok_or("command is required")?;
             let output = if cfg!(target_os = "windows") {
@@ -192,14 +240,26 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             };
             
             let mut entries_list = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(target_dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let is_dir = entry.file_type()?.is_dir();
-                    entries_list.push(format!("{}{}", name, if is_dir { "/" } else { "" }));
-                }
+            let entries = std::fs::read_dir(&target_dir)
+                .map_err(|e| format!("Failed to read directory '{}': {:?}", target_dir.display(), e))?;
+                
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_dir = entry.file_type()?.is_dir();
+                entries_list.push(format!("{}{}", name, if is_dir { "/" } else { "" }));
             }
             Ok(entries_list.join("\n"))
+        }
+        "delete_file" => {
+            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            
+            if full_path.is_dir() {
+                return Err("delete_file cannot be used to delete a directory. Use a command line tool if needed.".into());
+            }
+            
+            std::fs::remove_file(&full_path)?;
+            Ok(format!("Success: File '{}' deleted successfully.", rel_path))
         }
         "grep_search" => {
             let query = arguments["query"].as_str().ok_or("query is required")?;
@@ -214,11 +274,35 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                         
                         if file_type.is_dir() {
                             let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                            if dir_name == "node_modules" || dir_name == ".git" || dir_name == "target" {
+                            if dir_name == "node_modules" 
+                                || dir_name == ".git" 
+                                || dir_name == "target"
+                                || dir_name == "dist"
+                                || dir_name == "build"
+                                || dir_name == ".vscode"
+                                || dir_name == ".idea"
+                                || dir_name == "bin"
+                                || dir_name == "obj" 
+                            {
                                 continue;
                             }
                             search_dir(&path, query, matches, root)?;
                         } else if file_type.is_file() {
+                            let extension = path.extension()
+                                .and_then(|ext| ext.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            let skip_exts = ["png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz", "7z", "rar", "exe", "dll", "so", "dylib", "class", "pyc", "nda"];
+                            if skip_exts.contains(&extension.as_str()) {
+                                continue;
+                            }
+                            
+                            if let Ok(metadata) = path.metadata() {
+                                if metadata.len() > 1024 * 1024 { // skip files > 1 MB
+                                    continue;
+                                }
+                            }
+                            
                             if let Ok(content) = std::fs::read_to_string(&path) {
                                 let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
                                 for (idx, line) in content.lines().enumerate() {
@@ -372,6 +456,55 @@ mod tests {
 
         let output = call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
         assert!(output.to_lowercase().contains("project"));
+    }
+
+    #[test]
+    fn file_tools_delete_file_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        fs::write(root.join("temp.txt"), "hello").unwrap();
+        assert!(root.join("temp.txt").exists());
+
+        call_tool_in_workspace(
+            &root,
+            "delete_file",
+            &json!({"relativeFilePath": "temp.txt"}),
+        )
+        .unwrap();
+
+        assert!(!root.join("temp.txt").exists());
+    }
+
+    #[test]
+    fn file_tools_delete_file_rejects_parent_traversal() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let result = call_tool_in_workspace(
+            &root,
+            "delete_file",
+            &json!({"relativeFilePath": "../outside.txt"}),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_dir_returns_error_on_missing_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let result = call_tool_in_workspace(
+            &root,
+            "list_dir",
+            &json!({"relativeDirPath": "missing_folder"}),
+        );
+
+        assert!(result.is_err());
     }
 }
 

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghost Bridge | Knowledge Graph</title>
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Fira+Code&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="app">
+      <div id="viz">
+        <div class="search-overlay">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-search"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="search-input" placeholder="Search knowledge graph..." />
+          <button id="wipe-btn" onclick="window.wipeDatabase()" style="background: rgba(255, 79, 79, 0.2); border: 1px solid rgba(255, 79, 79, 0.4); color: #ff4f4f; padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 0.8rem; margin-left: 10px;">Wipe Graph</button>
+        </div>
+        <div class="status-badge" id="status">
+          Engine: Ghost Bridge v44.1 | Neo4j Connected
+        </div>
+      </div>
+
+      <aside id="sidebar" class="hidden">
+        <div class="sidebar-header">
+          <h2 id="node-title">Page Summary</h2>
+          <button class="close-btn" id="close-sidebar">&times;</button>
+        </div>
+        <div id="summary-content" class="summary-content">
+          <p>Select a node to view the high-fidelity summary artifact.</p>
+        </div>
+      </aside>
+    </div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

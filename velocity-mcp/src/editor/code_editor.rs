@@ -4,11 +4,13 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{self, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
+use once_cell::sync::Lazy;
+
+static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(|| SyntaxSet::load_defaults_newlines());
+static THEME_SET: Lazy<ThemeSet> = Lazy::new(|| ThemeSet::load_defaults());
 
 pub struct CodeEditor {
     id: egui::Id,
-    syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
 }
 
 impl Default for CodeEditor {
@@ -21,20 +23,29 @@ impl CodeEditor {
     pub fn new(id_source: impl std::hash::Hash + std::fmt::Debug) -> Self {
         Self {
             id: egui::Id::new(id_source),
-            syntax_set: SyntaxSet::load_defaults_newlines(),
-            theme_set: ThemeSet::load_defaults(),
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, text: &mut String) -> Response {
-        let theme = self.theme_set.themes.get("base16-ocean.dark").unwrap_or(&self.theme_set.themes["InspiredGitHub"]);
-        let syntax = self
-            .syntax_set
-            .find_syntax_by_extension("rs")
-            .cloned()
-            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text().clone());
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &mut String,
+        path: Option<&std::path::Path>,
+        pending_line: Option<usize>,
+        active_locks: &[crate::automation::mediator::EditLock],
+    ) -> Response {
+        let extension = path
+            .and_then(|p| p.extension())
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("txt");
 
-        let ss = self.syntax_set.clone();
+        let theme = THEME_SET.themes.get("base16-ocean.dark").unwrap_or(&THEME_SET.themes["InspiredGitHub"]);
+        let syntax = SYNTAX_SET
+            .find_syntax_by_extension(extension)
+            .cloned()
+            .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text().clone());
+
+        let ss = &*SYNTAX_SET;
         let mut h = HighlightLines::new(&syntax, theme);
         let mut layouter = |ui: &egui::Ui, string: &dyn egui::TextBuffer, wrap_width: f32| {
             let string_str = string.as_str();
@@ -45,7 +56,7 @@ impl CodeEditor {
                 } else {
                     line
                 };
-                let ranges = h.highlight_line(line_without_nl, &ss).unwrap_or_default();
+                let ranges = h.highlight_line(line_without_nl, ss).unwrap_or_default();
                 for (style, word) in ranges {
                     let color = syntect_color_to_egui(style.foreground);
                     let format = TextFormat {
@@ -63,14 +74,84 @@ impl CodeEditor {
             ui.fonts_mut(|f| f.layout_job(layout_job))
         };
 
-        TextEdit::multiline(text)
-            .id(self.id)
-            .code_editor()
-            .desired_width(f32::INFINITY)
-            .layouter(&mut layouter)
-            .show(ui)
-            .response
-            .response
+        let is_line_locked = |line_idx: usize| -> bool {
+            for lock in active_locks {
+                let (start, end) = lock.line_range;
+                if line_idx >= start && line_idx <= end {
+                    return true;
+                }
+            }
+            false
+        };
+
+        let total_rows = text.lines().count().max(1);
+        let mut gutter_job = egui::text::LayoutJob::default();
+        for i in 1..=total_rows {
+            let is_locked = is_line_locked(i);
+            let format = if is_locked {
+                egui::TextFormat {
+                    font_id: egui::FontId::monospace(13.0),
+                    color: egui::Color32::from_rgb(250, 204, 21),
+                    ..Default::default()
+                }
+            } else {
+                egui::TextFormat {
+                    font_id: egui::FontId::monospace(13.0),
+                    color: egui::Color32::from_gray(100),
+                    ..Default::default()
+                }
+            };
+            let line_num_str = if is_locked {
+                format!("🔒{: >3}\n", i)
+            } else {
+                format!("  {: >3}\n", i)
+            };
+            gutter_job.append(&line_num_str, 0.0, format);
+        }
+
+        // Wrap the entire editor and gutter in a ScrollArea so they scroll together vertically
+        let scroll_output = egui::ScrollArea::vertical()
+            .show(ui, |ui: &mut egui::Ui| {
+                ui.horizontal_top(|ui: &mut egui::Ui| {
+                    // Line number gutter
+                    ui.add(
+                        egui::Label::new(gutter_job)
+                        .selectable(false),
+                    );
+
+                    // Vertical divider line
+                    ui.add(egui::Separator::default().vertical());
+
+                    // Code Editor TextEdit
+                    let text_edit = TextEdit::multiline(text)
+                        .id(self.id)
+                        .code_editor()
+                        .desired_width(f32::INFINITY)
+                        .layouter(&mut layouter);
+
+                    ui.add(text_edit)
+                }).inner
+            });
+
+        let mut response = scroll_output.inner;
+
+        if let Some(target_line) = pending_line {
+            let mut char_idx = 0;
+            for (idx, line_str) in text.lines().enumerate() {
+                if idx + 1 == target_line {
+                    break;
+                }
+                char_idx += line_str.chars().count() + 1; // +1 for '\n'
+            }
+
+            let mut state = egui::widgets::text_edit::TextEditState::default();
+            let ccursor = egui::text::CCursor::new(char_idx);
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+            state.store(ui.ctx(), response.id);
+            response.request_focus();
+        }
+
+        response
     }
 }
 
@@ -80,16 +161,6 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 
 /// Render a gutter with line numbers next to a code text edit.
 pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
-    let total_rows = text.lines().count().max(1);
-    let line_numbers: String = (1..=total_rows).map(|i| format!("{i}\n")).collect();
-
-    ui.horizontal_top(|ui| {
-        ui.add(
-            egui::Label::new(egui::RichText::new(line_numbers).monospace().size(13.0))
-                .selectable(false),
-        );
-        let mut editor = CodeEditor::default();
-        editor.show(ui, text)
-    })
-    .inner
+    let mut editor = CodeEditor::default();
+    editor.show(ui, text, None, None, &[])
 }

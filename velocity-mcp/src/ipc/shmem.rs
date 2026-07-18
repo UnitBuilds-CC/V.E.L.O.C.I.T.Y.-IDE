@@ -150,6 +150,30 @@ impl SharedMemoryBuffer {
         // No-op fallback
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn signal_request(&self) {
+        unsafe {
+            SetEvent(self.h_req_event);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn signal_request(&self) {
+        // No-op fallback
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn wait_for_response(&self) {
+        unsafe {
+            WaitForSingleObject(self.h_res_event, 0xFFFFFFFF);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn wait_for_response(&self) {
+        std::thread::sleep(std::time::Duration::from_micros(100));
+    }
+
     pub fn get_state(&self) -> u8 {
         self.mmap[STATE_OFFSET]
     }
@@ -192,6 +216,25 @@ impl SharedMemoryBuffer {
             return Err("Input length exceeds buffer limit".into());
         }
         let bytes = &self.mmap[INPUT_BUFFER_OFFSET..INPUT_BUFFER_OFFSET + len];
+        Ok(String::from_utf8(bytes.to_vec())?)
+    }
+
+    pub fn write_input(&mut self, request: &str) -> Result<(), Box<dyn Error>> {
+        let bytes = request.as_bytes();
+        if bytes.len() > (OUTPUT_BUFFER_OFFSET - INPUT_BUFFER_OFFSET) {
+            return Err("Request length exceeds input buffer limit".into());
+        }
+        self.set_input_len(bytes.len() as u32);
+        self.mmap[INPUT_BUFFER_OFFSET..INPUT_BUFFER_OFFSET + bytes.len()].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    pub fn read_output(&self) -> Result<String, Box<dyn Error>> {
+        let len = self.get_output_len() as usize;
+        if len > (TOTAL_BUFFER_SIZE - OUTPUT_BUFFER_OFFSET) {
+            return Err("Output length exceeds buffer limit".into());
+        }
+        let bytes = &self.mmap[OUTPUT_BUFFER_OFFSET..OUTPUT_BUFFER_OFFSET + len];
         Ok(String::from_utf8(bytes.to_vec())?)
     }
 

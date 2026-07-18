@@ -18,13 +18,13 @@ pub struct IdePalette {
 impl IdePalette {
     pub fn dark() -> Self {
         Self {
-            bg_primary: Color32::from_rgb(11, 14, 24),
-            bg_secondary: Color32::from_rgb(22, 25, 37),
-            bg_tertiary: Color32::from_rgb(30, 33, 48),
+            bg_primary: Color32::from_rgb(8, 9, 14),
+            bg_secondary: Color32::from_rgb(17, 18, 26),
+            bg_tertiary: Color32::from_rgb(25, 27, 39),
             text: Color32::from_rgb(226, 227, 243),
             text_muted: Color32::from_rgb(125, 131, 166),
             accent: Color32::from_rgb(168, 85, 247),
-            border: Color32::from_rgb(38, 41, 62),
+            border: Color32::from_rgb(33, 36, 51),
             success: Color32::from_rgb(74, 222, 128),
             warning: Color32::from_rgb(250, 204, 21),
             error: Color32::from_rgb(248, 113, 113),
@@ -85,16 +85,22 @@ pub fn apply_theme(ctx: &egui::Context, palette: IdePalette) {
     visuals.hyperlink_color = palette.accent;
     visuals.faint_bg_color = palette.bg_secondary;
     visuals.extreme_bg_color = palette.bg_primary;
+    visuals.window_corner_radius = CornerRadius::same(8);
     visuals.widgets.noninteractive.bg_fill = palette.bg_tertiary;
     visuals.widgets.noninteractive.fg_stroke.color = palette.text_muted;
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
     visuals.widgets.inactive.bg_fill = palette.bg_secondary;
     visuals.widgets.inactive.fg_stroke.color = palette.text;
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
     visuals.widgets.active.bg_fill = palette.bg_tertiary;
     visuals.widgets.active.fg_stroke.color = palette.text;
+    visuals.widgets.active.corner_radius = CornerRadius::same(6);
     visuals.widgets.hovered.bg_fill = palette.accent.gamma_multiply(0.15);
     visuals.widgets.hovered.fg_stroke.color = palette.text;
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
     visuals.widgets.open.bg_fill = palette.bg_tertiary;
     visuals.widgets.open.fg_stroke.color = palette.text;
+    visuals.widgets.open.corner_radius = CornerRadius::same(6);
 
     let mut style = Style::default();
     style.visuals = visuals;

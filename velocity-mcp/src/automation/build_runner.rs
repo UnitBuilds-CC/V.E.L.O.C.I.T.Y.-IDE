@@ -55,10 +55,30 @@ pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
         ..Default::default()
     };
 
+    let cargo_dir = if workspace_root.join("Cargo.toml").exists() {
+        workspace_root.to_path_buf()
+    } else if workspace_root.join("velocity-mcp").join("Cargo.toml").exists() {
+        workspace_root.join("velocity-mcp")
+    } else {
+        let mut found = workspace_root.to_path_buf();
+        if let Ok(entries) = std::fs::read_dir(workspace_root) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let path = entry.path();
+                    if path.join("Cargo.toml").exists() {
+                        found = path;
+                        break;
+                    }
+                }
+            }
+        }
+        found
+    };
+
     let output = match Command::new("cargo")
         .arg("check")
         .arg("--workspace")
-        .current_dir(workspace_root)
+        .current_dir(&cargo_dir)
         .env("RUSTFLAGS", "--allow=warnings")
         .output()
     {

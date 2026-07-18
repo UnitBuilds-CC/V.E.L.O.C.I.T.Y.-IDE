@@ -2394,6 +2394,7 @@ fn node_to_str(node: &NdaNode) -> String {
         NdaNode::RegInt { vector, .. } => format!("RegInt({})", vector),
         NdaNode::Cast { from_type, to_type, .. } => format!("Cast({:?}->{:?})", from_type, to_type),
         NdaNode::GpuDispatch { shader_hash, .. } => format!("GpuDispatch(shader={:016x})", shader_hash),
+        NdaNode::Triple { subject_hash, predicate_id, object_hash } => format!("Triple(sub={:016x}, pred={}, obj={:016x})", subject_hash, predicate_id, object_hash),
     }
 }
 
@@ -3146,6 +3147,9 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                 state.stack.push(JitVal::Scalar(1, 0));
                 Ok(JitControlFlow::Continue)
             })
+        }
+        NdaNode::Triple { .. } => {
+            Arc::new(|_| Err("JIT execution of Triple nodes is unsupported".to_string()))
         }
     }
 }

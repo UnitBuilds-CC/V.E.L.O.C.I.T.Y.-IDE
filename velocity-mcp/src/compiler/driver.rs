@@ -107,6 +107,13 @@ impl VulkanDriver {
         })
     }
 
+    pub fn device_name(&self) -> String {
+        let props = unsafe { self.instance.get_physical_device_properties(self.physical_device) };
+        unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
     pub fn run_diagnostics(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("V.E.L.O.C.I.T.Y. V-NCE Diagnostic Run:");
         println!("  - Vulkan logical device handles initialized.");

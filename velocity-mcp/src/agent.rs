@@ -17,6 +17,8 @@ pub enum UiToAgentMessage {
     ApproveTool { id: String, tool_name: String, arguments: Value },
     #[allow(dead_code)]
     RejectTool { id: String, tool_name: String },
+    RunLocalBuild,
+    RunLocalRun,
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +89,7 @@ fn infer_model_info(id: String, item: &Value) -> Option<ModelInfo> {
     let metadata = serde_json::to_string(item).unwrap_or_default().to_lowercase();
     let supports_tools = lower.contains("function-calling")
         || lower.contains("tool-use")
-        || lower.contains("kimi-k2")
+        || lower.contains("kimi")
         || lower.contains("llama-3.1")
         || lower.contains("llama-3.2")
         || lower.contains("llama-3.3")
@@ -115,7 +117,7 @@ fn infer_model_info(id: String, item: &Value) -> Option<ModelInfo> {
         && !supports_tools;
     let supports_thinking = lower.contains("thinking")
         || lower.contains("reasoning")
-        || lower.contains("kimi-k2")
+        || lower.contains("kimi")
         || lower.contains("deepseek-r1")
         || lower.contains("o1-")
         || lower.contains("o3-")
@@ -199,7 +201,7 @@ fn fetch_model_catalog(accounts: &[CloudflareAccount]) -> Result<Vec<ModelInfo>,
                     .map(str::to_string)
                     .and_then(|id| infer_model_info(id, item))
             })
-            .filter(|model| model.id.starts_with("@cf/"))
+            .filter(|model| model.id.contains('/'))
             .collect::<Vec<_>>();
         models.sort_by(|a, b| a.id.cmp(&b.id));
         models.dedup_by(|a, b| a.id == b.id);
@@ -228,7 +230,7 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
     let label = name.clone();
     let supports_thinking = lower.contains("think")
         || lower.contains("reason")
-        || lower.contains("kimi-k2")
+        || lower.contains("kimi")
         || lower.contains("deepseek-r1")
         || lower.contains("qwq")
         || lower.contains("/o1")
@@ -346,7 +348,7 @@ fn default_model_info(id: &str) -> ModelInfo {
         supports_tools: false,
         supports_thinking: lower.contains("think")
             || lower.contains("reason")
-            || lower.contains("kimi-k2")
+            || lower.contains("kimi")
             || lower.contains("deepseek-r1")
             || lower.contains("qwq")
             || lower.contains("o1-")
@@ -491,6 +493,24 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
     // sessions with empty or missing roles.  Every provider rejects these.
     const VALID_ROLES: &[&str] = &["system", "user", "assistant", "tool", "function", "developer"];
     let mut messages: Vec<ChatMessage> = messages.iter().filter_map(|m| {
+        let trimmed_content = m.content.trim();
+        // Drop buggy empty/corrupted tool call residues or dummy loop errors
+        if trimmed_content.contains("Tool '' is not registered")
+            || trimmed_content == "</tool_call>"
+            || trimmed_content == "<tool_call>\n</tool_call>"
+            || trimmed_content == "Tool name came through empty. Let me retry with the correct tool:"
+            || trimmed_content == "The tool invocation isn't registering the function name. Let me use the proper `read_file` tool:"
+            || trimmed_content == "The tool name is still being stripped from my calls, so I can't write the file through the tool right now. But I can give you the exact file to create manually, which will permanently fix the validation error."
+            || trimmed_content == "The tool-call parser is consistently dropping the `<function>` tag on my side, so I can't fetch the file right now. However, I already have enough information from the earlier `list_dir` to resolve your build error confidently."
+            || trimmed_content == "Apologies — the tool name field is being dropped in my calls. Let me retry explicitly with `read_file`:"
+            || trimmed_content == "My `write_file` tool calls are being rejected because the function name isn't being transmitted correctly on my side. I cannot directly create the file through tools right now."
+            || trimmed_content == "My tool calls keep getting stripped of the function name, so I can't browse the files right now. Based on the earlier `list_dir` of `velocity-mcp/src/editor/`, the UI panels live there (e.g. `chat_panel.rs`, `status_bar.rs`, `app.rs`, `top_bar.rs` or similar)."
+            || trimmed_content.starts_with("[Tool result for '']: ")
+            || (m.role == "assistant" && trimmed_content.is_empty() && m.tool_calls.is_none())
+        {
+            return None;
+        }
+
         if m.role.trim().is_empty() {
             // Recover if content is meaningful, otherwise drop
             if !m.content.trim().is_empty() {
@@ -544,12 +564,42 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
         }
 
         if m.role == "tool" {
-            let remaining_tools = tool_indices.iter().filter(|&&i| i > idx).count();
-            if remaining_tools >= max_intact_tool_calls && m_copy.content.len() > 300 {
+            let has_subsequent_assistant_msg = messages[idx + 1..].iter().any(|msg| msg.role == "assistant");
+            if has_subsequent_assistant_msg && m_copy.content.len() > 1000 {
                 let tool_name = m_copy.name.clone().unwrap_or_else(|| "unknown_tool".to_string());
+                let content_len = m_copy.content.len();
+                let content_hash = hash_str(&m_copy.content);
+
+                let mut decls = Vec::new();
+                if tool_name == "read_file" || m_copy.content.contains("fn ") || m_copy.content.contains("class ") {
+                    for line in m_copy.content.lines() {
+                        let line = line.trim();
+                        if line.contains("fn ") || line.contains("void ") || line.contains("def ") || line.contains("class ") {
+                            let parts: Vec<&str> = line.split_whitespace().collect();
+                            for (i, &word) in parts.iter().enumerate() {
+                                if word == "fn" || word == "def" || word == "class" || word == "void" {
+                                    if let Some(&name) = parts.get(i + 1) {
+                                        let name_cleaned = name.split('(').next().unwrap_or(name);
+                                        decls.push(format!("{} {}", word, name_cleaned));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let decl_summary = if decls.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nParsed Declarations:\n  {}", decls.join("\n  "))
+                };
+
                 m_copy.content = format!(
-                    "[Tool output of \"{}\" compressed to optimize context & cost. Original size: {} characters. Output successfully processed in a previous turn.]",
-                    tool_name, m_copy.content.len()
+                    "[Tool output of '{}' compressed to optimize context budget.\n\
+                     Merkle Hash: {:016x}\n\
+                     Original Size: {} characters.{}\n\
+                     (This data was successfully read and processed in a previous turn. Query site_map to retrieve specific details.)]",
+                    tool_name, content_hash, content_len, decl_summary
                 );
             }
         }
@@ -1005,6 +1055,67 @@ pub fn run_agent_thread(
                     &ui_tx,
                 );
             }
+            UiToAgentMessage::RunLocalBuild => {
+                ui_tx.send(AgentToUiMessage::StatusUpdate("Running local cargo check...".to_string())).ok();
+                ui_tx.send(AgentToUiMessage::OutputToken("\n$ cargo check (Local)\n".to_string())).ok();
+                
+                let output = std::process::Command::new("cargo")
+                    .arg("check")
+                    .current_dir(&workspace_root)
+                    .output();
+                    
+                match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        ui_tx.send(AgentToUiMessage::OutputToken(stdout.into_owned())).ok();
+                        ui_tx.send(AgentToUiMessage::OutputToken(stderr.into_owned())).ok();
+                        
+                        if out.status.success() {
+                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local build succeeded!".to_string())).ok();
+                        } else {
+                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local build failed!".to_string())).ok();
+                        }
+                    }
+                    Err(e) => {
+                        ui_tx.send(AgentToUiMessage::OutputToken(format!("Failed to run build: {:?}", e))).ok();
+                        ui_tx.send(AgentToUiMessage::StatusUpdate("Local build failed to launch".to_string())).ok();
+                    }
+                }
+                
+                let _ = run_compilation_check(&workspace_root);
+                ui_tx.send(AgentToUiMessage::AgentFinished).ok();
+            }
+            UiToAgentMessage::RunLocalRun => {
+                ui_tx.send(AgentToUiMessage::StatusUpdate("Running local cargo run...".to_string())).ok();
+                ui_tx.send(AgentToUiMessage::OutputToken("\n$ cargo run (Local)\n".to_string())).ok();
+                
+                let output = std::process::Command::new("cargo")
+                    .arg("run")
+                    .current_dir(&workspace_root)
+                    .output();
+                    
+                match output {
+                    Ok(out) => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        ui_tx.send(AgentToUiMessage::OutputToken(stdout.into_owned())).ok();
+                        ui_tx.send(AgentToUiMessage::OutputToken(stderr.into_owned())).ok();
+                        
+                        if out.status.success() {
+                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local run finished successfully!".to_string())).ok();
+                        } else {
+                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local run exited with error!".to_string())).ok();
+                        }
+                    }
+                    Err(e) => {
+                        ui_tx.send(AgentToUiMessage::OutputToken(format!("Failed to run executable: {:?}", e))).ok();
+                        ui_tx.send(AgentToUiMessage::StatusUpdate("Local run failed to launch".to_string())).ok();
+                    }
+                }
+                
+                ui_tx.send(AgentToUiMessage::AgentFinished).ok();
+            }
             _ => {}
         }
     }
@@ -1076,6 +1187,7 @@ fn run_agent_reasoning_loop(
     ui_rx: &Receiver<UiToAgentMessage>,
     ui_tx: &Sender<AgentToUiMessage>,
 ) {
+    let mut sitemap_needed = false;
     let mut loop_count = 0;
     let max_loops = 15;
     
@@ -1349,7 +1461,7 @@ fn run_agent_reasoning_loop(
                                                 if let Some((p, _is_bracket)) = detected {
                                                     let safe = &search[..p];
                                                     if !safe.is_empty() {
-                                                        ui_tx.send(AgentToUiMessage::OutputToken(safe.to_string())).ok();
+                                                        ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(safe))).ok();
                                                     }
                                                     streamed_len += p;
                                                     suppressing = true;
@@ -1361,7 +1473,7 @@ fn run_agent_reasoning_loop(
                                                     }
                                                     if safe_end > streamed_len {
                                                         let chunk = &ac[streamed_len..safe_end];
-                                                        ui_tx.send(AgentToUiMessage::OutputToken(chunk.to_string())).ok();
+                                                        ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(chunk))).ok();
                                                         streamed_len = safe_end;
                                                     }
                                                     break;
@@ -1399,7 +1511,7 @@ fn run_agent_reasoning_loop(
                             {
                                 assistant_content.push_str(content);
                                 streamed_len += content.len();
-                                ui_tx.send(AgentToUiMessage::OutputToken(content.to_string())).ok();
+                                ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(content))).ok();
                             }
                         }
                     }
@@ -1422,7 +1534,7 @@ fn run_agent_reasoning_loop(
             }
             let tail = &assistant_content[flush_start..];
             if !tail.is_empty() {
-                ui_tx.send(AgentToUiMessage::OutputToken(tail.to_string())).ok();
+                ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(tail))).ok();
             }
         }
 
@@ -1633,11 +1745,13 @@ fn run_agent_reasoning_loop(
         if let Some(ref tcs) = final_tool_calls_value {
             let tool_calls_arr = tcs.as_array().unwrap();
             
+            let mut pending_ids = std::collections::HashSet::new();
+            let mut tool_specs = Vec::new();
+            
             for tc in tool_calls_arr {
                 let call_id = tc["id"].as_str().unwrap_or("").to_string();
                 let tool_name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                 let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-                
                 let arguments: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
                 
                 ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Requesting approval for tool: {}", tool_name))).ok();
@@ -1647,60 +1761,109 @@ fn run_agent_reasoning_loop(
                     arguments: arguments.clone(),
                 }).ok();
                 
-                // Wait for approval response
-                let mut tool_result = String::new();
-                
-                while let Ok(ui_msg) = ui_rx.recv() {
+                pending_ids.insert(call_id.clone());
+                tool_specs.push((call_id, tool_name, arguments));
+            }
+            
+            // Wait for all approvals
+            let mut resolved_approvals = std::collections::HashMap::new();
+            
+            while !pending_ids.is_empty() {
+                if let Ok(ui_msg) = ui_rx.recv() {
                     match ui_msg {
-                        UiToAgentMessage::ApproveTool { id, tool_name: _, arguments: approved_args } => {
-                            if id == call_id {
-                                ui_tx.send(AgentToUiMessage::ToolExecutionStarted { tool_name: tool_name.clone() }).ok();
-                                
-                                // Execute tool in our native registry
-                                match registry::call_tool_in_workspace(workspace_root, &tool_name, &approved_args) {
-                                    Ok(res) => {
-                                        tool_result = res;
-                                        // If tool is writing/modifying a file, send direct buffer update to UI
-                                        if tool_name == "write_file" {
-                                            if let Some(rel_path) = approved_args["relativeFilePath"].as_str() {
-                                                let full_path = workspace_root.join(rel_path);
-                                                if let Some(content) = approved_args["content"].as_str() {
-                                                    ui_tx.send(AgentToUiMessage::UpdateFileBuffer {
-                                                        path: full_path,
-                                                        content: content.to_string(),
-                                                     }).ok();
-                                                }
-                                                // Log change to changelog
-                                                append_changelog_nda(workspace_root, rel_path, "write_file");
-                                                // Refresh codebase sitemap
-                                                write_sitemap_nda(workspace_root);
-                                            }
-                                        }
-                                write_handover_nda(workspace_root, "executing", loop_count, "ok", false);
-                                    }
-                                    Err(e) => {
-                                        tool_result = format!("Error executing tool: {:?}", e);
-                                        write_handover_nda(workspace_root, "tool_error", loop_count, &format!("{:?}", e), false);
-                                    }
-                                }
-                                ui_tx.send(AgentToUiMessage::ToolExecutionFinished {
-                                    tool_name: tool_name.clone(),
-                                    result: tool_result.clone(),
-                                }).ok();
-                                break;
+                        UiToAgentMessage::ApproveTool { id, tool_name: _, arguments } => {
+                            if pending_ids.remove(&id) {
+                                resolved_approvals.insert(id, Some(arguments));
                             }
                         }
                         UiToAgentMessage::RejectTool { id, tool_name: _ } => {
-                            if id == call_id {
-                                tool_result = "Error: Tool execution rejected by the user.".to_string();
-                                write_handover_nda(workspace_root, "tool_rejected", loop_count, "user_reject", false);
-                                break;
+                            if pending_ids.remove(&id) {
+                                resolved_approvals.insert(id, None);
                             }
                         }
                         _ => {}
                     }
+                } else {
+                    break;
                 }
-
+            }
+            
+            // Execute approved tools in parallel
+            let mut handles = Vec::new();
+            
+            for (call_id, tool_name, _original_arguments) in tool_specs {
+                let approval = resolved_approvals.get(&call_id).cloned().flatten();
+                let workspace_root_clone = workspace_root.clone();
+                let ui_tx_clone = ui_tx.clone();
+                
+                let handle = std::thread::spawn(move || {
+                    let mut tool_result = String::new();
+                    let mut file_buffer_update = None;
+                    let mut changelog_entry = None;
+                    
+                    if let Some(approved_args) = approval {
+                        ui_tx_clone.send(AgentToUiMessage::ToolExecutionStarted { tool_name: tool_name.clone() }).ok();
+                        
+                        match registry::call_tool_in_workspace(&workspace_root_clone, &tool_name, &approved_args) {
+                            Ok(res) => {
+                                tool_result = res;
+                                if tool_name == "write_file" {
+                                    if let Some(rel_path) = approved_args["relativeFilePath"].as_str() {
+                                        let full_path = workspace_root_clone.join(rel_path);
+                                        if let Some(content) = approved_args["content"].as_str() {
+                                            file_buffer_update = Some((full_path, content.to_string()));
+                                        }
+                                        changelog_entry = Some((rel_path.to_string(), "write_file"));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tool_result = format!("Error executing tool: {:?}", e);
+                            }
+                        }
+                        
+                        ui_tx_clone.send(AgentToUiMessage::ToolExecutionFinished {
+                            tool_name: tool_name.clone(),
+                            result: tool_result.clone(),
+                        }).ok();
+                    } else {
+                        tool_result = "Error: Tool execution rejected by the user.".to_string();
+                    }
+                    
+                    (call_id, tool_name, tool_result, file_buffer_update, changelog_entry)
+                });
+                
+                handles.push(handle);
+            }
+            
+            let mut thread_results = Vec::new();
+            for h in handles {
+                if let Ok(res) = h.join() {
+                    thread_results.push(res);
+                }
+            }
+            
+            let mut any_success = false;
+            let mut any_rejected = false;
+            let mut any_error = false;
+            
+            for (call_id, tool_name, tool_result, file_buffer_update, changelog_entry) in thread_results {
+                if tool_result.contains("Error executing tool") {
+                    any_error = true;
+                } else if tool_result.contains("rejected by the user") {
+                    any_rejected = true;
+                } else {
+                    any_success = true;
+                }
+                
+                if let Some((path, content)) = file_buffer_update {
+                    ui_tx.send(AgentToUiMessage::UpdateFileBuffer { path, content }).ok();
+                }
+                if let Some((rel_path, action)) = changelog_entry {
+                    append_changelog_nda(workspace_root, &rel_path, action);
+                    sitemap_needed = true;
+                }
+                
                 // Add tool response to history
                 message_history.push(ChatMessage {
                     role: "tool".to_string(),
@@ -1709,67 +1872,114 @@ fn run_agent_reasoning_loop(
                     tool_call_id: Some(call_id),
                     tool_calls: None,
                 });
-                
-                // Save progress chatlogs
-                save_chatlogs_nda(workspace_root, message_history);
             }
+            
+            // Handover update
+            if any_error {
+                write_handover_nda(workspace_root, "tool_error", loop_count, "tool error in batch", false);
+            } else if any_rejected {
+                write_handover_nda(workspace_root, "tool_rejected", loop_count, "user reject in batch", false);
+            } else if any_success {
+                write_handover_nda(workspace_root, "executing", loop_count, "batch ok", false);
+            }
+            
+            // Save progress chatlogs
+            save_chatlogs_nda(workspace_root, message_history);
         } else {
-            // No tool calls, we are done
-            break;
+            // No tool calls, the model claims it is done. Let's validate compilation.
+            ui_tx.send(AgentToUiMessage::StatusUpdate("Running automatic compilation validation...".to_string())).ok();
+            match run_compilation_check(workspace_root) {
+                Ok(()) => {
+                    write_handover_nda(workspace_root, "idle", loop_count, "compiler validated", false);
+                    ui_tx.send(AgentToUiMessage::StatusUpdate("Compiler validation succeeded!".to_string())).ok();
+                    break;
+                }
+                Err(errors) => {
+                    if loop_count < max_loops {
+                        write_handover_nda(workspace_root, "self_correcting", loop_count, "compile_failed", false);
+                        ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation failed! Self-correcting...".to_string())).ok();
+                        
+                        let error_prompt = format!(
+                            "[SYSTEM NOTIFICATION: compiler validation failed. Please fix the following build errors immediately]\n{}",
+                            errors
+                        );
+                        message_history.push(ChatMessage {
+                            role: "user".to_string(),
+                            content: error_prompt,
+                            name: None,
+                            tool_call_id: None,
+                            tool_calls: None,
+                        });
+                        
+                        // Continue flat loop iteration to self-correct
+                        continue;
+                    } else {
+                        write_handover_nda(workspace_root, "idle", loop_count, "compile_failed", false);
+                        ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation validation failed (Max limits reached)".to_string())).ok();
+                        break;
+                    }
+                }
+            }
         }
     }
     
     save_chatlogs_nda(workspace_root, message_history);
     
-    // Perform compilation check
-    ui_tx.send(AgentToUiMessage::StatusUpdate("Running automatic compilation validation...".to_string())).ok();
-    match run_compilation_check(workspace_root) {
-        Ok(()) => {
-            write_handover_nda(workspace_root, "idle", loop_count, "compiler validated", false);
-            ui_tx.send(AgentToUiMessage::StatusUpdate("Compiler validation succeeded!".to_string())).ok();
-        }
-        Err(errors) => {
-            if loop_count < max_loops {
-                write_handover_nda(workspace_root, "self_correcting", loop_count, "compile_failed", false);
-                ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation failed! Self-correcting...".to_string())).ok();
-                
-                let error_prompt = format!(
-                    "[SYSTEM NOTIFICATION: compiler validation failed. Please fix the following build errors immediately]\n{}",
-                    errors
-                );
-                message_history.push(ChatMessage {
-                    role: "user".to_string(),
-                    content: error_prompt,
-                    name: None,
-                    tool_call_id: None,
-                    tool_calls: None,
-                });
-                
-                // Recursively self-correct
-                run_agent_reasoning_loop(
-                    workspace_root,
-                    accounts,
-                    or_accounts,
-                    model,
-                    profile,
-                    provider,
-                    thinking,
-                    message_history,
-                    usage_tracker,
-                    ui_rx,
-                    ui_tx,
-                );
-                return;
-            } else {
-                write_handover_nda(workspace_root, "idle", loop_count, "compile_failed", false);
-                ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation validation failed (Max limits reached)".to_string())).ok();
-            }
-        }
+    if sitemap_needed {
+        write_sitemap_nda(workspace_root);
     }
-    
     convert_jsonl_to_nda(workspace_root);
     ui_tx.send(AgentToUiMessage::StatusUpdate("Agent workflow finished. Idling.".to_string())).ok();
     ui_tx.send(AgentToUiMessage::AgentFinished).ok();
+}
+
+fn hash_str(s: &str) -> u64 {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let d = h.finalize();
+    u64::from_le_bytes(d[..8].try_into().unwrap())
+}
+
+fn sanitize_chat_token(s: &str) -> String {
+    let mut out = s.to_string();
+    let tags = [
+        "</tool_call>", "<tool_call>",
+        "</function>", "<function>",
+        "</parameter>", "<parameter>",
+    ];
+    for tag in &tags {
+        out = out.replace(&format!("{}\r\n", tag), "");
+        out = out.replace(&format!("{}\n", tag), "");
+        out = out.replace(tag, "");
+    }
+    let mut result = String::with_capacity(out.len());
+    let mut in_tag = false;
+    let chars: Vec<char> = out.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '<' {
+            let mut j = i + 1;
+            let mut is_tag_structure = false;
+            while j < chars.len() && chars[j] != '>' {
+                let c = chars[j];
+                if c.is_alphabetic() || c == '/' || c == '=' || c == '_' || c == '-' || c.is_ascii_digit() || c == '\"' || c == '\'' || c == '.' {
+                    is_tag_structure = true;
+                } else {
+                    is_tag_structure = false;
+                    break;
+                }
+                j += 1;
+            }
+            if is_tag_structure && j < chars.len() && chars[j] == '>' {
+                i = j + 1;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1795,10 +2005,17 @@ mod tests {
             supports_tools: false,
             supports_thinking: false,
         };
-        let request = build_request(&profile, &profile.id, &[message()], &[json!({"type": "function"})], true);
+        let request = build_request(&profile, &profile.id, &[message()], &[json!({"type": "function"})], true, AiProvider::CloudflareWorkersAi);
         assert!(request.get("messages").is_some());
         assert!(request.get("tools").is_none());
         assert!(request.get("thinking").is_none());
+    }
+
+    #[test]
+    fn test_sanitize_chat_token_removes_tags() {
+        let input = "Hello there </tool_call>\n</tool_call>\n<parameter=path>src/main.rs</parameter> checking.";
+        let expected = "Hello there src/main.rs checking.";
+        assert_eq!(sanitize_chat_token(input).trim(), expected);
     }
 
     #[test]
@@ -1810,7 +2027,7 @@ mod tests {
             supports_tools: false,
             supports_thinking: false,
         };
-        let request = build_request(&profile, &profile.id, &[message()], &[json!({"type": "function"})], false);
+        let request = build_request(&profile, &profile.id, &[message()], &[json!({"type": "function"})], false, AiProvider::CloudflareWorkersAi);
         assert_eq!(request["prompt"], "user: hello");
         assert!(request.get("messages").is_none());
         assert!(request.get("tools").is_none());
@@ -1858,5 +2075,41 @@ mod tests {
         assert_eq!(compressed[1].content, "[Tool result for 'write_file']: Success");
         assert!(compressed[1].name.is_none());
         assert!(compressed[1].tool_call_id.is_none());
+    }
+
+    #[test]
+    fn test_eager_merkle_compaction() {
+        let mut long_content = String::new();
+        long_content.push_str("fn test_function() {\n    println!(\"Hello\");\n}\nclass TestClass {}");
+        for i in 0..100 {
+            long_content.push_str(&format!("\n// Dummy line padding number {} to ensure we are well above the one thousand character compaction threshold.", i));
+        }
+
+        let original_messages = vec![
+            ChatMessage {
+                role: "tool".to_string(),
+                content: long_content,
+                name: Some("read_file".to_string()),
+                tool_call_id: Some("call_xyz".to_string()),
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "I have read the file.".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            }
+        ];
+
+        let compressed = compress_history(&original_messages, true);
+        assert_eq!(compressed.len(), 2);
+        assert_eq!(compressed[0].role, "tool");
+        
+        let content = &compressed[0].content;
+        assert!(content.contains("compressed to optimize context"));
+        assert!(content.contains("Merkle Hash:"));
+        assert!(content.contains("fn test_function"));
+        assert!(content.contains("class TestClass"));
     }
 }

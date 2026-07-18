@@ -9,3 +9,4 @@ pub mod status_bar;
 pub mod theme;
 pub mod toast;
 pub mod usage_panel;
+pub mod graph_view;

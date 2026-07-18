@@ -464,6 +464,9 @@ impl ExecutionState {
                 }
                 self.current_vec = NdaVec::from_f32_slice(&[1.0]);
             }
+            NdaNode::Triple { .. } => {
+                // Triple nodes represent semantic metadata and are ignored during evaluation.
+            }
         }
         Ok(ControlFlow::Continue)
     }

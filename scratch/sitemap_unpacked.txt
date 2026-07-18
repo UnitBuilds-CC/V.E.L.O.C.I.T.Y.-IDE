@@ -1,0 +1,257 @@
+V.E.L.O.C.I.T.Y. Codebase Sitemap Registry
+=========================================
+file	.env	4588
+file	.gitignore	290
+dir	agent
+file	agent\api.py	20005
+file	agent\main.py	12778
+file	agent\schemas.py	249
+file	agent\state.py	7296
+file	agent\tools.py	33397
+file	agent\usage.py	6846
+dir	agent\__pycache__
+file	agent\__pycache__\api.cpython-311.pyc	26025
+file	agent\__pycache__\main.cpython-311.pyc	11476
+file	agent\__pycache__\schemas.cpython-311.pyc	487
+file	agent\__pycache__\state.cpython-311.pyc	12473
+file	agent\__pycache__\tools.cpython-311.pyc	51543
+dir	bin
+file	bin\ide	42
+file	bin\velocity	47
+file	Cargo.lock	122072
+file	Cargo.toml	315
+file	Dockerfile	322
+dir	ide
+file	ide\actions.py	6374
+file	ide\app.py	19390
+file	ide\screens.py	3970
+file	ide\widgets.py	8241
+file	ide\__init__.py	18
+file	ide\__main__.py	102
+dir	ide\__pycache__
+file	ide\__pycache__\actions.cpython-311.pyc	10986
+file	ide\__pycache__\app.cpython-311.pyc	30705
+file	ide\__pycache__\screens.cpython-311.pyc	8504
+file	ide\__pycache__\widgets.cpython-311.pyc	15042
+file	ide\__pycache__\__init__.cpython-311.pyc	188
+file	ide\__pycache__\__main__.cpython-311.pyc	305
+dir	memory
+file	memory\.account_state.json	1609
+file	memory\.account_usage.json	5109
+file	memory\plan.md	1269
+file	memory\project.md	617
+file	memory\scratchpad.md	101
+file	memory\session.jsonl	102046
+dir	memory\summaries
+file	memory\summaries\20260703T093043Z.md	181
+file	memory\summaries\20260703T094353Z.md	181
+file	memory\summaries\20260703T102910Z.md	181
+file	memory\summaries\20260703T103020Z.md	181
+file	memory\summaries\20260703T103105Z.md	181
+file	memory\summaries\20260703T103151Z.md	181
+file	memory\summaries\20260703T103215Z.md	181
+file	memory\summaries\20260703T103304Z.md	181
+file	memory\summaries\20260703T103335Z.md	181
+file	memory\summaries\20260703T103405Z.md	181
+file	memory\summaries\20260703T103500Z.md	181
+file	memory\summaries\20260703T103529Z.md	181
+file	memory\summaries\20260703T103606Z.md	181
+file	memory\summaries\20260703T103711Z.md	181
+file	memory\summaries\20260703T103806Z.md	181
+file	memory\summaries\20260703T103853Z.md	181
+file	memory\summaries\20260703T103957Z.md	181
+file	memory\summaries\20260703T104118Z.md	181
+file	memory\summaries\20260703T104219Z.md	181
+file	memory\summaries\20260703T104321Z.md	181
+file	memory\summaries\20260703T104416Z.md	181
+file	memory\summaries\20260703T104515Z.md	181
+file	memory\summaries\20260703T104606Z.md	181
+file	memory\summaries\20260703T104700Z.md	181
+file	memory\summaries\20260703T104720Z.md	181
+file	memory\summaries\20260703T104840Z.md	181
+file	memory\summaries\20260703T105000Z.md	181
+file	memory\summaries\20260703T105109Z.md	181
+file	memory\summaries\20260703T105154Z.md	181
+file	memory\summaries\20260703T105311Z.md	181
+file	memory\summaries\20260703T105426Z.md	181
+file	memory\summaries\20260703T105522Z.md	181
+file	memory\summaries\20260703T105642Z.md	181
+file	memory\summaries\20260703T105809Z.md	181
+file	memory\summaries\20260703T105916Z.md	181
+file	memory\summaries\20260703T110029Z.md	181
+file	memory\summaries\20260703T110115Z.md	181
+file	memory\summaries\20260703T110221Z.md	181
+file	memory\summaries\20260703T110234Z.md	181
+file	memory\summaries\20260703T110348Z.md	181
+file	memory\summaries\20260703T110433Z.md	181
+file	memory\summaries\20260703T110548Z.md	181
+file	memory\summaries\20260703T110622Z.md	181
+file	memory\summaries\20260703T110704Z.md	181
+file	memory\summaries\20260703T110757Z.md	181
+file	memory\summaries\20260703T110853Z.md	181
+file	memory\summaries\20260703T110927Z.md	181
+file	memory\summaries\20260703T111000Z.md	181
+file	memory\summaries\20260703T111039Z.md	181
+file	memory\summaries\20260703T111109Z.md	181
+file	memory\summaries\20260703T121400Z.md	181
+file	memory\summaries\20260703T121443Z.md	181
+file	memory\summaries\20260703T121527Z.md	181
+file	memory\summaries\20260703T121610Z.md	181
+file	memory\summaries\20260703T121657Z.md	181
+file	memory\summaries\20260703T121719Z.md	181
+file	memory\summaries\20260703T121746Z.md	181
+file	memory\summaries\20260703T121824Z.md	181
+file	memory\summaries\20260703T121842Z.md	181
+file	memory\summaries\20260703T121913Z.md	181
+file	memory\summaries\20260703T121946Z.md	181
+file	memory\summaries\20260703T122053Z.md	181
+file	memory\summaries\20260703T122130Z.md	181
+file	memory\summaries\20260703T122249Z.md	181
+file	memory\summaries\20260703T122344Z.md	181
+file	memory\summaries\20260703T122448Z.md	181
+file	memory\summaries\20260703T122530Z.md	181
+file	memory\summaries\20260703T122636Z.md	181
+file	memory\summaries\20260703T122704Z.md	181
+file	memory\summaries\20260703T133831Z.md	181
+file	memory\summaries\20260703T134635Z.md	181
+file	memory\summaries\20260703T134708Z.md	181
+file	memory\summaries\20260703T134804Z.md	181
+file	memory\summaries\20260703T134831Z.md	181
+file	memory\summaries\20260703T134854Z.md	181
+file	memory\summaries\20260703T134910Z.md	181
+file	memory\summaries\20260703T134936Z.md	181
+file	memory\summaries\20260703T135024Z.md	181
+file	memory\summaries\20260703T151212Z.md	181
+file	memory\summaries\20260703T151246Z.md	181
+file	memory\summaries\20260703T151305Z.md	181
+file	memory\summaries\20260703T151355Z.md	181
+file	memory\summaries\20260703T151405Z.md	181
+file	memory\summaries\20260703T151457Z.md	181
+file	memory\summaries\20260703T151542Z.md	181
+file	memory\summaries\20260703T151619Z.md	181
+file	memory\todos.md	340
+file	README.md	3877
+file	requirements.txt	84
+dir	scratch
+file	scratch\test_reload.py	611
+file	scratch\test_subproc.py	881
+file	subproc_test.log	78
+file	test_api.py	1172
+file	test_ide_compose.py	848
+file	test_tree_expand.py	1188
+file	test_tree_headless.py	764
+file	test_tree_tabbed.py	1052
+file	test_tree_tabbed_expand.py	1289
+file	tree_tabbed.log	300
+file	tree_test.log	407
+dir	velocity-ide
+file	velocity-ide\Cargo.lock	39785
+file	velocity-ide\Cargo.toml	1089
+dir	velocity-ide\src
+dir	velocity-ide\src\bin
+file	velocity-ide\src\bin\bench_nda_vs_rust.rs	40467
+file	velocity-ide\src\bin\run_nda.rs	6307
+file	velocity-ide\src\bin\test_tok.rs	520
+dir	velocity-ide\src\compiler
+file	velocity-ide\src\compiler\driver.rs	192174
+file	velocity-ide\src\compiler\mod.rs	174
+file	velocity-ide\src\compiler\nda_jit.rs	143887
+file	velocity-ide\src\compiler\nda_lexer.rs	10545
+file	velocity-ide\src\compiler\nda_parser.rs	28496
+file	velocity-ide\src\compiler\rust_to_nda.rs	26316
+file	velocity-ide\src\compiler\shaders.rs	305392
+file	velocity-ide\src\lib.rs	307
+file	velocity-ide\src\main.rs	15271
+dir	velocity-ide\src\model
+file	velocity-ide\src\model\config.rs	3782
+file	velocity-ide\src\model\mod.rs	138
+file	velocity-ide\src\model\transformer.rs	30363
+file	velocity-ide\src\model\transformer_zero.rs	20306
+file	velocity-ide\src\model\weights.rs	11515
+file	velocity-ide\src\nda.rs	21625
+file	velocity-ide\src\nda_int.rs	37824
+file	velocity-ide\src\pipeline_bridge.rs	10996
+file	velocity-ide\src\pipeline_nda.rs	28396
+dir	velocity-ide\src\sandbox
+file	velocity-ide\src\sandbox\jit_sandbox.rs	9272
+file	velocity-ide\src\sandbox\mod.rs	25758
+file	velocity-ide\src\sandbox\scope_validator.rs	1407
+dir	velocity-ide\src\site_map
+file	velocity-ide\src\site_map\mod.rs	47253
+file	velocity-ide\src\site_map\verifier.rs	30464
+file	velocity-ide\src\tokenizer.rs	13778
+dir	velocity-mcp
+file	velocity-mcp\.velocity_projects.nda	187
+file	velocity-mcp\Cargo.lock	126956
+file	velocity-mcp\Cargo.toml	846
+dir	velocity-mcp\docs
+file	velocity-mcp\docs\ARCHITECTURE.md	3374
+file	velocity-mcp\docs\OBSERVABILITY.md	1232
+file	velocity-mcp\docs\ui_upgrade_deps.md	590
+file	velocity-mcp\Justfile	661
+file	velocity-mcp\LICENSE	1297
+dir	velocity-mcp\memory
+file	velocity-mcp\memory\.account_usage.json	5072
+dir	velocity-mcp\scripts
+file	velocity-mcp\scripts\check.py	1095
+file	velocity-mcp\scripts\fetch_examples.py	295
+file	velocity-mcp\scripts\find_layoutjob.py	250
+file	velocity-mcp\scripts\fix_deps.py	420
+file	velocity-mcp\scripts\inspect_combobox.py	348
+file	velocity-mcp\scripts\inspect_egui_api.py	1022
+file	velocity-mcp\scripts\inspect_egui_api2.py	1405
+file	velocity-mcp\scripts\inspect_egui_dock.py	895
+file	velocity-mcp\scripts\inspect_frame.py	286
+file	velocity-mcp\scripts\inspect_panels.py	1335
+file	velocity-mcp\scripts\inspect_panel_exports.py	728
+file	velocity-mcp\scripts\inspect_reexports.py	420
+file	velocity-mcp\scripts\inspect_spacing.py	259
+file	velocity-mcp\scripts\inspect_text_edit.py	695
+file	velocity-mcp\scripts\inspect_trait.py	283
+file	velocity-mcp\scripts\patch_app.py	2554
+file	velocity-mcp\scripts\revert_deps.py	426
+file	velocity-mcp\scripts\upgrade_egui.py	453
+dir	velocity-mcp\src
+file	velocity-mcp\src\agent.rs	85978
+dir	velocity-mcp\src\automation
+file	velocity-mcp\src\automation\build_runner.rs	4530
+file	velocity-mcp\src\automation\mod.rs	259
+file	velocity-mcp\src\automation\tester.rs	1190
+file	velocity-mcp\src\benchmark.rs	34075
+dir	velocity-mcp\src\compiler
+file	velocity-mcp\src\compiler\driver.rs	131602
+file	velocity-mcp\src\compiler\jit.rs	2842
+file	velocity-mcp\src\compiler\mod.rs	65
+file	velocity-mcp\src\compiler\shaders.rs	142280
+file	velocity-mcp\src\compiler\tokenizer.rs	7584
+dir	velocity-mcp\src\editor
+file	velocity-mcp\src\editor\app.rs	53364
+file	velocity-mcp\src\editor\buffer.rs	1458
+file	velocity-mcp\src\editor\chat_panel.rs	15000
+file	velocity-mcp\src\editor\code_editor.rs	3445
+file	velocity-mcp\src\editor\history.rs	6641
+file	velocity-mcp\src\editor\mod.rs	213
+file	velocity-mcp\src\editor\orchestrator_panel.rs	2448
+file	velocity-mcp\src\editor\search.rs	2334
+file	velocity-mcp\src\editor\status_bar.rs	1349
+file	velocity-mcp\src\editor\theme.rs	4416
+file	velocity-mcp\src\editor\toast.rs	4026
+file	velocity-mcp\src\editor\usage_panel.rs	9088
+dir	velocity-mcp\src\ipc
+file	velocity-mcp\src\ipc\mod.rs	16
+file	velocity-mcp\src\ipc\shmem.rs	6926
+file	velocity-mcp\src\main.rs	8295
+dir	velocity-mcp\src\orchestrator
+file	velocity-mcp\src\orchestrator\blueprint.rs	3586
+file	velocity-mcp\src\orchestrator\mod.rs	567
+file	velocity-mcp\src\orchestrator\reconcile.rs	1930
+file	velocity-mcp\src\orchestrator\registry.rs	1276
+file	velocity-mcp\src\orchestrator\scheduler.rs	1826
+file	velocity-mcp\src\orchestrator\validator.rs	1211
+file	velocity-mcp\src\orchestrator\worker.rs	1684
+dir	velocity-mcp\src\protocol
+file	velocity-mcp\src\protocol\json_rpc.rs	3618
+file	velocity-mcp\src\protocol\mod.rs	41
+file	velocity-mcp\src\protocol\nmcp_binary.rs	5835
+file	velocity-mcp\src\registry.rs	34199
+file	velocity-mcp\src\usage.rs	16014
