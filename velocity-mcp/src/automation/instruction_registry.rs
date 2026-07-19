@@ -325,65 +325,84 @@ impl InstructionRegistry {
         let mut preferred_policies = self.preferred_policies.clone();
         preferred_policies.sort_by(|a, b| a.task_kind.as_str().cmp(b.task_kind.as_str()));
 
-        let mut lines = vec!["registry version 1".to_string()];
+        let mut lines = vec![
+            "registry version 2".to_string(),
+            format!("template_count {}", templates.len()),
+            format!("policy_count {}", policies.len()),
+            format!("preferred_policy_count {}", preferred_policies.len()),
+        ];
         for template in templates {
+            lines.push(format!("template\t{}", Self::escape_value(&template.id)));
             lines.push(format!(
-                "template {} label {}",
-                template.id,
+                "template_field\t{}\tlabel\t{}",
+                Self::escape_value(&template.id),
                 Self::escape_value(&template.label)
             ));
             lines.push(format!(
-                "template {} task_kind {}",
-                template.id,
+                "template_field\t{}\ttask_kind\t{}",
+                Self::escape_value(&template.id),
                 template.task_kind.as_str()
             ));
             lines.push(format!(
-                "template {} system_prompt {}",
-                template.id,
+                "template_field\t{}\tsystem_prompt\t{}",
+                Self::escape_value(&template.id),
                 Self::escape_value(&template.system_prompt)
             ));
-            for checklist_item in template.checklist {
+            lines.push(format!(
+                "template_checklist_count\t{}\t{}",
+                Self::escape_value(&template.id),
+                template.checklist.len()
+            ));
+            for (index, checklist_item) in template.checklist.iter().enumerate() {
                 lines.push(format!(
-                    "template {} checklist {}",
-                    template.id,
-                    Self::escape_value(&checklist_item)
+                    "template_checklist\t{}\t{}\t{}",
+                    Self::escape_value(&template.id),
+                    index,
+                    Self::escape_value(checklist_item)
                 ));
             }
         }
 
         for policy in policies {
+            lines.push(format!("policy\t{}", Self::escape_value(&policy.id)));
             lines.push(format!(
-                "policy {} label {}",
-                policy.id,
+                "policy_field\t{}\tlabel\t{}",
+                Self::escape_value(&policy.id),
                 Self::escape_value(&policy.label)
             ));
             lines.push(format!(
-                "policy {} task_kind {}",
-                policy.id,
+                "policy_field\t{}\ttask_kind\t{}",
+                Self::escape_value(&policy.id),
                 policy.task_kind.as_str()
             ));
             lines.push(format!(
-                "policy {} template {}",
-                policy.id,
+                "policy_field\t{}\ttemplate\t{}",
+                Self::escape_value(&policy.id),
                 Self::escape_value(&policy.instruction_template_id)
             ));
             lines.push(format!(
-                "policy {} decomposition_style {}",
-                policy.id,
+                "policy_field\t{}\tdecomposition_style\t{}",
+                Self::escape_value(&policy.id),
                 policy.decomposition_style.as_str()
             ));
-            for expectation in policy.shared_expectations {
+            lines.push(format!(
+                "policy_expectation_count\t{}\t{}",
+                Self::escape_value(&policy.id),
+                policy.shared_expectations.len()
+            ));
+            for (index, expectation) in policy.shared_expectations.iter().enumerate() {
                 lines.push(format!(
-                    "policy {} expectation {}",
-                    policy.id,
-                    Self::escape_value(&expectation)
+                    "policy_expectation\t{}\t{}\t{}",
+                    Self::escape_value(&policy.id),
+                    index,
+                    Self::escape_value(expectation)
                 ));
             }
         }
 
         for preferred in preferred_policies {
             lines.push(format!(
-                "preferred_policy {} {}",
+                "preferred_policy\t{}\t{}",
                 preferred.task_kind.as_str(),
                 Self::escape_value(&preferred.policy_id)
             ));
@@ -406,17 +425,107 @@ impl InstructionRegistry {
         let mut policies = Vec::<DecompositionPolicy>::new();
         let mut preferred_policies = Vec::<PreferredPolicy>::new();
 
-        for (line_index, line) in raw.lines().enumerate() {
+        let mut lines = raw.lines();
+        let header = lines
+            .find(|line| !line.trim().is_empty())
+            .ok_or_else(|| "Empty NDA instruction registry".to_string())?
+            .trim()
+            .to_string();
+
+        if header == "registry version 2" {
+            for line in lines {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if line.starts_with("template_count ")
+                    || line.starts_with("policy_count ")
+                    || line.starts_with("preferred_policy_count ")
+                    || line.starts_with("template_checklist_count\t")
+                    || line.starts_with("policy_expectation_count\t")
+                {
+                    continue;
+                }
+
+                let parts = line.split('\t').collect::<Vec<_>>();
+                match parts.first().copied().unwrap_or_default() {
+                    "template" => {
+                        let id = parts.get(1).ok_or_else(|| format!("Missing template id on line: {line}"))?;
+                        Self::ensure_template(&mut templates, &Self::unescape_value(id)?);
+                    }
+                    "template_field" => {
+                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing template id on line: {line}"))?)?;
+                        let field = *parts.get(2).ok_or_else(|| format!("Missing template field on line: {line}"))?;
+                        let value = *parts.get(3).ok_or_else(|| format!("Missing template value on line: {line}"))?;
+                        let template = Self::ensure_template(&mut templates, &id);
+                        match field {
+                            "label" => template.label = Self::unescape_value(value)?,
+                            "task_kind" => {
+                                template.task_kind = AgentTaskKind::parse(value)
+                                    .ok_or_else(|| format!("Unknown template task kind '{value}'"))?;
+                            }
+                            "system_prompt" => template.system_prompt = Self::unescape_value(value)?,
+                            _ => return Err(format!("Unknown template field '{field}' on line: {line}")),
+                        }
+                    }
+                    "template_checklist" => {
+                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing template id on line: {line}"))?)?;
+                        let value = *parts.get(3).ok_or_else(|| format!("Missing checklist value on line: {line}"))?;
+                        let template = Self::ensure_template(&mut templates, &id);
+                        template.checklist.push(Self::unescape_value(value)?);
+                    }
+                    "policy" => {
+                        let id = parts.get(1).ok_or_else(|| format!("Missing policy id on line: {line}"))?;
+                        Self::ensure_policy(&mut policies, &Self::unescape_value(id)?);
+                    }
+                    "policy_field" => {
+                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing policy id on line: {line}"))?)?;
+                        let field = *parts.get(2).ok_or_else(|| format!("Missing policy field on line: {line}"))?;
+                        let value = *parts.get(3).ok_or_else(|| format!("Missing policy value on line: {line}"))?;
+                        let policy = Self::ensure_policy(&mut policies, &id);
+                        match field {
+                            "label" => policy.label = Self::unescape_value(value)?,
+                            "task_kind" => {
+                                policy.task_kind = AgentTaskKind::parse(value)
+                                    .ok_or_else(|| format!("Unknown policy task kind '{value}'"))?;
+                            }
+                            "template" => policy.instruction_template_id = Self::unescape_value(value)?,
+                            "decomposition_style" => {
+                                policy.decomposition_style = DecompositionStyle::parse(value)
+                                    .ok_or_else(|| format!("Unknown decomposition style '{value}'"))?;
+                            }
+                            _ => return Err(format!("Unknown policy field '{field}' on line: {line}")),
+                        }
+                    }
+                    "policy_expectation" => {
+                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing policy id on line: {line}"))?)?;
+                        let value = *parts.get(3).ok_or_else(|| format!("Missing expectation value on line: {line}"))?;
+                        let policy = Self::ensure_policy(&mut policies, &id);
+                        policy.shared_expectations.push(Self::unescape_value(value)?);
+                    }
+                    "preferred_policy" => {
+                        let task_kind = *parts.get(1).ok_or_else(|| format!("Missing preferred policy task kind on line: {line}"))?;
+                        let policy_id = *parts.get(2).ok_or_else(|| format!("Missing preferred policy id on line: {line}"))?;
+                        preferred_policies.push(PreferredPolicy {
+                            task_kind: AgentTaskKind::parse(task_kind)
+                                .ok_or_else(|| format!("Unknown preferred policy task kind '{task_kind}'"))?,
+                            policy_id: Self::unescape_value(policy_id)?,
+                        });
+                    }
+                    _ => return Err(format!("Unknown NDA instruction registry line: {line}")),
+                }
+            }
+
+            return Ok((templates, policies, preferred_policies));
+        }
+
+        if header != "registry version 1" {
+            return Err(format!("Unsupported NDA instruction registry header: {header}"));
+        }
+
+        for line in lines {
             let line = line.trim();
             if line.is_empty() {
-                continue;
-            }
-            if line_index == 0 {
-                if line != "registry version 1" {
-                    return Err(format!(
-                        "Unsupported NDA instruction registry header: {line}"
-                    ));
-                }
                 continue;
             }
 
@@ -468,9 +577,7 @@ impl InstructionRegistry {
                         policy.decomposition_style = DecompositionStyle::parse(value)
                             .ok_or_else(|| format!("Unknown decomposition style '{value}'"))?;
                     }
-                    "expectation" => policy
-                        .shared_expectations
-                        .push(Self::unescape_value(value)?),
+                    "expectation" => policy.shared_expectations.push(Self::unescape_value(value)?),
                     _ => return Err(format!("Unknown policy field '{field}' on line: {line}")),
                 }
                 continue;
@@ -834,7 +941,7 @@ mod tests {
         fs::create_dir_all(&agentic_dir).unwrap();
         fs::write(
             agentic_dir.join("instructions.nda"),
-            "registry version 1\ntemplate refactor-guardian label Native\ntemplate refactor-guardian task_kind refactor\ntemplate refactor-guardian system_prompt native\n",
+            "registry version 2\ntemplate_count 1\npolicy_count 0\npreferred_policy_count 0\ntemplate\trefactor-guardian\ntemplate_field\trefactor-guardian\tlabel\tNative\ntemplate_field\trefactor-guardian\ttask_kind\trefactor\ntemplate_field\trefactor-guardian\tsystem_prompt\tnative\ntemplate_checklist_count\trefactor-guardian\t0\n",
         )
         .unwrap();
         fs::write(
