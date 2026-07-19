@@ -8,6 +8,7 @@ use crate::editor::theme::IdePalette;
 use crate::editor::usage_panel::{render_usage_compact, render_usage_panel};
 use crate::editor::agent_ui_state::AgentUiState;
 use crate::editor::agent_ui_render::{RenderSnapshot, render_thinking_panel, render_pending_approvals, render_agent_metrics};
+use crate::editor::task_timeline::{TaskTimelineState as TTState, TaskTimelineSnapshot, render_task_timeline};
 use crate::usage::AccountUsageView;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
@@ -105,10 +106,12 @@ pub struct VelocityApp {
 
     tab_counter: u64,
 
-    // Agentic UI State (Phase 1 - Zero-allocation)
-    agent_ui_state: AgentUiState,
+        // Agentic UI State (Phase 1 - Zero-allocation)
+        agent_ui_state: AgentUiState,
+        // Task Timeline (Phase 2)
+        task_timeline: TTState,
 
-    // Project Management
+        // Project Management
     pub projects: Vec<PathBuf>,
     pub show_add_project_ui: bool,
     pub new_project_path_input: String,
@@ -185,24 +188,25 @@ impl VelocityApp {
         }
 
         let mut app = Self {
-            agent_tx,
-            agent_rx,
-            workspace_root,
-            tabs,
-            active_tab: Some(output.id.clone()),
-            buffers: HashMap::new(),
-            dock_state: Some(DockState::new(vec![output, chat, orchestrator, graph])),
-            chat_input: String::new(),
-            command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
-            chat_history: String::new(),
-            command_palette: CommandPalette {
-                open: false,
-                query: String::new(),
-                selected: 0,
-            },
-            status_message: String::from("Ready"),
-            tab_counter,
+                    agent_tx,
+                    agent_rx,
+                    workspace_root,
+                    tabs,
+                    active_tab: Some(output.id.clone()),
+                    buffers: HashMap::new(),
+                    dock_state: Some(DockState::new(vec![output, chat, orchestrator, graph])),
+                    chat_input: String::new(),
+                    command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
+                    chat_history: String::new(),
+                    command_palette: CommandPalette {
+                        open: false,
+                        query: String::new(),
+                        selected: 0,
+                    },
+                    status_message: String::from("Ready"),
+                    tab_counter,
             agent_ui_state: AgentUiState::default(),
+            task_timeline: TTState::default(),
             projects,
             show_add_project_ui: false,
             new_project_path_input: String::new(),
@@ -719,6 +723,15 @@ impl eframe::App for VelocityApp {
                         render_thinking_panel(ui, &snapshot, (226, 227, 243));
                         render_pending_approvals(ui, &snapshot);
                     });
+                });
+
+                // Task Timeline panel (Phase 2) - Left sidebar or separate panel
+                egui::Panel::left("task_timeline_panel")
+                .default_size(300.0)
+                .resizable(true)
+                .show(ui, |ui: &mut egui::Ui| {
+                    let snapshot = TaskTimelineSnapshot::new(&self.task_timeline);
+                    render_task_timeline(ui, &snapshot);
                 });
 
         self.command_palette_ui(&ctx);

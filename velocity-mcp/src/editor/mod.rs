@@ -15,3 +15,6 @@ pub mod browser;
 // Agentic UI Phase 1 - Zero-allocation components
 pub mod agent_ui_state;
 pub mod agent_ui_render;
+
+// Agentic UI Phase 2 - Task timeline
+pub mod task_timeline;
