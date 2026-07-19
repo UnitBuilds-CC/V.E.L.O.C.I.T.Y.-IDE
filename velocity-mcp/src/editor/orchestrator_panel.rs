@@ -1,6 +1,8 @@
 //! Optional IDE panel showing the orchestrator task graph.
 
-use crate::automation::{resolve_weight_root, AgentTaskKind, RoutedSubAgentTask};
+use crate::automation::{
+    resolve_weight_root, AgentTaskKind, DecompositionStyle, InstructionRegistry, RoutedSubAgentTask,
+};
 use crate::orchestrator::blueprint::{Task, TaskGraph};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
@@ -20,11 +22,39 @@ struct RoutedPlanState {
     tasks: Vec<RoutedSubAgentTask>,
 }
 
+#[derive(Debug, Clone)]
+struct PolicyEditorState {
+    kind: AgentTaskKind,
+    selected_policy_id: String,
+    loaded_policy_id: String,
+    draft_label: String,
+    draft_template_id: String,
+    draft_style: DecompositionStyle,
+    draft_expectations: String,
+    status: String,
+}
+
+impl Default for PolicyEditorState {
+    fn default() -> Self {
+        Self {
+            kind: AgentTaskKind::Refactor,
+            selected_policy_id: String::new(),
+            loaded_policy_id: String::new(),
+            draft_label: String::new(),
+            draft_template_id: String::new(),
+            draft_style: DecompositionStyle::CoupledComponents,
+            draft_expectations: String::new(),
+            status: "Select a policy to tune routed planning.".to_string(),
+        }
+    }
+}
+
 pub struct OrchestratorPanel {
     pub graph: TaskGraph,
     pub registry: Option<OrchestratorRegistry>,
     pub expanded: bool,
     routed_plan: Option<RoutedPlanState>,
+    policy_editor: PolicyEditorState,
     planning_status: String,
     runtime_status: String,
     execution_running: bool,
@@ -52,6 +82,7 @@ impl OrchestratorPanel {
             registry: Some(registry),
             expanded: true,
             routed_plan: None,
+            policy_editor: PolicyEditorState::default(),
             planning_status: "No routed sub-agent plan yet.".to_string(),
             runtime_status: "Idle".to_string(),
             execution_running: false,
@@ -86,6 +117,8 @@ impl OrchestratorPanel {
             scope_count,
             tasks: tasks.clone(),
         });
+        self.policy_editor.kind = kind;
+        self.policy_editor.loaded_policy_id.clear();
         self.graph = build_routed_graph(&goal, &tasks);
         self.registry = Some(OrchestratorRegistry::new(&self.graph));
         self.runtime_status = "Plan ready".to_string();
@@ -93,7 +126,206 @@ impl OrchestratorPanel {
         self.running_workers.clear();
     }
 
+    pub fn selected_policy_kind(&self) -> AgentTaskKind {
+        self.policy_editor.kind
+    }
+
+    pub fn set_selected_policy_kind(&mut self, kind: AgentTaskKind) {
+        if self.policy_editor.kind != kind {
+            self.policy_editor.kind = kind;
+            self.policy_editor.loaded_policy_id.clear();
+        }
+    }
+
+    fn ensure_policy_editor_loaded(&mut self, workspace_root: &Path) {
+        let registry = InstructionRegistry::open(workspace_root);
+        let policies = registry.policies_for_kind(self.policy_editor.kind);
+        let desired_policy_id = registry
+            .policy_for_kind(self.policy_editor.kind)
+            .or_else(|| policies.first().copied())
+            .map(|policy| policy.id.clone())
+            .unwrap_or_default();
+
+        if self.policy_editor.selected_policy_id.is_empty() {
+            self.policy_editor.selected_policy_id = desired_policy_id.clone();
+        }
+        let load_policy_id = if registry
+            .get_policy(&self.policy_editor.selected_policy_id)
+            .filter(|policy| policy.task_kind == self.policy_editor.kind)
+            .is_some()
+        {
+            self.policy_editor.selected_policy_id.clone()
+        } else {
+            desired_policy_id
+        };
+
+        if self.policy_editor.loaded_policy_id == load_policy_id {
+            return;
+        }
+
+        if let Some(policy) = registry.get_policy(&load_policy_id) {
+            self.policy_editor.selected_policy_id = policy.id.clone();
+            self.policy_editor.loaded_policy_id = policy.id.clone();
+            self.policy_editor.draft_label = policy.label.clone();
+            self.policy_editor.draft_template_id = policy.instruction_template_id.clone();
+            self.policy_editor.draft_style = policy.decomposition_style;
+            self.policy_editor.draft_expectations = policy.shared_expectations.join("\n");
+            self.policy_editor.status = format!("Editing policy '{}' for {}.", policy.label, self.policy_editor.kind.as_str());
+        }
+    }
+
+    fn render_policy_controls(&mut self, ui: &mut Ui, workspace_root: &Path) {
+        let registry = InstructionRegistry::open(workspace_root);
+        let kind = self.policy_editor.kind;
+        let policies = registry.policies_for_kind(kind);
+        let templates = registry.templates_for_kind(kind);
+
+        ui.group(|ui| {
+            ui.label(egui::RichText::new("⚙ Routing policy controls").strong());
+            ui.label(
+                egui::RichText::new(&self.policy_editor.status)
+                    .small()
+                    .color(egui::Color32::from_rgb(125, 131, 166)),
+            );
+
+            egui::ComboBox::from_label("Task kind")
+                .selected_text(kind.as_str())
+                .show_ui(ui, |ui| {
+                    for candidate in AgentTaskKind::ALL {
+                        let selected = self.policy_editor.kind == candidate;
+                        if ui.selectable_label(selected, candidate.as_str()).clicked() {
+                            self.policy_editor.kind = candidate;
+                            self.policy_editor.loaded_policy_id.clear();
+                        }
+                    }
+                });
+
+            let selected_policy_text = if self.policy_editor.selected_policy_id.is_empty() {
+                "No policy".to_string()
+            } else {
+                self.policy_editor.selected_policy_id.clone()
+            };
+            egui::ComboBox::from_label("Preferred policy")
+                .selected_text(selected_policy_text)
+                .show_ui(ui, |ui| {
+                    for policy in &policies {
+                        let selected = self.policy_editor.selected_policy_id == policy.id;
+                        if ui.selectable_label(selected, format!("{} ({})", policy.label, policy.id)).clicked() {
+                            self.policy_editor.selected_policy_id = policy.id.clone();
+                            self.policy_editor.loaded_policy_id.clear();
+                        }
+                    }
+                });
+
+            ui.horizontal(|ui| {
+                if ui.button("Save preferred policy").clicked() {
+                    let mut writable = InstructionRegistry::open(workspace_root);
+                    writable.set_preferred_policy(self.policy_editor.kind, self.policy_editor.selected_policy_id.clone());
+                    match writable.persist() {
+                        Ok(()) => {
+                            self.policy_editor.status = format!(
+                                "Preferred policy for {} saved as '{}'.",
+                                self.policy_editor.kind.as_str(),
+                                self.policy_editor.selected_policy_id
+                            );
+                        }
+                        Err(err) => {
+                            self.policy_editor.status = format!("Failed to save preferred policy: {err}");
+                        }
+                    }
+                }
+                if ui.button("Reload policy").clicked() {
+                    self.policy_editor.loaded_policy_id.clear();
+                    self.ensure_policy_editor_loaded(workspace_root);
+                }
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new("Policy details").small().strong());
+            ui.horizontal(|ui| {
+                ui.label("Label:");
+                ui.text_edit_singleline(&mut self.policy_editor.draft_label);
+            });
+            ui.horizontal(|ui| {
+                ui.label("Template:");
+                let selected_template = if self.policy_editor.draft_template_id.is_empty() {
+                    "No template".to_string()
+                } else {
+                    self.policy_editor.draft_template_id.clone()
+                };
+                egui::ComboBox::from_id_salt("policy-template-select")
+                    .selected_text(selected_template)
+                    .show_ui(ui, |ui: &mut egui::Ui| {
+                        for template in &templates {
+                            let selected = self.policy_editor.draft_template_id == template.id;
+                            if ui.selectable_label(selected, format!("{} ({})", template.label, template.id)).clicked() {
+                                self.policy_editor.draft_template_id = template.id.clone();
+                            }
+                        }
+                    });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Style:");
+                egui::ComboBox::from_id_salt("policy-style-select")
+                    .selected_text(self.policy_editor.draft_style.as_str())
+                    .show_ui(ui, |ui: &mut egui::Ui| {
+                        for style in DecompositionStyle::ALL {
+                            let selected = self.policy_editor.draft_style == style;
+                            if ui.selectable_label(selected, style.as_str()).clicked() {
+                                self.policy_editor.draft_style = style;
+                            }
+                        }
+                    });
+            });
+            ui.label("Shared expectations (one per line):");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.policy_editor.draft_expectations)
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY),
+            );
+
+            if ui.button("Persist policy edits").clicked() {
+                let mut writable = InstructionRegistry::open(workspace_root);
+                let mut policy = match writable.get_policy(&self.policy_editor.selected_policy_id).cloned() {
+                    Some(policy) => policy,
+                    None => {
+                        self.policy_editor.status = "Select a valid policy before persisting edits.".to_string();
+                        return;
+                    }
+                };
+                policy.label = self.policy_editor.draft_label.trim().to_string();
+                policy.instruction_template_id = self.policy_editor.draft_template_id.trim().to_string();
+                policy.decomposition_style = self.policy_editor.draft_style;
+                policy.shared_expectations = self
+                    .policy_editor
+                    .draft_expectations
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect();
+                writable.upsert_policy(policy);
+                writable.set_preferred_policy(self.policy_editor.kind, self.policy_editor.selected_policy_id.clone());
+                match writable.persist() {
+                    Ok(()) => {
+                        self.policy_editor.loaded_policy_id.clear();
+                        self.ensure_policy_editor_loaded(workspace_root);
+                        self.policy_editor.status = format!(
+                            "Persisted policy '{}' for {}. Re-run routed planning to apply changes.",
+                            self.policy_editor.selected_policy_id,
+                            self.policy_editor.kind.as_str()
+                        );
+                    }
+                    Err(err) => {
+                        self.policy_editor.status = format!("Failed to persist policy edits: {err}");
+                    }
+                }
+            }
+        });
+    }
+
     pub fn ui(&mut self, ui: &mut Ui, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+        self.ensure_policy_editor_loaded(workspace_root);
         if self.execution_running {
             self.poll_live_workers(workspace_root, mediator);
             ui.ctx().request_repaint();
@@ -105,6 +337,9 @@ impl OrchestratorPanel {
             ui.toggle_value(&mut self.expanded, label);
         });
         ui.separator();
+
+        self.render_policy_controls(ui, workspace_root);
+        ui.add_space(6.0);
 
         if let Some(plan) = &self.routed_plan {
             ui.group(|ui| {

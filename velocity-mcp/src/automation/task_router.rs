@@ -379,4 +379,43 @@ mod tests {
         assert!(routes.iter().all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
         assert!(routes.iter().all(|route| route.files.len() == 1));
     }
+
+    #[test]
+    fn honors_preferred_policy_override_for_kind() {
+        let temp = tempfile::tempdir().unwrap();
+        let sm = SiteMap::open(temp.path(), 0).unwrap();
+        let mut registry = InstructionRegistry::open(temp.path());
+        registry.upsert_policy(DecompositionPolicy {
+            id: "refactor-isolated".to_string(),
+            label: "Refactor isolated".to_string(),
+            task_kind: AgentTaskKind::Refactor,
+            instruction_template_id: "refactor-guardian".to_string(),
+            decomposition_style: DecompositionStyle::IsolatedFiles,
+            shared_expectations: vec!["Split refactor work per file when coupling is low.".to_string()],
+        });
+        registry.set_preferred_policy(AgentTaskKind::Refactor, "refactor-isolated");
+        registry.persist().unwrap();
+
+        let router = SiteMapTaskRouter::open(temp.path());
+        let routes = router.route_tasks(
+            "Refactor with isolation",
+            AgentTaskKind::Refactor,
+            &[PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")],
+            &sm,
+            &[ProviderModelCatalog {
+                provider: AiProvider::CloudflareWorkersAi,
+                models: vec![ModelInfo {
+                    id: "cf/kimi-k2".to_string(),
+                    label: "kimi-k2".to_string(),
+                    api_style: ApiStyle::OpenAiTools,
+                    supports_tools: true,
+                    supports_thinking: true,
+                }],
+            }],
+        );
+
+        assert_eq!(routes.len(), 2);
+        assert!(routes.iter().all(|route| route.decomposition_policy_id == "refactor-isolated"));
+        assert!(routes.iter().all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
+    }
 }

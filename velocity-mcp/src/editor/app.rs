@@ -725,7 +725,9 @@ impl VelocityApp {
             self.toasts.push(crate::editor::toast::Toast::warn("No goal available for routed planning"));
             return;
         };
-        let task_kind = infer_task_kind_from_goal(&goal);
+        let inferred_task_kind = infer_task_kind_from_goal(&goal);
+        self.orchestrator.set_selected_policy_kind(inferred_task_kind);
+        let task_kind = self.orchestrator.selected_policy_kind();
         let scope_files = self.collect_routing_scope_files(&goal);
         if scope_files.is_empty() {
             self.status_message = "No scoped files available for routed planning".into();

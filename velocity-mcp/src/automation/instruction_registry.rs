@@ -16,6 +16,16 @@ pub enum AgentTaskKind {
 }
 
 impl AgentTaskKind {
+    pub const ALL: [AgentTaskKind; 7] = [
+        AgentTaskKind::Refactor,
+        AgentTaskKind::BugFix,
+        AgentTaskKind::Test,
+        AgentTaskKind::Documentation,
+        AgentTaskKind::Analysis,
+        AgentTaskKind::Planning,
+        AgentTaskKind::Merge,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             AgentTaskKind::Refactor => "refactor",
@@ -38,6 +48,12 @@ pub enum DecompositionStyle {
 }
 
 impl DecompositionStyle {
+    pub const ALL: [DecompositionStyle; 3] = [
+        DecompositionStyle::IsolatedFiles,
+        DecompositionStyle::CoupledComponents,
+        DecompositionStyle::SequentialPipeline,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             DecompositionStyle::IsolatedFiles => "isolated_files",
@@ -67,11 +83,19 @@ pub struct DecompositionPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreferredPolicy {
+    pub task_kind: AgentTaskKind,
+    pub policy_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct InstructionRegistryFile {
     #[serde(default)]
     templates: Vec<InstructionTemplate>,
     #[serde(default)]
     policies: Vec<DecompositionPolicy>,
+    #[serde(default)]
+    preferred_policies: Vec<PreferredPolicy>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +103,7 @@ pub struct InstructionRegistry {
     storage_path: PathBuf,
     templates: Vec<InstructionTemplate>,
     policies: Vec<DecompositionPolicy>,
+    preferred_policies: Vec<PreferredPolicy>,
 }
 
 impl InstructionRegistry {
@@ -87,14 +112,19 @@ impl InstructionRegistry {
             .join(".velocity")
             .join("agentic")
             .join("instructions.json");
-        let (templates, policies) = Self::load_registry(&storage_path)
-            .map(|(templates, policies)| {
+        let (templates, policies, preferred_policies) = Self::load_registry(&storage_path)
+            .map(|(templates, policies, preferred_policies)| {
                 let templates = if templates.is_empty() { Self::default_templates() } else { templates };
                 let policies = if policies.is_empty() { Self::default_policies() } else { policies };
-                (templates, policies)
+                (templates, policies, preferred_policies)
             })
-            .unwrap_or_else(|_| (Self::default_templates(), Self::default_policies()));
-        let registry = Self { storage_path, templates, policies };
+            .unwrap_or_else(|_| (Self::default_templates(), Self::default_policies(), Vec::new()));
+        let registry = Self {
+            storage_path,
+            templates,
+            policies,
+            preferred_policies,
+        };
         let _ = registry.ensure_persisted();
         registry
     }
@@ -103,8 +133,16 @@ impl InstructionRegistry {
         &self.templates
     }
 
+    pub fn templates_for_kind(&self, kind: AgentTaskKind) -> Vec<&InstructionTemplate> {
+        self.templates.iter().filter(|template| template.task_kind == kind).collect()
+    }
+
     pub fn policies(&self) -> &[DecompositionPolicy] {
         &self.policies
+    }
+
+    pub fn policies_for_kind(&self, kind: AgentTaskKind) -> Vec<&DecompositionPolicy> {
+        self.policies.iter().filter(|policy| policy.task_kind == kind).collect()
     }
 
     pub fn get(&self, id: &str) -> Option<&InstructionTemplate> {
@@ -115,8 +153,31 @@ impl InstructionRegistry {
         self.templates.iter().find(|template| template.task_kind == kind)
     }
 
+    pub fn get_policy(&self, id: &str) -> Option<&DecompositionPolicy> {
+        self.policies.iter().find(|policy| policy.id == id)
+    }
+
+    pub fn preferred_policy_id_for_kind(&self, kind: AgentTaskKind) -> Option<&str> {
+        self.preferred_policies
+            .iter()
+            .find(|preferred| preferred.task_kind == kind)
+            .map(|preferred| preferred.policy_id.as_str())
+    }
+
     pub fn policy_for_kind(&self, kind: AgentTaskKind) -> Option<&DecompositionPolicy> {
-        self.policies.iter().find(|policy| policy.task_kind == kind)
+        self.preferred_policy_id_for_kind(kind)
+            .and_then(|policy_id| self.get_policy(policy_id))
+            .filter(|policy| policy.task_kind == kind)
+            .or_else(|| self.policies.iter().find(|policy| policy.task_kind == kind))
+    }
+
+    pub fn set_preferred_policy(&mut self, kind: AgentTaskKind, policy_id: impl Into<String>) {
+        let policy_id = policy_id.into();
+        if let Some(existing) = self.preferred_policies.iter_mut().find(|preferred| preferred.task_kind == kind) {
+            existing.policy_id = policy_id;
+        } else {
+            self.preferred_policies.push(PreferredPolicy { task_kind: kind, policy_id });
+        }
     }
 
     pub fn upsert(&mut self, template: InstructionTemplate) {
@@ -146,6 +207,7 @@ impl InstructionRegistry {
         let payload = InstructionRegistryFile {
             templates: self.templates.clone(),
             policies: self.policies.clone(),
+            preferred_policies: self.preferred_policies.clone(),
         };
         let json = serde_json::to_string_pretty(&payload)
             .map_err(|e| format!("Failed to serialize instruction registry: {e}"))?;
@@ -153,12 +215,12 @@ impl InstructionRegistry {
             .map_err(|e| format!("Failed to write instruction registry: {e}"))
     }
 
-    fn load_registry(path: &Path) -> Result<(Vec<InstructionTemplate>, Vec<DecompositionPolicy>), String> {
+    fn load_registry(path: &Path) -> Result<(Vec<InstructionTemplate>, Vec<DecompositionPolicy>, Vec<PreferredPolicy>), String> {
         let raw = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read instruction registry: {e}"))?;
         let file = serde_json::from_str::<InstructionRegistryFile>(&raw)
             .map_err(|e| format!("Failed to parse instruction registry: {e}"))?;
-        Ok((file.templates, file.policies))
+        Ok((file.templates, file.policies, file.preferred_policies))
     }
 
     fn default_templates() -> Vec<InstructionTemplate> {
@@ -363,5 +425,31 @@ mod tests {
         let registry = InstructionRegistry::open(dir.path());
         assert_eq!(registry.get("refactor-guardian").unwrap().system_prompt, "legacy");
         assert!(registry.policy_for_kind(AgentTaskKind::Refactor).is_some());
+    }
+
+    #[test]
+    fn persists_preferred_policy_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut registry = InstructionRegistry::open(dir.path());
+        registry.upsert_policy(DecompositionPolicy {
+            id: "refactor-isolated".to_string(),
+            label: "Refactor isolated".to_string(),
+            task_kind: AgentTaskKind::Refactor,
+            instruction_template_id: "refactor-guardian".to_string(),
+            decomposition_style: DecompositionStyle::IsolatedFiles,
+            shared_expectations: vec!["Split refactor work per file when coupling is low.".to_string()],
+        });
+        registry.set_preferred_policy(AgentTaskKind::Refactor, "refactor-isolated");
+        registry.persist().unwrap();
+
+        let reopened = InstructionRegistry::open(dir.path());
+        assert_eq!(
+            reopened.preferred_policy_id_for_kind(AgentTaskKind::Refactor),
+            Some("refactor-isolated")
+        );
+        assert_eq!(
+            reopened.policy_for_kind(AgentTaskKind::Refactor).unwrap().id,
+            "refactor-isolated"
+        );
     }
 }
