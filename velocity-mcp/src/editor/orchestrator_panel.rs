@@ -1071,6 +1071,24 @@ mod tests {
     }
 
     #[test]
+    fn dependency_blocked_tasks_return_to_pending_when_dependencies_clear() {
+        let mut graph = TaskGraph::default();
+        graph.root = TaskId(1);
+        graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        graph.add(TaskId(2), "child", "child", vec![], vec![], None);
+        let mut registry = OrchestratorRegistry::new(&graph);
+        registry.statuses.insert(TaskId(2), TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")));
+
+        propagate_blocked_dependents(&graph, &mut registry);
+        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Blocked(_))));
+
+        registry.statuses.insert(TaskId(2), TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())));
+        propagate_blocked_dependents(&graph, &mut registry);
+
+        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Pending)));
+    }
+
+    #[test]
     fn stale_routed_plan_blocks_dispatch() {
         let temp = tempfile::tempdir().unwrap();
         let workspace_root = temp.path();
@@ -1165,13 +1183,27 @@ fn requires_follow_up(result: &WorkerResult) -> bool {
             .any(|status| status.contains("MEDIATION CONTRACT:") || status.contains("Reconciliation blocked:"))
 }
 
+fn is_dependency_blocked_message(message: &str) -> bool {
+    message.starts_with("Follow-up required before this task can run because dependency task(s)")
+}
+
 fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
     loop {
         let mut changed = false;
         for task in graph.tasks.values() {
-            if !matches!(registry.statuses.get(&task.id), Some(TaskStatus::Pending) | None) {
+            let current_status = registry.statuses.get(&task.id).cloned().unwrap_or_default();
+            if matches!(current_status, TaskStatus::Done(_) | TaskStatus::Running) {
                 continue;
             }
+
+            let dependency_blocked = matches!(
+                &current_status,
+                TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message)
+            );
+            if !matches!(current_status, TaskStatus::Pending | TaskStatus::Blocked(_)) || (!dependency_blocked && matches!(current_status, TaskStatus::Blocked(_))) {
+                continue;
+            }
+
             let blocking_dependencies = task
                 .dependencies
                 .iter()
@@ -1183,12 +1215,16 @@ fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRe
                 })
                 .copied()
                 .collect::<Vec<_>>();
+
             if blocking_dependencies.is_empty() {
+                if dependency_blocked {
+                    registry.statuses.insert(task.id, TaskStatus::Pending);
+                    changed = true;
+                }
                 continue;
             }
-            let mut result = WorkerResult::new(task);
-            result.success = false;
-            result.message = format!(
+
+            let message = format!(
                 "Follow-up required before this task can run because dependency task(s) {} did not complete cleanly.",
                 blocking_dependencies
                     .iter()
@@ -1196,6 +1232,20 @@ fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRe
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+
+            let needs_update = match &current_status {
+                TaskStatus::Pending => true,
+                TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message) => result.message != message,
+                _ => false,
+            };
+
+            if !needs_update {
+                continue;
+            }
+
+            let mut result = WorkerResult::new(task);
+            result.success = false;
+            result.message = message;
             result.status_updates.push(result.message.clone());
             registry.statuses.insert(task.id, TaskStatus::Blocked(result));
             changed = true;
