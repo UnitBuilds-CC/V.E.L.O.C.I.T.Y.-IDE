@@ -505,16 +505,32 @@ impl OrchestratorPanel {
             .filter_map(|(id, handle)| handle.poll().map(|result| (*id, result)))
             .collect();
 
-        for (id, result) in finished_ids {
+        for (id, mut result) in finished_ids {
             self.running_workers.remove(&id);
+            let outputs = task_result_outputs(&result);
             let report = validator::validate(&result);
-            if result.success && report.ok {
-                let mut outputs = result.outputs.clone();
-                outputs.extend(result.created_files.clone());
-                outputs.extend(result.deleted_files.clone());
+            let reconciliation_error = reconciliation_error(&self.graph, &reg.outputs, id, &outputs);
+            if result.success && report.ok && reconciliation_error.is_none() {
                 reg.outputs.insert(id, outputs);
                 reg.statuses.insert(id, TaskStatus::Done(result));
             } else {
+                if let Some(error) = reconciliation_error {
+                    result.success = false;
+                    result.status_updates.push(error.clone());
+                    result.message = if result.message.trim().is_empty() {
+                        error
+                    } else {
+                        format!("{} | {}", result.message, error)
+                    };
+                } else if !report.ok && !report.messages.is_empty() {
+                    let details = report.messages.join(" | ");
+                    result.status_updates.push(details.clone());
+                    result.message = if result.message.trim().is_empty() {
+                        details
+                    } else {
+                        format!("{} | {}", result.message, details)
+                    };
+                }
                 reg.statuses.insert(id, TaskStatus::Failed(result));
             }
         }
@@ -663,6 +679,58 @@ impl OrchestratorPanel {
 fn routed_task_for_id(plan: &Option<RoutedPlanState>, task_id: TaskId) -> Option<&RoutedSubAgentTask> {
     let routed_idx = task_id.0.checked_sub(2)? as usize;
     plan.as_ref()?.tasks.get(routed_idx)
+}
+
+fn task_result_outputs(result: &WorkerResult) -> Vec<String> {
+    let mut outputs = result.outputs.clone();
+    outputs.extend(result.created_files.clone());
+    outputs.extend(result.deleted_files.clone());
+    outputs.sort();
+    outputs.dedup();
+    outputs
+}
+
+fn reconciliation_error(
+    graph: &TaskGraph,
+    existing_outputs: &HashMap<TaskId, Vec<String>>,
+    task_id: TaskId,
+    outputs: &[String],
+) -> Option<String> {
+    let mut candidate_outputs = existing_outputs.clone();
+    candidate_outputs.insert(task_id, outputs.to_vec());
+
+    let scope_violations = crate::orchestrator::reconcile::scope_violations(graph, &candidate_outputs)
+        .into_iter()
+        .filter(|(violating_task_id, _)| *violating_task_id == task_id)
+        .map(|(_, path)| path)
+        .collect::<Vec<_>>();
+    if !scope_violations.is_empty() {
+        return Some(format!(
+            "Reconciliation blocked: task touched files outside its declared scope: {}",
+            scope_violations.join(", ")
+        ));
+    }
+
+    let collisions = crate::orchestrator::reconcile::detect_collisions(graph, &candidate_outputs)
+        .into_iter()
+        .filter(|collision| collision.task_a == task_id || collision.task_b == task_id)
+        .map(|collision| {
+            let other_task_id = if collision.task_a == task_id {
+                collision.task_b.0
+            } else {
+                collision.task_a.0
+            };
+            format!("{} with task {}", collision.path, other_task_id)
+        })
+        .collect::<Vec<_>>();
+    if !collisions.is_empty() {
+        return Some(format!(
+            "Reconciliation blocked: overlapping outputs detected for {}",
+            collisions.join(", ")
+        ));
+    }
+
+    None
 }
 
 fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {
