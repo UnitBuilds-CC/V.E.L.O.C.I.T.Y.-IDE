@@ -1119,13 +1119,16 @@ fn write_handover_nda(workspace_root: &std::path::Path, task_state: &str, last_a
     let _ = std::fs::create_dir_all(&sitemap_dir);
     let handover_path = sitemap_dir.join("handover.nda");
 
-    let payload = format!(
-        "handover version 1\nstate {}\nturn {}\nbuild {}\ninterrupted {}\n",
-        encode_nda_text(task_state),
-        last_active_turn,
-        encode_nda_text(build_status),
-        interrupted,
-    );
+    let payload = [
+        "handover version 2".to_string(),
+        "field_count 4".to_string(),
+        format!("field\tstate\t{}", encode_nda_text(task_state)),
+        format!("field\tturn\t{}", last_active_turn),
+        format!("field\tbuild\t{}", encode_nda_text(build_status)),
+        format!("field\tinterrupted\t{}", interrupted),
+    ]
+    .join("\n")
+        + "\n";
     let _ = std::fs::write(handover_path, payload);
 }
 
@@ -2861,11 +2864,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_handover_nda(tmp.path(), "self_correcting", 7, "compile failed", true);
         let handover = std::fs::read_to_string(tmp.path().join(".velocity").join("handover.nda")).unwrap();
-        assert!(handover.starts_with("handover version 1\n"));
-        assert!(handover.contains("state self_correcting"));
-        assert!(handover.contains("turn 7"));
-        assert!(handover.contains("build compile failed"));
-        assert!(handover.contains("interrupted true"));
+        assert!(handover.starts_with("handover version 2\n"));
+        assert!(handover.contains("field_count 4\n"));
+        assert!(handover.contains("field\tstate\tself_correcting"));
+        assert!(handover.contains("field\tturn\t7"));
+        assert!(handover.contains("field\tbuild\tcompile failed"));
+        assert!(handover.contains("field\tinterrupted\ttrue"));
     }
 
     #[test]
