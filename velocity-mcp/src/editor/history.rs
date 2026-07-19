@@ -153,8 +153,39 @@ impl FileHistory {
 
     fn load_index_from_nda(base: &Path, index_path: &Path) -> Option<HashMap<PathBuf, Vec<Snapshot>>> {
         let content = fs::read_to_string(index_path).ok()?;
+        let mut lines = content.lines();
+        let header = lines.find(|line| !line.trim().is_empty())?.trim().to_string();
         let mut index: HashMap<PathBuf, Vec<Snapshot>> = HashMap::new();
-        for line in content.lines() {
+
+        if header == "history version 2" {
+            for line in lines {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if line.starts_with("file_count ") || line.starts_with("snapshot_count ") {
+                    continue;
+                }
+                let parts = line.split('\t').collect::<Vec<_>>();
+                if parts.len() != 5 || parts[0] != "snapshot" {
+                    continue;
+                }
+                let file_path = PathBuf::from(parts[1]);
+                let timestamp = parts[2].parse::<u64>().ok()?;
+                let size = parts[3].parse::<usize>().ok()?;
+                let snap_path = base.join(parts[4]);
+                let mut snapshot = Self::load_snapshot(&snap_path, timestamp);
+                snapshot.size = size;
+                index.entry(file_path).or_default().push(snapshot);
+            }
+            return Some(index);
+        }
+
+        if header != "history version 1" {
+            return None;
+        }
+
+        for line in lines {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -201,28 +232,39 @@ impl FileHistory {
     }
 
     fn persist_index(&self) -> Result<(), String> {
-        let mut entries = self
-            .index
+        let mut file_paths = self.index.keys().cloned().collect::<Vec<_>>();
+        file_paths.sort();
+        let snapshot_total = self.index.values().map(|snapshots| snapshots.len()).sum::<usize>();
+
+        let mut entries = file_paths
             .iter()
-            .flat_map(|(file_path, snapshots)| {
-                snapshots.iter().map(move |snapshot| {
-                    let snap_name = self
-                        .snapshot_path(file_path, snapshot.timestamp)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    format!(
-                        "snapshot\t{}\t{}\t{}",
-                        file_path.display(),
-                        snapshot.timestamp,
-                        snap_name
-                    )
-                })
+            .flat_map(|file_path| {
+                self.index
+                    .get(file_path)
+                    .into_iter()
+                    .flat_map(move |snapshots| snapshots.iter().map(move |snapshot| {
+                        let snap_name = self
+                            .snapshot_path(file_path, snapshot.timestamp)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        format!(
+                            "snapshot\t{}\t{}\t{}\t{}",
+                            file_path.display(),
+                            snapshot.timestamp,
+                            snapshot.size,
+                            snap_name
+                        )
+                    }))
             })
             .collect::<Vec<_>>();
         entries.sort();
-        let mut content = String::from("history version 1\n");
+        let mut content = format!(
+            "history version 2\nfile_count {}\nsnapshot_count {}\n",
+            file_paths.len(),
+            snapshot_total
+        );
         if !entries.is_empty() {
             content.push_str(&entries.join("\n"));
             content.push('\n');
@@ -253,9 +295,11 @@ mod tests {
         hist.record(Path::new("src/main.rs"), "fn main() {}");
 
         let index = fs::read_to_string(tmp.path().join(".velocity").join("history").join("index.nda")).unwrap();
-        assert!(index.starts_with("history version 1\n"));
+        assert!(index.starts_with("history version 2\n"));
+        assert!(index.contains("file_count 1\n"));
+        assert!(index.contains("snapshot_count 1\n"));
         assert!(index.contains("snapshot\tsrc/main.rs\t"));
-        assert!(index.contains("src_main.rs-"));
+        assert!(index.contains("\t12\tsrc_main.rs-"));
     }
 
     #[test]
@@ -266,7 +310,7 @@ mod tests {
         fs::write(history_dir.join("src_main.rs-123.snap"), "snapshot-body").unwrap();
         fs::write(
             history_dir.join("index.nda"),
-            "history version 1\nsnapshot\tsrc/main.rs\t123\tsrc_main.rs-123.snap\n",
+            "history version 2\nfile_count 1\nsnapshot_count 1\nsnapshot\tsrc/main.rs\t123\t13\tsrc_main.rs-123.snap\n",
         )
         .unwrap();
 
