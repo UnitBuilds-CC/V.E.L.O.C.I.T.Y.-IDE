@@ -77,10 +77,10 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
-fn escape_nda_text(value: &str) -> String {
+fn encode_nda_text(value: &str) -> String {
     value
         .replace('\\', "\\\\")
-        .replace('"', "\\\"")
+        .replace('\t', "\\t")
         .replace('\r', "\\r")
         .replace('\n', "\\n")
 }
@@ -113,24 +113,25 @@ fn write_crawl_facts(
     }
 
     let mut facts = Vec::new();
-    facts.push("artifact:browser-capture kind page-crawl".to_string());
-    facts.push(format!("artifact:browser-capture page_url \"{}\"", escape_nda_text(url)));
-    facts.push(format!("artifact:browser-capture page_title \"{}\"", escape_nda_text(title)));
-    facts.push(format!("artifact:browser-capture page_summary \"{}\"", escape_nda_text(summary)));
-    facts.push(format!("artifact:browser-capture element_count {}", elements.len()));
+    facts.push("browser-capture version 1".to_string());
+    facts.push(format!("kind page-crawl"));
+    facts.push(format!("page\turl\t{}", encode_nda_text(url)));
+    facts.push(format!("page\ttitle\t{}", encode_nda_text(title)));
+    facts.push(format!("page\tsummary\t{}", encode_nda_text(summary)));
+    facts.push(format!("page\telement_count\t{}", elements.len()));
 
     for (idx, element) in elements.iter().enumerate() {
-        let element_id = format!("element:{}", idx + 1);
-        facts.push(format!("artifact:browser-capture element {}", element_id));
-        facts.push(format!("{} role \"{}\"", element_id, escape_nda_text(&element.role)));
-        facts.push(format!("{} name \"{}\"", element_id, escape_nda_text(&element.name)));
-        facts.push(format!("{} value \"{}\"", element_id, escape_nda_text(&element.value)));
-        if let Some(target_url) = &element.target_url {
-            facts.push(format!("{} target_url \"{}\"", element_id, escape_nda_text(target_url)));
-        }
+        facts.push(format!(
+            "element\t{}\t{}\t{}\t{}\t{}",
+            idx,
+            encode_nda_text(&element.role),
+            encode_nda_text(&element.name),
+            encode_nda_text(&element.value),
+            encode_nda_text(element.target_url.as_deref().unwrap_or("-")),
+        ));
     }
 
-    fs::write(&facts_path, facts.join("\n")).map_err(|err| format!("write browser capture facts: {err}"))?;
+    fs::write(&facts_path, facts.join("\n") + "\n").map_err(|err| format!("write browser capture facts: {err}"))?;
     Ok(facts_path)
 }
 
@@ -380,10 +381,11 @@ mod tests {
 
         assert_eq!(facts_path, crawl_facts_path("https://example.com/docs", &sitemap_path));
         let facts = fs::read_to_string(facts_path).unwrap();
-        assert!(facts.contains("artifact:browser-capture kind page-crawl"));
-        assert!(facts.contains("artifact:browser-capture page_title \"Docs\""));
-        assert!(facts.contains("artifact:browser-capture element_count 2"));
-        assert!(facts.contains("element:1 role \"link\""));
-        assert!(facts.contains("element:2 role \"button\""));
+        assert!(facts.starts_with("browser-capture version 1\n"));
+        assert!(facts.contains("kind page-crawl"));
+        assert!(facts.contains("page\ttitle\tDocs"));
+        assert!(facts.contains("page\telement_count\t2"));
+        assert!(facts.contains("element\t0\tlink\tAPI\thttps://example.com/api\thttps://example.com/api"));
+        assert!(facts.contains("element\t1\tbutton\tSearch\t\t-"));
     }
 }
