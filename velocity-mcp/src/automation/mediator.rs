@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use velocity_ide::site_map::SiteMap;
 
@@ -125,7 +125,29 @@ impl MediatorArena {
         let mut locks_guard = self.locks.lock().unwrap();
         if let Some(file_locks) = locks_guard.get_mut(file_path) {
             file_locks.retain(|lock| lock.agent_id != agent_id);
+            if file_locks.is_empty() {
+                locks_guard.remove(file_path);
+            }
         }
+    }
+
+    /// Release every lock held by a specific agent across all tracked paths.
+    pub fn release_locks_for_agent(&self, agent_id: &str) {
+        let mut locks_guard = self.locks.lock().unwrap();
+        locks_guard.retain(|_, file_locks| {
+            file_locks.retain(|lock| lock.agent_id != agent_id);
+            !file_locks.is_empty()
+        });
+    }
+
+    /// Drop locks older than the provided age threshold.
+    pub fn prune_stale_locks(&self, max_age: Duration) {
+        let mut locks_guard = self.locks.lock().unwrap();
+        let now = Instant::now();
+        locks_guard.retain(|_, file_locks| {
+            file_locks.retain(|lock| now.duration_since(lock.timestamp) <= max_age);
+            !file_locks.is_empty()
+        });
     }
 
     /// Get active locks for a specific file.
@@ -334,5 +356,54 @@ mod tests {
         let conflict = conflict.err().unwrap();
         assert_eq!(conflict.kind, ConflictKind::ScopeOverlap);
         assert!(arena.resolve_conflict(&conflict).contains("Conflict Type: SCOPE OVERLAP"));
+    }
+
+    #[test]
+    fn can_release_locks_for_agent_across_paths() {
+        let arena = MediatorArena::new();
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SiteMap::open(temp_dir.path(), 0).unwrap();
+        let first = PathBuf::from("src/main.rs");
+        let second = PathBuf::from("src/lib.rs");
+
+        arena.acquire_lock(first.clone(), (1, 5), "AgentAlice".to_string(), &sm).unwrap();
+        arena.acquire_lock(second.clone(), (1, 5), "AgentAlice".to_string(), &sm).unwrap();
+        assert_eq!(arena.active_locks().len(), 2);
+
+        arena.release_locks_for_agent("AgentAlice");
+        assert!(arena.active_locks().is_empty());
+    }
+
+    #[test]
+    fn prunes_stale_locks() {
+        let arena = MediatorArena::new();
+        let fresh = PathBuf::from("src/fresh.rs");
+        let stale = PathBuf::from("src/stale.rs");
+        {
+            let mut locks = arena.locks.lock().unwrap();
+            locks.insert(
+                fresh.clone(),
+                vec![EditLock {
+                    file_path: fresh.clone(),
+                    line_range: (1, 5),
+                    agent_id: "fresh-agent".to_string(),
+                    timestamp: Instant::now(),
+                }],
+            );
+            locks.insert(
+                stale.clone(),
+                vec![EditLock {
+                    file_path: stale.clone(),
+                    line_range: (1, 5),
+                    agent_id: "stale-agent".to_string(),
+                    timestamp: Instant::now() - Duration::from_secs(30),
+                }],
+            );
+        }
+
+        arena.prune_stale_locks(Duration::from_secs(5));
+        let remaining = arena.active_locks();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].file_path, fresh);
     }
 }

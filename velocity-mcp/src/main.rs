@@ -131,6 +131,7 @@ fn main() {
 
         // Open SiteMap for semantic queries inside telemetry callbacks
         let site_map = automation::open_workspace_site_map(&workspace_root).ok();
+        const PRESENCE_LOCK_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
         std::thread::spawn(move || {
             if let Ok(mut server) = ipc::telemetry_share::TelemetryServer::open(&shmem_path_server) {
@@ -158,8 +159,10 @@ fn main() {
                             let agent_id = "Agent_Thread".to_string();
 
                             let mut warning = None;
+                            mediator_clone.prune_stale_locks(PRESENCE_LOCK_TTL);
+                            mediator_clone.release_locks_for_agent(&agent_id);
                             if let Some(sm) = &site_map {
-                                if let Err(conflict) = mediator_clone.acquire_lock(file_path, line_range, agent_id, sm) {
+                                if let Err(conflict) = mediator_clone.acquire_lock(file_path, line_range, agent_id.clone(), sm) {
                                     let warning_msg = mediator_clone.resolve_conflict(&conflict);
                                     println!("[mediator] Conflict detected! {}", warning_msg);
                                     warning = Some(warning_msg);
