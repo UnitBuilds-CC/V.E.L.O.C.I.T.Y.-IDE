@@ -5,6 +5,7 @@ pub mod mediator;
 pub mod coordinator;
 pub mod instruction_registry;
 pub mod model_quality;
+pub mod task_router;
 
 pub use build_runner::{
     diagnostics_path, read_latest_diagnostics, run_cargo_check, run_self_check,
@@ -16,3 +17,4 @@ pub use mediator::MediatorArena;
 pub use coordinator::WorkspaceCoordinator;
 pub use instruction_registry::{AgentTaskKind, InstructionRegistry, InstructionTemplate};
 pub use model_quality::{ModelCandidate, ModelQualityIndex, ProviderCapability, TaskRequirements};
+pub use task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedSubAgentTask, SiteMapTaskRouter};

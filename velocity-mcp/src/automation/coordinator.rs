@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use velocity_ide::site_map::SiteMap;
+use crate::agent::{AiProvider, ModelInfo};
+use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;
+use crate::automation::task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedSubAgentTask, SiteMapTaskRouter};
 
 pub struct CoordinatorTask {
     pub task_id: String,
@@ -27,35 +30,27 @@ impl WorkspaceCoordinator {
         files: &[PathBuf],
         site_map: &SiteMap,
     ) -> Vec<Vec<PathBuf>> {
-        let mut partitions: Vec<Vec<PathBuf>> = Vec::new();
-        
-        for file in files {
-            let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let file_hash = hash_str(file_name);
-            let callers = site_map.get_callers(file_hash);
+        partition_files_by_coupling(files, site_map)
+    }
 
-            let mut merged = false;
-            for partition in &mut partitions {
-                for other_file in partition.iter() {
-                    let other_name = other_file.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    let other_hash = hash_str(other_name);
-                    
-                    // If file calls other_file, or vice versa, they must group together (coupled!)
-                    if callers.contains(&other_hash) || site_map.get_callers(other_hash).contains(&file_hash) {
-                        partition.push(file.clone());
-                        merged = true;
-                        break;
-                    }
-                }
-                if merged { break; }
-            }
-
-            if !merged {
-                partitions.push(vec![file.clone()]);
-            }
-        }
-
-        partitions
+    pub fn plan_routed_tasks(
+        &self,
+        workspace_root: &Path,
+        goal: &str,
+        task_kind: AgentTaskKind,
+        files: &[PathBuf],
+        site_map: &SiteMap,
+        model_catalogs: &[(AiProvider, Vec<ModelInfo>)],
+    ) -> Vec<RoutedSubAgentTask> {
+        let router = SiteMapTaskRouter::open(workspace_root);
+        let catalogs: Vec<ProviderModelCatalog> = model_catalogs
+            .iter()
+            .map(|(provider, models)| ProviderModelCatalog {
+                provider: *provider,
+                models: models.clone(),
+            })
+            .collect();
+        router.route_tasks(goal, task_kind, files, site_map, &catalogs)
     }
 
     /// Spawns parallel subagent sessions across distinct worktree directories.
@@ -120,14 +115,6 @@ impl WorkspaceCoordinator {
             Ok("All parallel worktree agent tasks executed successfully with zero lock conflicts.".to_string())
         }
     }
-}
-
-fn hash_str(s: &str) -> u64 {
-    use sha2::{Sha256, Digest};
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
 #[cfg(test)]
