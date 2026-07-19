@@ -448,6 +448,7 @@ impl OrchestratorPanel {
                     TaskStatus::Running => egui::Color32::from_rgb(59, 130, 246),  // Blue
                     TaskStatus::Done(_) => egui::Color32::from_rgb(34, 197, 94),   // Green
                     TaskStatus::Failed(_) => egui::Color32::from_rgb(239, 68, 68), // Red
+                    TaskStatus::Blocked(_) => egui::Color32::from_rgb(245, 158, 11), // Amber
                 };
 
                 let size = egui::vec2(130.0, 45.0);
@@ -516,6 +517,7 @@ impl OrchestratorPanel {
                 reg.outputs.insert(id, outputs);
                 reg.statuses.insert(id, TaskStatus::Done(result));
             } else {
+                let needs_follow_up = reconciliation_error.is_some() || requires_follow_up(&result);
                 if let Some(error) = reconciliation_error {
                     result.success = false;
                     result.status_updates.push(error.clone());
@@ -533,9 +535,16 @@ impl OrchestratorPanel {
                         format!("{} | {}", result.message, details)
                     };
                 }
-                reg.statuses.insert(id, TaskStatus::Failed(result));
+                if needs_follow_up {
+                    reg.statuses.insert(id, TaskStatus::Blocked(result));
+                } else {
+                    reg.statuses.insert(id, TaskStatus::Failed(result));
+                }
             }
         }
+
+        propagate_blocked_dependents(&self.graph, reg);
+        complete_reconcile_root(&self.graph, reg);
 
         let ready_ids = reg.ready_ids(&self.graph);
         let weight_root = resolve_weight_root(workspace_root);
@@ -571,6 +580,8 @@ impl OrchestratorPanel {
         self.execution_running = !self.running_workers.is_empty();
         self.runtime_status = if self.execution_running {
             format!("Running {} worker(s)", self.running_workers.len())
+        } else if reg.has_blocked() {
+            "Follow-up required".to_string()
         } else if reg.is_complete() {
             "Execution complete".to_string()
         } else {
@@ -589,6 +600,7 @@ impl OrchestratorPanel {
             TaskStatus::Running => ("🔵 Running", egui::Color32::from_rgb(96, 165, 250)),
             TaskStatus::Done(_) => ("✅ Done", egui::Color32::from_rgb(74, 222, 128)),
             TaskStatus::Failed(_) => ("❌ Failed", egui::Color32::from_rgb(248, 113, 113)),
+            TaskStatus::Blocked(_) => ("⚠️ Follow-up", egui::Color32::from_rgb(251, 191, 36)),
         };
 
         ui.horizontal(|ui| {
@@ -610,7 +622,7 @@ impl OrchestratorPanel {
                 });
             }
             match &status {
-                TaskStatus::Done(result) | TaskStatus::Failed(result) => {
+                TaskStatus::Done(result) | TaskStatus::Failed(result) | TaskStatus::Blocked(result) => {
                     ui.horizontal_wrapped(|ui| {
                         ui.add_space(16.0);
                         ui.label(
@@ -733,6 +745,162 @@ fn reconciliation_error(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::orchestrator::registry::OrchestratorRegistry;
+
+    fn sample_result(task_id: TaskId, message: &str) -> WorkerResult {
+        WorkerResult {
+            success: false,
+            task_id,
+            outputs: Vec::new(),
+            duration: std::time::Duration::ZERO,
+            message: message.to_string(),
+            provider_label: String::new(),
+            model_label: String::new(),
+            transcript: String::new(),
+            status_updates: Vec::new(),
+            attempts: Vec::new(),
+            created_files: Vec::new(),
+            deleted_files: Vec::new(),
+            run_summary_path: None,
+        }
+    }
+
+    #[test]
+    fn follow_up_detection_matches_mediation_and_reconciliation() {
+        assert!(requires_follow_up(&sample_result(TaskId(2), "MEDIATION CONTRACT:\nConflict Type: DIRECT LINE COLLISION")));
+        assert!(requires_follow_up(&sample_result(TaskId(2), "Reconciliation blocked: overlapping outputs detected")));
+        assert!(!requires_follow_up(&sample_result(TaskId(2), "provider call failed")));
+    }
+
+    #[test]
+    fn blocked_tasks_propagate_to_dependents() {
+        let mut graph = TaskGraph::default();
+        graph.root = TaskId(1);
+        graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        graph.add(TaskId(2), "child", "child", vec![], vec![], None);
+        let mut registry = OrchestratorRegistry::new(&graph);
+        registry.statuses.insert(TaskId(2), TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")));
+
+        propagate_blocked_dependents(&graph, &mut registry);
+
+        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Blocked(_))));
+    }
+
+    #[test]
+    fn reconcile_root_completes_after_successful_children() {
+        let graph = build_routed_graph("goal", &[]);
+        let mut registry = OrchestratorRegistry::new(&graph);
+        registry.statuses.insert(TaskId(1), TaskStatus::Pending);
+        complete_reconcile_root(&graph, &mut registry);
+        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Pending)));
+
+        let graph = build_routed_graph(
+            "goal",
+            &[RoutedSubAgentTask {
+                task_id: "task-1".to_string(),
+                task_kind: AgentTaskKind::Refactor,
+                files: Vec::new(),
+                provider: crate::agent::AiProvider::CloudflareWorkersAi,
+                model_id: "model".to_string(),
+                model_label: "model".to_string(),
+                thinking: false,
+                fallback_chain: Vec::new(),
+                instruction_template_id: "template".to_string(),
+                decomposition_policy_id: "policy".to_string(),
+                decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
+                instructions: String::new(),
+                rationale: String::new(),
+            }],
+        );
+        let mut registry = OrchestratorRegistry::new(&graph);
+        registry.statuses.insert(TaskId(2), TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())));
+
+        complete_reconcile_root(&graph, &mut registry);
+
+        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Done(_))));
+    }
+}
+
+fn requires_follow_up(result: &WorkerResult) -> bool {
+    result.message.contains("MEDIATION CONTRACT:")
+        || result.message.contains("Reconciliation blocked:")
+        || result
+            .status_updates
+            .iter()
+            .any(|status| status.contains("MEDIATION CONTRACT:") || status.contains("Reconciliation blocked:"))
+}
+
+fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
+    loop {
+        let mut changed = false;
+        for task in graph.tasks.values() {
+            if !matches!(registry.statuses.get(&task.id), Some(TaskStatus::Pending) | None) {
+                continue;
+            }
+            let blocking_dependencies = task
+                .dependencies
+                .iter()
+                .filter(|dependency| {
+                    matches!(
+                        registry.statuses.get(dependency),
+                        Some(TaskStatus::Failed(_)) | Some(TaskStatus::Blocked(_))
+                    )
+                })
+                .copied()
+                .collect::<Vec<_>>();
+            if blocking_dependencies.is_empty() {
+                continue;
+            }
+            let mut result = WorkerResult::new(task);
+            result.success = false;
+            result.message = format!(
+                "Follow-up required before this task can run because dependency task(s) {} did not complete cleanly.",
+                blocking_dependencies
+                    .iter()
+                    .map(|dependency| dependency.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            result.status_updates.push(result.message.clone());
+            registry.statuses.insert(task.id, TaskStatus::Blocked(result));
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn complete_reconcile_root(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
+    let Some(root_task) = graph.tasks.get(&graph.root) else {
+        return;
+    };
+    if !matches!(registry.statuses.get(&graph.root), Some(TaskStatus::Pending) | None) {
+        return;
+    }
+    if root_task.dependencies.is_empty() {
+        return;
+    }
+    if !root_task
+        .dependencies
+        .iter()
+        .all(|dependency| matches!(registry.statuses.get(dependency), Some(TaskStatus::Done(_))))
+    {
+        return;
+    }
+
+    let mut result = WorkerResult::new(root_task);
+    result.message = format!(
+        "Reconciliation complete across {} routed task(s).",
+        root_task.dependencies.len()
+    );
+    result.status_updates.push(result.message.clone());
+    registry.statuses.insert(graph.root, TaskStatus::Done(result));
 }
 
 fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {
