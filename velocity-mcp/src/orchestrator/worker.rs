@@ -493,63 +493,60 @@ fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result
 }
 
 fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
-    let mut facts = Vec::new();
-    facts.push("artifact:worker-run kind orchestrator-run".to_string());
-    facts.push(format!(
-        "artifact:worker-run result {}",
-        if outcome.success { "success" } else { "failed" }
-    ));
-    facts.push(format!("artifact:worker-run provider provider:{}", nda_atom(&outcome.provider_label)));
-    facts.push(format!("artifact:worker-run model model:{}", nda_atom(&outcome.model_label)));
-    facts.push(format!("artifact:worker-run message text:{}", nda_atom(&outcome.message)));
-
-    for (idx, attempt) in outcome.attempts.iter().enumerate() {
-        let attempt_id = format!("attempt:{}", idx + 1);
-        facts.push(format!("artifact:worker-run attempted {}", attempt_id));
-        facts.push(format!("{} provider provider:{}", attempt_id, nda_atom(&attempt.provider_label)));
-        facts.push(format!("{} model model:{}", attempt_id, nda_atom(&attempt.model_label)));
-        facts.push(format!("{} model_id model-id:{}", attempt_id, nda_atom(&attempt.model_id)));
-        facts.push(format!("{} result {}", attempt_id, if attempt.success { "success" } else { "failed" }));
-        facts.push(format!("{} message text:{}", attempt_id, nda_atom(&attempt.message)));
-    }
-
-    for path in &outcome.changed_files {
-        facts.push(format!("artifact:worker-run changed file:{}", nda_atom(path)));
-    }
-    for path in &outcome.created_files {
-        facts.push(format!("artifact:worker-run created file:{}", nda_atom(path)));
-    }
-    for path in &outcome.deleted_files {
-        facts.push(format!("artifact:worker-run deleted file:{}", nda_atom(path)));
-    }
-    for path in &outcome.out_of_scope_created_files {
-        facts.push(format!("artifact:worker-run out_of_scope_created file:{}", nda_atom(path)));
-    }
-    for status in &outcome.status_updates {
-        facts.push(format!("artifact:worker-run status text:{}", nda_atom(status)));
-    }
-    if !outcome.transcript.trim().is_empty() {
-        facts.push(format!("artifact:worker-run transcript text:{}", nda_atom(outcome.transcript.trim())));
-    }
-
-    fs::write(run_dir.join("facts.nda"), facts.join("\n")).map_err(|err| format!("write facts: {err}"))
-}
-
-fn nda_atom(value: &str) -> String {
-    let mut atom = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            atom.push(ch.to_ascii_lowercase());
-        } else {
-            atom.push('-');
-        }
-    }
-    let atom = atom.trim_matches('-');
-    if atom.is_empty() {
-        "empty".to_string()
+    let transcript_lines = if outcome.transcript.trim().is_empty() {
+        Vec::new()
     } else {
-        atom.to_string()
+        outcome.transcript.trim().split('\n').collect::<Vec<_>>()
+    };
+
+    let mut facts = vec![
+        "worker-run-facts version 2".to_string(),
+        format!("field\tresult\t{}", if outcome.success { "success" } else { "failed" }),
+        format!("field\tprovider\t{}", encode_nda_text(&outcome.provider_label)),
+        format!("field\tmodel\t{}", encode_nda_text(&outcome.model_label)),
+        format!("field\tmessage\t{}", encode_nda_text(&outcome.message)),
+        format!("attempt_count {}", outcome.attempts.len()),
+        format!("changed_file_count {}", outcome.changed_files.len()),
+        format!("created_file_count {}", outcome.created_files.len()),
+        format!("deleted_file_count {}", outcome.deleted_files.len()),
+        format!(
+            "out_of_scope_created_file_count {}",
+            outcome.out_of_scope_created_files.len()
+        ),
+        format!("status_count {}", outcome.status_updates.len()),
+        format!("transcript_line_count {}", transcript_lines.len()),
+    ];
+
+    for (index, attempt) in outcome.attempts.iter().enumerate() {
+        facts.push(format!("attempt\t{}", index));
+        facts.push(format!("attempt_field\t{}\tprovider\t{}", index, encode_nda_text(&attempt.provider_label)));
+        facts.push(format!("attempt_field\t{}\tmodel\t{}", index, encode_nda_text(&attempt.model_label)));
+        facts.push(format!("attempt_field\t{}\tmodel_id\t{}", index, encode_nda_text(&attempt.model_id)));
+        facts.push(format!("attempt_field\t{}\tresult\t{}", index, if attempt.success { "success" } else { "failed" }));
+        facts.push(format!("attempt_field\t{}\tmessage\t{}", index, encode_nda_text(&attempt.message)));
     }
+
+    for (index, path) in outcome.changed_files.iter().enumerate() {
+        facts.push(format!("changed_file\t{}\t{}", index, encode_nda_text(path)));
+    }
+    for (index, path) in outcome.created_files.iter().enumerate() {
+        facts.push(format!("created_file\t{}\t{}", index, encode_nda_text(path)));
+    }
+    for (index, path) in outcome.deleted_files.iter().enumerate() {
+        facts.push(format!("deleted_file\t{}\t{}", index, encode_nda_text(path)));
+    }
+    for (index, path) in outcome.out_of_scope_created_files.iter().enumerate() {
+        facts.push(format!("out_of_scope_created_file\t{}\t{}", index, encode_nda_text(path)));
+    }
+    for (index, status) in outcome.status_updates.iter().enumerate() {
+        facts.push(format!("status\t{}\t{}", index, encode_nda_text(status)));
+    }
+    for (index, line) in transcript_lines.iter().enumerate() {
+        facts.push(format!("transcript_line\t{}\t{}", index, encode_nda_text(line)));
+    }
+
+    fs::write(run_dir.join("facts.nda"), facts.join("\n") + "\n")
+        .map_err(|err| format!("write facts: {err}"))
 }
 
 #[derive(Debug, Clone)]
@@ -888,9 +885,14 @@ mod tests {
         write_execution_facts(workspace.path(), &outcome).unwrap();
         let facts = fs::read_to_string(workspace.path().join("facts.nda")).unwrap();
 
-        assert!(facts.contains("artifact:worker-run result success"));
-        assert!(facts.contains("artifact:worker-run changed file:src-main-rs"));
-        assert!(facts.contains("artifact:worker-run out_of_scope_created file:docs-rogue-md"));
-        assert!(facts.contains("attempt:1 result success"));
+        assert!(facts.starts_with("worker-run-facts version 2\n"));
+        assert!(facts.contains("field\tresult\tsuccess"));
+        assert!(facts.contains("field\tprovider\tWorkers AI"));
+        assert!(facts.contains("changed_file\t0\tsrc/main.rs"));
+        assert!(facts.contains("out_of_scope_created_file\t0\tdocs/rogue.md"));
+        assert!(facts.contains("attempt\t0"));
+        assert!(facts.contains("attempt_field\t0\tresult\tsuccess"));
+        assert!(facts.contains("status\t0\tupdated scope"));
+        assert!(facts.contains("transcript_line\t0\tdone"));
     }
 }
