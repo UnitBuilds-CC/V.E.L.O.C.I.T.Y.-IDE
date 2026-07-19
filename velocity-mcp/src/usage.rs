@@ -64,6 +64,7 @@ pub struct AccountUsageView {
 
 pub struct UsageTracker {
     path: PathBuf,
+    nda_path: PathBuf,
     legacy_path: PathBuf,
     data: UsageFile,
 }
@@ -73,6 +74,7 @@ impl UsageTracker {
         let memory = workspace_root.join("memory");
         let mut tracker = Self {
             path: memory.join(".account_usage.json"),
+            nda_path: memory.join(".account_usage.nda"),
             legacy_path: memory.join(".account_state.json"),
             data: UsageFile {
                 date: today_utc(),
@@ -85,22 +87,25 @@ impl UsageTracker {
 
     fn load(&mut self) {
         let today = today_utc();
+        if self.nda_path.exists() {
+            if let Ok(raw) = std::fs::read_to_string(&self.nda_path) {
+                if let Some(parsed) = parse_usage_nda(&raw) {
+                    self.data = normalize_usage_file_date(parsed, &today);
+                    self.migrate_legacy();
+                    return;
+                }
+            }
+        }
         if self.path.exists() {
             if let Ok(raw) = std::fs::read_to_string(&self.path) {
                 if let Ok(parsed) = serde_json::from_str::<UsageFile>(&raw) {
-                    if parsed.date == today {
-                        self.data = parsed;
-                    } else {
-                        self.data = UsageFile {
-                            date: today,
-                            accounts: HashMap::new(),
-                        };
-                    }
+                    self.data = normalize_usage_file_date(parsed, &today);
+                    self.migrate_legacy();
+                    return;
                 }
             }
-        } else {
-            self.data.date = today;
         }
+        self.data.date = today;
         self.migrate_legacy();
     }
 
@@ -141,9 +146,10 @@ impl UsageTracker {
     }
 
     fn save(&self) {
-        if let Some(parent) = self.path.parent() {
+        if let Some(parent) = self.nda_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        let _ = std::fs::write(&self.nda_path, serialize_usage_nda(&self.data));
         if let Ok(json) = serde_json::to_string_pretty(&self.data) {
             let _ = std::fs::write(&self.path, json);
         }
@@ -453,6 +459,121 @@ pub fn load_openrouter_accounts_from_env() -> Vec<OpenRouterAccount> {
     accounts
 }
 
+fn serialize_usage_nda(data: &UsageFile) -> String {
+    let mut lines = vec![
+        "account-usage version 1".to_string(),
+        format!("date {}", data.date),
+    ];
+    let mut keys: Vec<&String> = data.accounts.keys().collect();
+    keys.sort();
+    for key in keys {
+        if let Some(stats) = data.accounts.get(key) {
+            lines.push(format!(
+                "account\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                key,
+                encode_nda_text(&stats.label),
+                encode_nda_text(&stats.tier),
+                stats.requests,
+                stats.tokens_in,
+                stats.tokens_out,
+                stats.exhausted,
+                encode_optional_nda_text(stats.exhausted_at.as_deref()),
+                stats.daily_limit,
+            ));
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
+fn parse_usage_nda(raw: &str) -> Option<UsageFile> {
+    let mut date = None;
+    let mut accounts = HashMap::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line == "account-usage version 1" {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("date ") {
+            date = Some(value.to_string());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("account\t") {
+            let parts: Vec<&str> = rest.split('\t').collect();
+            if parts.len() != 9 {
+                return None;
+            }
+            accounts.insert(
+                parts[0].to_string(),
+                AccountStats {
+                    label: decode_nda_text(parts[1]),
+                    tier: decode_nda_text(parts[2]),
+                    requests: parts[3].parse().ok()?,
+                    tokens_in: parts[4].parse().ok()?,
+                    tokens_out: parts[5].parse().ok()?,
+                    exhausted: parts[6].parse().ok()?,
+                    exhausted_at: decode_optional_nda_text(parts[7]),
+                    daily_limit: parts[8].parse().ok()?,
+                },
+            );
+        }
+    }
+    Some(UsageFile {
+        date: date?,
+        accounts,
+    })
+}
+
+fn normalize_usage_file_date(parsed: UsageFile, today: &str) -> UsageFile {
+    if parsed.date == today {
+        parsed
+    } else {
+        UsageFile {
+            date: today.to_string(),
+            accounts: HashMap::new(),
+        }
+    }
+}
+
+fn encode_nda_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn decode_nda_text(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('t') => out.push('\t'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => out.push(other),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn encode_optional_nda_text(value: Option<&str>) -> String {
+    value.map(encode_nda_text).unwrap_or_else(|| "-".to_string())
+}
+
+fn decode_optional_nda_text(value: &str) -> Option<String> {
+    if value == "-" {
+        None
+    } else {
+        Some(decode_nda_text(value))
+    }
+}
+
 fn today_utc() -> String {
     // Simple UTC date without chrono dependency
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -498,4 +619,62 @@ fn chrono_now_iso() -> String {
     let min = (tod % 3600) / 60;
     let s = tod % 60;
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_nda_usage_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut tracker = UsageTracker::new(tmp.path());
+        tracker.record_request(2, "primary account", "paid", 11, 22);
+        tracker.mark_or_exhausted(3, "OR account", "free");
+
+        let nda = std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.nda")).unwrap();
+        let json = std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.json")).unwrap();
+
+        assert!(nda.starts_with("account-usage version 1\n"));
+        assert!(nda.contains("account\t2\tprimary account\tpaid\t1\t11\t22\tfalse\t-\t500"));
+        assert!(nda.contains("account\tor_3\tOR account\tfree\t0\t0\t0\ttrue\t"));
+        assert!(json.contains("\"label\": \"primary account\""));
+    }
+
+    #[test]
+    fn reads_nda_usage_state_before_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("memory")).unwrap();
+        let today = today_utc();
+        std::fs::write(
+            tmp.path().join("memory").join(".account_usage.nda"),
+            format!(
+                "account-usage version 1\ndate {}\naccount\t2\tnda label\tfree\t4\t9\t12\ttrue\t2026-07-19T12:00:00Z\t50\n",
+                today
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("memory").join(".account_usage.json"),
+            format!(
+                "{{\"date\":\"{}\",\"accounts\":{{\"2\":{{\"label\":\"json label\",\"tier\":\"free\",\"requests\":1,\"tokens_in\":1,\"tokens_out\":1,\"exhausted\":false,\"exhausted_at\":null,\"daily_limit\":50}}}}}}",
+                today
+            ),
+        )
+        .unwrap();
+
+        let mut tracker = UsageTracker::new(tmp.path());
+        let views = tracker.build_views(&[CloudflareAccount {
+            n: 2,
+            id: "id".to_string(),
+            token: "token".to_string(),
+            tier: "free".to_string(),
+            label: "fallback".to_string(),
+        }], &[]);
+
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].label, "nda label");
+        assert_eq!(views[0].requests, 4);
+        assert!(views[0].exhausted);
+    }
 }
