@@ -461,25 +461,27 @@ pub fn load_openrouter_accounts_from_env() -> Vec<OpenRouterAccount> {
 
 fn serialize_usage_nda(data: &UsageFile) -> String {
     let mut lines = vec![
-        "account-usage version 1".to_string(),
+        "account-usage version 2".to_string(),
         format!("date {}", data.date),
+        format!("account_count {}", data.accounts.len()),
     ];
     let mut keys: Vec<&String> = data.accounts.keys().collect();
     keys.sort();
     for key in keys {
         if let Some(stats) = data.accounts.get(key) {
+            lines.push(format!("account\t{}", encode_nda_text(key)));
+            lines.push(format!("field\t{}\tlabel\t{}", encode_nda_text(key), encode_nda_text(&stats.label)));
+            lines.push(format!("field\t{}\ttier\t{}", encode_nda_text(key), encode_nda_text(&stats.tier)));
+            lines.push(format!("field\t{}\trequests\t{}", encode_nda_text(key), stats.requests));
+            lines.push(format!("field\t{}\ttokens_in\t{}", encode_nda_text(key), stats.tokens_in));
+            lines.push(format!("field\t{}\ttokens_out\t{}", encode_nda_text(key), stats.tokens_out));
+            lines.push(format!("field\t{}\texhausted\t{}", encode_nda_text(key), stats.exhausted));
             lines.push(format!(
-                "account\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                key,
-                encode_nda_text(&stats.label),
-                encode_nda_text(&stats.tier),
-                stats.requests,
-                stats.tokens_in,
-                stats.tokens_out,
-                stats.exhausted,
-                encode_optional_nda_text(stats.exhausted_at.as_deref()),
-                stats.daily_limit,
+                "field\t{}\texhausted_at\t{}",
+                encode_nda_text(key),
+                encode_optional_nda_text(stats.exhausted_at.as_deref())
             ));
+            lines.push(format!("field\t{}\tdaily_limit\t{}", encode_nda_text(key), stats.daily_limit));
         }
     }
     lines.join("\n") + "\n"
@@ -488,14 +490,62 @@ fn serialize_usage_nda(data: &UsageFile) -> String {
 fn parse_usage_nda(raw: &str) -> Option<UsageFile> {
     let mut date = None;
     let mut accounts = HashMap::new();
+    let mut version = 1;
     for line in raw.lines() {
         let line = line.trim();
-        if line.is_empty() || line == "account-usage version 1" {
+        if line.is_empty() {
+            continue;
+        }
+        if line == "account-usage version 1" {
+            version = 1;
+            continue;
+        }
+        if line == "account-usage version 2" {
+            version = 2;
             continue;
         }
         if let Some(value) = line.strip_prefix("date ") {
             date = Some(value.to_string());
             continue;
+        }
+        if version == 2 {
+            if line.starts_with("account\t") {
+                continue;
+            }
+            if line.starts_with("account_count ") {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("field\t") {
+                let parts: Vec<&str> = rest.split('\t').collect();
+                if parts.len() != 3 {
+                    return None;
+                }
+                let key = decode_nda_text(parts[0]);
+                let field = parts[1];
+                let value = parts[2];
+                let stats = accounts.entry(key).or_insert_with(|| AccountStats {
+                    label: String::new(),
+                    tier: String::new(),
+                    requests: 0,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    exhausted: false,
+                    exhausted_at: None,
+                    daily_limit: default_limit_free(),
+                });
+                match field {
+                    "label" => stats.label = decode_nda_text(value),
+                    "tier" => stats.tier = decode_nda_text(value),
+                    "requests" => stats.requests = value.parse().ok()?,
+                    "tokens_in" => stats.tokens_in = value.parse().ok()?,
+                    "tokens_out" => stats.tokens_out = value.parse().ok()?,
+                    "exhausted" => stats.exhausted = value.parse().ok()?,
+                    "exhausted_at" => stats.exhausted_at = decode_optional_nda_text(value),
+                    "daily_limit" => stats.daily_limit = value.parse().ok()?,
+                    _ => {}
+                }
+                continue;
+            }
         }
         if let Some(rest) = line.strip_prefix("account\t") {
             let parts: Vec<&str> = rest.split('\t').collect();
@@ -635,9 +685,13 @@ mod tests {
         let nda = std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.nda")).unwrap();
         let json = std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.json")).unwrap();
 
-        assert!(nda.starts_with("account-usage version 1\n"));
-        assert!(nda.contains("account\t2\tprimary account\tpaid\t1\t11\t22\tfalse\t-\t500"));
-        assert!(nda.contains("account\tor_3\tOR account\tfree\t0\t0\t0\ttrue\t"));
+        assert!(nda.starts_with("account-usage version 2\n"));
+        assert!(nda.contains("account_count 2"));
+        assert!(nda.contains("account\t2"));
+        assert!(nda.contains("field\t2\tlabel\tprimary account"));
+        assert!(nda.contains("field\t2\ttier\tpaid"));
+        assert!(nda.contains("field\t2\trequests\t1"));
+        assert!(nda.contains("field\tor_3\texhausted\ttrue"));
         assert!(json.contains("\"label\": \"primary account\""));
     }
 
@@ -649,7 +703,7 @@ mod tests {
         std::fs::write(
             tmp.path().join("memory").join(".account_usage.nda"),
             format!(
-                "account-usage version 1\ndate {}\naccount\t2\tnda label\tfree\t4\t9\t12\ttrue\t2026-07-19T12:00:00Z\t50\n",
+                "account-usage version 2\ndate {}\naccount_count 1\naccount\t2\nfield\t2\tlabel\tnda label\nfield\t2\ttier\tfree\nfield\t2\trequests\t4\nfield\t2\ttokens_in\t9\nfield\t2\ttokens_out\t12\nfield\t2\texhausted\ttrue\nfield\t2\texhausted_at\t2026-07-19T12:00:00Z\nfield\t2\tdaily_limit\t50\n",
                 today
             ),
         )
@@ -674,6 +728,35 @@ mod tests {
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].label, "nda label");
+        assert_eq!(views[0].requests, 4);
+        assert!(views[0].exhausted);
+    }
+
+    #[test]
+    fn reads_legacy_v1_usage_state_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("memory")).unwrap();
+        let today = today_utc();
+        std::fs::write(
+            tmp.path().join("memory").join(".account_usage.nda"),
+            format!(
+                "account-usage version 1\ndate {}\naccount\t2\tlegacy label\tfree\t4\t9\t12\ttrue\t2026-07-19T12:00:00Z\t50\n",
+                today
+            ),
+        )
+        .unwrap();
+
+        let mut tracker = UsageTracker::new(tmp.path());
+        let views = tracker.build_views(&[CloudflareAccount {
+            n: 2,
+            id: "id".to_string(),
+            token: "token".to_string(),
+            tier: "free".to_string(),
+            label: "fallback".to_string(),
+        }], &[]);
+
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].label, "legacy label");
         assert_eq!(views[0].requests, 4);
         assert!(views[0].exhausted);
     }
