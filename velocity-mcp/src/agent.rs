@@ -779,6 +779,101 @@ fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage
 }
 
 fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
+    if text.starts_with("chatlogs version 3\n") {
+        let mut messages = std::collections::BTreeMap::new();
+        let mut tool_calls: std::collections::BTreeMap<(usize, usize), serde_json::Map<String, Value>> =
+            std::collections::BTreeMap::new();
+        for line in text.lines() {
+            if line.trim().is_empty() || line == "chatlogs version 3" {
+                continue;
+            }
+            if line.starts_with("message_count ") || line.starts_with("message\t") || line.starts_with("tool_call\t") {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("field\t") {
+                let parts: Vec<&str> = rest.split('\t').collect();
+                if parts.len() != 3 {
+                    continue;
+                }
+                let Ok(index) = parts[0].parse::<usize>() else {
+                    continue;
+                };
+                let field = parts[1];
+                let value = parts[2];
+                let message = messages.entry(index).or_insert_with(|| ChatMessage {
+                    role: String::new(),
+                    content: String::new(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
+                match field {
+                    "role" => message.role = decode_nda_text(value),
+                    "content" => message.content = decode_nda_text(value),
+                    "name" => message.name = decode_optional_nda_text(value),
+                    "tool_call_id" => message.tool_call_id = decode_optional_nda_text(value),
+                    _ => {}
+                }
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("tool_call_field\t") else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.split('\t').collect();
+            if parts.len() != 4 {
+                continue;
+            }
+            let Ok(message_index) = parts[0].parse::<usize>() else {
+                continue;
+            };
+            let Ok(call_index) = parts[1].parse::<usize>() else {
+                continue;
+            };
+            let field = parts[2];
+            let value = parts[3];
+            let tool_call = tool_calls
+                .entry((message_index, call_index))
+                .or_insert_with(serde_json::Map::new);
+            match field {
+                "id" | "type" => {
+                    tool_call.insert(field.to_string(), Value::String(decode_nda_text(value)));
+                }
+                "function_name" => {
+                    let function = tool_call
+                        .entry("function".to_string())
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                    if let Some(object) = function.as_object_mut() {
+                        object.insert("name".to_string(), Value::String(decode_nda_text(value)));
+                    }
+                }
+                "arguments" => {
+                    let function = tool_call
+                        .entry("function".to_string())
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                    if let Some(object) = function.as_object_mut() {
+                        object.insert("arguments".to_string(), Value::String(decode_nda_text(value)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for ((message_index, _call_index), tool_call) in tool_calls {
+            let message = messages.entry(message_index).or_insert_with(|| ChatMessage {
+                role: String::new(),
+                content: String::new(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            let array = message
+                .tool_calls
+                .get_or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(items) = array.as_array_mut() {
+                items.push(Value::Object(tool_call));
+            }
+        }
+        return messages.into_values().collect();
+    }
     if text.starts_with("chatlogs version 2\n") {
         let mut messages = std::collections::BTreeMap::new();
         for line in text.lines() {
@@ -888,24 +983,34 @@ fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
 
 fn serialize_chatlogs_nda(messages: &[ChatMessage]) -> String {
     let mut lines = vec![
-        "chatlogs version 2".to_string(),
+        "chatlogs version 3".to_string(),
         format!("message_count {}", messages.len()),
     ];
     for (index, msg) in messages.iter().enumerate() {
-        let tool_calls = msg
-            .tool_calls
-            .as_ref()
-            .and_then(|value| serde_json::to_string(value).ok());
         lines.push(format!("message\t{}", index));
         lines.push(format!("field\t{}\trole\t{}", index, encode_nda_text(&msg.role)));
         lines.push(format!("field\t{}\tname\t{}", index, encode_optional_nda_text(msg.name.as_deref())));
         lines.push(format!("field\t{}\ttool_call_id\t{}", index, encode_optional_nda_text(msg.tool_call_id.as_deref())));
         lines.push(format!("field\t{}\tcontent\t{}", index, encode_nda_text(&msg.content)));
-        lines.push(format!(
-            "field\t{}\ttool_calls\t{}",
-            index,
-            encode_optional_nda_text(tool_calls.as_deref()),
-        ));
+        if let Some(tool_calls) = msg.tool_calls.as_ref().and_then(|value| value.as_array()) {
+            for (call_index, tool_call) in tool_calls.iter().enumerate() {
+                lines.push(format!("tool_call\t{}\t{}", index, call_index));
+                if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+                    lines.push(format!("tool_call_field\t{}\t{}\tid\t{}", index, call_index, encode_nda_text(id)));
+                }
+                if let Some(kind) = tool_call.get("type").and_then(|v| v.as_str()) {
+                    lines.push(format!("tool_call_field\t{}\t{}\ttype\t{}", index, call_index, encode_nda_text(kind)));
+                }
+                if let Some(function) = tool_call.get("function") {
+                    if let Some(name) = function.get("name").and_then(|v| v.as_str()) {
+                        lines.push(format!("tool_call_field\t{}\t{}\tfunction_name\t{}", index, call_index, encode_nda_text(name)));
+                    }
+                    if let Some(arguments) = function.get("arguments").and_then(|v| v.as_str()) {
+                        lines.push(format!("tool_call_field\t{}\t{}\targuments\t{}", index, call_index, encode_nda_text(arguments)));
+                    }
+                }
+            }
+        }
     }
     lines.join("\n") + "\n"
 }
@@ -2576,10 +2681,14 @@ mod tests {
 
         save_chatlogs_nda(tmp.path(), &messages);
         let chatlogs = std::fs::read_to_string(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
-        assert!(chatlogs.starts_with("chatlogs version 2\n"));
+        assert!(chatlogs.starts_with("chatlogs version 3\n"));
         assert!(chatlogs.contains("message_count 2"));
         assert!(chatlogs.contains("field\t0\trole\tassistant"));
         assert!(chatlogs.contains("field\t0\tcontent\thello\\nworld"));
+        assert!(chatlogs.contains("tool_call\t0\t0"));
+        assert!(chatlogs.contains("tool_call_field\t0\t0\tid\tcall_1"));
+        assert!(chatlogs.contains("tool_call_field\t0\t0\tfunction_name\tread_file"));
+        assert!(chatlogs.contains("tool_call_field\t0\t0\targuments\t{\"path\":\"src/main.rs\"}"));
         assert!(chatlogs.contains("field\t1\tname\tread_file"));
         assert!(chatlogs.contains("field\t1\ttool_call_id\tcall_1"));
 
@@ -2589,6 +2698,30 @@ mod tests {
         assert!(loaded[0].tool_calls.is_some());
         assert_eq!(loaded[1].name.as_deref(), Some("read_file"));
         assert_eq!(loaded[1].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn loads_legacy_v2_chatlogs_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        let velocity_dir = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        let legacy_tool_calls = encode_nda_text(
+            "[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"src/main.rs\\\"}\"}}]",
+        );
+        std::fs::write(
+            velocity_dir.join("chatlogs.nda"),
+            format!(
+                "chatlogs version 2\nfield\t0\trole\tassistant\nfield\t0\tname\t-\nfield\t0\ttool_call_id\t-\nfield\t0\tcontent\thello\\nworld\nfield\t0\ttool_calls\t{}\n",
+                legacy_tool_calls
+            ),
+        )
+        .unwrap();
+
+        let loaded = load_chatlogs_nda(tmp.path()).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].role, "assistant");
+        assert_eq!(loaded[0].content, "hello\nworld");
+        assert!(loaded[0].tool_calls.is_some());
     }
 
     #[test]
