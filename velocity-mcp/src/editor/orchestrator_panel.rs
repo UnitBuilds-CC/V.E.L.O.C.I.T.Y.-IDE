@@ -389,6 +389,17 @@ impl OrchestratorPanel {
                     self.start_execution(workspace_root, mediator);
                 }
 
+                let retryable_blocked = self.retryable_blocked_task_count();
+                if ui
+                    .add_enabled(
+                        !self.execution_running && retryable_blocked > 0,
+                        egui::Button::new(format!("↻ Retry Blocked Tasks ({retryable_blocked})")),
+                    )
+                    .clicked()
+                {
+                    self.retry_blocked_tasks(workspace_root, mediator);
+                }
+
                 if ui.button("↻ Reset Runtime").clicked() {
                     self.reset_runtime();
                 }
@@ -729,6 +740,42 @@ impl OrchestratorPanel {
             reg.outputs.clear();
         }
         self.runtime_status = "Idle".to_string();
+    }
+
+    fn retryable_blocked_task_count(&self) -> usize {
+        self.registry
+            .as_ref()
+            .map(|reg| {
+                reg.statuses
+                    .values()
+                    .filter(|status| matches!(status, TaskStatus::Blocked(result) if is_retryable_blocked_result(result)))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    fn retry_blocked_tasks(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+        if self.registry.is_none() {
+            self.registry = Some(OrchestratorRegistry::new(&self.graph));
+        }
+        let reg = self.registry.as_mut().unwrap();
+        let mut retried = 0usize;
+        for status in reg.statuses.values_mut() {
+            if matches!(status, TaskStatus::Blocked(result) if is_retryable_blocked_result(result)) {
+                *status = TaskStatus::Pending;
+                retried += 1;
+            }
+        }
+        self.running_workers.clear();
+        self.execution_running = retried > 0;
+        self.runtime_status = if retried > 0 {
+            format!("Retrying {retried} blocked task(s)")
+        } else {
+            "No retryable blocked tasks".to_string()
+        };
+        if retried > 0 {
+            self.poll_live_workers(workspace_root, mediator);
+        }
     }
 
     fn poll_live_workers(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
@@ -1137,6 +1184,30 @@ mod tests {
     }
 
     #[test]
+    fn retry_blocked_tasks_requeues_follow_up_blocks_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path();
+        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+        let mut panel = OrchestratorPanel::new();
+        panel.graph = TaskGraph::default();
+        panel.graph.root = TaskId(1);
+        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2), TaskId(3)], None);
+        panel.graph.add(TaskId(2), "follow-up", "follow-up", vec![], vec![], None);
+        panel.graph.add(TaskId(3), "stale", "stale", vec![], vec![], None);
+        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+
+        let reg = panel.registry.as_mut().unwrap();
+        reg.statuses.insert(TaskId(2), TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")));
+        reg.statuses.insert(TaskId(3), TaskStatus::Blocked(sample_result(TaskId(3), "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002")));
+
+        panel.retry_blocked_tasks(workspace_root, &mediator);
+
+        let reg = panel.registry.as_ref().unwrap();
+        assert!(matches!(reg.statuses.get(&TaskId(2)), Some(TaskStatus::Pending)));
+        assert!(matches!(reg.statuses.get(&TaskId(3)), Some(TaskStatus::Blocked(_))));
+    }
+
+    #[test]
     fn reconcile_root_completes_after_successful_children() {
         let graph = build_routed_graph("goal", &[]);
         let mut registry = OrchestratorRegistry::new(&graph);
@@ -1185,6 +1256,19 @@ fn requires_follow_up(result: &WorkerResult) -> bool {
 
 fn is_dependency_blocked_message(message: &str) -> bool {
     message.starts_with("Follow-up required before this task can run because dependency task(s)")
+}
+
+fn is_retryable_blocked_result(result: &WorkerResult) -> bool {
+    !is_stale_plan_blocked_result(result)
+        && (requires_follow_up(result) || is_dependency_blocked_message(&result.message))
+}
+
+fn is_stale_plan_blocked_result(result: &WorkerResult) -> bool {
+    result.message.contains("stale routed plan:")
+        || result
+            .status_updates
+            .iter()
+            .any(|status| status.contains("stale routed plan:"))
 }
 
 fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
