@@ -6,6 +6,8 @@ use crate::editor::code_editor::CodeEditor;
 use crate::editor::orchestrator_panel::OrchestratorPanel;
 use crate::editor::theme::IdePalette;
 use crate::editor::usage_panel::{render_usage_compact, render_usage_panel};
+use crate::editor::agent_ui_state::AgentUiState;
+use crate::editor::agent_ui_render::{RenderSnapshot, render_thinking_panel, render_pending_approvals, render_agent_metrics};
 use crate::usage::AccountUsageView;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
@@ -103,6 +105,9 @@ pub struct VelocityApp {
 
     tab_counter: u64,
 
+    // Agentic UI State (Phase 1 - Zero-allocation)
+    agent_ui_state: AgentUiState,
+
     // Project Management
     pub projects: Vec<PathBuf>,
     pub show_add_project_ui: bool,
@@ -197,6 +202,7 @@ impl VelocityApp {
             },
             status_message: String::from("Ready"),
             tab_counter,
+            agent_ui_state: AgentUiState::default(),
             projects,
             show_add_project_ui: false,
             new_project_path_input: String::new(),
@@ -696,6 +702,25 @@ impl eframe::App for VelocityApp {
             self.dock_state = Some(dock_state);
         });
 
+        // Bottom panel: Agentic UI (thinking, approvals, metrics)
+        egui::Panel::bottom("agentic_ui_panel")
+                .default_size(120.0)
+                .resizable(true)
+                .show(ui, |ui: &mut egui::Ui| {
+                    ui.add_space(4.0);
+                
+                    // Create immutable snapshot for rendering (zero-copy)
+                    let snapshot = RenderSnapshot::new(&self.agent_ui_state);
+                
+                    // Render agentic UI components
+                    ui.vertical(|ui| {
+                        render_agent_metrics(ui, &snapshot);
+                        ui.separator();
+                        render_thinking_panel(ui, &snapshot, (226, 227, 243));
+                        render_pending_approvals(ui, &snapshot);
+                    });
+                });
+
         self.command_palette_ui(&ctx);
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
@@ -863,9 +888,15 @@ impl VelocityApp {
                     self.chat.append_agent_token(&token);
                 }
                 AgentToUiMessage::ThoughtToken(token) => {
+                    // Wire to agentic UI state (zero-allocation append)
+                    let _ = self.agent_ui_state.thinking.append_token(&token);
                     self.chat.append_thought_token(&token);
                 }
                 AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
+                    // Wire to agentic UI state (add to approval manager)
+                    let tool_id = id.parse::<u32>().unwrap_or(0);
+                    let _ = self.agent_ui_state.approvals.add_approval(tool_id, &tool_name, false);
+
                     self.command_output.push_str(&format!("[tool-approval-request] {}: {:?}\n", tool_name, arguments));
                     let should_auto = self.chat.auto_approve || self.auto_approve;
                     if should_auto {
@@ -881,11 +912,18 @@ impl VelocityApp {
                     }
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
+                    // Update metrics (tool started)
+                    self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Running;
+                    self.agent_ui_state.metrics.tool_call_count += 1;
+
                     self.command_output.push_str(&format!("[tool-start] {}\n", tool_name));
                     self.status_message = format!("Running tool: {}", tool_name);
                     self.toasts.push(crate::editor::toast::Toast::info(format!("Running tool: {}", tool_name)));
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
+                    // Update metrics (tool finished)
+                    self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Running;
+
                     self.command_output
                         .push_str(&format!("[tool-finish] {}: {}\n", tool_name, result));
                     self.status_message = format!("Tool done: {}", tool_name);
@@ -900,6 +938,9 @@ impl VelocityApp {
                     self.status_message = message;
                 }
                 AgentToUiMessage::AgentFinished => {
+                    // Update metrics (agent finished)
+                    self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Idle;
+
                     self.status_message = "Agent finished".into();
                     self.agent_active = false;
                     self.chat.agent_active = false;
@@ -917,6 +958,9 @@ impl VelocityApp {
                         self.thinking_supported = model.supports_thinking;
                         self.tools_supported = model.supports_tools;
                     }
+                    // Update metrics (thinking feature state)
+                    self.agent_ui_state.metrics.thinking_enabled = thinking;
+
                     self.available_models = models.clone();
                     self.selected_model = selected.clone();
                     self.thinking_enabled = thinking;
