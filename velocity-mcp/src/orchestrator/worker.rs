@@ -228,14 +228,8 @@ fn execute_live_task(
     scope: &[String],
 ) -> Result<ExecutionOutcome, ExecutionOutcome> {
     fs::create_dir_all(run_dir).map_err(|err| failed_execution(assignment, format!("create run dir: {err}")))?;
-    fs::write(
-        run_dir.join("instructions.txt"),
-        format!(
-            "provider: {}\nmodel: {}\nmodel_id: {}\n\n{}",
-            assignment.provider_label, assignment.model_label, assignment.model_id, assignment.instructions
-        ),
-    )
-    .map_err(|err| failed_execution(assignment, format!("write instructions: {err}")))?;
+    write_execution_contract_artifacts(run_dir, assignment)
+        .map_err(|err| failed_execution(assignment, format!("write instructions: {err}")))?;
 
     let snapshot_root = run_dir.join("scope_snapshot");
     fs::create_dir_all(&snapshot_root).map_err(|err| failed_execution(assignment, format!("create snapshot dir: {err}")))?;
@@ -368,6 +362,42 @@ fn failed_execution(assignment: &WorkerAssignment, message: String) -> Execution
 fn write_execution_artifacts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
     write_execution_summary(run_dir, outcome)?;
     write_execution_facts(run_dir, outcome)
+}
+
+fn serialize_execution_contract_nda(assignment: &WorkerAssignment) -> String {
+    format!(
+        "worker-execution-contract version 1\nprovider {}\nmodel {}\nmodel_id {}\nthinking {}\ninstructions {}\n",
+        encode_nda_text(&assignment.provider_label),
+        encode_nda_text(&assignment.model_label),
+        encode_nda_text(&assignment.model_id),
+        assignment.thinking,
+        encode_nda_text(&assignment.instructions),
+    )
+}
+
+fn write_execution_contract_artifacts(run_dir: &Path, assignment: &WorkerAssignment) -> Result<(), String> {
+    fs::write(run_dir.join("instructions.nda"), serialize_execution_contract_nda(assignment))
+        .map_err(|err| format!("write nda instructions: {err}"))?;
+    fs::write(
+        run_dir.join("instructions.txt"),
+        format!(
+            "provider: {}\nmodel: {}\nmodel_id: {}\n\nthinking: {}\n\n{}",
+            assignment.provider_label,
+            assignment.model_label,
+            assignment.model_id,
+            assignment.thinking,
+            assignment.instructions
+        ),
+    )
+    .map_err(|err| format!("write text instructions: {err}"))
+}
+
+fn encode_nda_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
@@ -686,8 +716,11 @@ fn is_path_within_scope(rel_path: &Path, scoped_paths: &ScopedPaths, workspace_r
 mod tests {
     use super::{
         collect_scoped_paths, collect_workspace_files, detect_out_of_scope_created_files,
-        detect_scoped_changes, snapshot_scope, write_execution_facts, ExecutionOutcome, WorkerAttempt,
+        detect_scoped_changes, snapshot_scope, write_execution_contract_artifacts,
+        write_execution_facts, ExecutionOutcome, WorkerAssignment, WorkerAttempt,
     };
+    use crate::agent::AiProvider;
+    use crate::orchestrator::blueprint::Task;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -750,6 +783,41 @@ mod tests {
         let out_of_scope = detect_out_of_scope_created_files(&scoped_paths, &before_workspace, workspace_root).unwrap();
 
         assert_eq!(out_of_scope, vec![PathBuf::from("docs").join("rogue.md").display().to_string()]);
+    }
+
+    #[test]
+    fn writes_execution_contract_as_nda() {
+        let workspace = tempdir().unwrap();
+        let assignment = WorkerAssignment {
+            task: Task {
+                id: super::TaskId(1),
+                title: "demo".to_string(),
+                description: "demo task".to_string(),
+                scope: vec!["src/main.rs".to_string()],
+                dependencies: Vec::new(),
+                output: None,
+            },
+            workspace_root: workspace.path().to_path_buf(),
+            instructions: "step one\nstep two".to_string(),
+            planned_site_map_root: 42,
+            provider: AiProvider::CloudflareWorkersAi,
+            provider_label: "Workers AI".to_string(),
+            model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
+            model_label: "Llama 3.1 8B".to_string(),
+            thinking: true,
+            fallback_chain: Vec::new(),
+        };
+
+        write_execution_contract_artifacts(workspace.path(), &assignment).unwrap();
+        let nda = fs::read_to_string(workspace.path().join("instructions.nda")).unwrap();
+        let txt = fs::read_to_string(workspace.path().join("instructions.txt")).unwrap();
+
+        assert!(nda.starts_with("worker-execution-contract version 1\n"));
+        assert!(nda.contains("provider Workers AI"));
+        assert!(nda.contains("thinking true"));
+        assert!(nda.contains("instructions step one\\nstep two"));
+        assert!(txt.contains("provider: Workers AI"));
+        assert!(txt.contains("thinking: true"));
     }
 
     #[test]
