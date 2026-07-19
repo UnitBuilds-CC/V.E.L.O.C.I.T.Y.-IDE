@@ -1042,6 +1042,7 @@ mod tests {
             deleted_files: Vec::new(),
             out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
+            run_facts_path: None,
         }
     }
 

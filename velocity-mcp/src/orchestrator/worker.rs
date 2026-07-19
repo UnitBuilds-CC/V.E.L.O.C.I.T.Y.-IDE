@@ -41,6 +41,7 @@ pub struct WorkerResult {
     pub deleted_files: Vec<String>,
     pub out_of_scope_created_files: Vec<String>,
     pub run_summary_path: Option<PathBuf>,
+    pub run_facts_path: Option<PathBuf>,
 }
 
 impl WorkerResult {
@@ -60,6 +61,7 @@ impl WorkerResult {
             deleted_files: Vec::new(),
             out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
+            run_facts_path: None,
         }
     }
 }
@@ -180,6 +182,7 @@ fn run_assignment(
             result.status_updates = execution.status_updates;
             result.attempts = execution.attempts;
             result.run_summary_path = Some(run_dir.join("summary.txt"));
+            result.run_facts_path = Some(run_dir.join("facts.nda"));
             result.duration = start.elapsed();
             result.message = execution.message;
         }
@@ -195,6 +198,7 @@ fn run_assignment(
             result.status_updates = execution.status_updates;
             result.attempts = execution.attempts;
             result.run_summary_path = Some(run_dir.join("summary.txt"));
+            result.run_facts_path = Some(run_dir.join("facts.nda"));
             result.duration = start.elapsed();
             result.message = execution.message;
         }
@@ -323,7 +327,7 @@ fn execute_live_task(
                 attempts,
                 message,
             };
-            write_execution_summary(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
+            write_execution_artifacts(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
             return Ok(outcome);
         }
     }
@@ -341,7 +345,7 @@ fn execute_live_task(
         attempts,
         message: "No scoped file changes were produced by any provider-backed sub-agent route.".to_string(),
     };
-    write_execution_summary(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
+    write_execution_artifacts(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
     Err(outcome)
 }
 
@@ -359,6 +363,11 @@ fn failed_execution(assignment: &WorkerAssignment, message: String) -> Execution
         attempts: Vec::new(),
         message,
     }
+}
+
+fn write_execution_artifacts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
+    write_execution_summary(run_dir, outcome)?;
+    write_execution_facts(run_dir, outcome)
 }
 
 fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
@@ -424,6 +433,66 @@ fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result
         summary.push('\n');
     }
     fs::write(run_dir.join("summary.txt"), &summary).map_err(|err| format!("write summary: {err}"))
+}
+
+fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
+    let mut facts = Vec::new();
+    facts.push("artifact:worker-run kind orchestrator-run".to_string());
+    facts.push(format!(
+        "artifact:worker-run result {}",
+        if outcome.success { "success" } else { "failed" }
+    ));
+    facts.push(format!("artifact:worker-run provider provider:{}", nda_atom(&outcome.provider_label)));
+    facts.push(format!("artifact:worker-run model model:{}", nda_atom(&outcome.model_label)));
+    facts.push(format!("artifact:worker-run message text:{}", nda_atom(&outcome.message)));
+
+    for (idx, attempt) in outcome.attempts.iter().enumerate() {
+        let attempt_id = format!("attempt:{}", idx + 1);
+        facts.push(format!("artifact:worker-run attempted {}", attempt_id));
+        facts.push(format!("{} provider provider:{}", attempt_id, nda_atom(&attempt.provider_label)));
+        facts.push(format!("{} model model:{}", attempt_id, nda_atom(&attempt.model_label)));
+        facts.push(format!("{} model_id model-id:{}", attempt_id, nda_atom(&attempt.model_id)));
+        facts.push(format!("{} result {}", attempt_id, if attempt.success { "success" } else { "failed" }));
+        facts.push(format!("{} message text:{}", attempt_id, nda_atom(&attempt.message)));
+    }
+
+    for path in &outcome.changed_files {
+        facts.push(format!("artifact:worker-run changed file:{}", nda_atom(path)));
+    }
+    for path in &outcome.created_files {
+        facts.push(format!("artifact:worker-run created file:{}", nda_atom(path)));
+    }
+    for path in &outcome.deleted_files {
+        facts.push(format!("artifact:worker-run deleted file:{}", nda_atom(path)));
+    }
+    for path in &outcome.out_of_scope_created_files {
+        facts.push(format!("artifact:worker-run out_of_scope_created file:{}", nda_atom(path)));
+    }
+    for status in &outcome.status_updates {
+        facts.push(format!("artifact:worker-run status text:{}", nda_atom(status)));
+    }
+    if !outcome.transcript.trim().is_empty() {
+        facts.push(format!("artifact:worker-run transcript text:{}", nda_atom(outcome.transcript.trim())));
+    }
+
+    fs::write(run_dir.join("facts.nda"), facts.join("\n")).map_err(|err| format!("write facts: {err}"))
+}
+
+fn nda_atom(value: &str) -> String {
+    let mut atom = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            atom.push(ch.to_ascii_lowercase());
+        } else {
+            atom.push('-');
+        }
+    }
+    let atom = atom.trim_matches('-');
+    if atom.is_empty() {
+        "empty".to_string()
+    } else {
+        atom.to_string()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -617,7 +686,7 @@ fn is_path_within_scope(rel_path: &Path, scoped_paths: &ScopedPaths, workspace_r
 mod tests {
     use super::{
         collect_scoped_paths, collect_workspace_files, detect_out_of_scope_created_files,
-        detect_scoped_changes, snapshot_scope,
+        detect_scoped_changes, snapshot_scope, write_execution_facts, ExecutionOutcome, WorkerAttempt,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -681,5 +750,37 @@ mod tests {
         let out_of_scope = detect_out_of_scope_created_files(&scoped_paths, &before_workspace, workspace_root).unwrap();
 
         assert_eq!(out_of_scope, vec![PathBuf::from("docs").join("rogue.md").display().to_string()]);
+    }
+
+    #[test]
+    fn writes_execution_facts_as_nda() {
+        let workspace = tempdir().unwrap();
+        let outcome = ExecutionOutcome {
+            success: true,
+            provider_label: "Workers AI".to_string(),
+            model_label: "Llama 3.1 8B".to_string(),
+            changed_files: vec!["src/main.rs".to_string()],
+            created_files: vec!["src/new.rs".to_string()],
+            deleted_files: vec!["src/old.rs".to_string()],
+            out_of_scope_created_files: vec!["docs/rogue.md".to_string()],
+            transcript: "done".to_string(),
+            status_updates: vec!["updated scope".to_string()],
+            attempts: vec![WorkerAttempt {
+                provider_label: "Workers AI".to_string(),
+                model_label: "Llama 3.1 8B".to_string(),
+                model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
+                success: true,
+                message: "Changed 1 file".to_string(),
+            }],
+            message: "Changed 1, created 1, deleted 1 via Workers AI / Llama 3.1 8B".to_string(),
+        };
+
+        write_execution_facts(workspace.path(), &outcome).unwrap();
+        let facts = fs::read_to_string(workspace.path().join("facts.nda")).unwrap();
+
+        assert!(facts.contains("artifact:worker-run result success"));
+        assert!(facts.contains("artifact:worker-run changed file:src-main-rs"));
+        assert!(facts.contains("artifact:worker-run out_of_scope_created file:docs-rogue-md"));
+        assert!(facts.contains("attempt:1 result success"));
     }
 }
