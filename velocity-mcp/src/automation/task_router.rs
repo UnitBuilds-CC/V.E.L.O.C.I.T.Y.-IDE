@@ -126,16 +126,14 @@ pub fn partition_files_by_coupling(files: &[PathBuf], site_map: &SiteMap) -> Vec
     let mut partitions: Vec<Vec<PathBuf>> = Vec::new();
 
     for file in files {
-        let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let file_hash = hash_str(file_name);
+        let file_hash = path_identity_hash(file);
         let callers = site_map.get_callers(file_hash);
         let dependencies = site_map.get_dependencies(file_hash);
 
         let mut merged = false;
         for partition in &mut partitions {
             for other_file in partition.iter() {
-                let other_name = other_file.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let other_hash = hash_str(other_name);
+                let other_hash = path_identity_hash(other_file);
                 let reverse_callers = site_map.get_callers(other_hash);
                 let reverse_dependencies = site_map.get_dependencies(other_hash);
                 if callers.contains(&other_hash)
@@ -280,8 +278,7 @@ fn build_rationale(
 ) -> String {
     let mut coupling_edges = 0usize;
     for file in files {
-        let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let file_hash = hash_str(file_name);
+        let file_hash = path_identity_hash(file);
         coupling_edges += site_map.get_callers(file_hash).len();
         coupling_edges += site_map.get_dependencies(file_hash).len();
     }
@@ -358,6 +355,27 @@ fn escape_contract_value(value: &str) -> String {
     escaped
 }
 
+fn path_identity_hash(path: &Path) -> u64 {
+    let canonical = canonicalize_scope_path(path);
+    hash_str(&canonical)
+}
+
+fn canonicalize_scope_path(path: &Path) -> String {
+    let mut normalized = Vec::new();
+    for component in path.components() {
+        use std::path::Component;
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.push("..".to_string());
+            }
+            Component::Normal(part) => normalized.push(part.to_string_lossy().replace('\\', "/")),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized.join("/")
+}
+
 fn hash_str(s: &str) -> u64 {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
@@ -376,8 +394,8 @@ mod tests {
     fn routes_coupled_files_together() {
         let temp = tempfile::tempdir().unwrap();
         let mut sm = SiteMap::open(temp.path(), 0).unwrap();
-        let a_hash = hash_str("a.rs");
-        let b_hash = hash_str("b.rs");
+        let a_hash = path_identity_hash(Path::new("src/a.rs"));
+        let b_hash = path_identity_hash(Path::new("src/b.rs"));
         sm.put_node(&NdaNode::Triple {
             subject_hash: a_hash,
             predicate_id: 2,
@@ -413,6 +431,39 @@ mod tests {
         assert!(routes[0].execution_contract.contains("contract version 1"));
         assert!(routes[0].execution_contract.contains("policy_label Refactor coupled"));
         assert!(routes[0].summary.contains("Refactor coupled"));
+    }
+
+    #[test]
+    fn same_named_files_in_different_directories_do_not_collide() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut sm = SiteMap::open(temp.path(), 0).unwrap();
+        let caller_hash = path_identity_hash(Path::new("src/feature/a.rs"));
+        let callee_hash = path_identity_hash(Path::new("src/shared/a.rs"));
+        sm.put_node(&NdaNode::Triple {
+            subject_hash: caller_hash,
+            predicate_id: 2,
+            object_hash: callee_hash,
+        })
+        .unwrap();
+
+        let partitions = partition_files_by_coupling(
+            &[
+                PathBuf::from("src/feature/a.rs"),
+                PathBuf::from("src/shared/a.rs"),
+                PathBuf::from("src/other/a.rs"),
+            ],
+            &sm,
+        );
+
+        assert_eq!(partitions.len(), 2);
+        assert!(partitions.iter().any(|group| {
+            group.len() == 2
+                && group.contains(&PathBuf::from("src/feature/a.rs"))
+                && group.contains(&PathBuf::from("src/shared/a.rs"))
+        }));
+        assert!(partitions
+            .iter()
+            .any(|group| group == &vec![PathBuf::from("src/other/a.rs")]));
     }
 
     #[test]
