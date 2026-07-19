@@ -15,7 +15,8 @@ use crate::orchestrator::TaskId;
 pub struct CoordinatorTask {
     pub task_id: String,
     pub files: Vec<PathBuf>,
-    pub instructions: String,
+    pub summary: String,
+    pub execution_contract: String,
     pub provider: AiProvider,
     pub model_id: String,
     pub model_label: String,
@@ -75,7 +76,7 @@ impl WorkspaceCoordinator {
             let orchestrator_task = Task {
                 id: TaskId(idx as u64 + 1),
                 title: task.task_id.clone(),
-                description: task.instructions.clone(),
+                description: task.summary.clone(),
                 scope: task
                     .files
                     .iter()
@@ -88,7 +89,7 @@ impl WorkspaceCoordinator {
                 WorkerAssignment {
                     task: orchestrator_task,
                     workspace_root: base_workspace.to_path_buf(),
-                    instructions: task.instructions.clone(),
+                    instructions: task.execution_contract.clone(),
                     provider: task.provider,
                     provider_label: task.provider.label().to_string(),
                     model_id: task.model_id.clone(),
@@ -157,7 +158,8 @@ mod tests {
             CoordinatorTask {
                 task_id: "Agent_1".to_string(),
                 files: vec![PathBuf::from("src/main.rs")],
-                instructions: "Compile main".to_string(),
+                summary: "Compile main".to_string(),
+                execution_contract: "contract version 1\n".to_string(),
                 provider: AiProvider::CloudflareWorkersAi,
                 model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
                 model_label: "llama-3.1-8b-instruct".to_string(),
@@ -167,7 +169,8 @@ mod tests {
             CoordinatorTask {
                 task_id: "Agent_2".to_string(),
                 files: vec![PathBuf::from("src/lib.rs")],
-                instructions: "Clean lib".to_string(),
+                summary: "Clean lib".to_string(),
+                execution_contract: "contract version 1\n".to_string(),
                 provider: AiProvider::CloudflareWorkersAi,
                 model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
                 model_label: "llama-3.1-8b-instruct".to_string(),

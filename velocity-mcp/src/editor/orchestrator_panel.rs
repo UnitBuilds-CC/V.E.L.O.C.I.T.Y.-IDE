@@ -797,7 +797,7 @@ impl OrchestratorPanel {
                 WorkerAssignment {
                     task,
                     workspace_root: workspace_root.to_path_buf(),
-                    instructions: routed_task.instructions.clone(),
+                    instructions: routed_task.execution_contract.clone(),
                     provider: routed_task.provider,
                     provider_label: routed_task.provider.label().to_string(),
                     model_id: routed_task.model_id.clone(),
@@ -1065,7 +1065,8 @@ mod tests {
                 instruction_template_id: "template".to_string(),
                 decomposition_policy_id: "policy".to_string(),
                 decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
-                instructions: String::new(),
+                execution_contract: String::new(),
+                summary: String::new(),
                 rationale: String::new(),
             }],
         );
@@ -1177,7 +1178,7 @@ fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {
         graph.add(
             TaskId(idx as u64 + 2),
             format!("{} {}", task.task_kind.as_str(), idx + 1),
-            format!("{} [{} / {}]", task.rationale, task.provider.label(), task.model_label),
+            format!("{}\n{}", task.summary, task.rationale),
             scope,
             vec![],
             Some(TaskId(1)),

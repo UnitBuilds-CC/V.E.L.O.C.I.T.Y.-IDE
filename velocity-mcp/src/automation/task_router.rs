@@ -34,7 +34,8 @@ pub struct RoutedSubAgentTask {
     pub decomposition_policy_id: String,
     pub decomposition_style: DecompositionStyle,
     pub instruction_template_id: String,
-    pub instructions: String,
+    pub execution_contract: String,
+    pub summary: String,
     pub rationale: String,
 }
 
@@ -78,10 +79,22 @@ impl SiteMapTaskRouter {
                 let fallback_chain = build_fallback_chain(&ranked_models);
                 let selected = fallback_chain.first().cloned().unwrap_or_else(fallback_route);
                 let instruction_template_id = template.map(|item| item.id.clone()).unwrap_or_else(|| "default".to_string());
-                let instructions = build_instruction_payload(goal, kind, &partition, site_map, template, &selected, &fallback_chain, &policy);
+                let task_id = format!("subagent-{:02}", idx + 1);
+                let execution_contract = build_execution_contract(
+                    &task_id,
+                    goal,
+                    kind,
+                    &partition,
+                    site_map,
+                    template,
+                    &selected,
+                    &fallback_chain,
+                    &policy,
+                );
+                let summary = build_summary(goal, kind, &partition, &selected, &policy);
                 let rationale = build_rationale(kind, &partition, site_map, &selected, fallback_chain.len(), &policy);
                 RoutedSubAgentTask {
-                    task_id: format!("subagent-{:02}", idx + 1),
+                    task_id,
                     files: partition,
                     task_kind: kind,
                     provider: selected.provider,
@@ -92,7 +105,8 @@ impl SiteMapTaskRouter {
                     decomposition_policy_id: policy.id.clone(),
                     decomposition_style: policy.decomposition_style,
                     instruction_template_id,
-                    instructions,
+                    execution_contract,
+                    summary,
                     rationale,
                 }
             })
@@ -156,7 +170,8 @@ fn rank_candidates(kind: AgentTaskKind, catalogs: &[ProviderModelCatalog]) -> Ve
     ranked
 }
 
-fn build_instruction_payload(
+fn build_execution_contract(
+    task_id: &str,
     goal: &str,
     kind: AgentTaskKind,
     files: &[PathBuf],
@@ -166,61 +181,93 @@ fn build_instruction_payload(
     fallback_chain: &[RoutedModelRoute],
     policy: &DecompositionPolicy,
 ) -> String {
-    let mut out = String::new();
+    let mut lines = vec![
+        "contract version 1".to_string(),
+        format!("task {} kind {}", task_id, kind.as_str()),
+        format!("task {} goal {}", task_id, escape_contract_value(goal)),
+        format!("task {} site_map_root {:016x}", task_id, site_map.root()),
+        format!("task {} policy_id {}", task_id, escape_contract_value(&policy.id)),
+        format!("task {} policy_label {}", task_id, escape_contract_value(&policy.label)),
+        format!("task {} decomposition_style {}", task_id, policy.decomposition_style.as_str()),
+        format!("task {} route_provider {}", task_id, escape_contract_value(model.provider.label())),
+        format!("task {} route_model {}", task_id, escape_contract_value(&model.model_label)),
+        format!("task {} route_model_id {}", task_id, escape_contract_value(&model.model_id)),
+        format!("task {} route_thinking {}", task_id, if model.thinking { "true" } else { "false" }),
+    ];
+
     if let Some(template) = template {
-        out.push_str("SYSTEM ROLE:\n");
-        out.push_str(&template.system_prompt);
-        out.push_str("\n\nCHECKLIST:\n");
+        lines.push(format!("task {} template_id {}", task_id, escape_contract_value(&template.id)));
+        lines.push(format!("task {} system_prompt {}", task_id, escape_contract_value(&template.system_prompt)));
         for item in &template.checklist {
-            out.push_str("- ");
-            out.push_str(item);
-            out.push('\n');
+            lines.push(format!("task {} checklist {}", task_id, escape_contract_value(item)));
         }
     }
-    out.push_str("\nTASK KIND: ");
-    out.push_str(kind.as_str());
-    out.push_str("\nDECOMPOSITION POLICY: ");
-    out.push_str(&policy.label);
-    out.push_str(" (");
-    out.push_str(policy.decomposition_style.as_str());
-    out.push_str(")");
-    out.push_str("\nGOAL: ");
-    out.push_str(goal);
-    out.push_str("\nSITE MAP ROOT: ");
-    out.push_str(&format!("{:016x}", site_map.root()));
-    out.push_str("\nMODEL ROUTE: ");
-    out.push_str(model.provider.label());
-    out.push_str(" :: ");
-    out.push_str(&model.model_label);
-    out.push_str("\nFALLBACK CHAIN:\n");
+
     for route in fallback_chain {
-        out.push_str("- ");
-        out.push_str(route.provider.label());
-        out.push_str(" :: ");
-        out.push_str(&route.model_label);
-        out.push_str(" (score ");
-        out.push_str(&route.score.to_string());
-        out.push_str(")\n");
+        lines.push(format!(
+            "task {} fallback {}|{}|{}|{}|{}",
+            task_id,
+            escape_contract_value(route.provider.label()),
+            escape_contract_value(&route.model_label),
+            escape_contract_value(&route.model_id),
+            route.score,
+            if route.thinking { "true" } else { "false" }
+        ));
     }
-    out.push_str("\nSCOPE FILES:\n");
+
     for file in files {
-        out.push_str("- ");
-        out.push_str(&file.display().to_string());
-        out.push('\n');
+        lines.push(format!("task {} scope_file {}", task_id, escape_contract_value(&file.display().to_string())));
     }
-    out.push_str("\nSTRUCTURAL EXPECTATIONS:\n");
-    out.push_str("- Respect the live Merkle SiteMap and avoid edits outside the assigned scope.\n");
-    out.push_str("- Preserve compatibility for any caller/dependency relationships touching this scope.\n");
-    out.push_str("- Return concise notes suitable for reconciliation and validation.\n");
-    if !policy.shared_expectations.is_empty() {
-        out.push_str("\nPOLICY EXPECTATIONS:\n");
-        for expectation in &policy.shared_expectations {
-            out.push_str("- ");
-            out.push_str(expectation);
-            out.push('\n');
-        }
+
+    lines.push(format!(
+        "task {} structural_expectation {}",
+        task_id,
+        escape_contract_value("Respect the live Merkle SiteMap and avoid edits outside the assigned scope.")
+    ));
+    lines.push(format!(
+        "task {} structural_expectation {}",
+        task_id,
+        escape_contract_value("Preserve compatibility for any caller/dependency relationships touching this scope.")
+    ));
+    lines.push(format!(
+        "task {} structural_expectation {}",
+        task_id,
+        escape_contract_value("Return concise notes suitable for reconciliation and validation.")
+    ));
+
+    for expectation in &policy.shared_expectations {
+        lines.push(format!("task {} policy_expectation {}", task_id, escape_contract_value(expectation)));
     }
-    out
+
+    lines.join("\n") + "\n"
+}
+
+fn build_summary(
+    goal: &str,
+    kind: AgentTaskKind,
+    files: &[PathBuf],
+    model: &RoutedModelRoute,
+    policy: &DecompositionPolicy,
+) -> String {
+    let scope = if files.is_empty() {
+        "no scoped files".to_string()
+    } else {
+        files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "{} task for '{}' using policy '{}' ({}) on {} via {} / {}.",
+        kind.as_str(),
+        goal,
+        policy.label,
+        policy.decomposition_style.as_str(),
+        scope,
+        model.provider.label(),
+        model.model_label,
+    )
 }
 
 fn build_rationale(
@@ -297,6 +344,20 @@ fn fallback_route() -> RoutedModelRoute {
     }
 }
 
+fn escape_contract_value(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 fn hash_str(s: &str) -> u64 {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
@@ -349,7 +410,9 @@ mod tests {
         assert_eq!(routes[0].fallback_chain[0].model_label, "kimi-k2");
         assert_eq!(routes[0].decomposition_policy_id, "refactor-coupled");
         assert_eq!(routes[0].decomposition_style, DecompositionStyle::CoupledComponents);
-        assert!(routes[0].instructions.contains("DECOMPOSITION POLICY: Refactor coupled"));
+        assert!(routes[0].execution_contract.contains("contract version 1"));
+        assert!(routes[0].execution_contract.contains("policy_label Refactor coupled"));
+        assert!(routes[0].summary.contains("Refactor coupled"));
     }
 
     #[test]
