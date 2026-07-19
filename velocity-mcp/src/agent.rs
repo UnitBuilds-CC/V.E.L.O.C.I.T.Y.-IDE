@@ -1130,7 +1130,7 @@ fn serialize_last_request_nda(
     request_body: &Value,
 ) -> String {
     let mut lines = vec![
-        "last-request version 2".to_string(),
+        "last-request version 3".to_string(),
         format!("field\tprovider\t{}", nda_atom(provider.label())),
         format!("field\tprovider_label\t{}", encode_nda_text(provider.label())),
         format!("field\tmodel\t{}", encode_nda_text(model)),
@@ -1159,11 +1159,34 @@ fn serialize_last_request_nda(
         lines.push(format!("message_field\t{}\tname\t{}", index, encode_optional_nda_text(message.name.as_deref())));
         lines.push(format!("message_field\t{}\ttool_call_id\t{}", index, encode_optional_nda_text(message.tool_call_id.as_deref())));
         lines.push(format!("message_field\t{}\tcontent\t{}", index, encode_nda_text(&message.content)));
-        lines.push(format!(
-            "message_field\t{}\ttool_calls\t{}",
-            index,
-            encode_optional_nda_text(message.tool_calls.as_ref().map(|v| v.to_string()).as_deref()),
-        ));
+        if let Some(tool_calls) = message.tool_calls.as_ref().and_then(|value| value.as_array()) {
+            for (call_index, tool_call) in tool_calls.iter().enumerate() {
+                lines.push(format!("message_tool_call\t{}\t{}", index, call_index));
+                if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+                    lines.push(format!("message_tool_call_field\t{}\t{}\tid\t{}", index, call_index, encode_nda_text(id)));
+                }
+                if let Some(kind) = tool_call.get("type").and_then(|v| v.as_str()) {
+                    lines.push(format!("message_tool_call_field\t{}\t{}\ttype\t{}", index, call_index, encode_nda_text(kind)));
+                }
+                if let Some(function) = tool_call.get("function") {
+                    if let Some(name) = function.get("name").and_then(|v| v.as_str()) {
+                        lines.push(format!("message_tool_call_field\t{}\t{}\tfunction_name\t{}", index, call_index, encode_nda_text(name)));
+                    }
+                    if let Some(arguments) = function.get("arguments").and_then(|v| v.as_str()) {
+                        if let Ok(parsed) = serde_json::from_str::<Value>(arguments) {
+                            append_nda_json_rows(
+                                &mut lines,
+                                format!("message_tool_call_arg\t{}\t{}", index, call_index),
+                                "$",
+                                &parsed,
+                            );
+                        } else {
+                            lines.push(format!("message_tool_call_field\t{}\t{}\targuments_raw\t{}", index, call_index, encode_nda_text(arguments)));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     for (index, tool) in tools.iter().enumerate() {
@@ -1177,17 +1200,47 @@ fn serialize_last_request_nda(
             .and_then(|f| f.get("description"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let parameters = tool
-            .get("function")
-            .and_then(|f| f.get("parameters"))
-            .map(|v| v.to_string());
         lines.push(format!("tool\t{}", index));
         lines.push(format!("tool_field\t{}\tname\t{}", index, encode_nda_text(name)));
         lines.push(format!("tool_field\t{}\tdescription\t{}", index, encode_nda_text(description)));
-        lines.push(format!("tool_field\t{}\tparameters\t{}", index, encode_optional_nda_text(parameters.as_deref())));
+        if let Some(parameters) = tool
+            .get("function")
+            .and_then(|f| f.get("parameters"))
+        {
+            append_nda_json_rows(&mut lines, format!("tool_parameter\t{}", index), "$", parameters);
+        }
     }
 
     lines.join("\n") + "\n"
+}
+
+fn append_nda_json_rows(lines: &mut Vec<String>, prefix: String, path: &str, value: &Value) {
+    match value {
+        Value::Object(map) => {
+            lines.push(format!("{}\t{}\tobject\t-", prefix, encode_nda_text(path)));
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for key in keys {
+                let child_path = if path == "$" {
+                    format!("$.{}", key)
+                } else {
+                    format!("{}.{}", path, key)
+                };
+                append_nda_json_rows(lines, prefix.clone(), &child_path, &map[key]);
+            }
+        }
+        Value::Array(items) => {
+            lines.push(format!("{}\t{}\tarray\t{}", prefix, encode_nda_text(path), items.len()));
+            for (index, item) in items.iter().enumerate() {
+                let child_path = format!("{}[{}]", path, index);
+                append_nda_json_rows(lines, prefix.clone(), &child_path, item);
+            }
+        }
+        Value::String(text) => lines.push(format!("{}\t{}\tstring\t{}", prefix, encode_nda_text(path), encode_nda_text(text))),
+        Value::Number(number) => lines.push(format!("{}\t{}\tnumber\t{}", prefix, encode_nda_text(path), encode_nda_text(&number.to_string()))),
+        Value::Bool(boolean) => lines.push(format!("{}\t{}\tbool\t{}", prefix, encode_nda_text(path), boolean)),
+        Value::Null => lines.push(format!("{}\t{}\tnull\t-", prefix, encode_nda_text(path))),
+    }
 }
 
 fn api_style_name(style: ApiStyle) -> &'static str {
@@ -2612,7 +2665,7 @@ mod tests {
             &request,
         );
 
-        assert!(nda.starts_with("last-request version 2\n"));
+        assert!(nda.starts_with("last-request version 3\n"));
         assert!(nda.contains("field\tprovider\tcloudflare-workers-ai"));
         assert!(nda.contains("field\tapi_style\topenai-tools"));
         assert!(nda.contains("field\tprofile_id\t@cf/example/chat"));
@@ -2620,9 +2673,14 @@ mod tests {
         assert!(nda.contains("tool_count 1"));
         assert!(nda.contains("message_field\t1\trole\tassistant"));
         assert!(nda.contains("message_field\t1\tcontent\tcalling tool"));
+        assert!(nda.contains("message_tool_call\t1\t0"));
+        assert!(nda.contains("message_tool_call_field\t1\t0\tid\tcall_1"));
+        assert!(nda.contains("message_tool_call_field\t1\t0\tfunction_name\tread_file"));
+        assert!(nda.contains("message_tool_call_arg\t1\t0\t$.path\tstring\tsrc/main.rs"));
         assert!(nda.contains("tool_field\t0\tname\tread_file"));
         assert!(nda.contains("tool_field\t0\tdescription\tRead a file"));
-        assert!(nda.contains("tool_field\t0\tparameters\t{\"type\":\"object\"}"));
+        assert!(nda.contains("tool_parameter\t0\t$\tobject\t-"));
+        assert!(nda.contains("tool_parameter\t0\t$.type\tstring\tobject"));
     }
 
     #[test]
@@ -2901,7 +2959,7 @@ mod tests {
 
         let nda = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
         let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json")).unwrap();
-        assert!(nda.contains("last-request version 2"));
+        assert!(nda.contains("last-request version 3"));
         assert!(nda.contains("field\tmodel\t@cf/example/chat"));
         assert!(json.contains("\"model\""));
     }
