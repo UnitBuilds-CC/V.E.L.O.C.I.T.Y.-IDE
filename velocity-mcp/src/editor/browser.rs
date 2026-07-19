@@ -82,8 +82,20 @@ pub enum BrowserWorkflowStep {
         timeout_ms: Option<u64>,
         interval_ms: Option<u64>,
     },
+    ExtractText {
+        output: String,
+        source: String,
+        role: Option<String>,
+        name: Option<String>,
+        field: Option<String>,
+    },
     AssertElement { role: String, name: String },
     AssertTextContains { text: String },
+    AssertOutput {
+        output: String,
+        equals: Option<String>,
+        contains: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -102,7 +114,21 @@ pub struct BrowserSnapshotDiff {
 pub struct BrowserWorkflow {
     pub name: String,
     pub start_url: String,
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
     pub steps: Vec<BrowserWorkflowStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserWorkflowRunReport {
+    pub workflow_name: String,
+    pub session_id: String,
+    pub final_url: String,
+    pub final_title: String,
+    pub step_count: usize,
+    pub cookie_count: usize,
+    pub outputs: HashMap<String, String>,
+    pub log: Vec<String>,
 }
 
 struct BrowserHttpResponse {
@@ -114,10 +140,49 @@ struct BrowserReplayState {
     session: BrowserSessionState,
     snapshot: BrowserPageSnapshot,
     filled_fields: HashMap<String, String>,
+    variables: HashMap<String, String>,
+    outputs: HashMap<String, String>,
 }
 
 const DEFAULT_WAIT_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_WAIT_INTERVAL_MS: u64 = 250;
+
+fn replay_lookup<'a>(state: &'a BrowserReplayState, key: &str) -> Option<&'a str> {
+    state
+        .outputs
+        .get(key)
+        .map(|value| value.as_str())
+        .or_else(|| state.variables.get(key).map(|value| value.as_str()))
+}
+
+fn resolve_template(input: &str, state: &BrowserReplayState) -> String {
+    if !input.contains("{{") {
+        return input.to_string();
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut remaining = input;
+    loop {
+        let Some(start) = remaining.find("{{") else {
+            out.push_str(remaining);
+            break;
+        };
+        out.push_str(&remaining[..start]);
+        let after_start = &remaining[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            out.push_str(&remaining[start..]);
+            break;
+        };
+        let key = after_start[..end].trim();
+        if let Some(value) = replay_lookup(state, key) {
+            out.push_str(value);
+        } else {
+            out.push_str(&remaining[start..start + end + 4]);
+        }
+        remaining = &after_start[end + 2..];
+    }
+    out
+}
 
 fn content_hash_id(value: &str) -> String {
     let mut hasher = Sha256::new();
@@ -246,6 +311,17 @@ fn browser_workflow_nda_path(workspace_root: &Path, workflow_name: &str) -> Path
         .join(".velocity")
         .join("browser-workflows")
         .join(format!("{}.browser.nda", sanitize_file_stem(workflow_name)))
+}
+
+fn browser_workflow_run_path(workspace_root: &Path, workflow_name: &str, session_id: &str) -> PathBuf {
+    workspace_root
+        .join(".velocity")
+        .join("browser-runs")
+        .join(format!(
+            "{}--{}.run.json",
+            sanitize_file_stem(workflow_name),
+            sanitize_file_stem(session_id)
+        ))
 }
 
 fn browser_session_checkpoint_path(
@@ -913,6 +989,17 @@ fn find_form<'a>(snapshot: &'a BrowserPageSnapshot, form_id: Option<&str>) -> Op
     }
 }
 
+fn find_form_field<'a>(snapshot: &'a BrowserPageSnapshot, field_name: &str) -> Option<&'a BrowserFormField> {
+    for form in &snapshot.forms {
+        for field in &form.fields {
+            if field.name.eq_ignore_ascii_case(field_name) || field.label.eq_ignore_ascii_case(field_name) {
+                return Some(field);
+            }
+        }
+    }
+    None
+}
+
 fn snapshot_contains_text(snapshot: &BrowserPageSnapshot, needle: &str) -> bool {
     let needle = needle.to_ascii_lowercase();
     snapshot.title.to_ascii_lowercase().contains(&needle)
@@ -1143,6 +1230,41 @@ pub fn wait_for_session(
     ))
 }
 
+fn extract_snapshot_value(
+    snapshot: &BrowserPageSnapshot,
+    source: &str,
+    role: Option<&str>,
+    name: Option<&str>,
+    field: Option<&str>,
+) -> Result<String, String> {
+    if source.eq_ignore_ascii_case("title") {
+        return Ok(snapshot.title.clone());
+    }
+    if source.eq_ignore_ascii_case("summary") {
+        return Ok(snapshot.summary.clone());
+    }
+    if source.eq_ignore_ascii_case("field_value") {
+        let field_name = field.ok_or_else(|| "extract_text field is required for source=field_value".to_string())?;
+        let matched = find_form_field(snapshot, field_name)
+            .ok_or_else(|| format!("workflow extract field not found: '{}'", field_name))?;
+        return Ok(matched.value.clone());
+    }
+
+    let role = role.ok_or_else(|| format!("extract_text role is required for source='{}'", source))?;
+    let name = name.ok_or_else(|| format!("extract_text name is required for source='{}'", source))?;
+    let matched = find_element(snapshot, role, name)
+        .ok_or_else(|| format!("workflow extract target not found: role='{}' name='{}'", role, name))?;
+    if source.eq_ignore_ascii_case("element_name") {
+        Ok(matched.name.clone())
+    } else if source.eq_ignore_ascii_case("element_value") {
+        Ok(matched.value.clone())
+    } else if source.eq_ignore_ascii_case("element_url") {
+        Ok(matched.target_url.clone().unwrap_or_default())
+    } else {
+        Err(format!("unsupported workflow extract source: '{}'", source))
+    }
+}
+
 fn apply_fill_field(state: &mut BrowserReplayState, field_name: &str, value: &str) -> Result<(), String> {
     let mut matched = false;
     for form in &mut state.snapshot.forms {
@@ -1300,6 +1422,23 @@ pub fn render_workflow_dsl(workflow: &BrowserWorkflow) -> String {
                     interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
                 ));
             }
+            BrowserWorkflowStep::ExtractText {
+                output,
+                source,
+                role,
+                name,
+                field,
+            } => {
+                lines.push(format!(
+                    "step\t{}\textract_text\toutput={}\tsource={}\trole={}\tname={}\tfield={}",
+                    idx,
+                    encode_nda_text(output),
+                    encode_nda_text(source),
+                    encode_nda_text(role.as_deref().unwrap_or_default()),
+                    encode_nda_text(name.as_deref().unwrap_or_default()),
+                    encode_nda_text(field.as_deref().unwrap_or_default())
+                ));
+            }
             BrowserWorkflowStep::AssertElement { role, name } => {
                 lines.push(format!(
                     "step\t{}\tassert_element\trole={}\tname={}",
@@ -1310,6 +1449,19 @@ pub fn render_workflow_dsl(workflow: &BrowserWorkflow) -> String {
             }
             BrowserWorkflowStep::AssertTextContains { text } => {
                 lines.push(format!("step\t{}\tassert_text\t{}", idx, encode_nda_text(text)));
+            }
+            BrowserWorkflowStep::AssertOutput {
+                output,
+                equals,
+                contains,
+            } => {
+                lines.push(format!(
+                    "step\t{}\tassert_output\toutput={}\tequals={}\tcontains={}",
+                    idx,
+                    encode_nda_text(output),
+                    encode_nda_text(equals.as_deref().unwrap_or_default()),
+                    encode_nda_text(contains.as_deref().unwrap_or_default())
+                ));
             }
         }
     }
@@ -1337,36 +1489,42 @@ pub fn load_workflow(path: &Path) -> Result<BrowserWorkflow, String> {
 fn replay_workflow_with_state(
     workflow: &BrowserWorkflow,
     mut state: BrowserReplayState,
-) -> Result<(String, BrowserReplayState), String> {
+) -> Result<(String, BrowserReplayState, BrowserWorkflowRunReport), String> {
     let mut log = vec![format!("start {} -> {}", state.snapshot.url, state.snapshot.title)];
 
     for step in &workflow.steps {
         match step {
             BrowserWorkflowStep::Navigate { url } => {
-                state.snapshot = crawl_page_snapshot_with_session(&mut state.session, url)?;
-                log.push(format!("navigate {} -> {}", url, state.snapshot.title));
+                let resolved_url = resolve_template(url, &state);
+                state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &resolved_url)?;
+                log.push(format!("navigate {} -> {}", resolved_url, state.snapshot.title));
             }
             BrowserWorkflowStep::Click { role, name } => {
-                let target = find_element(&state.snapshot, role, name)
-                    .ok_or_else(|| format!("workflow click target not found: role='{}' name='{}'", role, name))?;
+                let resolved_role = resolve_template(role, &state);
+                let resolved_name = resolve_template(name, &state);
+                let target = find_element(&state.snapshot, &resolved_role, &resolved_name)
+                    .ok_or_else(|| format!("workflow click target not found: role='{}' name='{}'", resolved_role, resolved_name))?;
                 let target_url = target.target_url.clone().ok_or_else(|| {
                     format!(
                         "workflow click target '{}' is not a navigable link in the current static browser engine",
-                        name
+                        resolved_name
                     )
                 })?;
                 state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &target_url)?;
-                log.push(format!("click {}:{} -> {}", role, name, state.snapshot.title));
+                log.push(format!("click {}:{} -> {}", resolved_role, resolved_name, state.snapshot.title));
             }
             BrowserWorkflowStep::FillField { field, value } => {
-                apply_fill_field(&mut state, field, value)?;
-                log.push(format!("fill_field {} ok", field));
+                let resolved_field = resolve_template(field, &state);
+                let resolved_value = resolve_template(value, &state);
+                apply_fill_field(&mut state, &resolved_field, &resolved_value)?;
+                log.push(format!("fill_field {} ok", resolved_field));
             }
             BrowserWorkflowStep::SubmitForm { form } => {
-                submit_current_form(&mut state, form.as_deref())?;
+                let resolved_form = form.as_ref().map(|value| resolve_template(value, &state));
+                submit_current_form(&mut state, resolved_form.as_deref())?;
                 log.push(format!(
                     "submit_form {} -> {}",
-                    form.as_deref().unwrap_or("default"),
+                    resolved_form.as_deref().unwrap_or("default"),
                     state.snapshot.title
                 ));
             }
@@ -1375,14 +1533,15 @@ fn replay_workflow_with_state(
                 timeout_ms,
                 interval_ms,
             } => {
+                let resolved_text = resolve_template(text, &state);
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
                     *timeout_ms,
                     *interval_ms,
-                    |candidate| snapshot_contains_text(candidate, text),
+                    |candidate| snapshot_contains_text(candidate, &resolved_text),
                 )?;
-                log.push(format!("wait_for_text '{}' -> {}", text, render_snapshot_diff(&diff)));
+                log.push(format!("wait_for_text '{}' -> {}", resolved_text, render_snapshot_diff(&diff)));
             }
             BrowserWorkflowStep::WaitForElement {
                 role,
@@ -1390,46 +1549,107 @@ fn replay_workflow_with_state(
                 timeout_ms,
                 interval_ms,
             } => {
+                let resolved_role = resolve_template(role, &state);
+                let resolved_name = resolve_template(name, &state);
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
                     *timeout_ms,
                     *interval_ms,
-                    |candidate| find_element(candidate, role, name).is_some(),
+                    |candidate| find_element(candidate, &resolved_role, &resolved_name).is_some(),
                 )?;
                 log.push(format!(
                     "wait_for_element {}:{} -> {}",
-                    role,
-                    name,
+                    resolved_role,
+                    resolved_name,
                     render_snapshot_diff(&diff)
                 ));
             }
+            BrowserWorkflowStep::ExtractText {
+                output,
+                source,
+                role,
+                name,
+                field,
+            } => {
+                let resolved_source = resolve_template(source, &state);
+                let resolved_role = role.as_ref().map(|value| resolve_template(value, &state));
+                let resolved_name = name.as_ref().map(|value| resolve_template(value, &state));
+                let resolved_field = field.as_ref().map(|value| resolve_template(value, &state));
+                let extracted = extract_snapshot_value(
+                    &state.snapshot,
+                    &resolved_source,
+                    resolved_role.as_deref(),
+                    resolved_name.as_deref(),
+                    resolved_field.as_deref(),
+                )?;
+                state.outputs.insert(output.clone(), extracted.clone());
+                log.push(format!("extract_text {}='{}'", output, truncate_string(&extracted, 80)));
+            }
             BrowserWorkflowStep::AssertElement { role, name } => {
-                find_element(&state.snapshot, role, name).ok_or_else(|| {
-                    format!("workflow assertion failed: missing element role='{}' name='{}'", role, name)
+                let resolved_role = resolve_template(role, &state);
+                let resolved_name = resolve_template(name, &state);
+                find_element(&state.snapshot, &resolved_role, &resolved_name).ok_or_else(|| {
+                    format!("workflow assertion failed: missing element role='{}' name='{}'", resolved_role, resolved_name)
                 })?;
-                log.push(format!("assert_element {}:{} ok", role, name));
+                log.push(format!("assert_element {}:{} ok", resolved_role, resolved_name));
             }
             BrowserWorkflowStep::AssertTextContains { text } => {
-                if !snapshot_contains_text(&state.snapshot, text) {
-                    return Err(format!("workflow assertion failed: text '{}' not present", text));
+                let resolved_text = resolve_template(text, &state);
+                if !snapshot_contains_text(&state.snapshot, &resolved_text) {
+                    return Err(format!("workflow assertion failed: text '{}' not present", resolved_text));
                 }
-                log.push(format!("assert_text '{}' ok", text));
+                log.push(format!("assert_text '{}' ok", resolved_text));
+            }
+            BrowserWorkflowStep::AssertOutput {
+                output,
+                equals,
+                contains,
+            } => {
+                let actual = state
+                    .outputs
+                    .get(output)
+                    .cloned()
+                    .ok_or_else(|| format!("workflow assertion failed: output '{}' not present", output))?;
+                if let Some(expected) = equals {
+                    let resolved_expected = resolve_template(expected, &state);
+                    if actual != resolved_expected {
+                        return Err(format!("workflow assertion failed: output '{}' expected '{}' but was '{}'", output, resolved_expected, actual));
+                    }
+                }
+                if let Some(expected_fragment) = contains {
+                    let resolved_fragment = resolve_template(expected_fragment, &state);
+                    if !actual.contains(&resolved_fragment) {
+                        return Err(format!("workflow assertion failed: output '{}' does not contain '{}'", output, resolved_fragment));
+                    }
+                }
+                log.push(format!("assert_output {} ok", output));
             }
         }
     }
 
+    let report = BrowserWorkflowRunReport {
+        workflow_name: workflow.name.clone(),
+        session_id: state.session.id.clone(),
+        final_url: state.snapshot.url.clone(),
+        final_title: state.snapshot.title.clone(),
+        step_count: workflow.steps.len(),
+        cookie_count: state.session.cookies.len(),
+        outputs: state.outputs.clone(),
+        log: log.clone(),
+    };
     let result = format!(
-        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\n{}",
+        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\nOutputs: {}\n{}",
         workflow.name,
         state.snapshot.url,
         state.snapshot.title,
         state.session.id,
         workflow.steps.len(),
         state.session.cookies.len(),
+        state.outputs.len(),
         log.join("\n")
     );
-    Ok((result, state))
+    Ok((result, state, report))
 }
 
 fn persist_replay_state(
@@ -1452,6 +1672,19 @@ fn persist_replay_state(
     Ok((snapshot_path, session_path, facts_path))
 }
 
+fn persist_run_report(
+    workspace_root: &Path,
+    report: &BrowserWorkflowRunReport,
+) -> Result<PathBuf, String> {
+    let path = browser_workflow_run_path(workspace_root, &report.workflow_name, &report.session_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create browser run dir: {err}"))?;
+    }
+    let json = serde_json::to_vec_pretty(report).map_err(|err| format!("serialise browser run report: {err}"))?;
+    fs::write(&path, json).map_err(|err| format!("write browser run report: {err}"))?;
+    Ok(path)
+}
+
 pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
     let mut session = BrowserSessionState {
         id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
@@ -1463,9 +1696,42 @@ pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
         session,
         snapshot,
         filled_fields: HashMap::new(),
+        variables: workflow.variables.clone(),
+        outputs: HashMap::new(),
     };
-    let (result, _) = replay_workflow_with_state(workflow, state)?;
+    let (result, _, _) = replay_workflow_with_state(workflow, state)?;
     Ok(result)
+}
+
+pub fn replay_workflow_with_artifacts(
+    workspace_root: &Path,
+    workflow: &BrowserWorkflow,
+    sitemap_path: &Path,
+) -> Result<String, String> {
+    let mut session = BrowserSessionState {
+        id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
+        current_url: Some(workflow.start_url.clone()),
+        cookies: Vec::new(),
+    };
+    let snapshot = crawl_page_snapshot_with_session(&mut session, &workflow.start_url)?;
+    let state = BrowserReplayState {
+        session,
+        snapshot,
+        filled_fields: HashMap::new(),
+        variables: workflow.variables.clone(),
+        outputs: HashMap::new(),
+    };
+    let (result, final_state, report) = replay_workflow_with_state(workflow, state)?;
+    let (snapshot_path, session_path, facts_path) = persist_replay_state(workspace_root, &final_state, sitemap_path)?;
+    let report_path = persist_run_report(workspace_root, &report)?;
+    Ok(format!(
+        "{}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}\nRun Report: {}",
+        result,
+        snapshot_path.display(),
+        session_path.display(),
+        facts_path.display(),
+        report_path.display()
+    ))
 }
 
 pub fn replay_workflow_in_session(
@@ -1485,16 +1751,20 @@ pub fn replay_workflow_in_session(
         session,
         snapshot,
         filled_fields: HashMap::new(),
+        variables: workflow.variables.clone(),
+        outputs: HashMap::new(),
     };
-    let (result, final_state) = replay_workflow_with_state(workflow, state)?;
+    let (result, final_state, report) = replay_workflow_with_state(workflow, state)?;
     let (snapshot_path, session_path, facts_path) =
         persist_replay_state(workspace_root, &final_state, sitemap_path)?;
+    let report_path = persist_run_report(workspace_root, &report)?;
     Ok(format!(
-        "{}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}",
+        "{}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}\nRun Report: {}",
         result,
         snapshot_path.display(),
         session_path.display(),
-        facts_path.display()
+        facts_path.display(),
+        report_path.display()
     ))
 }
 
@@ -1507,6 +1777,7 @@ mod tests {
         save_session_checkpoint, save_workflow, wait_for_session, write_crawl_facts, AomElement,
         BrowserCookie, BrowserWorkflow, BrowserWorkflowStep,
     };
+    use std::collections::HashMap;
     use std::fs;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -1609,6 +1880,7 @@ mod tests {
         let workflow = BrowserWorkflow {
             name: "Checkout Smoke".to_string(),
             start_url: "https://example.com".to_string(),
+            variables: HashMap::new(),
             steps: vec![
                 BrowserWorkflowStep::FillField { field: "email".to_string(), value: "a@example.com".to_string() },
                 BrowserWorkflowStep::WaitForText {
@@ -1630,6 +1902,21 @@ mod tests {
         assert!(dsl.contains("fill_field"));
         assert!(dsl.contains("wait_for_text"));
         assert!(dsl.contains("submit_form"));
+    }
+
+    #[test]
+    fn extracts_semantic_values_from_snapshot_sources() {
+        let snapshot = parse_html_to_snapshot(
+            "https://example.com",
+            "<html><head><title>Docs</title></head><body><form id='login' action='/login' method='post'><input name='email' value='saved@example.com' placeholder='Email'></form><a href='/api'>API</a></body></html>",
+            &[],
+        );
+        let title = super::extract_snapshot_value(&snapshot, "title", None, None, None).unwrap();
+        let link_name = super::extract_snapshot_value(&snapshot, "element_name", Some("link"), Some("API"), None).unwrap();
+        let field_value = super::extract_snapshot_value(&snapshot, "field_value", None, None, Some("email")).unwrap();
+        assert_eq!(title, "Docs");
+        assert_eq!(link_name, "API");
+        assert_eq!(field_value, "saved@example.com");
     }
 
     #[test]
@@ -1659,12 +1946,27 @@ mod tests {
             }
         });
 
+        let mut variables = HashMap::new();
+        variables.insert("email".to_string(), "rust@example.com".to_string());
         let workflow = BrowserWorkflow {
             name: "Login Flow".to_string(),
             start_url: base_url,
+            variables,
             steps: vec![
-                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "rust@example.com".to_string() },
+                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "{{email}}".to_string() },
                 BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },
+                BrowserWorkflowStep::ExtractText {
+                    output: "page_title".to_string(),
+                    source: "title".to_string(),
+                    role: None,
+                    name: None,
+                    field: None,
+                },
+                BrowserWorkflowStep::AssertOutput {
+                    output: "page_title".to_string(),
+                    equals: Some("Dashboard".to_string()),
+                    contains: None,
+                },
                 BrowserWorkflowStep::AssertTextContains { text: "Welcome back".to_string() },
             ],
         };
@@ -1673,6 +1975,8 @@ mod tests {
         assert!(result.contains("Workflow 'Login Flow' completed."));
         assert!(result.contains("Final title: Dashboard"));
         assert!(result.contains("Cookies: 1"));
+        assert!(result.contains("Outputs: 1"));
+        assert!(result.contains("extract_text page_title='Dashboard'"));
     }
 
     #[test]
@@ -1813,6 +2117,7 @@ mod tests {
         let workflow = BrowserWorkflow {
             name: "Resume Login".to_string(),
             start_url: base_url.clone(),
+            variables: HashMap::new(),
             steps: vec![
                 BrowserWorkflowStep::FillField { field: "email".to_string(), value: "rust@example.com".to_string() },
                 BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },

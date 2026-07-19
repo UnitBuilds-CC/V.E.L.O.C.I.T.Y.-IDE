@@ -218,9 +218,14 @@ pub fn get_tools() -> Vec<Tool> {
                 "properties": {
                     "name": { "type": "string", "description": "Workflow name." },
                     "startUrl": { "type": "string", "description": "Initial URL for replay." },
+                    "variables": {
+                        "type": "object",
+                        "description": "Optional workflow variables used by {{variable}} templates in step fields.",
+                        "additionalProperties": { "type": "string" }
+                    },
                     "steps": {
                         "type": "array",
-                        "description": "Workflow steps. Supported kinds: navigate, click, fill_field, submit_form, wait_for_text, wait_for_element, assert_element, assert_text_contains.",
+                        "description": "Workflow steps. Supported kinds: navigate, click, fill_field, submit_form, wait_for_text, wait_for_element, extract_text, assert_element, assert_text_contains, assert_output.",
                         "items": { "type": "object" }
                     }
                 },
@@ -334,6 +339,13 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let name = arguments["name"].as_str().ok_or("name is required")?;
             let start_url = arguments["startUrl"].as_str().ok_or("startUrl is required")?;
             let steps = arguments["steps"].as_array().ok_or("steps must be an array")?;
+            let mut variables = std::collections::HashMap::new();
+            if let Some(map) = arguments["variables"].as_object() {
+                for (key, value) in map {
+                    let text = value.as_str().ok_or("workflow variables must be string values")?;
+                    variables.insert(key.to_string(), text.to_string());
+                }
+            }
             let mut parsed_steps = Vec::with_capacity(steps.len());
             for step in steps {
                 let kind = step["kind"].as_str().ok_or("workflow step kind is required")?;
@@ -363,12 +375,24 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                         timeout_ms: step["timeoutMs"].as_u64(),
                         interval_ms: step["intervalMs"].as_u64(),
                     },
+                    "extract_text" => crate::editor::browser::BrowserWorkflowStep::ExtractText {
+                        output: step["output"].as_str().ok_or("extract_text step output is required")?.to_string(),
+                        source: step["source"].as_str().ok_or("extract_text step source is required")?.to_string(),
+                        role: step["role"].as_str().map(|value| value.to_string()),
+                        name: step["name"].as_str().map(|value| value.to_string()),
+                        field: step["field"].as_str().map(|value| value.to_string()),
+                    },
                     "assert_element" => crate::editor::browser::BrowserWorkflowStep::AssertElement {
                         role: step["role"].as_str().ok_or("assert_element step role is required")?.to_string(),
                         name: step["name"].as_str().ok_or("assert_element step name is required")?.to_string(),
                     },
                     "assert_text_contains" => crate::editor::browser::BrowserWorkflowStep::AssertTextContains {
                         text: step["text"].as_str().ok_or("assert_text_contains step text is required")?.to_string(),
+                    },
+                    "assert_output" => crate::editor::browser::BrowserWorkflowStep::AssertOutput {
+                        output: step["output"].as_str().ok_or("assert_output step output is required")?.to_string(),
+                        equals: step["equals"].as_str().map(|value| value.to_string()),
+                        contains: step["contains"].as_str().map(|value| value.to_string()),
                     },
                     other => return Err(format!("unsupported browser workflow step kind: {}", other).into()),
                 };
@@ -378,6 +402,7 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let workflow = crate::editor::browser::BrowserWorkflow {
                 name: name.to_string(),
                 start_url: start_url.to_string(),
+                variables,
                 steps: parsed_steps,
             };
             let (json_path, nda_path) = crate::editor::browser::save_workflow(&root, &workflow)
@@ -406,7 +431,8 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 crate::editor::browser::replay_workflow_in_session(&root, session_id, &workflow, &sitemap_path)
                     .map_err(|e| e.into())
             } else {
-                crate::editor::browser::replay_workflow(&workflow).map_err(|e| e.into())
+                crate::editor::browser::replay_workflow_with_artifacts(&root, &workflow, &sitemap_path)
+                    .map_err(|e| e.into())
             }
         }
         "run_command" => {
@@ -873,10 +899,13 @@ mod tests {
             &json!({
                 "name": "Login Flow",
                 "startUrl": base_url,
+                "variables": {"email": "rust@example.com"},
                 "steps": [
-                    {"kind": "fill_field", "field": "email", "value": "rust@example.com"},
+                    {"kind": "fill_field", "field": "email", "value": "{{email}}"},
                     {"kind": "submit_form", "form": "login"},
                     {"kind": "wait_for_text", "text": "Welcome back", "timeoutMs": 1500, "intervalMs": 10},
+                    {"kind": "extract_text", "output": "page_title", "source": "title"},
+                    {"kind": "assert_output", "output": "page_title", "equals": "Dashboard"},
                     {"kind": "assert_text_contains", "text": "Welcome back"}
                 ]
             }),
@@ -895,6 +924,8 @@ mod tests {
         assert!(read_back.contains("fill_field"));
         assert!(read_back.contains("submit_form"));
         assert!(read_back.contains("wait_for_text"));
+        assert!(read_back.contains("extract_text"));
+        assert!(read_back.contains("assert_output"));
 
         let replay = call_tool_in_workspace(
             &root,
@@ -905,6 +936,8 @@ mod tests {
         assert!(replay.contains("Workflow 'Login Flow' completed."));
         assert!(replay.contains("Final title: Dashboard"));
         assert!(replay.contains("Cookies: 1"));
+        assert!(replay.contains("Outputs: 1"));
+        assert!(replay.contains("Run Report:"));
     }
 
     #[test]
