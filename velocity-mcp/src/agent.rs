@@ -857,6 +857,140 @@ fn write_handover_nda(workspace_root: &std::path::Path, task_state: &str, last_a
     let _ = std::fs::write(handover_path, nda_data);
 }
 
+fn write_last_request_artifacts(
+    workspace_root: &std::path::Path,
+    profile: &ModelInfo,
+    model: &str,
+    provider: AiProvider,
+    thinking: bool,
+    messages: &[ChatMessage],
+    tools: &[Value],
+    request_body: &Value,
+) {
+    let velocity_dir = workspace_root.join(".velocity");
+    let _ = std::fs::create_dir_all(&velocity_dir);
+    let _ = std::fs::write(
+        velocity_dir.join("last_request.nda"),
+        serialize_last_request_nda(profile, model, provider, thinking, messages, tools, request_body),
+    );
+    let _ = std::fs::write(
+        velocity_dir.join("last_request.json"),
+        serde_json::to_string_pretty(request_body).unwrap_or_default(),
+    );
+}
+
+fn serialize_last_request_nda(
+    profile: &ModelInfo,
+    model: &str,
+    provider: AiProvider,
+    thinking: bool,
+    messages: &[ChatMessage],
+    tools: &[Value],
+    request_body: &Value,
+) -> String {
+    let mut lines = vec![
+        "last-request version 1".to_string(),
+        format!("provider {}", nda_atom(provider.label())),
+        format!("provider_label {}", encode_nda_text(provider.label())),
+        format!("model {}", encode_nda_text(model)),
+        format!("api_style {}", nda_atom(api_style_name(profile.api_style))),
+        format!("supports_tools {}", profile.supports_tools),
+        format!("supports_thinking {}", profile.supports_thinking),
+        format!("thinking {}", thinking),
+        format!("stream {}", request_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)),
+        format!("message_count {}", messages.len()),
+        format!("tool_count {}", tools.len()),
+    ];
+
+    if let Some(prompt) = request_body.get("prompt").and_then(|v| v.as_str()) {
+        lines.push(format!("prompt {}", encode_nda_text(prompt)));
+    }
+
+    if let Some(reasoning) = request_body.get("reasoning") {
+        lines.push(format!("reasoning {}", encode_nda_text(&reasoning.to_string())));
+    }
+
+    for (index, message) in messages.iter().enumerate() {
+        lines.push(format!(
+            "message\t{}\t{}\t{}\t{}\t{}\t{}",
+            index,
+            nda_atom(&message.role),
+            encode_optional_nda_text(message.name.as_deref()),
+            encode_optional_nda_text(message.tool_call_id.as_deref()),
+            encode_nda_text(&message.content),
+            encode_optional_nda_text(message.tool_calls.as_ref().map(|v| v.to_string()).as_deref()),
+        ));
+    }
+
+    for (index, tool) in tools.iter().enumerate() {
+        let name = tool
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let description = tool
+            .get("function")
+            .and_then(|f| f.get("description"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        lines.push(format!(
+            "tool\t{}\t{}\t{}",
+            index,
+            encode_nda_text(name),
+            encode_nda_text(description),
+        ));
+    }
+
+    lines.join("\n") + "\n"
+}
+
+fn api_style_name(style: ApiStyle) -> &'static str {
+    match style {
+        ApiStyle::OpenAiTools => "openai-tools",
+        ApiStyle::OpenAiChat => "openai-chat",
+        ApiStyle::PromptCompletion => "prompt-completion",
+    }
+}
+
+fn nda_atom(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else {
+            '-'
+        };
+        if mapped == '-' {
+            if !last_dash && !out.is_empty() {
+                out.push('-');
+            }
+            last_dash = true;
+        } else {
+            out.push(mapped);
+            last_dash = false;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "empty".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn encode_nda_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn encode_optional_nda_text(value: Option<&str>) -> String {
+    value.map(encode_nda_text).unwrap_or_else(|| "-".to_string())
+}
+
 pub fn run_agent_thread(
     mut workspace_root: PathBuf,
     ui_rx: Receiver<UiToAgentMessage>,
@@ -1338,8 +1472,16 @@ fn run_agent_reasoning_loop(
         let compressed_history = compress_history(message_history, profile.supports_tools);
 
         let request_body = build_request(profile, model, &compressed_history, &cf_tools, thinking, provider);
-        let _ = std::fs::create_dir_all(workspace_root.join(".velocity"));
-        let _ = std::fs::write(workspace_root.join(".velocity").join("last_request.json"), serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        write_last_request_artifacts(
+            workspace_root,
+            profile,
+            model,
+            provider,
+            thinking,
+            &compressed_history,
+            &cf_tools,
+            &request_body,
+        );
 
         // --- Provider-forked API call ---
         let mut used_account: Option<&CloudflareAccount> = None;
@@ -2135,6 +2277,61 @@ mod tests {
     }
 
     #[test]
+    fn serializes_last_request_as_nda() {
+        let profile = ModelInfo {
+            id: "@cf/example/chat".into(),
+            label: "chat".into(),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: true,
+        };
+        let messages = vec![
+            ChatMessage {
+                role: "system".into(),
+                content: "system prompt".into(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".into(),
+                content: "calling tool".into(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Some(json!([{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}])),
+            },
+        ];
+        let tools = vec![json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"}
+            }
+        })];
+        let request = build_request(&profile, &profile.id, &messages, &tools, true, AiProvider::CloudflareWorkersAi);
+
+        let nda = serialize_last_request_nda(
+            &profile,
+            &profile.id,
+            AiProvider::CloudflareWorkersAi,
+            true,
+            &messages,
+            &tools,
+            &request,
+        );
+
+        assert!(nda.starts_with("last-request version 1\n"));
+        assert!(nda.contains("provider cloudflare-workers-ai"));
+        assert!(nda.contains("api_style openai-tools"));
+        assert!(nda.contains("message_count 2"));
+        assert!(nda.contains("tool_count 1"));
+        assert!(nda.contains("message\t1\tassistant\t-\t-\tcalling tool\t["));
+        assert!(nda.contains("read_file"));
+        assert!(nda.contains("tool\t0\tread_file\tRead a file"));
+    }
+
+    #[test]
     fn test_sanitize_chat_token_removes_tags() {
         let input = "Hello there </tool_call>\n</tool_call>\n<parameter=path>src/main.rs</parameter> checking.";
         let expected = "Hello there src/main.rs checking.";
@@ -2198,6 +2395,37 @@ mod tests {
         assert_eq!(compressed[1].content, "[Tool result for 'write_file']: Success");
         assert!(compressed[1].name.is_none());
         assert!(compressed[1].tool_call_id.is_none());
+    }
+
+    #[test]
+    fn writes_last_request_artifacts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = ModelInfo {
+            id: "@cf/example/chat".into(),
+            label: "chat".into(),
+            api_style: ApiStyle::OpenAiChat,
+            supports_tools: false,
+            supports_thinking: false,
+        };
+        let messages = vec![message()];
+        let tools = vec![json!({"type": "function", "function": {"name": "search", "description": "Search"}})];
+        let request = build_request(&profile, &profile.id, &messages, &tools, false, AiProvider::CloudflareWorkersAi);
+
+        write_last_request_artifacts(
+            tmp.path(),
+            &profile,
+            &profile.id,
+            AiProvider::CloudflareWorkersAi,
+            false,
+            &messages,
+            &tools,
+            &request,
+        );
+
+        let nda = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
+        let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json")).unwrap();
+        assert!(nda.contains("last-request version 1"));
+        assert!(json.contains("\"model\""));
     }
 
     #[test]
