@@ -114,6 +114,11 @@ impl MediatorArena {
         locks_guard.get(file_path).cloned().unwrap_or_default()
     }
 
+    pub fn active_locks(&self) -> Vec<EditLock> {
+        let locks_guard = self.locks.lock().unwrap();
+        locks_guard.values().flat_map(|locks| locks.iter().cloned()).collect()
+    }
+
     /// Generate an adapter or contract resolution for a conflict.
     pub fn resolve_conflict(&self, conflict: &Conflict) -> String {
         if conflict.is_semantic {

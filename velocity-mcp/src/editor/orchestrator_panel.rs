@@ -1,14 +1,16 @@
 //! Optional IDE panel showing the orchestrator task graph.
 
-use crate::automation::{AgentTaskKind, RoutedSubAgentTask};
+use crate::automation::{resolve_weight_root, AgentTaskKind, RoutedSubAgentTask};
 use crate::orchestrator::blueprint::{Task, TaskGraph};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
-use crate::orchestrator::worker::WorkerResult;
+use crate::orchestrator::validator;
+use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult};
 use crate::orchestrator::TaskId;
 use eframe::egui;
 use egui::{ScrollArea, Ui};
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 struct RoutedPlanState {
@@ -18,16 +20,15 @@ struct RoutedPlanState {
     tasks: Vec<RoutedSubAgentTask>,
 }
 
-#[derive(Debug)]
 pub struct OrchestratorPanel {
     pub graph: TaskGraph,
     pub registry: Option<OrchestratorRegistry>,
     pub expanded: bool,
     routed_plan: Option<RoutedPlanState>,
     planning_status: String,
-    // Simulation state
-    pub simulation_running: bool,
-    pub last_simulation_step: Option<Instant>,
+    runtime_status: String,
+    execution_running: bool,
+    running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
     // Builder form state
     pub builder_title: String,
     pub builder_desc: String,
@@ -52,8 +53,9 @@ impl OrchestratorPanel {
             expanded: true,
             routed_plan: None,
             planning_status: "No routed sub-agent plan yet.".to_string(),
-            simulation_running: false,
-            last_simulation_step: None,
+            runtime_status: "Idle".to_string(),
+            execution_running: false,
+            running_workers: HashMap::new(),
             builder_title: String::new(),
             builder_desc: String::new(),
             builder_deps: String::new(),
@@ -86,82 +88,14 @@ impl OrchestratorPanel {
         });
         self.graph = build_routed_graph(&goal, &tasks);
         self.registry = Some(OrchestratorRegistry::new(&self.graph));
-        self.simulation_running = false;
-        self.last_simulation_step = None;
+        self.runtime_status = "Plan ready".to_string();
+        self.execution_running = false;
+        self.running_workers.clear();
     }
 
-    pub fn step_simulation(&mut self) {
-        if self.registry.is_none() {
-            self.registry = Some(OrchestratorRegistry::new(&self.graph));
-        }
-        let reg = self.registry.as_mut().unwrap();
-
-        // 1. Complete any tasks currently running
-        let mut completed_some = false;
-        let mut keys_to_update = Vec::new();
-        for (id, status) in &reg.statuses {
-            if matches!(status, TaskStatus::Running) {
-                keys_to_update.push(*id);
-            }
-        }
-
-        let now_millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-
-        for id in keys_to_update {
-            completed_some = true;
-            // 90% chance of success, 10% failure
-            let is_success = (now_millis + id.0 as u128) % 10 != 0;
-            if is_success {
-                if let Some(task) = self.graph.tasks.get(&id) {
-                    let mut res = WorkerResult::new(task);
-                    res.duration = Duration::from_millis(500);
-                    reg.statuses.insert(id, TaskStatus::Done(res));
-                    
-                    let mut outputs = Vec::new();
-                    for scope_prefix in &task.scope {
-                        let clean = scope_prefix.trim_end_matches('/');
-                        if clean.contains('.') {
-                            outputs.push(clean.to_string());
-                        } else {
-                            outputs.push(format!("{}/mod.rs", clean));
-                            outputs.push(format!("{}/impl.rs", clean));
-                        }
-                    }
-                    reg.outputs.insert(id, outputs);
-                }
-            } else {
-                reg.statuses.insert(id, TaskStatus::Failed("Sub-agent process timeout".to_string()));
-            }
-        }
-
-        // 2. If no running tasks were completed, dispatch new ready tasks
-        if !completed_some {
-            let ready_ids = reg.ready_ids(&self.graph);
-            if ready_ids.is_empty() {
-                self.simulation_running = false;
-            } else {
-                for id in ready_ids {
-                    reg.statuses.insert(id, TaskStatus::Running);
-                }
-            }
-        }
-
-        self.last_simulation_step = Some(Instant::now());
-    }
-
-    pub fn ui(&mut self, ui: &mut Ui) {
-        // Automatic simulator update
-        if self.simulation_running {
-            let now = Instant::now();
-            let should_step = self.last_simulation_step
-                .map(|t| now.duration_since(t) > Duration::from_millis(1500))
-                .unwrap_or(true);
-            if should_step {
-                self.step_simulation();
-            }
+    pub fn ui(&mut self, ui: &mut Ui, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+        if self.execution_running {
+            self.poll_live_workers(workspace_root, mediator);
             ui.ctx().request_repaint();
         }
 
@@ -196,55 +130,60 @@ impl OrchestratorPanel {
             });
         }
 
-        // Simulation Controls
-        ui.horizontal(|ui| {
-            if has_cycle {
-                ui.add_enabled_ui(false, |ui| {
-                    let _ = ui.button("▶ Start Simulation");
-                });
-            } else if self.simulation_running {
-                if ui.button("⏸ Pause").clicked() {
-                    self.simulation_running = false;
+        ui.group(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("Runtime: {}", self.runtime_status))
+                        .small()
+                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                );
+                ui.separator();
+                ui.label(format!("Active workers: {}", self.running_workers.len()));
+            });
+
+            ui.horizontal(|ui| {
+                if has_cycle {
+                    ui.add_enabled_ui(false, |ui| {
+                        let _ = ui.button("▶ Execute Routed Tasks");
+                    });
+                } else if self.execution_running {
+                    ui.add_enabled_ui(false, |ui| {
+                        let _ = ui.button("▶ Executing…");
+                    });
+                } else if ui.button("▶ Execute Routed Tasks").clicked() {
+                    self.start_execution(workspace_root, mediator);
                 }
-            } else if ui.button("▶ Start Simulation").clicked() {
-                self.simulation_running = true;
-            }
 
-            if ui.button("⏭ Step").clicked() && !has_cycle {
-                self.step_simulation();
-            }
+                if ui.button("↻ Reset Runtime").clicked() {
+                    self.reset_runtime();
+                }
 
-            if ui.button("↻ Reset Sim").clicked() {
-                if let Some(reg) = &mut self.registry {
-                    for status in reg.statuses.values_mut() {
-                        *status = TaskStatus::Pending;
+                ui.separator();
+
+                if ui.button("⚠️ Inject Cycle").clicked() {
+                    if let Some(t3) = self.graph.tasks.get_mut(&TaskId(3)) {
+                        if !t3.dependencies.contains(&TaskId(4)) {
+                            t3.dependencies.push(TaskId(4));
+                        }
                     }
-                    reg.outputs.clear();
-                }
-                self.simulation_running = false;
-            }
-
-            ui.separator();
-
-            if ui.button("⚠️ Inject Cycle").clicked() {
-                if let Some(t3) = self.graph.tasks.get_mut(&TaskId(3)) {
-                    if !t3.dependencies.contains(&TaskId(4)) {
-                        t3.dependencies.push(TaskId(4));
+                    if let Some(t4) = self.graph.tasks.get_mut(&TaskId(4)) {
+                        if !t4.dependencies.contains(&TaskId(3)) {
+                            t4.dependencies.push(TaskId(3));
+                        }
                     }
+                    self.execution_running = false;
+                    self.running_workers.clear();
+                    self.runtime_status = "Cycle injected".to_string();
                 }
-                if let Some(t4) = self.graph.tasks.get_mut(&TaskId(4)) {
-                    if !t4.dependencies.contains(&TaskId(3)) {
-                        t4.dependencies.push(TaskId(3));
-                    }
-                }
-                self.simulation_running = false;
-            }
 
-            if ui.button("Fix & Reset Graph").clicked() {
-                self.graph = TaskGraph::example_game();
-                self.registry = Some(OrchestratorRegistry::new(&self.graph));
-                self.simulation_running = false;
-            }
+                if ui.button("Fix & Reset Graph").clicked() {
+                    self.graph = TaskGraph::example_game();
+                    self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                    self.execution_running = false;
+                    self.running_workers.clear();
+                    self.runtime_status = "Graph reset".to_string();
+                }
+            });
         });
 
         ui.add_space(4.0);
@@ -520,6 +459,91 @@ impl OrchestratorPanel {
 
 
 
+    fn start_execution(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+        if self.registry.is_none() {
+            self.registry = Some(OrchestratorRegistry::new(&self.graph));
+        }
+        self.execution_running = true;
+        self.runtime_status = "Dispatching routed tasks".to_string();
+        self.poll_live_workers(workspace_root, mediator);
+    }
+
+    fn reset_runtime(&mut self) {
+        self.execution_running = false;
+        self.running_workers.clear();
+        if let Some(reg) = &mut self.registry {
+            for status in reg.statuses.values_mut() {
+                *status = TaskStatus::Pending;
+            }
+            reg.outputs.clear();
+        }
+        self.runtime_status = "Idle".to_string();
+    }
+
+    fn poll_live_workers(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+        if self.registry.is_none() {
+            self.registry = Some(OrchestratorRegistry::new(&self.graph));
+        }
+        let reg = self.registry.as_mut().unwrap();
+
+        let finished_ids: Vec<_> = self
+            .running_workers
+            .iter_mut()
+            .filter_map(|(id, handle)| handle.poll().map(|result| (*id, result)))
+            .collect();
+
+        for (id, result) in finished_ids {
+            self.running_workers.remove(&id);
+            let report = validator::validate(&result);
+            if result.success && report.ok {
+                reg.outputs.insert(id, result.outputs.clone());
+                reg.statuses.insert(id, TaskStatus::Done(result));
+            } else {
+                let mut messages = report.messages;
+                if !result.success || messages.is_empty() {
+                    messages.insert(0, result.message.clone());
+                }
+                reg.statuses.insert(id, TaskStatus::Failed(messages.join(" | ")));
+            }
+        }
+
+        let ready_ids = reg.ready_ids(&self.graph);
+        let weight_root = resolve_weight_root(workspace_root);
+        for id in ready_ids {
+            if self.running_workers.contains_key(&id) {
+                continue;
+            }
+            let Some(task) = self.graph.tasks.get(&id).cloned() else {
+                continue;
+            };
+            let Some(routed_task) = routed_task_for_id(&self.routed_plan, id) else {
+                continue;
+            };
+            let handle = spawn_live_worker(
+                WorkerAssignment {
+                    task,
+                    workspace_root: workspace_root.to_path_buf(),
+                    instructions: routed_task.instructions.clone(),
+                    provider_label: routed_task.provider.label().to_string(),
+                    model_label: routed_task.model_label.clone(),
+                },
+                mediator.clone(),
+                weight_root,
+            );
+            reg.statuses.insert(id, TaskStatus::Running);
+            self.running_workers.insert(id, handle);
+        }
+
+        self.execution_running = !self.running_workers.is_empty();
+        self.runtime_status = if self.execution_running {
+            format!("Running {} worker(s)", self.running_workers.len())
+        } else if reg.is_complete() {
+            "Execution complete".to_string()
+        } else {
+            "Waiting for executable routed tasks".to_string()
+        };
+    }
+
     fn task_row(&self, ui: &mut Ui, task: &Task) {
         let status = self.registry.as_ref()
             .and_then(|r| r.statuses.get(&task.id))
@@ -553,6 +577,11 @@ impl OrchestratorPanel {
             }
         }
     }
+}
+
+fn routed_task_for_id(plan: &Option<RoutedPlanState>, task_id: TaskId) -> Option<&RoutedSubAgentTask> {
+    let routed_idx = task_id.0.checked_sub(2)? as usize;
+    plan.as_ref()?.tasks.get(routed_idx)
 }
 
 fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {

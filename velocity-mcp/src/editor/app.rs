@@ -733,8 +733,7 @@ impl VelocityApp {
             return;
         }
 
-        let sitemap_dir = self.workspace_root.join(".velocity").join("site_map");
-        let site_map = match velocity_ide::site_map::SiteMap::open(&sitemap_dir, 0xDEAD) {
+        let site_map = match crate::automation::open_workspace_site_map(&self.workspace_root) {
             Ok(site_map) => site_map,
             Err(err) => {
                 self.status_message = format!("SiteMap unavailable: {err}");
@@ -1096,9 +1095,7 @@ impl eframe::App for VelocityApp {
                         ui.label(egui::RichText::new(format!("Hash: {:016x}", symbol_hash)).size(10.0).weak());
 
                         // Query SiteMap triples
-                        let sitemap_dir = self.workspace_root.join(".velocity").join("site_map");
-                        let weight_root = 0xDEAD; // Dummy or active root
-                        if let Ok(sm) = velocity_ide::site_map::SiteMap::open(&sitemap_dir, weight_root) {
+                        if let Ok(sm) = crate::automation::open_workspace_site_map(&self.workspace_root) {
                             // Find callers
                             let callers = sm.get_callers(symbol_hash);
                             ui.add_space(6.0);
@@ -1840,7 +1837,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             }
             TabKind::Output => self.output_panel(ui),
             TabKind::Orchestrator => {
-                self.app.orchestrator.ui(ui);
+                self.app.orchestrator.ui(ui, &self.app.workspace_root, &self.app.mediator);
             }
             TabKind::Usage => {
                 render_usage_panel(ui, &self.app.account_usage, &self.app.usage_date, || {

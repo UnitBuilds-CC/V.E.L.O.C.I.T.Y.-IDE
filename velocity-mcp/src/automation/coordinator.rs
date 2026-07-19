@@ -1,13 +1,16 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 use velocity_ide::site_map::SiteMap;
 use crate::agent::{AiProvider, ModelInfo};
 use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;
+use crate::automation::site_map_support::resolve_weight_root;
 use crate::automation::task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedSubAgentTask, SiteMapTaskRouter};
+use crate::orchestrator::blueprint::Task;
+use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment};
+use crate::orchestrator::TaskId;
 
 pub struct CoordinatorTask {
     pub task_id: String,
@@ -58,61 +61,63 @@ impl WorkspaceCoordinator {
         &self,
         tasks: Vec<CoordinatorTask>,
         base_workspace: &Path,
-        site_map: &SiteMap,
+        _site_map: &SiteMap,
     ) -> Result<String, String> {
-        let mut handles = Vec::new();
-        let error_accumulator = Arc::new(Mutex::new(Vec::new()));
+        let weight_root = resolve_weight_root(base_workspace);
+        let mut workers = Vec::new();
 
-        for task in tasks {
-            let mediator = self.mediator.clone();
-            let base_workspace = base_workspace.to_path_buf();
-            let errs = error_accumulator.clone();
-            let site_map_path = base_workspace.join(".velocity").join("site_map");
-            let weight_root = 0xDEAD;
+        for (idx, task) in tasks.into_iter().enumerate() {
+            let orchestrator_task = Task {
+                id: TaskId(idx as u64 + 1),
+                title: task.task_id.clone(),
+                description: task.instructions.clone(),
+                scope: task
+                    .files
+                    .iter()
+                    .map(|file| file.display().to_string())
+                    .collect(),
+                dependencies: Vec::new(),
+                output: None,
+            };
+            let handle = spawn_live_worker(
+                WorkerAssignment {
+                    task: orchestrator_task,
+                    workspace_root: base_workspace.to_path_buf(),
+                    instructions: task.instructions.clone(),
+                    provider_label: "coordinator".to_string(),
+                    model_label: "live-runtime".to_string(),
+                },
+                self.mediator.clone(),
+                weight_root,
+            );
+            workers.push((task.task_id, handle));
+        }
 
-            let handle = thread::spawn(move || {
-                // Setup temporary worktree space
-                let worktree_dir = base_workspace.join(".velocity").join("temp_workspaces").join(&task.task_id);
-                std::fs::create_dir_all(&worktree_dir).ok();
-
-                // Mock file lock acquisition
-                let sm = SiteMap::open(&site_map_path, weight_root).unwrap();
-                for file in &task.files {
-                    let lock_res = mediator.acquire_lock(
-                        file.clone(),
-                        (1, 100),
-                        task.task_id.clone(),
-                        &sm,
-                    );
-                    if let Err(conflict) = lock_res {
-                        let msg = mediator.resolve_conflict(&conflict);
-                        let mut errs_guard = errs.lock().unwrap();
-                        errs_guard.push(format!("Task {} lock error: {}", task.task_id, msg));
-                        return;
+        let mut completed = Vec::new();
+        let mut failures = Vec::new();
+        while !workers.is_empty() {
+            let mut remaining = Vec::new();
+            for (task_id, mut handle) in workers.into_iter() {
+                if let Some(result) = handle.poll() {
+                    if result.success {
+                        completed.push(format!("{}: {}", task_id, result.message));
+                    } else {
+                        failures.push(format!("{}: {}", task_id, result.message));
                     }
+                } else {
+                    remaining.push((task_id, handle));
                 }
-
-                // Simulate agent work execution time
-                thread::sleep(Duration::from_millis(50));
-
-                // Release locks upon completion
-                for file in &task.files {
-                    mediator.release_lock(file, &task.task_id);
-                }
-            });
-
-            handles.push(handle);
+            }
+            workers = remaining;
+            if !workers.is_empty() {
+                thread::yield_now();
+            }
         }
 
-        for h in handles {
-            h.join().map_err(|_| "Failed to join subagent thread".to_string())?;
-        }
-
-        let errs_guard = error_accumulator.lock().unwrap();
-        if !errs_guard.is_empty() {
-            Err(errs_guard.join("\n"))
+        if failures.is_empty() {
+            Ok(format!("Executed {} parallel task(s) through the live worker runtime.", completed.len()))
         } else {
-            Ok("All parallel worktree agent tasks executed successfully with zero lock conflicts.".to_string())
+            Err(failures.join("\n"))
         }
     }
 }
@@ -126,7 +131,7 @@ mod tests {
     fn test_partition_and_execution() {
         let temp = tempdir().unwrap();
         let sitemap_dir = temp.path().join("site_map");
-        let sm = SiteMap::open(&sitemap_dir, 0xDEAD).unwrap();
+        let sm = SiteMap::open(&sitemap_dir, resolve_weight_root(temp.path())).unwrap();
 
         let mediator = Arc::new(MediatorArena::new());
         let coord = WorkspaceCoordinator::new(mediator);

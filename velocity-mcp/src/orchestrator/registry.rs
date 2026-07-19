@@ -41,6 +41,11 @@ impl OrchestratorRegistry {
             .filter(|(_, s)| matches!(s, TaskStatus::Done(_) | TaskStatus::Failed(_)))
             .map(|(id, _)| *id)
             .collect();
-        graph.ready(&completed).into_iter().map(|t| t.id).collect()
+        graph
+            .ready(&completed)
+            .into_iter()
+            .filter(|task| matches!(self.statuses.get(&task.id), Some(TaskStatus::Pending) | None))
+            .map(|t| t.id)
+            .collect()
     }
 }

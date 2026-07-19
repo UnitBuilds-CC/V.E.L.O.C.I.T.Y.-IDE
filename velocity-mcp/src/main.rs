@@ -121,16 +121,16 @@ fn main() {
         // Initialize the MediatorArena
         let mediator = std::sync::Arc::new(automation::MediatorArena::new());
         let mediator_clone = mediator.clone();
+        let presence_file_path = resolve_presence_file(&workspace_root);
 
         // Spawn Telemetry Server on a Shared Memory segment
         let shmem_path = dot_velocity.join("telemetry_shmem.bin");
         let shmem_path_server = shmem_path.clone();
         let shmem_path_watcher = shmem_path.clone();
+        let presence_file_path_server = presence_file_path.clone();
 
         // Open SiteMap for semantic queries inside telemetry callbacks
-        let sitemap_path = dot_velocity.join("site_map");
-        let weight_root = 0xDEAD; // Dummy/default weight root
-        let site_map = velocity_ide::site_map::SiteMap::open(&sitemap_path, weight_root).ok();
+        let site_map = automation::open_workspace_site_map(&workspace_root).ok();
 
         std::thread::spawn(move || {
             if let Ok(mut server) = ipc::telemetry_share::TelemetryServer::open(&shmem_path_server) {
@@ -153,7 +153,7 @@ fn main() {
                             let start_time = std::time::Instant::now();
                             
                             // Check for concurrency conflicts using MediatorArena
-                            let file_path = std::path::PathBuf::from("src/main.rs"); // Stub path for context
+                            let file_path = presence_file_path_server.clone();
                             let line_range = (cursor_line.saturating_sub(5), cursor_line.saturating_add(5));
                             let agent_id = "Agent_Thread".to_string();
 
@@ -237,6 +237,19 @@ fn main() {
             process::exit(1);
         }
     }
+}
+
+fn resolve_presence_file(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    let candidates = [
+        workspace_root.join("velocity-mcp").join("src").join("main.rs"),
+        workspace_root.join("velocity-mcp").join("src").join("lib.rs"),
+        workspace_root.join("src").join("main.rs"),
+        workspace_root.join("src").join("lib.rs"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| workspace_root.to_path_buf())
 }
 
 fn print_help() {

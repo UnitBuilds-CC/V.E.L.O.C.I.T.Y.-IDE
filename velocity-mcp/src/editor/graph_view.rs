@@ -1,7 +1,6 @@
-use eframe::egui::{self, Color32, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use velocity_ide::site_map::{SiteMap, VcTriple};
 use crate::automation::mediator::MediatorArena;
 
 pub struct MerkleGraphView {
@@ -27,10 +26,7 @@ impl MerkleGraphView {
             ui.label("Interactive visualization of declarations, method calls, and active edit locks.");
             ui.separator();
 
-            let sitemap_dir = workspace_root.join(".velocity").join("site_map");
-            let weight_root = 0xDEAD; // Default root reference
-            
-            let sm = match SiteMap::open(&sitemap_dir, weight_root) {
+            let sm = match crate::automation::open_workspace_site_map(workspace_root) {
                 Ok(sm) => sm,
                 Err(_) => {
                     ui.vertical_centered(|ui| {
@@ -100,11 +96,13 @@ impl MerkleGraphView {
 
             for &node in &nodes_vec {
                 if let Some(&pos) = self.positions.get(&node) {
-                    // Check if node has active locks or warnings
-                    // For mock visualization, we compute lock checks based on filename matching node hashes
-                    // We render active locks in warning-yellow, other nodes in slate/obsidian colors
-                    let is_locked = node % 5 == 0; // Simple mock check for locks in UI preview
-                    let is_conflict = node % 7 == 0 && is_locked;
+                    let matching_locks: Vec<_> = mediator
+                        .active_locks()
+                        .into_iter()
+                        .filter(|lock| hash_str(lock.file_path.file_name().and_then(|n| n.to_str()).unwrap_or("")) == node)
+                        .collect();
+                    let is_locked = !matching_locks.is_empty();
+                    let is_conflict = matching_locks.len() > 1;
 
                     let node_color = if is_conflict {
                         Color32::from_rgb(248, 113, 113) // Conflict red
@@ -145,4 +143,13 @@ impl MerkleGraphView {
             }
         });
     }
+}
+
+fn hash_str(s: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let d = h.finalize();
+    u64::from_le_bytes(d[..8].try_into().unwrap())
 }
