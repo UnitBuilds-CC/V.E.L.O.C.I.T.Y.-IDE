@@ -1387,6 +1387,25 @@ pub fn run_agent_thread(
     }
 }
 
+fn serialize_transcript_nda(content: &[u8]) -> String {
+    let text = String::from_utf8_lossy(content);
+    let mut lines = vec!["transcript version 1".to_string(), "source jsonl".to_string()];
+    for (index, line) in text.lines().enumerate() {
+        lines.push(format!("line\t{}\t{}", index, encode_nda_text(line)));
+    }
+    if text.ends_with('\n') {
+        lines.push("trailing_newline true".to_string());
+    }
+    lines.join("\n") + "\n"
+}
+
+fn write_workspace_transcript_nda(workspace_root: &std::path::Path, content: &[u8]) {
+    let velocity_dir = workspace_root.join(".velocity");
+    let _ = std::fs::create_dir_all(&velocity_dir);
+    let workspace_nda = velocity_dir.join("transcript.nda");
+    let _ = std::fs::write(workspace_nda, serialize_transcript_nda(content));
+}
+
 fn convert_jsonl_to_nda(workspace_root: &std::path::Path) {
     let conv_id = "17bd30f6-be7a-4829-b5b9-023fa4dd8c59";
     let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\visse".to_string());
@@ -1398,14 +1417,12 @@ fn convert_jsonl_to_nda(workspace_root: &std::path::Path) {
         .join(".system_generated")
         .join("logs")
         .join("transcript.jsonl");
-        
+
     if let Ok(content) = std::fs::read(&transcript_path) {
         let nda_payload = pack_ndav("transcript.txt", &content);
         let nda_path = transcript_path.with_extension("nda");
         let _ = std::fs::write(nda_path, &nda_payload);
-        
-        let workspace_nda = workspace_root.join(".velocity").join("transcript.nda");
-        let _ = std::fs::write(workspace_nda, &nda_payload);
+        write_workspace_transcript_nda(workspace_root, &content);
     }
 }
 
@@ -2444,6 +2461,20 @@ mod tests {
         assert!(nda.contains("message\t1\tassistant\t-\t-\tcalling tool\t["));
         assert!(nda.contains("read_file"));
         assert!(nda.contains("tool\t0\tread_file\tRead a file"));
+    }
+
+    #[test]
+    fn writes_plaintext_transcript_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        let content = b"{\"role\":\"user\"}\n{\"role\":\"assistant\"}\n";
+
+        write_workspace_transcript_nda(tmp.path(), content);
+        let transcript = std::fs::read_to_string(tmp.path().join(".velocity").join("transcript.nda")).unwrap();
+        assert!(transcript.starts_with("transcript version 1\n"));
+        assert!(transcript.contains("source jsonl\n"));
+        assert!(transcript.contains("line\t0\t{\"role\":\"user\"}"));
+        assert!(transcript.contains("line\t1\t{\"role\":\"assistant\"}"));
+        assert!(transcript.contains("trailing_newline true\n"));
     }
 
     #[test]
