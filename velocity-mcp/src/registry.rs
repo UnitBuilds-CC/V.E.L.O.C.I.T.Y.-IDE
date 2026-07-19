@@ -125,14 +125,103 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "web_navigate".to_string(),
-            description: "Navigate, crawl, and analyze a website using the integrated agentic browser crawler. This extracts page titles, text, links, scripts, and cookies, compiling them directly into the local Merkle SiteMap database.".to_string(),
+            description: "Navigate and crawl a page with the current static AOM-first browser engine. It captures a truthful live snapshot, persists SiteMap facts, and writes browser artifacts for links, forms, and cookies discovered in fetched HTML.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "url": { "type": "string", "description": "Absolute URL to navigate to and crawl." },
-                    "concurrency": { "type": "integer", "description": "Optional number of parallel crawler instances. Defaults to 2." }
+                    "concurrency": { "type": "integer", "description": "Unused by the current static browser engine." }
                 },
                 "required": ["url"]
+            }),
+        },
+        Tool {
+            name: "browser_create_session".to_string(),
+            description: "Create or reset a persisted browser session with its own cookie jar and navigation state.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_get_session".to_string(),
+            description: "Read the current persisted browser session state, including current URL and cookies.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_session_navigate".to_string(),
+            description: "Navigate a persisted browser session so cookies and current URL survive across requests.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "url": { "type": "string", "description": "Absolute URL to navigate within the persisted session." }
+                },
+                "required": ["sessionId", "url"]
+            }),
+        },
+        Tool {
+            name: "browser_session_wait".to_string(),
+            description: "Poll the current page in a persisted browser session until text or an element appears, then persist the updated snapshot and semantic diff.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "text": { "type": "string", "description": "Wait until this text appears in the current snapshot." },
+                    "role": { "type": "string", "description": "Optional role when waiting for an element." },
+                    "name": { "type": "string", "description": "Optional accessible name when waiting for an element." },
+                    "timeoutMs": { "type": "integer", "description": "Maximum time to wait before failing." },
+                    "intervalMs": { "type": "integer", "description": "Polling interval between re-fetches." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_save_workflow".to_string(),
+            description: "Persist a semantic browser workflow as JSON plus NDA-backed DSL for later deterministic replay.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Workflow name." },
+                    "startUrl": { "type": "string", "description": "Initial URL for replay." },
+                    "steps": {
+                        "type": "array",
+                        "description": "Workflow steps. Supported kinds: navigate, click, fill_field, submit_form, wait_for_text, wait_for_element, assert_element, assert_text_contains.",
+                        "items": { "type": "object" }
+                    }
+                },
+                "required": ["name", "startUrl", "steps"]
+            }),
+        },
+        Tool {
+            name: "browser_read_workflow".to_string(),
+            description: "Read a saved browser workflow JSON artifact from the workspace.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .browser.json workflow relative to the workspace root." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "browser_replay_workflow".to_string(),
+            description: "Replay a saved semantic browser workflow deterministically using the current static AOM-first engine with session/form support.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .browser.json workflow relative to the workspace root." }
+                },
+                "required": ["relativeFilePath"]
             }),
         },
     ]
@@ -148,6 +237,118 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 Ok(res) => Ok(res),
                 Err(e) => Err(e.into()),
             }
+        }
+        "browser_create_session" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let path = crate::editor::browser::create_session(&root, session_id)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(format!("Created browser session '{}'\nSession JSON: {}", session_id, path.display()))
+        }
+        "browser_get_session" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session = crate::editor::browser::load_session_state(&root, session_id)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            crate::editor::browser::session_state_to_json(&session).map_err(|e| e.into())
+        }
+        "browser_session_navigate" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let url = arguments["url"].as_str().ok_or("url is required")?;
+            let sitemap_path = root.join(".velocity").join("site_map");
+            crate::editor::browser::navigate_session(&root, session_id, url, &sitemap_path)
+                .map_err(|e| e.into())
+        }
+        "browser_session_wait" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let text = arguments["text"].as_str();
+            let role = arguments["role"].as_str();
+            let name = arguments["name"].as_str();
+            let timeout_ms = arguments["timeoutMs"].as_u64();
+            let interval_ms = arguments["intervalMs"].as_u64();
+            let sitemap_path = root.join(".velocity").join("site_map");
+            crate::editor::browser::wait_for_session(
+                &root,
+                session_id,
+                text,
+                role,
+                name,
+                timeout_ms,
+                interval_ms,
+                &sitemap_path,
+            )
+            .map_err(|e| e.into())
+        }
+        "browser_save_workflow" => {
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let start_url = arguments["startUrl"].as_str().ok_or("startUrl is required")?;
+            let steps = arguments["steps"].as_array().ok_or("steps must be an array")?;
+            let mut parsed_steps = Vec::with_capacity(steps.len());
+            for step in steps {
+                let kind = step["kind"].as_str().ok_or("workflow step kind is required")?;
+                let parsed = match kind {
+                    "navigate" => crate::editor::browser::BrowserWorkflowStep::Navigate {
+                        url: step["url"].as_str().ok_or("navigate step url is required")?.to_string(),
+                    },
+                    "click" => crate::editor::browser::BrowserWorkflowStep::Click {
+                        role: step["role"].as_str().ok_or("click step role is required")?.to_string(),
+                        name: step["name"].as_str().ok_or("click step name is required")?.to_string(),
+                    },
+                    "fill_field" => crate::editor::browser::BrowserWorkflowStep::FillField {
+                        field: step["field"].as_str().ok_or("fill_field step field is required")?.to_string(),
+                        value: step["value"].as_str().ok_or("fill_field step value is required")?.to_string(),
+                    },
+                    "submit_form" => crate::editor::browser::BrowserWorkflowStep::SubmitForm {
+                        form: step["form"].as_str().map(|value| value.to_string()),
+                    },
+                    "wait_for_text" => crate::editor::browser::BrowserWorkflowStep::WaitForText {
+                        text: step["text"].as_str().ok_or("wait_for_text step text is required")?.to_string(),
+                        timeout_ms: step["timeoutMs"].as_u64(),
+                        interval_ms: step["intervalMs"].as_u64(),
+                    },
+                    "wait_for_element" => crate::editor::browser::BrowserWorkflowStep::WaitForElement {
+                        role: step["role"].as_str().ok_or("wait_for_element step role is required")?.to_string(),
+                        name: step["name"].as_str().ok_or("wait_for_element step name is required")?.to_string(),
+                        timeout_ms: step["timeoutMs"].as_u64(),
+                        interval_ms: step["intervalMs"].as_u64(),
+                    },
+                    "assert_element" => crate::editor::browser::BrowserWorkflowStep::AssertElement {
+                        role: step["role"].as_str().ok_or("assert_element step role is required")?.to_string(),
+                        name: step["name"].as_str().ok_or("assert_element step name is required")?.to_string(),
+                    },
+                    "assert_text_contains" => crate::editor::browser::BrowserWorkflowStep::AssertTextContains {
+                        text: step["text"].as_str().ok_or("assert_text_contains step text is required")?.to_string(),
+                    },
+                    other => return Err(format!("unsupported browser workflow step kind: {}", other).into()),
+                };
+                parsed_steps.push(parsed);
+            }
+
+            let workflow = crate::editor::browser::BrowserWorkflow {
+                name: name.to_string(),
+                start_url: start_url.to_string(),
+                steps: parsed_steps,
+            };
+            let (json_path, nda_path) = crate::editor::browser::save_workflow(&root, &workflow)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(format!(
+                "Saved browser workflow '{}'\nJSON: {}\nNDA: {}",
+                workflow.name,
+                json_path.display(),
+                nda_path.display()
+            ))
+        }
+        "browser_read_workflow" => {
+            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let workflow = crate::editor::browser::load_workflow(&full_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(serde_json::to_string_pretty(&workflow)?)
+        }
+        "browser_replay_workflow" => {
+            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let workflow = crate::editor::browser::load_workflow(&full_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            crate::editor::browser::replay_workflow(&workflow).map_err(|e| e.into())
         }
         "run_command" => {
             let command_str = arguments["command"].as_str().ok_or("command is required")?;
@@ -398,6 +599,49 @@ mod tests {
     use super::call_tool_in_workspace;
     use serde_json::json;
     use std::fs;
+    use std::io::Read;
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    fn read_http_request(stream: &mut TcpStream) -> String {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+        let mut data = Vec::new();
+        let mut buf = [0u8; 1024];
+        let mut expected_total = None;
+
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) => break,
+                Ok(read) => {
+                    data.extend_from_slice(&buf[..read]);
+                    if expected_total.is_none() {
+                        if let Some(header_end) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                            let headers_end = header_end + 4;
+                            let headers = String::from_utf8_lossy(&data[..headers_end]);
+                            let content_length = headers
+                                .lines()
+                                .find_map(|line| {
+                                    let lower = line.to_ascii_lowercase();
+                                    lower
+                                        .strip_prefix("content-length:")
+                                        .and_then(|value| value.trim().parse::<usize>().ok())
+                                })
+                                .unwrap_or(0);
+                            expected_total = Some(headers_end + content_length);
+                        }
+                    }
+                    if let Some(total) = expected_total {
+                        if data.len() >= total {
+                            break;
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        String::from_utf8_lossy(&data).to_string()
+    }
 
     #[test]
     fn file_tools_use_explicit_workspace_root() {
@@ -492,8 +736,8 @@ mod tests {
 
     #[test]
     fn test_web_navigate_native_parser() {
-        use std::net::TcpListener;
         use std::io::Write;
+        use std::net::TcpListener;
         use velocity_ide::site_map::SiteMap;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -523,10 +767,198 @@ mod tests {
         let res = crate::editor::browser::crawl_and_sync_sitemap(&url, &sitemap_path).unwrap();
         assert!(res.contains("Egui Test"));
         assert!(res.contains("Interactive Elements: 1"));
+        assert!(res.contains("Snapshot JSON:"));
         assert!(res.contains("NDA Facts:"));
 
         let sm = SiteMap::open(&sitemap_path, 0).unwrap();
         assert!(sm.len() > 0);
+    }
+
+    #[test]
+    fn browser_workflow_tools_round_trip_and_replay() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let body = if first_line.starts_with("POST /login") {
+                        "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
+                    } else {
+                        "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nSet-Cookie: session=abc123; Path=/\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let save = call_tool_in_workspace(
+            &root,
+            "browser_save_workflow",
+            &json!({
+                "name": "Login Flow",
+                "startUrl": base_url,
+                "steps": [
+                    {"kind": "fill_field", "field": "email", "value": "rust@example.com"},
+                    {"kind": "submit_form", "form": "login"},
+                    {"kind": "wait_for_text", "text": "Welcome back", "timeoutMs": 1500, "intervalMs": 10},
+                    {"kind": "assert_text_contains", "text": "Welcome back"}
+                ]
+            }),
+        )
+        .unwrap();
+        assert!(save.contains("Saved browser workflow 'Login Flow'"));
+
+        let rel_path = ".velocity/browser-workflows/login-flow.browser.json";
+        let read_back = call_tool_in_workspace(
+            &root,
+            "browser_read_workflow",
+            &json!({"relativeFilePath": rel_path}),
+        )
+        .unwrap();
+        assert!(read_back.contains("Login Flow"));
+        assert!(read_back.contains("fill_field"));
+        assert!(read_back.contains("submit_form"));
+        assert!(read_back.contains("wait_for_text"));
+
+        let replay = call_tool_in_workspace(
+            &root,
+            "browser_replay_workflow",
+            &json!({"relativeFilePath": rel_path}),
+        )
+        .unwrap();
+        assert!(replay.contains("Workflow 'Login Flow' completed."));
+        assert!(replay.contains("Final title: Dashboard"));
+        assert!(replay.contains("Cookies: 1"));
+    }
+
+    #[test]
+    fn browser_session_wait_tool_round_trip() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for idx in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let _ = read_http_request(&mut stream);
+                    let body = if idx == 0 {
+                        "<html><head><title>Loading</title></head><body><p>Preparing dashboard</p></body></html>"
+                    } else {
+                        "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(
+            &root,
+            "browser_create_session",
+            &json!({"sessionId": "waiter"}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_session_navigate",
+            &json!({"sessionId": "waiter", "url": url}),
+        )
+        .unwrap();
+
+        let waited = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "waiter", "text": "Ready", "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(waited.contains("Session wait complete."));
+        assert!(waited.contains("Title: Dashboard"));
+        assert!(waited.contains("Diff: title,summary"));
+    }
+
+    #[test]
+    fn browser_session_tools_round_trip() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let body = "<html><head><title>Session Test</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'></form></body></html>";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nSet-Cookie: token=xyz; Path=/\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let created = call_tool_in_workspace(
+            &root,
+            "browser_create_session",
+            &json!({"sessionId": "qa-session"}),
+        )
+        .unwrap();
+        assert!(created.contains("Created browser session 'qa-session'"));
+
+        let navigated = call_tool_in_workspace(
+            &root,
+            "browser_session_navigate",
+            &json!({"sessionId": "qa-session", "url": url}),
+        )
+        .unwrap();
+        assert!(navigated.contains("Session: qa-session"));
+        assert!(navigated.contains("Forms: 1"));
+        assert!(navigated.contains("Cookies: 1"));
+
+        let session = call_tool_in_workspace(
+            &root,
+            "browser_get_session",
+            &json!({"sessionId": "qa-session"}),
+        )
+        .unwrap();
+        assert!(session.contains("\"id\": \"qa-session\""));
+        assert!(session.contains("\"name\": \"token\""));
     }
 }
 
