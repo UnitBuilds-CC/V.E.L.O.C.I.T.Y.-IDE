@@ -41,35 +41,19 @@ impl Snapshot {
 
 pub struct FileHistory {
     base: PathBuf,
+    index_path: PathBuf,
     index: HashMap<PathBuf, Vec<Snapshot>>,
 }
 
 impl FileHistory {
     pub fn new(workspace_root: &Path) -> Self {
         let base = workspace_root.join(".velocity").join("history");
+        let index_path = base.join("index.nda");
         let _ = fs::create_dir_all(&base);
-        let mut index = HashMap::new();
-        if let Ok(entries) = fs::read_dir(&base) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("snap") {
-                    let name = path.file_stem().unwrap_or_default().to_string_lossy();
-                    let parts: Vec<&str> = name.rsplitn(2, '-').collect();
-                    if parts.len() == 2 {
-                        let ts = parts[0].parse::<u64>().unwrap_or(0);
-                        let file_name = parts[1];
-                        let snapshot = Self::load_snapshot(&path, ts);
-                        let file_path = Self::decode_name(file_name);
-                        index.entry(file_path).or_insert_with(Vec::new).push(snapshot);
-                    }
-                }
-            }
-        }
-        for snapshots in index.values_mut() {
-            snapshots.sort_by_key(|s| s.timestamp);
-            snapshots.reverse();
-        }
-        Self { base, index }
+        let mut index = Self::load_index_from_nda(&base, &index_path)
+            .unwrap_or_else(|| Self::load_index_from_snapshots(&base));
+        Self::sort_index(&mut index);
+        Self { base, index_path, index }
     }
 
     pub fn record(&mut self, file_path: &Path, content: &str) {
@@ -92,6 +76,8 @@ impl FileHistory {
                 let _ = fs::remove_file(self.snapshot_path(file_path, snap.timestamp));
             }
         }
+        Self::sort_index(&mut self.index);
+        let _ = self.persist_index();
     }
 
     pub fn snapshots(&self, file_path: &Path) -> Vec<Snapshot> {
@@ -164,6 +150,85 @@ impl FileHistory {
             size,
         }
     }
+
+    fn load_index_from_nda(base: &Path, index_path: &Path) -> Option<HashMap<PathBuf, Vec<Snapshot>>> {
+        let content = fs::read_to_string(index_path).ok()?;
+        let mut index: HashMap<PathBuf, Vec<Snapshot>> = HashMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts = line.split('\t').collect::<Vec<_>>();
+            if parts.len() != 4 || parts[0] != "snapshot" {
+                continue;
+            }
+            let file_path = PathBuf::from(parts[1]);
+            let timestamp = parts[2].parse::<u64>().ok()?;
+            let snap_path = base.join(parts[3]);
+            let snapshot = Self::load_snapshot(&snap_path, timestamp);
+            index.entry(file_path).or_default().push(snapshot);
+        }
+        Some(index)
+    }
+
+    fn load_index_from_snapshots(base: &Path) -> HashMap<PathBuf, Vec<Snapshot>> {
+        let mut index = HashMap::new();
+        if let Ok(entries) = fs::read_dir(base) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("snap") {
+                    let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                    let parts: Vec<&str> = name.rsplitn(2, '-').collect();
+                    if parts.len() == 2 {
+                        let ts = parts[0].parse::<u64>().unwrap_or(0);
+                        let file_name = parts[1];
+                        let snapshot = Self::load_snapshot(&path, ts);
+                        let file_path = Self::decode_name(file_name);
+                        index.entry(file_path).or_insert_with(Vec::new).push(snapshot);
+                    }
+                }
+            }
+        }
+        index
+    }
+
+    fn sort_index(index: &mut HashMap<PathBuf, Vec<Snapshot>>) {
+        for snapshots in index.values_mut() {
+            snapshots.sort_by_key(|s| s.timestamp);
+            snapshots.reverse();
+        }
+    }
+
+    fn persist_index(&self) -> Result<(), String> {
+        let mut entries = self
+            .index
+            .iter()
+            .flat_map(|(file_path, snapshots)| {
+                snapshots.iter().map(move |snapshot| {
+                    let snap_name = self
+                        .snapshot_path(file_path, snapshot.timestamp)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    format!(
+                        "snapshot\t{}\t{}\t{}",
+                        file_path.display(),
+                        snapshot.timestamp,
+                        snap_name
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+        let mut content = String::from("history version 1\n");
+        if !entries.is_empty() {
+            content.push_str(&entries.join("\n"));
+            content.push('\n');
+        }
+        fs::write(&self.index_path, content).map_err(|err| format!("write history index: {err}"))
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +244,37 @@ mod tests {
         let snaps = hist.snapshots(Path::new("src/main.rs"));
         assert_eq!(snaps.len(), 1);
         assert!(snaps[0].age_label().contains("s ago") || snaps[0].age_label().contains("now"));
+    }
+
+    #[test]
+    fn writes_nda_history_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut hist = FileHistory::new(tmp.path());
+        hist.record(Path::new("src/main.rs"), "fn main() {}");
+
+        let index = fs::read_to_string(tmp.path().join(".velocity").join("history").join("index.nda")).unwrap();
+        assert!(index.starts_with("history version 1\n"));
+        assert!(index.contains("snapshot\tsrc/main.rs\t"));
+        assert!(index.contains("src_main.rs-"));
+    }
+
+    #[test]
+    fn loads_from_nda_history_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let history_dir = tmp.path().join(".velocity").join("history");
+        fs::create_dir_all(&history_dir).unwrap();
+        fs::write(history_dir.join("src_main.rs-123.snap"), "snapshot-body").unwrap();
+        fs::write(
+            history_dir.join("index.nda"),
+            "history version 1\nsnapshot\tsrc/main.rs\t123\tsrc_main.rs-123.snap\n",
+        )
+        .unwrap();
+
+        let hist = FileHistory::new(tmp.path());
+        let snaps = hist.snapshots(Path::new("src/main.rs"));
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].timestamp, 123);
+        assert_eq!(snaps[0].content, "snapshot-body");
     }
 
     #[test]
