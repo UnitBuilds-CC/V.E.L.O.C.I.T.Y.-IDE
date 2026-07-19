@@ -3,6 +3,7 @@
 use crate::automation::{
     resolve_weight_root, AgentTaskKind, DecompositionStyle, InstructionRegistry, RoutedSubAgentTask,
 };
+use crate::editor::theme::IdePalette;
 use crate::orchestrator::blueprint::{Task, TaskGraph};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
@@ -334,6 +335,7 @@ impl OrchestratorPanel {
     }
 
     fn render_policy_controls(&mut self, ui: &mut Ui, workspace_root: &Path) {
+        let palette = IdePalette::dark();
         let registry = InstructionRegistry::open(workspace_root);
         let kind = self.policy_editor.kind;
         let policies = registry.policies_for_kind(kind);
@@ -344,7 +346,7 @@ impl OrchestratorPanel {
             ui.label(
                 egui::RichText::new(&self.policy_editor.status)
                     .small()
-                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                    .color(palette.text_muted),
             );
 
             egui::ComboBox::from_label("Task kind")
@@ -484,6 +486,7 @@ impl OrchestratorPanel {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+        let palette = IdePalette::dark();
         self.ensure_policy_editor_loaded(workspace_root);
         if self.execution_running {
             self.poll_live_workers(workspace_root, mediator);
@@ -506,7 +509,7 @@ impl OrchestratorPanel {
                 ui.label(
                     egui::RichText::new(&self.planning_status)
                         .small()
-                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                        .color(palette.text_muted),
                 );
                 ui.label(format!("Goal: {}", plan.goal));
                 ui.label(format!("Task kind: {}", plan.kind.as_str()));
@@ -519,7 +522,7 @@ impl OrchestratorPanel {
         let has_cycle = scheduler::detect_cycle(&self.graph);
         if has_cycle {
             ui.group(|ui| {
-                ui.colored_label(egui::Color32::from_rgb(239, 68, 68), "❌ Dependency Loop Blocked Scheduling!");
+                ui.colored_label(palette.error, "❌ Dependency Loop Blocked Scheduling!");
                 ui.label("Topological sort is disabled until the loop is fixed.");
             });
         }
@@ -529,7 +532,7 @@ impl OrchestratorPanel {
                 ui.label(
                     egui::RichText::new(format!("Runtime: {}", self.runtime_status))
                         .small()
-                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                        .color(palette.text_muted),
                 );
                 ui.separator();
                 ui.label(format!("Active workers: {}", self.running_workers.len()));
@@ -619,7 +622,7 @@ impl OrchestratorPanel {
                                                 task.model_label,
                                             ))
                                             .small()
-                                            .color(egui::Color32::from_rgb(34, 211, 238)),
+                                            .color(palette.accent),
                                         );
                                     });
                                     ui.label(
@@ -630,12 +633,12 @@ impl OrchestratorPanel {
                                             task.instruction_template_id,
                                         ))
                                         .small()
-                                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                                        .color(palette.text_muted),
                                     );
                                     ui.label(
                                         egui::RichText::new(&task.rationale)
                                             .small()
-                                            .color(egui::Color32::from_rgb(226, 227, 243)),
+                                            .color(palette.text),
                                     );
                                     if !task.files.is_empty() {
                                         let scope = task
@@ -647,7 +650,7 @@ impl OrchestratorPanel {
                                         ui.label(
                                             egui::RichText::new(format!("Files: {scope}"))
                                                 .small()
-                                                .color(egui::Color32::from_rgb(168, 85, 247)),
+                                                .color(palette.accent),
                                         );
                                     }
                                     if !task.fallback_chain.is_empty() {
@@ -660,7 +663,7 @@ impl OrchestratorPanel {
                                         ui.label(
                                             egui::RichText::new(format!("Fallbacks: {fallback}"))
                                                 .small()
-                                                .color(egui::Color32::from_rgb(244, 114, 182)),
+                                                .color(palette.warning),
                                         );
                                     }
                                 });
@@ -705,16 +708,16 @@ impl OrchestratorPanel {
                     if !collisions.is_empty() || !violations.is_empty() {
                         ui.add_space(8.0);
                         ui.group(|ui: &mut egui::Ui| {
-                            ui.label(egui::RichText::new("⚠️ Reconciler Warnings").strong().color(egui::Color32::from_rgb(234, 179, 8)));
+                            ui.label(egui::RichText::new("⚠️ Reconciler Warnings").strong().color(palette.warning));
                             for c in &collisions {
                                 ui.colored_label(
-                                    egui::Color32::from_rgb(250, 204, 21),
+                                    palette.warning,
                                     format!("Conflict: tasks {} and {} both touch file '{}'", c.task_a, c.task_b, c.path),
                                 );
                             }
                             for v in &violations {
                                 ui.colored_label(
-                                    egui::Color32::from_rgb(248, 113, 113),
+                                    palette.error,
                                     format!("Scope Violation: task {} wrote unauthorized path '{}'", v.0, v.1),
                                 );
                             }
@@ -780,13 +783,14 @@ impl OrchestratorPanel {
 
             // Right column: Canvas drawing the task graph pipeline
             columns[1].vertical(|ui: &mut egui::Ui| {
-                ui.label(egui::RichText::new("📊 TASK FLOW PIPELINE").strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                ui.label(egui::RichText::new("📊 TASK FLOW PIPELINE").strong().color(palette.accent));
                 self.draw_task_graph(ui, &plan, has_cycle);
             });
         });
     }
 
     fn draw_task_graph(&self, ui: &mut Ui, plan: &scheduler::Plan, has_cycle: bool) {
+        let palette = IdePalette::dark();
         use std::collections::HashMap;
 
         let mut canvas_size = ui.available_size();
@@ -798,7 +802,7 @@ impl OrchestratorPanel {
         let painter = ui.painter_at(rect);
 
         // Fill background
-        painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(8, 9, 14));
+        painter.rect_filled(rect, 4.0, palette.bg_primary);
 
         let mut node_positions = HashMap::new();
 
@@ -834,7 +838,7 @@ impl OrchestratorPanel {
             if let Some(&p_to) = node_positions.get(&id) {
                 for dep_id in &task.dependencies {
                     if let Some(&p_from) = node_positions.get(dep_id) {
-                        painter.line_segment([p_from, p_to], egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 116, 139)));
+                        painter.line_segment([p_from, p_to], egui::Stroke::new(1.5, palette.border));
                     }
                 }
             }
@@ -849,11 +853,11 @@ impl OrchestratorPanel {
                     .unwrap_or(TaskStatus::Pending);
 
                 let color = match status {
-                    TaskStatus::Pending => egui::Color32::from_rgb(55, 65, 81),    // Gray
-                    TaskStatus::Running => egui::Color32::from_rgb(59, 130, 246),  // Blue
-                    TaskStatus::Done(_) => egui::Color32::from_rgb(34, 197, 94),   // Green
-                    TaskStatus::Failed(_) => egui::Color32::from_rgb(239, 68, 68), // Red
-                    TaskStatus::Blocked(_) => egui::Color32::from_rgb(245, 158, 11), // Amber
+                    TaskStatus::Pending => palette.text_muted.gamma_multiply(0.6),
+                    TaskStatus::Running => palette.accent,
+                    TaskStatus::Done(_) => palette.success,
+                    TaskStatus::Failed(_) => palette.error,
+                    TaskStatus::Blocked(_) => palette.warning,
                 };
 
                 let size = egui::vec2(130.0, 45.0);
@@ -862,7 +866,7 @@ impl OrchestratorPanel {
                     node_rect,
                     6.0,
                     color,
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(226, 227, 243)),
+                    egui::Stroke::new(1.0, palette.text),
                     egui::StrokeKind::Inside,
                 );
 
@@ -872,7 +876,7 @@ impl OrchestratorPanel {
                     egui::Align2::CENTER_CENTER,
                     format!("ID: {}\n{}", id.0, truncated_title),
                     egui::FontId::monospace(10.0),
-                    egui::Color32::from_rgb(226, 227, 243),
+                    palette.text,
                 );
             }
         }
@@ -1126,12 +1130,13 @@ impl OrchestratorPanel {
             .cloned()
             .unwrap_or(TaskStatus::Pending);
 
+        let palette = IdePalette::dark();
         let (status_label, bg_color) = match &status {
-            TaskStatus::Pending => ("⏳ Pending", egui::Color32::from_rgb(156, 163, 175)),
-            TaskStatus::Running => ("🔵 Running", egui::Color32::from_rgb(96, 165, 250)),
-            TaskStatus::Done(_) => ("✅ Done", egui::Color32::from_rgb(74, 222, 128)),
-            TaskStatus::Failed(_) => ("❌ Failed", egui::Color32::from_rgb(248, 113, 113)),
-            TaskStatus::Blocked(_) => ("⚠️ Follow-up", egui::Color32::from_rgb(251, 191, 36)),
+            TaskStatus::Pending => ("⏳ Pending", palette.text_muted),
+            TaskStatus::Running => ("🔵 Running", palette.accent),
+            TaskStatus::Done(_) => ("✅ Done", palette.success),
+            TaskStatus::Failed(_) => ("❌ Failed", palette.error),
+            TaskStatus::Blocked(_) => ("⚠️ Follow-up", palette.warning),
         };
 
         ui.horizontal(|ui| {
@@ -1149,7 +1154,7 @@ impl OrchestratorPanel {
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(16.0);
                     let scope_str = task.scope.join(", ");
-                    ui.label(egui::RichText::new(format!("Scope: {scope_str}")).small().color(egui::Color32::from_rgb(168, 85, 247)));
+                    ui.label(egui::RichText::new(format!("Scope: {scope_str}")).small().color(palette.accent));
                 });
             }
             match &status {
@@ -1164,7 +1169,7 @@ impl OrchestratorPanel {
                                 result.duration,
                             ))
                             .small()
-                            .color(egui::Color32::from_rgb(34, 211, 238)),
+                            .color(palette.accent),
                         );
                     });
                     ui.horizontal_wrapped(|ui| {
@@ -1174,19 +1179,19 @@ impl OrchestratorPanel {
                     if !result.outputs.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Changed: {}", result.outputs.join(", "))).small().color(egui::Color32::from_rgb(74, 222, 128)));
+                            ui.label(egui::RichText::new(format!("Changed: {}", result.outputs.join(", "))).small().color(palette.success));
                         });
                     }
                     if !result.created_files.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Created: {}", result.created_files.join(", "))).small().color(egui::Color32::from_rgb(250, 204, 21)));
+                            ui.label(egui::RichText::new(format!("Created: {}", result.created_files.join(", "))).small().color(palette.warning));
                         });
                     }
                     if !result.deleted_files.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Deleted: {}", result.deleted_files.join(", "))).small().color(egui::Color32::from_rgb(248, 113, 113)));
+                            ui.label(egui::RichText::new(format!("Deleted: {}", result.deleted_files.join(", "))).small().color(palette.error));
                         });
                     }
                     if !result.out_of_scope_created_files.is_empty() {
@@ -1198,7 +1203,7 @@ impl OrchestratorPanel {
                                     result.out_of_scope_created_files.join(", ")
                                 ))
                                 .small()
-                                .color(egui::Color32::from_rgb(251, 191, 36)),
+                                .color(palette.warning),
                             );
                         });
                     }
@@ -1211,7 +1216,7 @@ impl OrchestratorPanel {
                                 .map(|attempt| format!("{} / {} ({})", attempt.provider_label, attempt.model_label, if attempt.success { "ok" } else { "miss" }))
                                 .collect::<Vec<_>>()
                                 .join(" -> ");
-                            ui.label(egui::RichText::new(format!("Attempts: {attempts}")).small().color(egui::Color32::from_rgb(244, 114, 182)));
+                            ui.label(egui::RichText::new(format!("Attempts: {attempts}")).small().color(palette.warning));
                         });
                     }
                     if !result.status_updates.is_empty() {
@@ -1224,7 +1229,7 @@ impl OrchestratorPanel {
                         let preview: String = result.transcript.chars().take(240).collect();
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Transcript: {}{}", preview, if result.transcript.len() > preview.len() { "…" } else { "" })).small().color(egui::Color32::from_rgb(226, 227, 243)));
+                            ui.label(egui::RichText::new(format!("Transcript: {}{}", preview, if result.transcript.len() > preview.len() { "…" } else { "" })).small().color(palette.text));
                         });
                     }
                 }

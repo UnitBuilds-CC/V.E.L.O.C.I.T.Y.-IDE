@@ -233,13 +233,18 @@ impl VelocityApp {
     }
 
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         workspace_root: PathBuf,
         agent_tx: Sender<UiToAgentMessage>,
         agent_rx: Receiver<AgentToUiMessage>,
         gpu_name: String,
         mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
     ) -> Self {
+        let mut fonts = egui::FontDefinitions::default();
+        let _ = crate::editor::theme::setup_fonts(&mut fonts);
+        cc.egui_ctx.set_fonts(fonts);
+        crate::editor::theme::apply_theme(&cc.egui_ctx, IdePalette::dark());
+
         let mut tab_counter = 0u64;
         let output = Tab {
             id: TabId::next(&mut tab_counter),
@@ -971,7 +976,6 @@ impl VelocityApp {
 impl eframe::App for VelocityApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        crate::editor::theme::apply_theme(&ctx, IdePalette::dark());
         self.handle_agent_messages();
         self.handle_global_shortcuts(&ctx);
         self.update_diagnostics();

@@ -3,6 +3,7 @@
 //! Provides a ring-buffer based sidebar that tracks context, file references,
 //! and presents actionable suggestions to the user.
 
+use crate::editor::theme::IdePalette;
 use eframe::egui;
 use std::time::Instant;
 
@@ -345,10 +346,11 @@ impl<'a> SmartSidebarSnapshot<'a> {
 
 /// Render smart sidebar panel
 pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) {
+    let palette = IdePalette::dark();
     let frame = egui::Frame::new()
-        .fill(egui::Color32::from_rgb(25, 27, 39))
+        .fill(palette.bg_secondary)
         .inner_margin(8.0)
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(33, 36, 51)));
+        .stroke(egui::Stroke::new(1.0, palette.border));
 
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -356,13 +358,13 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
                 egui::RichText::new("🔍 Smart Sidebar")
                     .size(12.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(226, 227, 243)),
+                    .color(palette.text),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(format!("({})", snapshot.state.filtered_count()))
                         .size(10.0)
-                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                        .color(palette.text_muted),
                 );
             });
         });
@@ -372,7 +374,7 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
             ui.label(
                 egui::RichText::new("No context available yet")
                     .size(10.0)
-                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                    .color(palette.text_muted),
             );
             return;
         }
@@ -384,14 +386,14 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
             .show(ui, |ui| {
                 for entry in snapshot.state.visible_entries() {
                     let (icon, color, type_name) = match entry.entry_type {
-                        SidebarEntryType::FileReference => ("📄", egui::Color32::from_rgb(34, 211, 238), "File"),
-                        SidebarEntryType::SymbolDefinition => ("🔧", egui::Color32::from_rgb(168, 85, 247), "Symbol"),
-                        SidebarEntryType::CodeSuggestion => ("💡", egui::Color32::from_rgb(250, 204, 21), "Suggest"),
-                        SidebarEntryType::QuickAction => ("⚡", egui::Color32::from_rgb(236, 72, 153), "Action"),
-                        SidebarEntryType::ErrorDiagnostic => ("✕", egui::Color32::from_rgb(239, 68, 68), "Error"),
-                        SidebarEntryType::WarningDiagnostic => ("⚠", egui::Color32::from_rgb(250, 204, 21), "Warn"),
-                        SidebarEntryType::TodoComment => ("☐", egui::Color32::from_rgb(34, 197, 94), "TODO"),
-                        SidebarEntryType::Note => ("📝", egui::Color32::from_rgb(125, 131, 166), "Note"),
+                        SidebarEntryType::FileReference => ("📄", palette.accent, "File"),
+                        SidebarEntryType::SymbolDefinition => ("🔧", palette.accent.gamma_multiply(0.85), "Symbol"),
+                        SidebarEntryType::CodeSuggestion => ("💡", palette.warning, "Suggest"),
+                        SidebarEntryType::QuickAction => ("⚡", palette.accent.gamma_multiply(1.1), "Action"),
+                        SidebarEntryType::ErrorDiagnostic => ("✕", palette.error, "Error"),
+                        SidebarEntryType::WarningDiagnostic => ("⚠", palette.warning, "Warn"),
+                        SidebarEntryType::TodoComment => ("☐", palette.success, "TODO"),
+                        SidebarEntryType::Note => ("📝", palette.text_muted, "Note"),
                     };
 
                     let file = snapshot.state.get_file(entry.file_offset, entry.file_len);
@@ -409,12 +411,12 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
                                     ui.label(
                                         egui::RichText::new(type_name)
                                             .size(9.0)
-                                            .color(egui::Color32::from_rgb(125, 131, 166)),
+                                            .color(palette.text_muted),
                                     );
                                     ui.label(
                                         egui::RichText::new(text)
                                             .size(10.0)
-                                            .color(egui::Color32::from_rgb(226, 227, 243))
+                                            .color(palette.text)
                                             .strong(),
                                     );
                                 });
@@ -424,7 +426,7 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
                                         ui.label(
                                             egui::RichText::new(format!("{} :{}", file, entry.line_number))
                                                 .size(8.0)
-                                                .color(egui::Color32::from_rgb(125, 131, 166)),
+                                                .color(palette.text_muted),
                                         );
                                     });
                                 }

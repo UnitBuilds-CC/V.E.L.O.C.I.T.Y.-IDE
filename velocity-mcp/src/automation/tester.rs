@@ -52,20 +52,14 @@ pub fn run_jit_tests_in_sandbox(
         return Err(format!("Test file not found: {:?}", test_file));
     }
 
-    let code = std::fs::read_to_string(test_file).map_err(|e| e.to_string())?;
-    
-    let mut test_count = 0;
-    for line in code.lines() {
-        if line.contains("#[test]") || line.contains("fn test_") {
-            test_count += 1;
-        }
-    }
-
     Ok(TestReport {
-        success: true,
-        stdout: format!("JIT sandbox executed {} test blocks in-memory.", test_count),
+        success: false,
+        stdout: String::new(),
         stderr: String::new(),
-        summary: format!("JIT execution successful (elapsed: 15µs, tests run: {})", test_count),
+        summary: format!(
+            "JIT sandbox test execution is not implemented for {:?}; refusing to report fake success",
+            test_file.file_name().unwrap_or_default()
+        ),
     })
 }
 
@@ -74,13 +68,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_jit_sandbox_runner_scaffold() {
+    fn test_jit_sandbox_runner_reports_unsupported_instead_of_fake_success() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let test_file = temp_dir.path().join("mock_test.rs");
+        let test_file = temp_dir.path().join("sample_test.rs");
         std::fs::write(&test_file, "fn test_one() {}\nfn test_two() {}").unwrap();
 
         let report = run_jit_tests_in_sandbox(&temp_dir.path().to_path_buf(), &test_file).unwrap();
-        assert!(report.success);
-        assert!(report.summary.contains("tests run: 2"));
+        assert!(!report.success);
+        assert!(report.summary.contains("not implemented"));
+        assert!(report.summary.contains("refusing to report fake success"));
     }
 }

@@ -50,15 +50,16 @@ For NDA-vs-JSON boundary decisions, see `docs/NDA_BOUNDARIES.md`.
 
 ## Orchestrator (parallel agent execution)
 
-See `src/orchestrator/mod.rs`. It defines:
+See `src/orchestrator/mod.rs` plus the Mission Control/editor integration. The active orchestration stack now includes:
 
 - `TaskGraph` — DAG of work packages.
-- `Scheduler` — topological execution, parallel worker dispatch.
-- `Worker` — placeholder for sub-agent invocation.
-- `Reconciler` — diff-based collision detection.
-- `Validator` — per-worktree `cargo check` / `cargo test`.
+- `Scheduler` — topological execution and phase planning.
+- `Worker` — live provider-backed routed worker execution with scoped locking, cancellation, event streaming, and structured results.
+- `Reconciler` — diff-based collision and scope-violation detection.
+- `Validator` — per-worktree validation hooks such as `cargo check` / `cargo test`.
+- `OrchestratorPanel` / Mission Control — operator-facing planning, launch, retry, reset, stop, note routing, and live task supervision.
 
-Current integration is local-only; external sub-agent processes can be wired in later.
+Current integration is still local-workspace-first, but the runtime is no longer a placeholder: routed sub-agents execute through the real provider-backed worker path used by the active IDE.
 
 ## Known constraints
 

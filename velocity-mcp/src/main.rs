@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 use std::env;
 use std::process;
 use eframe::egui;
@@ -99,8 +97,8 @@ fn main() {
             Ok(driver) => {
                 let _ = driver.run_diagnostics();
                 gpu_name = driver.device_name();
-                let mock_weights = vec![1, -1, 0, 1, 1];
-                if let Ok(shader) = compiler::jit::JitCompiler::compile_inlined_weights(&mock_weights) {
+                let diagnostic_weights = vec![1, -1, 0, 1, 1];
+                if let Ok(shader) = compiler::jit::JitCompiler::compile_inlined_weights(&diagnostic_weights) {
                     println!("  - [OK] JIT weight-inlining compile test passed (Size: {} words).", shader.len());
                 }
             }
@@ -116,7 +114,10 @@ fn main() {
 
         // Ensure the .velocity folder exists
         let dot_velocity = workspace_root.join(".velocity");
-        std::fs::create_dir_all(&dot_velocity).ok();
+        if let Err(err) = std::fs::create_dir_all(&dot_velocity) {
+            eprintln!("Failed to initialize workspace state directory {}: {}", dot_velocity.display(), err);
+            process::exit(1);
+        }
 
         // Initialize the MediatorArena
         let mediator = std::sync::Arc::new(automation::MediatorArena::new());
