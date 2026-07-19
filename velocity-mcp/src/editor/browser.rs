@@ -58,6 +58,13 @@ pub struct BrowserSessionState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserSessionCheckpoint {
+    pub name: String,
+    pub session: BrowserSessionState,
+    pub snapshot: Option<BrowserPageSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserWorkflowStep {
     Navigate { url: String },
@@ -239,6 +246,18 @@ fn browser_workflow_nda_path(workspace_root: &Path, workflow_name: &str) -> Path
         .join(".velocity")
         .join("browser-workflows")
         .join(format!("{}.browser.nda", sanitize_file_stem(workflow_name)))
+}
+
+fn browser_session_checkpoint_path(
+    workspace_root: &Path,
+    session_id: &str,
+    checkpoint_name: &str,
+) -> PathBuf {
+    workspace_root
+        .join(".velocity")
+        .join("browser-session-checkpoints")
+        .join(sanitize_file_stem(session_id))
+        .join(format!("{}.checkpoint.json", sanitize_file_stem(checkpoint_name)))
 }
 
 fn parse_cookie_header(value: &str) -> Option<BrowserCookie> {
@@ -738,6 +757,75 @@ pub fn load_session_state(workspace_root: &Path, session_id: &str) -> Result<Bro
 
 pub fn session_state_to_json(session: &BrowserSessionState) -> Result<String, String> {
     serde_json::to_string_pretty(session).map_err(|err| format!("serialise browser session state: {err}"))
+}
+
+pub fn save_session_checkpoint(
+    workspace_root: &Path,
+    session_id: &str,
+    checkpoint_name: &str,
+    sitemap_path: &Path,
+) -> Result<PathBuf, String> {
+    let session = load_session_state(workspace_root, session_id)?;
+    let snapshot = match session.current_url.as_deref() {
+        Some(url) => load_snapshot_json(url, sitemap_path).ok(),
+        None => None,
+    };
+    let checkpoint = BrowserSessionCheckpoint {
+        name: checkpoint_name.to_string(),
+        session,
+        snapshot,
+    };
+    let path = browser_session_checkpoint_path(workspace_root, session_id, checkpoint_name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create checkpoint dir: {err}"))?;
+    }
+    let json = serde_json::to_vec_pretty(&checkpoint)
+        .map_err(|err| format!("serialise browser checkpoint: {err}"))?;
+    fs::write(&path, json).map_err(|err| format!("write browser checkpoint: {err}"))?;
+    Ok(path)
+}
+
+pub fn restore_session_checkpoint(
+    workspace_root: &Path,
+    session_id: &str,
+    checkpoint_name: &str,
+    target_session_id: Option<&str>,
+    sitemap_path: &Path,
+) -> Result<String, String> {
+    let path = browser_session_checkpoint_path(workspace_root, session_id, checkpoint_name);
+    let raw = fs::read(&path).map_err(|err| format!("read browser checkpoint: {err}"))?;
+    let mut checkpoint: BrowserSessionCheckpoint =
+        serde_json::from_slice(&raw).map_err(|err| format!("parse browser checkpoint: {err}"))?;
+    if let Some(target) = target_session_id {
+        checkpoint.session.id = target.to_string();
+    }
+    let session_path = save_session_state(workspace_root, &checkpoint.session)?;
+
+    let mut details = vec![
+        format!("Restored browser session checkpoint '{}'", checkpoint.name),
+        format!("Session: {}", checkpoint.session.id),
+        format!("Session JSON: {}", session_path.display()),
+    ];
+
+    if let Some(snapshot) = checkpoint.snapshot {
+        persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
+        let facts_path = write_crawl_facts(
+            &snapshot.url,
+            &snapshot.title,
+            &snapshot.summary,
+            &snapshot.elements,
+            &snapshot.forms,
+            &snapshot.cookies,
+            sitemap_path,
+        )?;
+        let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
+        details.push(format!("URL: {}", snapshot.url));
+        details.push(format!("Title: {}", snapshot.title));
+        details.push(format!("Snapshot JSON: {}", snapshot_path.display()));
+        details.push(format!("NDA Facts: {}", facts_path.display()));
+    }
+
+    Ok(details.join("\n"))
 }
 
 pub fn navigate_session(
@@ -1246,19 +1334,11 @@ pub fn load_workflow(path: &Path) -> Result<BrowserWorkflow, String> {
     serde_json::from_slice(&raw).map_err(|err| format!("parse workflow: {err}"))
 }
 
-pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
-    let mut session = BrowserSessionState {
-        id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
-        current_url: Some(workflow.start_url.clone()),
-        cookies: Vec::new(),
-    };
-    let snapshot = crawl_page_snapshot_with_session(&mut session, &workflow.start_url)?;
-    let mut state = BrowserReplayState {
-        session,
-        snapshot,
-        filled_fields: HashMap::new(),
-    };
-    let mut log = vec![format!("start {} -> {}", workflow.start_url, state.snapshot.title)];
+fn replay_workflow_with_state(
+    workflow: &BrowserWorkflow,
+    mut state: BrowserReplayState,
+) -> Result<(String, BrowserReplayState), String> {
+    let mut log = vec![format!("start {} -> {}", state.snapshot.url, state.snapshot.title)];
 
     for step in &workflow.steps {
         match step {
@@ -1339,14 +1419,82 @@ pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
         }
     }
 
-    Ok(format!(
-        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSteps executed: {}\nCookies: {}\n{}",
+    let result = format!(
+        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\n{}",
         workflow.name,
         state.snapshot.url,
         state.snapshot.title,
+        state.session.id,
         workflow.steps.len(),
         state.session.cookies.len(),
         log.join("\n")
+    );
+    Ok((result, state))
+}
+
+fn persist_replay_state(
+    workspace_root: &Path,
+    state: &BrowserReplayState,
+    sitemap_path: &Path,
+) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    persist_snapshot_to_sitemap(&state.snapshot, sitemap_path)?;
+    let facts_path = write_crawl_facts(
+        &state.snapshot.url,
+        &state.snapshot.title,
+        &state.snapshot.summary,
+        &state.snapshot.elements,
+        &state.snapshot.forms,
+        &state.snapshot.cookies,
+        sitemap_path,
+    )?;
+    let snapshot_path = write_snapshot_json(&state.snapshot, sitemap_path)?;
+    let session_path = save_session_state(workspace_root, &state.session)?;
+    Ok((snapshot_path, session_path, facts_path))
+}
+
+pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
+    let mut session = BrowserSessionState {
+        id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
+        current_url: Some(workflow.start_url.clone()),
+        cookies: Vec::new(),
+    };
+    let snapshot = crawl_page_snapshot_with_session(&mut session, &workflow.start_url)?;
+    let state = BrowserReplayState {
+        session,
+        snapshot,
+        filled_fields: HashMap::new(),
+    };
+    let (result, _) = replay_workflow_with_state(workflow, state)?;
+    Ok(result)
+}
+
+pub fn replay_workflow_in_session(
+    workspace_root: &Path,
+    session_id: &str,
+    workflow: &BrowserWorkflow,
+    sitemap_path: &Path,
+) -> Result<String, String> {
+    let mut session = load_session_state(workspace_root, session_id)?;
+    let snapshot = match session.current_url.clone() {
+        Some(url) => load_snapshot_json(&url, sitemap_path)
+            .or_else(|_| crawl_page_snapshot_with_session(&mut session, &url)),
+        None => crawl_page_snapshot_with_session(&mut session, &workflow.start_url),
+    }?;
+    session.id = session_id.to_string();
+    let state = BrowserReplayState {
+        session,
+        snapshot,
+        filled_fields: HashMap::new(),
+    };
+    let (result, final_state) = replay_workflow_with_state(workflow, state)?;
+    let (snapshot_path, session_path, facts_path) =
+        persist_replay_state(workspace_root, &final_state, sitemap_path)?;
+    Ok(format!(
+        "{}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}",
+        result,
+        snapshot_path.display(),
+        session_path.display(),
+        facts_path.display()
     ))
 }
 
@@ -1355,7 +1503,8 @@ mod tests {
     use super::{
         crawl_facts_path, create_session, diff_snapshots, load_session_state, load_workflow,
         load_snapshot_json, navigate_session, parse_html_to_snapshot, render_workflow_dsl,
-        replay_workflow, save_workflow, wait_for_session, write_crawl_facts, AomElement,
+        replay_workflow, replay_workflow_in_session, restore_session_checkpoint,
+        save_session_checkpoint, save_workflow, wait_for_session, write_crawl_facts, AomElement,
         BrowserCookie, BrowserWorkflow, BrowserWorkflowStep,
     };
     use std::fs;
@@ -1624,5 +1773,74 @@ mod tests {
         let session = load_session_state(root, "qa-session").unwrap();
         assert_eq!(session.cookies.len(), 1);
         assert_eq!(session.cookies[0].name, "token");
+    }
+
+    #[test]
+    fn saves_restores_and_replays_browser_session_checkpoints() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for _ in 0..3 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let body = if first_line.starts_with("POST /login") {
+                        "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
+                    } else {
+                        "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nSet-Cookie: session=abc123; Path=/\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let sitemap_path = root.join("site_map");
+        create_session(root, "auth-session").unwrap();
+        navigate_session(root, "auth-session", &base_url, &sitemap_path).unwrap();
+        let checkpoint_path = save_session_checkpoint(root, "auth-session", "before-submit", &sitemap_path).unwrap();
+        assert!(checkpoint_path.exists());
+
+        let workflow = BrowserWorkflow {
+            name: "Resume Login".to_string(),
+            start_url: base_url.clone(),
+            steps: vec![
+                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "rust@example.com".to_string() },
+                BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },
+                BrowserWorkflowStep::AssertTextContains { text: "Welcome back".to_string() },
+            ],
+        };
+
+        let replay = replay_workflow_in_session(root, "auth-session", &workflow, &sitemap_path).unwrap();
+        assert!(replay.contains("Workflow 'Resume Login' completed."));
+        assert!(replay.contains("Final title: Dashboard"));
+        assert!(replay.contains("Session: auth-session"));
+        let session = load_session_state(root, "auth-session").unwrap();
+        let expected_login_url = format!("{}/login", base_url);
+        assert_eq!(session.current_url.as_deref(), Some(expected_login_url.as_str()));
+        assert_eq!(session.cookies.len(), 1);
+
+        let restored = restore_session_checkpoint(
+            root,
+            "auth-session",
+            "before-submit",
+            Some("forked-session"),
+            &sitemap_path,
+        )
+        .unwrap();
+        assert!(restored.contains("Restored browser session checkpoint 'before-submit'"));
+        assert!(restored.contains("Session: forked-session"));
+        assert!(restored.contains("Title: Login"));
+        let restored_session = load_session_state(root, "forked-session").unwrap();
+        assert_eq!(restored_session.current_url.as_deref(), Some(base_url.as_str()));
     }
 }

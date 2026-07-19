@@ -186,6 +186,31 @@ pub fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_save_checkpoint".to_string(),
+            description: "Persist the current browser session and its latest snapshot as a named checkpoint for later restore or forking.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Existing browser session identifier." },
+                    "checkpointName": { "type": "string", "description": "Human-readable checkpoint name." }
+                },
+                "required": ["sessionId", "checkpointName"]
+            }),
+        },
+        Tool {
+            name: "browser_restore_checkpoint".to_string(),
+            description: "Restore a saved browser session checkpoint, optionally forking it into a different session id.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Original session identifier that owns the checkpoint." },
+                    "checkpointName": { "type": "string", "description": "Checkpoint name to restore." },
+                    "targetSessionId": { "type": "string", "description": "Optional new session identifier to restore into." }
+                },
+                "required": ["sessionId", "checkpointName"]
+            }),
+        },
+        Tool {
             name: "browser_save_workflow".to_string(),
             description: "Persist a semantic browser workflow as JSON plus NDA-backed DSL for later deterministic replay.".to_string(),
             input_schema: json!({
@@ -215,11 +240,12 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_replay_workflow".to_string(),
-            description: "Replay a saved semantic browser workflow deterministically using the current static AOM-first engine with session/form support.".to_string(),
+            description: "Replay a saved semantic browser workflow deterministically using the current static AOM-first engine with session/form support. Provide sessionId to run inside an existing persisted session.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "relativeFilePath": { "type": "string", "description": "Path to a saved .browser.json workflow relative to the workspace root." }
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .browser.json workflow relative to the workspace root." },
+                    "sessionId": { "type": "string", "description": "Optional persisted session id to replay inside instead of an ephemeral session." }
                 },
                 "required": ["relativeFilePath"]
             }),
@@ -273,6 +299,33 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 name,
                 timeout_ms,
                 interval_ms,
+                &sitemap_path,
+            )
+            .map_err(|e| e.into())
+        }
+        "browser_save_checkpoint" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let checkpoint_name = arguments["checkpointName"].as_str().ok_or("checkpointName is required")?;
+            let sitemap_path = root.join(".velocity").join("site_map");
+            let checkpoint_path = crate::editor::browser::save_session_checkpoint(&root, session_id, checkpoint_name, &sitemap_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(format!(
+                "Saved browser checkpoint '{}' for session '{}'\nCheckpoint JSON: {}",
+                checkpoint_name,
+                session_id,
+                checkpoint_path.display()
+            ))
+        }
+        "browser_restore_checkpoint" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let checkpoint_name = arguments["checkpointName"].as_str().ok_or("checkpointName is required")?;
+            let target_session_id = arguments["targetSessionId"].as_str();
+            let sitemap_path = root.join(".velocity").join("site_map");
+            crate::editor::browser::restore_session_checkpoint(
+                &root,
+                session_id,
+                checkpoint_name,
+                target_session_id,
                 &sitemap_path,
             )
             .map_err(|e| e.into())
@@ -348,7 +401,13 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let workflow = crate::editor::browser::load_workflow(&full_path)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
-            crate::editor::browser::replay_workflow(&workflow).map_err(|e| e.into())
+            let sitemap_path = root.join(".velocity").join("site_map");
+            if let Some(session_id) = arguments["sessionId"].as_str() {
+                crate::editor::browser::replay_workflow_in_session(&root, session_id, &workflow, &sitemap_path)
+                    .map_err(|e| e.into())
+            } else {
+                crate::editor::browser::replay_workflow(&workflow).map_err(|e| e.into())
+            }
         }
         "run_command" => {
             let command_str = arguments["command"].as_str().ok_or("command is required")?;
@@ -959,6 +1018,106 @@ mod tests {
         .unwrap();
         assert!(session.contains("\"id\": \"qa-session\""));
         assert!(session.contains("\"name\": \"token\""));
+    }
+
+    #[test]
+    fn browser_checkpoint_and_session_replay_tools_round_trip() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for _ in 0..3 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let body = if first_line.starts_with("POST /login") {
+                        "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
+                    } else {
+                        "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nSet-Cookie: session=abc123; Path=/\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(
+            &root,
+            "browser_create_session",
+            &json!({"sessionId": "auth-session"}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_session_navigate",
+            &json!({"sessionId": "auth-session", "url": base_url}),
+        )
+        .unwrap();
+
+        let saved = call_tool_in_workspace(
+            &root,
+            "browser_save_checkpoint",
+            &json!({"sessionId": "auth-session", "checkpointName": "before-submit"}),
+        )
+        .unwrap();
+        assert!(saved.contains("Saved browser checkpoint 'before-submit'"));
+
+        let save_workflow = call_tool_in_workspace(
+            &root,
+            "browser_save_workflow",
+            &json!({
+                "name": "Resume Login",
+                "startUrl": base_url,
+                "steps": [
+                    {"kind": "fill_field", "field": "email", "value": "rust@example.com"},
+                    {"kind": "submit_form", "form": "login"},
+                    {"kind": "assert_text_contains", "text": "Welcome back"}
+                ]
+            }),
+        )
+        .unwrap();
+        assert!(save_workflow.contains("Saved browser workflow 'Resume Login'"));
+
+        let replay = call_tool_in_workspace(
+            &root,
+            "browser_replay_workflow",
+            &json!({
+                "relativeFilePath": ".velocity/browser-workflows/resume-login.browser.json",
+                "sessionId": "auth-session"
+            }),
+        )
+        .unwrap();
+        assert!(replay.contains("Workflow 'Resume Login' completed."));
+        assert!(replay.contains("Final title: Dashboard"));
+        assert!(replay.contains("Session: auth-session"));
+        assert!(replay.contains("Session JSON:"));
+
+        let restored = call_tool_in_workspace(
+            &root,
+            "browser_restore_checkpoint",
+            &json!({
+                "sessionId": "auth-session",
+                "checkpointName": "before-submit",
+                "targetSessionId": "forked-session"
+            }),
+        )
+        .unwrap();
+        assert!(restored.contains("Restored browser session checkpoint 'before-submit'"));
+        assert!(restored.contains("Session: forked-session"));
+        assert!(restored.contains("Title: Login"));
     }
 }
 
