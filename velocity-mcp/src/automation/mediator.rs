@@ -12,12 +12,19 @@ pub struct EditLock {
     pub timestamp: Instant,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConflictKind {
+    DirectLine,
+    ScopeOverlap,
+    Semantic,
+}
+
 #[derive(Clone, Debug)]
 pub struct Conflict {
     pub file_path: PathBuf,
     pub existing_lock: EditLock,
     pub requested_lock: EditLock,
-    pub is_semantic: bool, // true if caught via callers/dependencies coupling
+    pub kind: ConflictKind,
 }
 
 pub struct MediatorArena {
@@ -48,10 +55,20 @@ impl MediatorArena {
             timestamp: Instant::now(),
         };
 
-        // 1. Direct line overlap check in the same file
-        if let Some(file_locks) = locks_guard.get(&file_path) {
-            for existing in file_locks {
-                if existing.agent_id != agent_id {
+        // 1. Direct path overlap and exact-file line overlap checks.
+        let requested_is_dir = file_path.is_dir();
+        for (other_path, other_locks) in locks_guard.iter() {
+            for existing in other_locks {
+                if existing.agent_id == agent_id {
+                    continue;
+                }
+
+                let existing_is_dir = existing.file_path.is_dir();
+                if !scopes_overlap(&file_path, requested_is_dir, other_path, existing_is_dir) {
+                    continue;
+                }
+
+                if !requested_is_dir && !existing_is_dir && other_path == &file_path {
                     let (req_start, req_end) = line_range;
                     let (exist_start, exist_end) = existing.line_range;
                     if req_start <= exist_end && req_end >= exist_start {
@@ -59,10 +76,18 @@ impl MediatorArena {
                             file_path: file_path.clone(),
                             existing_lock: existing.clone(),
                             requested_lock: requested,
-                            is_semantic: false,
+                            kind: ConflictKind::DirectLine,
                         });
                     }
+                    continue;
                 }
+
+                return Err(Conflict {
+                    file_path: file_path.clone(),
+                    existing_lock: existing.clone(),
+                    requested_lock: requested,
+                    kind: ConflictKind::ScopeOverlap,
+                });
             }
         }
 
@@ -82,7 +107,7 @@ impl MediatorArena {
                                 file_path: file_path.clone(),
                                 existing_lock: existing.clone(),
                                 requested_lock: requested,
-                                is_semantic: true,
+                                kind: ConflictKind::Semantic,
                             });
                         }
                     }
@@ -116,8 +141,8 @@ impl MediatorArena {
 
     /// Generate an adapter or contract resolution for a conflict.
     pub fn resolve_conflict(&self, conflict: &Conflict) -> String {
-        if conflict.is_semantic {
-            format!(
+        match conflict.kind {
+            ConflictKind::Semantic => format!(
                 "MEDIATION CONTRACT:\n\
                  Conflict Type: SEMANTIC COUPLING\n\
                  File A: {}\n\
@@ -128,9 +153,19 @@ impl MediatorArena {
                 conflict.requested_lock.file_path.display(),
                 conflict.existing_lock.agent_id,
                 conflict.requested_lock.agent_id
-            )
-        } else {
-            format!(
+            ),
+            ConflictKind::ScopeOverlap => format!(
+                "MEDIATION CONTRACT:\n\
+                 Conflict Type: SCOPE OVERLAP\n\
+                 Scope A: {}\n\
+                 Scope B: {}\n\
+                 Action required: Alice ({}) and Bob ({}) must serialize overlapping scoped work before applying edits.",
+                conflict.existing_lock.file_path.display(),
+                conflict.requested_lock.file_path.display(),
+                conflict.existing_lock.agent_id,
+                conflict.requested_lock.agent_id
+            ),
+            ConflictKind::DirectLine => format!(
                 "MEDIATION CONTRACT:\n\
                  Conflict Type: DIRECT LINE COLLISION\n\
                  File: {}\n\
@@ -143,7 +178,7 @@ impl MediatorArena {
                 conflict.requested_lock.line_range.1,
                 conflict.existing_lock.agent_id,
                 conflict.requested_lock.agent_id
-            )
+            ),
         }
     }
 }
@@ -151,6 +186,32 @@ impl MediatorArena {
 fn path_identity_hash(path: &Path) -> u64 {
     let canonical = canonicalize_scope_path(path);
     hash_str(&canonical)
+}
+
+fn scopes_overlap(a: &Path, a_is_dir: bool, b: &Path, b_is_dir: bool) -> bool {
+    let a_canonical = canonicalize_scope_path(a);
+    let b_canonical = canonicalize_scope_path(b);
+
+    if a_canonical == b_canonical {
+        return true;
+    }
+
+    if a_is_dir && is_canonical_within_scope(&b_canonical, &a_canonical) {
+        return true;
+    }
+
+    if b_is_dir && is_canonical_within_scope(&a_canonical, &b_canonical) {
+        return true;
+    }
+
+    false
+}
+
+fn is_canonical_within_scope(path: &str, scope_root: &str) -> bool {
+    path == scope_root
+        || path
+            .strip_prefix(scope_root)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn canonicalize_scope_path(path: &Path) -> String {
@@ -197,7 +258,7 @@ mod tests {
         let res = arena.acquire_lock(file_a.clone(), (15, 25), "AgentBob".to_string(), &sm);
         assert!(res.is_err());
         let conflict = res.err().unwrap();
-        assert_eq!(conflict.is_semantic, false);
+        assert_eq!(conflict.kind, ConflictKind::DirectLine);
         assert_eq!(conflict.existing_lock.agent_id, "AgentAlice");
 
         // Requesting non-overlapping range on same file succeeds
@@ -218,7 +279,7 @@ mod tests {
         let res_sem = arena.acquire_lock(file_a.clone(), (1, 9), "AgentBob".to_string(), &sm);
         assert!(res_sem.is_err());
         let conflict_sem = res_sem.err().unwrap();
-        assert_eq!(conflict_sem.is_semantic, true);
+        assert_eq!(conflict_sem.kind, ConflictKind::Semantic);
         assert_eq!(conflict_sem.existing_lock.agent_id, "AgentAlice");
 
         // Verify conflict resolution text output
@@ -246,11 +307,32 @@ mod tests {
 
         let conflict = arena.acquire_lock(callee.clone(), (1, 5), "AgentBob".to_string(), &sm);
         assert!(conflict.is_err());
-        assert!(conflict.as_ref().err().unwrap().is_semantic);
+        assert_eq!(conflict.as_ref().err().unwrap().kind, ConflictKind::Semantic);
 
         arena.release_lock(&caller, "AgentAlice");
 
         let unrelated_result = arena.acquire_lock(unrelated.clone(), (1, 5), "AgentBob".to_string(), &sm);
         assert!(unrelated_result.is_ok());
+    }
+
+    #[test]
+    fn directory_scopes_conflict_with_nested_files() {
+        let arena = MediatorArena::new();
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path();
+        let mut sm = SiteMap::open(temp_dir.path(), 0).unwrap();
+
+        let dir_scope = workspace_root.join("src");
+        let nested_file = workspace_root.join("src").join("lib.rs");
+        std::fs::create_dir_all(dir_scope.clone()).unwrap();
+        std::fs::write(&nested_file, "pub fn demo() {}\n").unwrap();
+
+        arena.acquire_lock(dir_scope.clone(), (1, usize::MAX / 4), "AgentAlice".to_string(), &sm).unwrap();
+
+        let conflict = arena.acquire_lock(nested_file.clone(), (1, usize::MAX / 4), "AgentBob".to_string(), &sm);
+        assert!(conflict.is_err());
+        let conflict = conflict.err().unwrap();
+        assert_eq!(conflict.kind, ConflictKind::ScopeOverlap);
+        assert!(arena.resolve_conflict(&conflict).contains("Conflict Type: SCOPE OVERLAP"));
     }
 }

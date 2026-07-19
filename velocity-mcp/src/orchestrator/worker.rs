@@ -145,29 +145,20 @@ fn run_assignment(
         return result;
     }
 
-    let mut locked_files = Vec::new();
-    for scope in &task.scope {
-        let rel = PathBuf::from(scope);
-        let abs = if rel.is_absolute() {
-            rel
-        } else {
-            assignment.workspace_root.join(&rel)
-        };
-        if abs.is_file() {
-            if let Err(conflict) = mediator.acquire_lock(abs.clone(), (1, usize::MAX / 4), format!("task-{}", task.id.0), &site_map) {
-                result.success = false;
-                result.duration = start.elapsed();
-                result.message = mediator.resolve_conflict(&conflict);
-                return result;
-            }
-            locked_files.push(abs);
+    let locked_scopes = match acquire_scope_locks(&assignment.workspace_root, &task.scope, &mediator, &site_map, task.id) {
+        Ok(locked_scopes) => locked_scopes,
+        Err(message) => {
+            result.success = false;
+            result.duration = start.elapsed();
+            result.message = message;
+            return result;
         }
-    }
+    };
 
     let outcome = execute_live_task(&assignment, &run_dir, &task.scope);
 
-    for file in &locked_files {
-        mediator.release_lock(file, &format!("task-{}", task.id.0));
+    for scope in &locked_scopes {
+        mediator.release_lock(scope, &format!("task-{}", task.id.0));
     }
 
     match outcome {
@@ -220,6 +211,33 @@ struct ExecutionOutcome {
     status_updates: Vec<String>,
     attempts: Vec<WorkerAttempt>,
     message: String,
+}
+
+fn acquire_scope_locks(
+    workspace_root: &Path,
+    scope: &[String],
+    mediator: &Arc<MediatorArena>,
+    site_map: &SiteMap,
+    task_id: TaskId,
+) -> Result<Vec<PathBuf>, String> {
+    let agent_id = format!("task-{}", task_id.0);
+    let mut locked_scopes: Vec<PathBuf> = Vec::new();
+    for entry in scope {
+        let rel = PathBuf::from(entry);
+        let abs = if rel.is_absolute() {
+            rel
+        } else {
+            workspace_root.join(&rel)
+        };
+        if let Err(conflict) = mediator.acquire_lock(abs.clone(), (1, usize::MAX / 4), agent_id.clone(), site_map) {
+            for locked in &locked_scopes {
+                mediator.release_lock(locked, &agent_id);
+            }
+            return Err(mediator.resolve_conflict(&conflict));
+        }
+        locked_scopes.push(abs);
+    }
+    Ok(locked_scopes)
 }
 
 fn execute_live_task(
@@ -739,12 +757,14 @@ fn is_path_within_scope(rel_path: &Path, scoped_paths: &ScopedPaths, workspace_r
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_scoped_paths, collect_workspace_files, detect_out_of_scope_created_files,
-        detect_scoped_changes, snapshot_scope, write_execution_contract_artifacts,
-        write_execution_facts, ExecutionOutcome, WorkerAssignment, WorkerAttempt,
+        acquire_scope_locks, collect_scoped_paths, collect_workspace_files,
+        detect_out_of_scope_created_files, detect_scoped_changes, snapshot_scope,
+        write_execution_contract_artifacts, write_execution_facts, ExecutionOutcome,
+        WorkerAssignment, WorkerAttempt,
     };
     use crate::agent::AiProvider;
-    use crate::automation::RoutedModelRoute;
+    use crate::automation::{MediatorArena, RoutedModelRoute};
+    use velocity_ide::site_map::SiteMap;
     use crate::orchestrator::blueprint::Task;
     use std::fs;
     use std::path::PathBuf;
@@ -808,6 +828,48 @@ mod tests {
         let out_of_scope = detect_out_of_scope_created_files(&scoped_paths, &before_workspace, workspace_root).unwrap();
 
         assert_eq!(out_of_scope, vec![PathBuf::from("docs").join("rogue.md").display().to_string()]);
+    }
+
+    #[test]
+    fn acquires_directory_scope_locks_for_worker_runs() {
+        let workspace = tempdir().unwrap();
+        let workspace_root = workspace.path();
+        let workspace_root_buf = workspace_root.to_path_buf();
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::write(workspace_root.join("src").join("lib.rs"), "pub fn demo() {}\n").unwrap();
+
+        let mediator = std::sync::Arc::new(MediatorArena::new());
+        let site_map = SiteMap::open(workspace_root, 0).unwrap();
+        let locked = acquire_scope_locks(
+            workspace_root,
+            &["src".to_string()],
+            &mediator,
+            &site_map,
+            super::TaskId(7),
+        )
+        .unwrap();
+        assert_eq!(locked, vec![workspace_root.join("src")]);
+
+        let conflict = mediator.acquire_lock(
+            workspace_root.join("src").join("lib.rs"),
+            (1, usize::MAX / 4),
+            "task-8".to_string(),
+            &site_map,
+        );
+        assert!(conflict.is_err());
+
+        for scope in &locked {
+            mediator.release_lock(scope, "task-7");
+        }
+
+        let reacquired = acquire_scope_locks(
+            &workspace_root_buf,
+            &["src".to_string()],
+            &mediator,
+            &site_map,
+            super::TaskId(9),
+        );
+        assert!(reacquired.is_ok());
     }
 
     #[test]
