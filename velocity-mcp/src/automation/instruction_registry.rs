@@ -37,6 +37,19 @@ impl AgentTaskKind {
             AgentTaskKind::Merge => "merge",
         }
     }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "refactor" => Some(AgentTaskKind::Refactor),
+            "bug_fix" => Some(AgentTaskKind::BugFix),
+            "test" => Some(AgentTaskKind::Test),
+            "documentation" => Some(AgentTaskKind::Documentation),
+            "analysis" => Some(AgentTaskKind::Analysis),
+            "planning" => Some(AgentTaskKind::Planning),
+            "merge" => Some(AgentTaskKind::Merge),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +72,15 @@ impl DecompositionStyle {
             DecompositionStyle::IsolatedFiles => "isolated_files",
             DecompositionStyle::CoupledComponents => "coupled_components",
             DecompositionStyle::SequentialPipeline => "sequential_pipeline",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "isolated_files" => Some(DecompositionStyle::IsolatedFiles),
+            "coupled_components" => Some(DecompositionStyle::CoupledComponents),
+            "sequential_pipeline" => Some(DecompositionStyle::SequentialPipeline),
+            _ => None,
         }
     }
 }
@@ -100,7 +122,8 @@ struct InstructionRegistryFile {
 
 #[derive(Debug, Clone)]
 pub struct InstructionRegistry {
-    storage_path: PathBuf,
+    nda_storage_path: PathBuf,
+    json_storage_path: PathBuf,
     templates: Vec<InstructionTemplate>,
     policies: Vec<DecompositionPolicy>,
     preferred_policies: Vec<PreferredPolicy>,
@@ -108,19 +131,34 @@ pub struct InstructionRegistry {
 
 impl InstructionRegistry {
     pub fn open(workspace_root: &Path) -> Self {
-        let storage_path = workspace_root
-            .join(".velocity")
-            .join("agentic")
-            .join("instructions.json");
-        let (templates, policies, preferred_policies) = Self::load_registry(&storage_path)
-            .map(|(templates, policies, preferred_policies)| {
-                let templates = if templates.is_empty() { Self::default_templates() } else { templates };
-                let policies = if policies.is_empty() { Self::default_policies() } else { policies };
-                (templates, policies, preferred_policies)
-            })
-            .unwrap_or_else(|_| (Self::default_templates(), Self::default_policies(), Vec::new()));
+        let storage_dir = workspace_root.join(".velocity").join("agentic");
+        let nda_storage_path = storage_dir.join("instructions.nda");
+        let json_storage_path = storage_dir.join("instructions.json");
+        let (templates, policies, preferred_policies) =
+            Self::load_registry(&nda_storage_path, &json_storage_path)
+                .map(|(templates, policies, preferred_policies)| {
+                    let templates = if templates.is_empty() {
+                        Self::default_templates()
+                    } else {
+                        templates
+                    };
+                    let policies = if policies.is_empty() {
+                        Self::default_policies()
+                    } else {
+                        policies
+                    };
+                    (templates, policies, preferred_policies)
+                })
+                .unwrap_or_else(|_| {
+                    (
+                        Self::default_templates(),
+                        Self::default_policies(),
+                        Vec::new(),
+                    )
+                });
         let registry = Self {
-            storage_path,
+            nda_storage_path,
+            json_storage_path,
             templates,
             policies,
             preferred_policies,
@@ -134,7 +172,10 @@ impl InstructionRegistry {
     }
 
     pub fn templates_for_kind(&self, kind: AgentTaskKind) -> Vec<&InstructionTemplate> {
-        self.templates.iter().filter(|template| template.task_kind == kind).collect()
+        self.templates
+            .iter()
+            .filter(|template| template.task_kind == kind)
+            .collect()
     }
 
     pub fn policies(&self) -> &[DecompositionPolicy] {
@@ -142,7 +183,10 @@ impl InstructionRegistry {
     }
 
     pub fn policies_for_kind(&self, kind: AgentTaskKind) -> Vec<&DecompositionPolicy> {
-        self.policies.iter().filter(|policy| policy.task_kind == kind).collect()
+        self.policies
+            .iter()
+            .filter(|policy| policy.task_kind == kind)
+            .collect()
     }
 
     pub fn get(&self, id: &str) -> Option<&InstructionTemplate> {
@@ -150,7 +194,9 @@ impl InstructionRegistry {
     }
 
     pub fn for_kind(&self, kind: AgentTaskKind) -> Option<&InstructionTemplate> {
-        self.templates.iter().find(|template| template.task_kind == kind)
+        self.templates
+            .iter()
+            .find(|template| template.task_kind == kind)
     }
 
     pub fn get_policy(&self, id: &str) -> Option<&DecompositionPolicy> {
@@ -173,15 +219,26 @@ impl InstructionRegistry {
 
     pub fn set_preferred_policy(&mut self, kind: AgentTaskKind, policy_id: impl Into<String>) {
         let policy_id = policy_id.into();
-        if let Some(existing) = self.preferred_policies.iter_mut().find(|preferred| preferred.task_kind == kind) {
+        if let Some(existing) = self
+            .preferred_policies
+            .iter_mut()
+            .find(|preferred| preferred.task_kind == kind)
+        {
             existing.policy_id = policy_id;
         } else {
-            self.preferred_policies.push(PreferredPolicy { task_kind: kind, policy_id });
+            self.preferred_policies.push(PreferredPolicy {
+                task_kind: kind,
+                policy_id,
+            });
         }
     }
 
     pub fn upsert(&mut self, template: InstructionTemplate) {
-        if let Some(existing) = self.templates.iter_mut().find(|existing| existing.id == template.id) {
+        if let Some(existing) = self
+            .templates
+            .iter_mut()
+            .find(|existing| existing.id == template.id)
+        {
             *existing = template;
         } else {
             self.templates.push(template);
@@ -189,7 +246,11 @@ impl InstructionRegistry {
     }
 
     pub fn upsert_policy(&mut self, policy: DecompositionPolicy) {
-        if let Some(existing) = self.policies.iter_mut().find(|existing| existing.id == policy.id) {
+        if let Some(existing) = self
+            .policies
+            .iter_mut()
+            .find(|existing| existing.id == policy.id)
+        {
             *existing = policy;
         } else {
             self.policies.push(policy);
@@ -201,26 +262,316 @@ impl InstructionRegistry {
     }
 
     fn ensure_persisted(&self) -> Result<(), String> {
-        if let Some(parent) = self.storage_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create instruction registry directory: {e}"))?;
+        if let Some(parent) = self.nda_storage_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create instruction registry directory: {e}"))?;
         }
+        let nda = self.to_nda_string();
+        fs::write(&self.nda_storage_path, nda)
+            .map_err(|e| format!("Failed to write NDA instruction registry: {e}"))?;
+
         let payload = InstructionRegistryFile {
             templates: self.templates.clone(),
             policies: self.policies.clone(),
             preferred_policies: self.preferred_policies.clone(),
         };
         let json = serde_json::to_string_pretty(&payload)
-            .map_err(|e| format!("Failed to serialize instruction registry: {e}"))?;
-        fs::write(&self.storage_path, json)
-            .map_err(|e| format!("Failed to write instruction registry: {e}"))
+            .map_err(|e| format!("Failed to serialize instruction registry JSON export: {e}"))?;
+        fs::write(&self.json_storage_path, json)
+            .map_err(|e| format!("Failed to write instruction registry JSON export: {e}"))
     }
 
-    fn load_registry(path: &Path) -> Result<(Vec<InstructionTemplate>, Vec<DecompositionPolicy>, Vec<PreferredPolicy>), String> {
-        let raw = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read instruction registry: {e}"))?;
+    fn load_registry(
+        nda_path: &Path,
+        json_path: &Path,
+    ) -> Result<
+        (
+            Vec<InstructionTemplate>,
+            Vec<DecompositionPolicy>,
+            Vec<PreferredPolicy>,
+        ),
+        String,
+    > {
+        if nda_path.exists() {
+            let raw = fs::read_to_string(nda_path)
+                .map_err(|e| format!("Failed to read NDA instruction registry: {e}"))?;
+            return Self::parse_nda_registry(&raw);
+        }
+
+        let raw = fs::read_to_string(json_path)
+            .map_err(|e| format!("Failed to read instruction registry JSON fallback: {e}"))?;
         let file = serde_json::from_str::<InstructionRegistryFile>(&raw)
-            .map_err(|e| format!("Failed to parse instruction registry: {e}"))?;
+            .map_err(|e| format!("Failed to parse instruction registry JSON fallback: {e}"))?;
         Ok((file.templates, file.policies, file.preferred_policies))
+    }
+
+    fn to_nda_string(&self) -> String {
+        let mut templates = self.templates.clone();
+        templates.sort_by(|a, b| {
+            a.task_kind
+                .as_str()
+                .cmp(b.task_kind.as_str())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+
+        let mut policies = self.policies.clone();
+        policies.sort_by(|a, b| {
+            a.task_kind
+                .as_str()
+                .cmp(b.task_kind.as_str())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+
+        let mut preferred_policies = self.preferred_policies.clone();
+        preferred_policies.sort_by(|a, b| a.task_kind.as_str().cmp(b.task_kind.as_str()));
+
+        let mut lines = vec!["registry version 1".to_string()];
+        for template in templates {
+            lines.push(format!(
+                "template {} label {}",
+                template.id,
+                Self::escape_value(&template.label)
+            ));
+            lines.push(format!(
+                "template {} task_kind {}",
+                template.id,
+                template.task_kind.as_str()
+            ));
+            lines.push(format!(
+                "template {} system_prompt {}",
+                template.id,
+                Self::escape_value(&template.system_prompt)
+            ));
+            for checklist_item in template.checklist {
+                lines.push(format!(
+                    "template {} checklist {}",
+                    template.id,
+                    Self::escape_value(&checklist_item)
+                ));
+            }
+        }
+
+        for policy in policies {
+            lines.push(format!(
+                "policy {} label {}",
+                policy.id,
+                Self::escape_value(&policy.label)
+            ));
+            lines.push(format!(
+                "policy {} task_kind {}",
+                policy.id,
+                policy.task_kind.as_str()
+            ));
+            lines.push(format!(
+                "policy {} template {}",
+                policy.id,
+                Self::escape_value(&policy.instruction_template_id)
+            ));
+            lines.push(format!(
+                "policy {} decomposition_style {}",
+                policy.id,
+                policy.decomposition_style.as_str()
+            ));
+            for expectation in policy.shared_expectations {
+                lines.push(format!(
+                    "policy {} expectation {}",
+                    policy.id,
+                    Self::escape_value(&expectation)
+                ));
+            }
+        }
+
+        for preferred in preferred_policies {
+            lines.push(format!(
+                "preferred_policy {} {}",
+                preferred.task_kind.as_str(),
+                Self::escape_value(&preferred.policy_id)
+            ));
+        }
+
+        lines.join("\n") + "\n"
+    }
+
+    fn parse_nda_registry(
+        raw: &str,
+    ) -> Result<
+        (
+            Vec<InstructionTemplate>,
+            Vec<DecompositionPolicy>,
+            Vec<PreferredPolicy>,
+        ),
+        String,
+    > {
+        let mut templates = Vec::<InstructionTemplate>::new();
+        let mut policies = Vec::<DecompositionPolicy>::new();
+        let mut preferred_policies = Vec::<PreferredPolicy>::new();
+
+        for (line_index, line) in raw.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if line_index == 0 {
+                if line != "registry version 1" {
+                    return Err(format!(
+                        "Unsupported NDA instruction registry header: {line}"
+                    ));
+                }
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("template ") {
+                let mut parts = rest.splitn(3, ' ');
+                let id = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing template id on line: {line}"))?;
+                let field = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing template field on line: {line}"))?;
+                let value = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing template value on line: {line}"))?;
+                let template = Self::ensure_template(&mut templates, id);
+                match field {
+                    "label" => template.label = Self::unescape_value(value)?,
+                    "task_kind" => {
+                        template.task_kind = AgentTaskKind::parse(value)
+                            .ok_or_else(|| format!("Unknown template task kind '{value}'"))?;
+                    }
+                    "system_prompt" => template.system_prompt = Self::unescape_value(value)?,
+                    "checklist" => template.checklist.push(Self::unescape_value(value)?),
+                    _ => return Err(format!("Unknown template field '{field}' on line: {line}")),
+                }
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("policy ") {
+                let mut parts = rest.splitn(3, ' ');
+                let id = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing policy id on line: {line}"))?;
+                let field = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing policy field on line: {line}"))?;
+                let value = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing policy value on line: {line}"))?;
+                let policy = Self::ensure_policy(&mut policies, id);
+                match field {
+                    "label" => policy.label = Self::unescape_value(value)?,
+                    "task_kind" => {
+                        policy.task_kind = AgentTaskKind::parse(value)
+                            .ok_or_else(|| format!("Unknown policy task kind '{value}'"))?;
+                    }
+                    "template" => policy.instruction_template_id = Self::unescape_value(value)?,
+                    "decomposition_style" => {
+                        policy.decomposition_style = DecompositionStyle::parse(value)
+                            .ok_or_else(|| format!("Unknown decomposition style '{value}'"))?;
+                    }
+                    "expectation" => policy
+                        .shared_expectations
+                        .push(Self::unescape_value(value)?),
+                    _ => return Err(format!("Unknown policy field '{field}' on line: {line}")),
+                }
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("preferred_policy ") {
+                let mut parts = rest.splitn(2, ' ');
+                let task_kind = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing preferred policy task kind on line: {line}"))?;
+                let policy_id = parts
+                    .next()
+                    .ok_or_else(|| format!("Missing preferred policy id on line: {line}"))?;
+                preferred_policies.push(PreferredPolicy {
+                    task_kind: AgentTaskKind::parse(task_kind).ok_or_else(|| {
+                        format!("Unknown preferred policy task kind '{task_kind}'")
+                    })?,
+                    policy_id: Self::unescape_value(policy_id)?,
+                });
+                continue;
+            }
+
+            return Err(format!("Unknown NDA instruction registry line: {line}"));
+        }
+
+        Ok((templates, policies, preferred_policies))
+    }
+
+    fn ensure_template<'a>(
+        templates: &'a mut Vec<InstructionTemplate>,
+        id: &str,
+    ) -> &'a mut InstructionTemplate {
+        if let Some(index) = templates.iter().position(|template| template.id == id) {
+            return &mut templates[index];
+        }
+        templates.push(InstructionTemplate {
+            id: id.to_string(),
+            label: String::new(),
+            task_kind: AgentTaskKind::Planning,
+            system_prompt: String::new(),
+            checklist: Vec::new(),
+        });
+        templates.last_mut().expect("template inserted")
+    }
+
+    fn ensure_policy<'a>(
+        policies: &'a mut Vec<DecompositionPolicy>,
+        id: &str,
+    ) -> &'a mut DecompositionPolicy {
+        if let Some(index) = policies.iter().position(|policy| policy.id == id) {
+            return &mut policies[index];
+        }
+        policies.push(DecompositionPolicy {
+            id: id.to_string(),
+            label: String::new(),
+            task_kind: AgentTaskKind::Planning,
+            instruction_template_id: String::new(),
+            decomposition_style: DecompositionStyle::SequentialPipeline,
+            shared_expectations: Vec::new(),
+        });
+        policies.last_mut().expect("policy inserted")
+    }
+
+    fn escape_value(value: &str) -> String {
+        let mut escaped = String::new();
+        for ch in value.chars() {
+            match ch {
+                '\\' => escaped.push_str("\\\\"),
+                '\n' => escaped.push_str("\\n"),
+                '\r' => escaped.push_str("\\r"),
+                '\t' => escaped.push_str("\\t"),
+                _ => escaped.push(ch),
+            }
+        }
+        escaped
+    }
+
+    fn unescape_value(value: &str) -> Result<String, String> {
+        let mut result = String::new();
+        let mut chars = value.chars();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                result.push(ch);
+                continue;
+            }
+
+            let escaped = chars
+                .next()
+                .ok_or_else(|| "Dangling escape in NDA registry value".to_string())?;
+            match escaped {
+                '\\' => result.push('\\'),
+                'n' => result.push('\n'),
+                'r' => result.push('\r'),
+                't' => result.push('\t'),
+                other => {
+                    result.push('\\');
+                    result.push(other);
+                }
+            }
+        }
+        Ok(result)
     }
 
     fn default_templates() -> Vec<InstructionTemplate> {
@@ -398,13 +749,28 @@ mod tests {
         let registry = InstructionRegistry::open(dir.path());
         assert!(registry.for_kind(AgentTaskKind::Refactor).is_some());
         assert!(registry.policy_for_kind(AgentTaskKind::Refactor).is_some());
-        assert!(dir.path().join(".velocity").join("agentic").join("instructions.json").exists());
+        assert!(dir
+            .path()
+            .join(".velocity")
+            .join("agentic")
+            .join("instructions.nda")
+            .exists());
+        assert!(dir
+            .path()
+            .join(".velocity")
+            .join("agentic")
+            .join("instructions.json")
+            .exists());
     }
 
     #[test]
     fn backfills_default_policies_for_legacy_registry_files() {
         let dir = tempfile::tempdir().unwrap();
-        let storage_path = dir.path().join(".velocity").join("agentic").join("instructions.json");
+        let storage_path = dir
+            .path()
+            .join(".velocity")
+            .join("agentic")
+            .join("instructions.json");
         fs::create_dir_all(storage_path.parent().unwrap()).unwrap();
         fs::write(
             &storage_path,
@@ -423,7 +789,10 @@ mod tests {
         .unwrap();
 
         let registry = InstructionRegistry::open(dir.path());
-        assert_eq!(registry.get("refactor-guardian").unwrap().system_prompt, "legacy");
+        assert_eq!(
+            registry.get("refactor-guardian").unwrap().system_prompt,
+            "legacy"
+        );
         assert!(registry.policy_for_kind(AgentTaskKind::Refactor).is_some());
     }
 
@@ -437,7 +806,9 @@ mod tests {
             task_kind: AgentTaskKind::Refactor,
             instruction_template_id: "refactor-guardian".to_string(),
             decomposition_style: DecompositionStyle::IsolatedFiles,
-            shared_expectations: vec!["Split refactor work per file when coupling is low.".to_string()],
+            shared_expectations: vec![
+                "Split refactor work per file when coupling is low.".to_string()
+            ],
         });
         registry.set_preferred_policy(AgentTaskKind::Refactor, "refactor-isolated");
         registry.persist().unwrap();
@@ -448,8 +819,45 @@ mod tests {
             Some("refactor-isolated")
         );
         assert_eq!(
-            reopened.policy_for_kind(AgentTaskKind::Refactor).unwrap().id,
+            reopened
+                .policy_for_kind(AgentTaskKind::Refactor)
+                .unwrap()
+                .id,
             "refactor-isolated"
+        );
+    }
+
+    #[test]
+    fn prefers_nda_registry_over_json_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let agentic_dir = dir.path().join(".velocity").join("agentic");
+        fs::create_dir_all(&agentic_dir).unwrap();
+        fs::write(
+            agentic_dir.join("instructions.nda"),
+            "registry version 1\ntemplate refactor-guardian label Native\ntemplate refactor-guardian task_kind refactor\ntemplate refactor-guardian system_prompt native\n",
+        )
+        .unwrap();
+        fs::write(
+            agentic_dir.join("instructions.json"),
+            r#"{
+  "templates": [
+    {
+      "id": "refactor-guardian",
+      "label": "Json",
+      "task_kind": "refactor",
+      "system_prompt": "json",
+      "checklist": []
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let registry = InstructionRegistry::open(dir.path());
+        assert_eq!(registry.get("refactor-guardian").unwrap().label, "Native");
+        assert_eq!(
+            registry.get("refactor-guardian").unwrap().system_prompt,
+            "native"
         );
     }
 }

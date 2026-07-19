@@ -31,12 +31,14 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::nda_int::NdaVec;
 #[allow(unused_imports)]
-pub use verifier::{MerkleVerifier, NdaNode, NdaOpcode, CmpOp, VecOpKind, BitwiseOp, MathOp, MathFuncKind, AtomicOp, TypeKind};
+pub use verifier::{
+    AtomicOp, BitwiseOp, CmpOp, MathFuncKind, MathOp, MerkleVerifier, NdaNode, NdaOpcode, TypeKind,
+    VecOpKind,
+};
 
 // ─── Entry types ──────────────────────────────────────────────────────────────
 
@@ -50,21 +52,21 @@ pub struct VcTriple {
 /// Metadata record stored in index.json for one site-map entry.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SiteMapEntry {
-    pub kind:      EntryKind,
-    pub hash:      u64,
+    pub kind: EntryKind,
+    pub hash: u64,
     /// Path relative to site_map root.
-    pub file:      String,
+    pub file: String,
     /// SHA-256 of the raw file bytes — second integrity check on top of Merkle.
-    pub file_sha:  String,
+    pub file_sha: String,
     /// Size in bytes.
-    pub size:      u64,
+    pub size: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EntryKind {
-    Kv,       // token K/V pair
-    Node,     // NDA program node
-    Program,  // complete NDA program (root reference)
+    Kv,      // token K/V pair
+    Node,    // NDA program node
+    Program, // complete NDA program (root reference)
 }
 
 // ─── On-disk KV record ─────────────────────────────────────────────────────────
@@ -101,25 +103,32 @@ impl KvRecord {
 
     fn deserialise(data: &[u8]) -> Result<Self> {
         anyhow::ensure!(data.len() >= 4, "KV record too short");
-        let len        = u16::from_le_bytes([data[0], data[1]]) as usize;
+        let len = u16::from_le_bytes([data[0], data[1]]) as usize;
         let log2_scale = data[2] as i8;
         let bitmap_bytes = (len + 7) / 8;
         anyhow::ensure!(
             data.len() >= 4 + 4 * bitmap_bytes,
-            "KV record truncated (len={len}, expected {} bytes)", 4 + 4 * bitmap_bytes
+            "KV record truncated (len={len}, expected {} bytes)",
+            4 + 4 * bitmap_bytes
         );
         let base = 4;
         let k = NdaVec {
             len,
             log2_scale,
-            sign:  data[base .. base + bitmap_bytes].to_vec().into(),
-            extra: data[base + bitmap_bytes .. base + 2 * bitmap_bytes].to_vec().into(),
+            sign: data[base..base + bitmap_bytes].to_vec().into(),
+            extra: data[base + bitmap_bytes..base + 2 * bitmap_bytes]
+                .to_vec()
+                .into(),
         };
         let v = NdaVec {
             len,
             log2_scale,
-            sign:  data[base + 2 * bitmap_bytes .. base + 3 * bitmap_bytes].to_vec().into(),
-            extra: data[base + 3 * bitmap_bytes .. base + 4 * bitmap_bytes].to_vec().into(),
+            sign: data[base + 2 * bitmap_bytes..base + 3 * bitmap_bytes]
+                .to_vec()
+                .into(),
+            extra: data[base + 3 * bitmap_bytes..base + 4 * bitmap_bytes]
+                .to_vec()
+                .into(),
         };
         Ok(KvRecord { k, v })
     }
@@ -136,16 +145,16 @@ impl KvRecord {
 /// background flush thread).
 pub struct SiteMap {
     /// Root directory on disk.
-    base:         PathBuf,
+    base: PathBuf,
     /// Hot in-RAM index: hash → entry metadata.
-    pub index:    HashMap<u64, SiteMapEntry>,
+    pub index: HashMap<u64, SiteMapEntry>,
     /// Merkle root of the index (hash of all entry hashes, sorted).
-    root:         u64,
+    root: u64,
     /// Blake3-style root of the model weight files — embedded in token hashes
     /// so that weight updates automatically invalidate stale KV entries.
-    weight_root:  u64,
+    weight_root: u64,
     /// In-RAM KV cache (evict-never for now; add LRU if RAM pressure matters).
-    kv_cache:     HashMap<u64, (NdaVec, NdaVec)>,
+    kv_cache: HashMap<u64, (NdaVec, NdaVec)>,
 }
 
 impl SiteMap {
@@ -161,12 +170,11 @@ impl SiteMap {
 
         let index_path = base_dir.join("index.json");
         let (index, root) = if index_path.exists() {
-            let raw = fs::read_to_string(&index_path)
-                .context("reading site_map/index.json")?;
-            let entries: Vec<SiteMapEntry> = serde_json::from_str(&raw)
-                .context("parsing site_map/index.json")?;
+            let raw = fs::read_to_string(&index_path).context("reading site_map/index.json")?;
+            let entries: Vec<SiteMapEntry> =
+                serde_json::from_str(&raw).context("parsing site_map/index.json")?;
             let root = Self::compute_index_root(&entries);
-            let map  = entries.into_iter().map(|e| (e.hash, e)).collect();
+            let map = entries.into_iter().map(|e| (e.hash, e)).collect();
             (map, root)
         } else {
             (HashMap::new(), 0u64)
@@ -215,6 +223,22 @@ impl SiteMap {
     }
 
     fn read_weight_root(base_dir: &Path) -> Option<u64> {
+        Self::read_weight_root_nda(base_dir).or_else(|| Self::read_weight_root_json(base_dir))
+    }
+
+    fn read_weight_root_nda(base_dir: &Path) -> Option<u64> {
+        let metadata_path = base_dir.join("metadata.nda");
+        let raw = fs::read_to_string(metadata_path).ok()?;
+        for line in raw.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("weight_root ") {
+                return u64::from_str_radix(value.trim_start_matches("0x"), 16).ok();
+            }
+        }
+        None
+    }
+
+    fn read_weight_root_json(base_dir: &Path) -> Option<u64> {
         let metadata_path = base_dir.join("metadata.json");
         let raw = fs::read_to_string(metadata_path).ok()?;
         let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
@@ -246,16 +270,15 @@ impl SiteMap {
         if self.kv_cache.contains_key(&key) {
             let (k, v) = self.kv_cache.get(&key).unwrap();
             // Re-borrow to satisfy the borrow checker.
-            return Some((
-                unsafe { &*(k as *const NdaVec) },
-                unsafe { &*(v as *const NdaVec) },
-            ));
+            return Some((unsafe { &*(k as *const NdaVec) }, unsafe {
+                &*(v as *const NdaVec)
+            }));
         }
 
         // Slow path: try disk.
         let entry = self.index.get(&key)?;
-        let path  = self.base.join(&entry.file);
-        let data  = fs::read(&path).ok()?;
+        let path = self.base.join(&entry.file);
+        let data = fs::read(&path).ok()?;
         // Verify file integrity before trusting it.
         if !Self::verify_file_sha(&data, &entry.file_sha) {
             eprintln!("[site_map] integrity check failed for {}", path.display());
@@ -264,10 +287,9 @@ impl SiteMap {
         let rec = KvRecord::deserialise(&data).ok()?;
         self.kv_cache.insert(key, (rec.k, rec.v));
         let (k, v) = self.kv_cache.get(&key).unwrap();
-        Some((
-            unsafe { &*(k as *const NdaVec) },
-            unsafe { &*(v as *const NdaVec) },
-        ))
+        Some((unsafe { &*(k as *const NdaVec) }, unsafe {
+            &*(v as *const NdaVec)
+        }))
     }
 
     /// Store K and V for `token_id` and `layer_idx`.  Write-through: RAM + disk updated
@@ -281,20 +303,22 @@ impl SiteMap {
             return Ok(key);
         }
 
-        let rec  = KvRecord { k: k.clone(), v: v.clone() };
+        let rec = KvRecord {
+            k: k.clone(),
+            v: v.clone(),
+        };
         let data = rec.serialise();
-        let sha  = Self::file_sha(&data);
+        let sha = Self::file_sha(&data);
         let name = format!("kv/{:016x}.kv", key);
         let path = self.base.join(&name);
-        fs::write(&path, &data)
-            .with_context(|| format!("writing {}", path.display()))?;
+        fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
 
         let entry = SiteMapEntry {
-            kind:     EntryKind::Kv,
-            hash:     key,
-            file:     name,
+            kind: EntryKind::Kv,
+            hash: key,
+            file: name,
             file_sha: sha,
-            size:     data.len() as u64,
+            size: data.len() as u64,
         };
         self.index.insert(key, entry);
         self.kv_cache.insert(key, (k, v));
@@ -307,23 +331,22 @@ impl SiteMap {
     /// Store an NDA program node.  Returns its content hash.
     /// Idempotent — storing an identical node twice is a no-op.
     pub fn put_node(&mut self, node: &NdaNode) -> Result<u64> {
-        let key  = node.hash();
+        let key = node.hash();
         if self.index.contains_key(&key) {
             return Ok(key);
         }
         let data = Self::serialise_node(node);
-        let sha  = Self::file_sha(&data);
+        let sha = Self::file_sha(&data);
         let name = format!("nodes/{:016x}.nda", key);
         let path = self.base.join(&name);
-        fs::write(&path, &data)
-            .with_context(|| format!("writing {}", path.display()))?;
+        fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
 
         let entry = SiteMapEntry {
-            kind:     EntryKind::Node,
-            hash:     key,
-            file:     name,
+            kind: EntryKind::Node,
+            hash: key,
+            file: name,
             file_sha: sha,
-            size:     data.len() as u64,
+            size: data.len() as u64,
         };
         self.index.insert(key, entry);
         self.recompute_root();
@@ -342,7 +365,9 @@ impl SiteMap {
             return None;
         }
         if entry.kind == EntryKind::Program {
-            if data.len() < 8 { return None; }
+            if data.len() < 8 {
+                return None;
+            }
             let root_hash = u64::from_le_bytes(data[..8].try_into().unwrap());
             return self.get_node(root_hash);
         }
@@ -355,7 +380,6 @@ impl SiteMap {
         self.index.keys().next().copied()
     }
 
-
     fn deserialise_node(data: &[u8], offset: &mut usize) -> Result<NdaNode> {
         if *offset >= data.len() {
             anyhow::bail!("EOF");
@@ -364,56 +388,89 @@ impl SiteMap {
         *offset += 1;
         match tag {
             b'M' => {
-                if *offset + 5 > data.len() { anyhow::bail!("Truncated Matrix"); }
-                let rows = u16::from_le_bytes(data[*offset..*offset+2].try_into().unwrap());
-                let cols = u16::from_le_bytes(data[*offset+2..*offset+4].try_into().unwrap());
-                let scale = data[*offset+4] as i8;
+                if *offset + 5 > data.len() {
+                    anyhow::bail!("Truncated Matrix");
+                }
+                let rows = u16::from_le_bytes(data[*offset..*offset + 2].try_into().unwrap());
+                let cols = u16::from_le_bytes(data[*offset + 2..*offset + 4].try_into().unwrap());
+                let scale = data[*offset + 4] as i8;
                 *offset += 5;
                 let bitmap_bytes = rows as usize * ((cols as usize + 7) / 8);
-                if *offset + 2 * bitmap_bytes > data.len() { anyhow::bail!("Truncated Matrix bitmaps"); }
-                let sign = data[*offset..*offset+bitmap_bytes].to_vec();
+                if *offset + 2 * bitmap_bytes > data.len() {
+                    anyhow::bail!("Truncated Matrix bitmaps");
+                }
+                let sign = data[*offset..*offset + bitmap_bytes].to_vec();
                 *offset += bitmap_bytes;
-                let extra = data[*offset..*offset+bitmap_bytes].to_vec();
+                let extra = data[*offset..*offset + bitmap_bytes].to_vec();
                 *offset += bitmap_bytes;
-                Ok(NdaNode::Matrix { rows, cols, scale, sign, extra })
+                Ok(NdaNode::Matrix {
+                    rows,
+                    cols,
+                    scale,
+                    sign,
+                    extra,
+                })
             }
             b'N' => {
-                if *offset + 2 > data.len() { anyhow::bail!("Truncated Norm"); }
-                let size = u16::from_le_bytes(data[*offset..*offset+2].try_into().unwrap());
+                if *offset + 2 > data.len() {
+                    anyhow::bail!("Truncated Norm");
+                }
+                let size = u16::from_le_bytes(data[*offset..*offset + 2].try_into().unwrap());
                 *offset += 2;
                 let bitmap_bytes = (size as usize + 7) / 8;
-                if *offset + 2 * bitmap_bytes > data.len() { anyhow::bail!("Truncated Norm bitmaps"); }
-                let weight = data[*offset..*offset+bitmap_bytes].to_vec();
+                if *offset + 2 * bitmap_bytes > data.len() {
+                    anyhow::bail!("Truncated Norm bitmaps");
+                }
+                let weight = data[*offset..*offset + bitmap_bytes].to_vec();
                 *offset += bitmap_bytes;
-                let bias = data[*offset..*offset+bitmap_bytes].to_vec();
+                let bias = data[*offset..*offset + bitmap_bytes].to_vec();
                 *offset += bitmap_bytes;
                 Ok(NdaNode::Norm { size, weight, bias })
             }
             b'C' => {
                 if *offset < data.len() && data[*offset] == b'M' {
                     *offset += 1;
-                    if *offset >= data.len() || data[*offset] != b'P' { anyhow::bail!("Invalid Compare tag"); }
+                    if *offset >= data.len() || data[*offset] != b'P' {
+                        anyhow::bail!("Invalid Compare tag");
+                    }
                     *offset += 1;
-                    if *offset >= data.len() { anyhow::bail!("Truncated Compare op"); }
+                    if *offset >= data.len() {
+                        anyhow::bail!("Truncated Compare op");
+                    }
                     let op_val = data[*offset];
                     *offset += 1;
-                    let op = CmpOp::from_u8(op_val).ok_or_else(|| anyhow::anyhow!("Invalid CmpOp"))?;
+                    let op =
+                        CmpOp::from_u8(op_val).ok_or_else(|| anyhow::anyhow!("Invalid CmpOp"))?;
                     let lhs = Self::deserialise_node(data, offset)?;
                     let rhs = Self::deserialise_node(data, offset)?;
-                    Ok(NdaNode::Compare { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
+                    Ok(NdaNode::Compare {
+                        op,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    })
                 } else if *offset < data.len() && data[*offset] == b'S' {
                     *offset += 1;
-                    if *offset + 2 > data.len() { anyhow::bail!("Truncated Cast types"); }
+                    if *offset + 2 > data.len() {
+                        anyhow::bail!("Truncated Cast types");
+                    }
                     let from_val = data[*offset];
-                    let to_val = data[*offset+1];
+                    let to_val = data[*offset + 1];
                     *offset += 2;
-                    let from_type = TypeKind::from_u8(from_val).ok_or_else(|| anyhow::anyhow!("Invalid from_type"))?;
-                    let to_type = TypeKind::from_u8(to_val).ok_or_else(|| anyhow::anyhow!("Invalid to_type"))?;
+                    let from_type = TypeKind::from_u8(from_val)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid from_type"))?;
+                    let to_type = TypeKind::from_u8(to_val)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid to_type"))?;
                     let operand = Self::deserialise_node(data, offset)?;
-                    Ok(NdaNode::Cast { from_type, to_type, operand: Box::new(operand) })
+                    Ok(NdaNode::Cast {
+                        from_type,
+                        to_type,
+                        operand: Box::new(operand),
+                    })
                 } else {
-                    if *offset + 8 > data.len() { anyhow::bail!("Truncated Call"); }
-                    let target = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
+                    if *offset + 8 > data.len() {
+                        anyhow::bail!("Truncated Call");
+                    }
+                    let target = u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
                     *offset += 8;
                     Ok(NdaNode::Call { target })
                 }
@@ -422,8 +479,11 @@ impl SiteMap {
                 if *offset < data.len() && data[*offset] == b'F' {
                     *offset += 1;
                     let cond = Self::deserialise_node(data, offset)?;
-                    if *offset + 4 > data.len() { anyhow::bail!("Truncated If then len"); }
-                    let then_len = u32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap()) as usize;
+                    if *offset + 4 > data.len() {
+                        anyhow::bail!("Truncated If then len");
+                    }
+                    let then_len =
+                        u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
                     *offset += 4;
                     let mut then_body = Vec::with_capacity(then_len);
                     for _ in 0..then_len {
@@ -434,8 +494,12 @@ impl SiteMap {
                         let has_else = data[*offset];
                         if has_else == 1 {
                             *offset += 1;
-                            if *offset + 4 > data.len() { anyhow::bail!("Truncated If else len"); }
-                            let else_len = u32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap()) as usize;
+                            if *offset + 4 > data.len() {
+                                anyhow::bail!("Truncated If else len");
+                            }
+                            let else_len =
+                                u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap())
+                                    as usize;
                             *offset += 4;
                             let mut eb = Vec::with_capacity(else_len);
                             for _ in 0..else_len {
@@ -446,10 +510,16 @@ impl SiteMap {
                             *offset += 1;
                         }
                     }
-                    Ok(NdaNode::If { cond: Box::new(cond), then_body, else_body })
+                    Ok(NdaNode::If {
+                        cond: Box::new(cond),
+                        then_body,
+                        else_body,
+                    })
                 } else {
-                    if *offset + 4 > data.len() { anyhow::bail!("Truncated Int"); }
-                    let value = i32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap());
+                    if *offset + 4 > data.len() {
+                        anyhow::bail!("Truncated Int");
+                    }
+                    let value = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
                     *offset += 4;
                     Ok(NdaNode::Int { value })
                 }
@@ -457,14 +527,23 @@ impl SiteMap {
             b'S' => {
                 if *offset < data.len() && data[*offset] == b'T' {
                     *offset += 1;
-                    if *offset + 8 > data.len() { anyhow::bail!("Truncated Store name_hash"); }
-                    let name_hash = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
+                    if *offset + 8 > data.len() {
+                        anyhow::bail!("Truncated Store name_hash");
+                    }
+                    let name_hash =
+                        u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
                     *offset += 8;
                     let value = Self::deserialise_node(data, offset)?;
-                    Ok(NdaNode::Store { name_hash, value: Box::new(value) })
+                    Ok(NdaNode::Store {
+                        name_hash,
+                        value: Box::new(value),
+                    })
                 } else {
-                    if *offset + 4 > data.len() { anyhow::bail!("Truncated Scope"); }
-                    let len = u32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap()) as usize;
+                    if *offset + 4 > data.len() {
+                        anyhow::bail!("Truncated Scope");
+                    }
+                    let len =
+                        u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
                     *offset += 4;
                     let mut children = Vec::with_capacity(len);
                     for _ in 0..len {
@@ -474,14 +553,21 @@ impl SiteMap {
                 }
             }
             b'L' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated L tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated L tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'P' => {
-                        if *offset + 8 > data.len() { anyhow::bail!("Truncated Loop count/len"); }
-                        let count = u32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap());
-                        let len = u32::from_le_bytes(data[*offset+4..*offset+8].try_into().unwrap()) as usize;
+                        if *offset + 8 > data.len() {
+                            anyhow::bail!("Truncated Loop count/len");
+                        }
+                        let count =
+                            u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                        let len =
+                            u32::from_le_bytes(data[*offset + 4..*offset + 8].try_into().unwrap())
+                                as usize;
                         *offset += 8;
                         let mut body = Vec::with_capacity(len);
                         for _ in 0..len {
@@ -490,15 +576,24 @@ impl SiteMap {
                         Ok(NdaNode::Loop { count, body })
                     }
                     b'T' => {
-                        if *offset + 8 > data.len() { anyhow::bail!("Truncated Let name_hash"); }
-                        let name_hash = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
+                        if *offset + 8 > data.len() {
+                            anyhow::bail!("Truncated Let name_hash");
+                        }
+                        let name_hash =
+                            u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
                         *offset += 8;
                         let init = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Let { name_hash, init: Box::new(init) })
+                        Ok(NdaNode::Let {
+                            name_hash,
+                            init: Box::new(init),
+                        })
                     }
                     b'D' => {
-                        if *offset + 8 > data.len() { anyhow::bail!("Truncated Load name_hash"); }
-                        let name_hash = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
+                        if *offset + 8 > data.len() {
+                            anyhow::bail!("Truncated Load name_hash");
+                        }
+                        let name_hash =
+                            u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
                         *offset += 8;
                         Ok(NdaNode::Load { name_hash })
                     }
@@ -506,31 +601,46 @@ impl SiteMap {
                 }
             }
             b'W' => {
-                if *offset >= data.len() || data[*offset] != b'H' { anyhow::bail!("Invalid While tag"); }
+                if *offset >= data.len() || data[*offset] != b'H' {
+                    anyhow::bail!("Invalid While tag");
+                }
                 *offset += 1;
                 let cond = Self::deserialise_node(data, offset)?;
-                if *offset + 4 > data.len() { anyhow::bail!("Truncated While body len"); }
-                let len = u32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap()) as usize;
+                if *offset + 4 > data.len() {
+                    anyhow::bail!("Truncated While body len");
+                }
+                let len =
+                    u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
                 *offset += 4;
                 let mut body = Vec::with_capacity(len);
                 for _ in 0..len {
                     body.push(Self::deserialise_node(data, offset)?);
                 }
-                Ok(NdaNode::While { cond: Box::new(cond), body })
+                Ok(NdaNode::While {
+                    cond: Box::new(cond),
+                    body,
+                })
             }
             b'B' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated B tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated B tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'K' => Ok(NdaNode::Break),
                     b'W' => {
-                        if *offset + 1 > data.len() { anyhow::bail!("Truncated Bitwise op"); }
+                        if *offset + 1 > data.len() {
+                            anyhow::bail!("Truncated Bitwise op");
+                        }
                         let op_val = data[*offset];
                         *offset += 1;
-                        let op = BitwiseOp::from_u8(op_val).ok_or_else(|| anyhow::anyhow!("Invalid BitwiseOp"))?;
+                        let op = BitwiseOp::from_u8(op_val)
+                            .ok_or_else(|| anyhow::anyhow!("Invalid BitwiseOp"))?;
                         let lhs = Self::deserialise_node(data, offset)?;
-                        if *offset >= data.len() { anyhow::bail!("Truncated Bitwise has_rhs"); }
+                        if *offset >= data.len() {
+                            anyhow::bail!("Truncated Bitwise has_rhs");
+                        }
                         let has_rhs = data[*offset];
                         *offset += 1;
                         let rhs = if has_rhs == 1 {
@@ -538,43 +648,64 @@ impl SiteMap {
                         } else {
                             None
                         };
-                        Ok(NdaNode::Bitwise { op, lhs: Box::new(lhs), rhs })
+                        Ok(NdaNode::Bitwise {
+                            op,
+                            lhs: Box::new(lhs),
+                            rhs,
+                        })
                     }
                     _ => anyhow::bail!("Unknown subtag B{}", sub),
                 }
             }
             b'F' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated F tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated F tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'L' => {
-                        if *offset + 4 > data.len() { anyhow::bail!("Truncated Float"); }
-                        let value = f32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap());
+                        if *offset + 4 > data.len() {
+                            anyhow::bail!("Truncated Float");
+                        }
+                        let value =
+                            f32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
                         *offset += 4;
                         Ok(NdaNode::Float { value })
                     }
                     b'R' => {
                         let addr = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Free { addr: Box::new(addr) })
+                        Ok(NdaNode::Free {
+                            addr: Box::new(addr),
+                        })
                     }
                     _ => anyhow::bail!("Unknown subtag F{}", sub),
                 }
             }
             b'G' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated G tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated G tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'M' => {
                         let matrix = Self::deserialise_node(data, offset)?;
                         let vector = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Gemv { matrix: Box::new(matrix), vector: Box::new(vector) })
+                        Ok(NdaNode::Gemv {
+                            matrix: Box::new(matrix),
+                            vector: Box::new(vector),
+                        })
                     }
                     b'D' => {
-                        if *offset + 12 > data.len() { anyhow::bail!("Truncated GpuDispatch"); }
-                        let shader_hash = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
-                        let len = u32::from_le_bytes(data[*offset+8..*offset+12].try_into().unwrap()) as usize;
+                        if *offset + 12 > data.len() {
+                            anyhow::bail!("Truncated GpuDispatch");
+                        }
+                        let shader_hash =
+                            u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
+                        let len =
+                            u32::from_le_bytes(data[*offset + 8..*offset + 12].try_into().unwrap())
+                                as usize;
                         *offset += 12;
                         let mut args = Vec::with_capacity(len);
                         for _ in 0..len {
@@ -586,105 +717,164 @@ impl SiteMap {
                 }
             }
             b'D' => {
-                if *offset >= data.len() || data[*offset] != b'T' { anyhow::bail!("Invalid Dot tag"); }
+                if *offset >= data.len() || data[*offset] != b'T' {
+                    anyhow::bail!("Invalid Dot tag");
+                }
                 *offset += 1;
                 let lhs = Self::deserialise_node(data, offset)?;
                 let rhs = Self::deserialise_node(data, offset)?;
-                Ok(NdaNode::Dot { lhs: Box::new(lhs), rhs: Box::new(rhs) })
+                Ok(NdaNode::Dot {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                })
             }
             b'A' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated A tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated A tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'D' => {
                         let lhs = Self::deserialise_node(data, offset)?;
                         let rhs = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Add { lhs: Box::new(lhs), rhs: Box::new(rhs) })
+                        Ok(NdaNode::Add {
+                            lhs: Box::new(lhs),
+                            rhs: Box::new(rhs),
+                        })
                     }
                     b'T' => {
-                        if *offset + 1 > data.len() { anyhow::bail!("Truncated Atomic op"); }
+                        if *offset + 1 > data.len() {
+                            anyhow::bail!("Truncated Atomic op");
+                        }
                         let op_val = data[*offset];
                         *offset += 1;
-                        let op = AtomicOp::from_u8(op_val).ok_or_else(|| anyhow::anyhow!("Invalid AtomicOp"))?;
+                        let op = AtomicOp::from_u8(op_val)
+                            .ok_or_else(|| anyhow::anyhow!("Invalid AtomicOp"))?;
                         let addr = Self::deserialise_node(data, offset)?;
                         let val = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Atomic { op, addr: Box::new(addr), val: Box::new(val) })
+                        Ok(NdaNode::Atomic {
+                            op,
+                            addr: Box::new(addr),
+                            val: Box::new(val),
+                        })
                     }
                     b'L' => {
                         let size = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Alloc { size: Box::new(size) })
+                        Ok(NdaNode::Alloc {
+                            size: Box::new(size),
+                        })
                     }
                     _ => anyhow::bail!("Unknown subtag A{}", sub),
                 }
             }
             b'V' => {
-                if *offset >= data.len() || data[*offset] != b'O' { anyhow::bail!("Invalid VecOp tag"); }
+                if *offset >= data.len() || data[*offset] != b'O' {
+                    anyhow::bail!("Invalid VecOp tag");
+                }
                 *offset += 1;
-                if *offset >= data.len() { anyhow::bail!("Truncated VecOp op"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated VecOp op");
+                }
                 let op_val = data[*offset];
                 *offset += 1;
-                let op = VecOpKind::from_u8(op_val).ok_or_else(|| anyhow::anyhow!("Invalid VecOpKind"))?;
+                let op = VecOpKind::from_u8(op_val)
+                    .ok_or_else(|| anyhow::anyhow!("Invalid VecOpKind"))?;
                 let operand = Self::deserialise_node(data, offset)?;
-                Ok(NdaNode::VecOp { op, operand: Box::new(operand) })
+                Ok(NdaNode::VecOp {
+                    op,
+                    operand: Box::new(operand),
+                })
             }
             b'P' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated P tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated P tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'R' => {
                         let source = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Print { source: Box::new(source) })
+                        Ok(NdaNode::Print {
+                            source: Box::new(source),
+                        })
                     }
                     b'K' => {
                         let addr = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Peek { addr: Box::new(addr) })
+                        Ok(NdaNode::Peek {
+                            addr: Box::new(addr),
+                        })
                     }
                     b'O' => {
                         let addr = Self::deserialise_node(data, offset)?;
                         let value = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Poke { addr: Box::new(addr), value: Box::new(value) })
+                        Ok(NdaNode::Poke {
+                            addr: Box::new(addr),
+                            value: Box::new(value),
+                        })
                     }
                     _ => anyhow::bail!("Unknown subtag P{}", sub),
                 }
             }
             b'R' => {
-                if *offset >= data.len() { anyhow::bail!("Truncated R tag"); }
+                if *offset >= data.len() {
+                    anyhow::bail!("Truncated R tag");
+                }
                 let sub = data[*offset];
                 *offset += 1;
                 match sub {
                     b'T' => {
                         let value = Self::deserialise_node(data, offset)?;
-                        Ok(NdaNode::Return { value: Box::new(value) })
+                        Ok(NdaNode::Return {
+                            value: Box::new(value),
+                        })
                     }
                     b'I' => {
-                        if *offset + 12 > data.len() { anyhow::bail!("Truncated RegInt"); }
-                        let vector = u32::from_le_bytes(data[*offset..*offset+4].try_into().unwrap());
-                        let handler_hash = u64::from_le_bytes(data[*offset+4..*offset+12].try_into().unwrap());
+                        if *offset + 12 > data.len() {
+                            anyhow::bail!("Truncated RegInt");
+                        }
+                        let vector =
+                            u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                        let handler_hash =
+                            u64::from_le_bytes(data[*offset + 4..*offset + 12].try_into().unwrap());
                         *offset += 12;
-                        Ok(NdaNode::RegInt { vector, handler_hash })
+                        Ok(NdaNode::RegInt {
+                            vector,
+                            handler_hash,
+                        })
                     }
                     _ => anyhow::bail!("Unknown subtag R{}", sub),
                 }
             }
             b'T' => {
-                if *offset + 18 > data.len() { anyhow::bail!("Truncated Triple"); }
-                let subject_hash = u64::from_le_bytes(data[*offset..*offset+8].try_into().unwrap());
-                let predicate_id = u16::from_le_bytes(data[*offset+8..*offset+10].try_into().unwrap());
-                let object_hash = u64::from_le_bytes(data[*offset+10..*offset+18].try_into().unwrap());
+                if *offset + 18 > data.len() {
+                    anyhow::bail!("Truncated Triple");
+                }
+                let subject_hash =
+                    u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
+                let predicate_id =
+                    u16::from_le_bytes(data[*offset + 8..*offset + 10].try_into().unwrap());
+                let object_hash =
+                    u64::from_le_bytes(data[*offset + 10..*offset + 18].try_into().unwrap());
                 *offset += 18;
-                Ok(NdaNode::Triple { subject_hash, predicate_id, object_hash })
+                Ok(NdaNode::Triple {
+                    subject_hash,
+                    predicate_id,
+                    object_hash,
+                })
             }
             _ => anyhow::bail!("Unknown tag {}", tag),
         }
     }
 
-
     /// Recursively extract all VcTriple nodes from an AST tree.
     fn extract_triples_recursive(node: &NdaNode, triples: &mut Vec<VcTriple>) {
         match node {
-            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+            NdaNode::Triple {
+                subject_hash,
+                predicate_id,
+                object_hash,
+            } => {
                 triples.push(VcTriple {
                     subject_hash: *subject_hash,
                     predicate_id: *predicate_id,
@@ -707,7 +897,11 @@ impl SiteMap {
                     Self::extract_triples_recursive(child, triples);
                 }
             }
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 Self::extract_triples_recursive(cond, triples);
                 for child in then_body {
                     Self::extract_triples_recursive(child, triples);
@@ -815,13 +1009,19 @@ impl SiteMap {
             .into_iter()
             .filter(|t| {
                 if let Some(s) = subject {
-                    if t.subject_hash != s { return false; }
+                    if t.subject_hash != s {
+                        return false;
+                    }
                 }
                 if let Some(p) = predicate {
-                    if t.predicate_id != p { return false; }
+                    if t.predicate_id != p {
+                        return false;
+                    }
                 }
                 if let Some(o) = object {
-                    if t.object_hash != o { return false; }
+                    if t.object_hash != o {
+                        return false;
+                    }
                 }
                 true
             })
@@ -847,23 +1047,23 @@ impl SiteMap {
     /// Store a complete NDA program (by its root node hash).
     pub fn put_program(&mut self, root_node: &NdaNode) -> Result<u64> {
         let node_hash = self.put_node(root_node)?;
-        let key  = self.program_hash(node_hash);
+        let key = self.program_hash(node_hash);
         if self.index.contains_key(&key) {
             return Ok(key);
         }
         // Program file is a 8-byte root node hash reference.
         let data = node_hash.to_le_bytes().to_vec();
-        let sha  = Self::file_sha(&data);
+        let sha = Self::file_sha(&data);
         let name = format!("programs/{:016x}.nda", key);
         let path = self.base.join(&name);
         fs::write(&path, &data)?;
 
         let entry = SiteMapEntry {
-            kind:     EntryKind::Program,
-            hash:     key,
-            file:     name,
+            kind: EntryKind::Program,
+            hash: key,
+            file: name,
             file_sha: sha,
-            size:     8,
+            size: 8,
         };
         self.index.insert(key, entry);
         self.recompute_root();
@@ -878,8 +1078,17 @@ impl SiteMap {
         let json = serde_json::to_string_pretty(&entries)?;
         fs::write(self.base.join("index.json"), json)?;
         fs::write(
+            self.base.join("metadata.nda"),
+            format!(
+                "metadata version 1\nweight_root {:016x}\n",
+                self.weight_root
+            ),
+        )?;
+        fs::write(
             self.base.join("metadata.json"),
-            serde_json::to_string_pretty(&json!({ "weight_root": format!("{:016x}", self.weight_root) }))?,
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "weight_root": format!("{:016x}", self.weight_root) }),
+            )?,
         )?;
         Ok(())
     }
@@ -907,29 +1116,44 @@ impl SiteMap {
     }
 
     /// Current Merkle root of the site map index.
-    pub fn root(&self) -> u64 { self.root }
+    pub fn root(&self) -> u64 {
+        self.root
+    }
 
     /// Canonical weight root associated with this site map.
-    pub fn weight_root(&self) -> u64 { self.weight_root }
+    pub fn weight_root(&self) -> u64 {
+        self.weight_root
+    }
 
     /// Number of entries in the site map.
-    pub fn len(&self) -> usize { self.index.len() }
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
 
-    pub fn is_empty(&self) -> bool { self.index.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
 
     // ── Statistics ────────────────────────────────────────────────────────────
 
     pub fn stats(&self) -> SiteMapStats {
-        let (kv, nodes, programs) = self.index.values().fold(
-            (0usize, 0usize, 0usize),
-            |(k, n, p), e| match e.kind {
-                EntryKind::Kv      => (k + 1, n, p),
-                EntryKind::Node    => (k, n + 1, p),
-                EntryKind::Program => (k, n, p + 1),
-            },
-        );
+        let (kv, nodes, programs) =
+            self.index
+                .values()
+                .fold((0usize, 0usize, 0usize), |(k, n, p), e| match e.kind {
+                    EntryKind::Kv => (k + 1, n, p),
+                    EntryKind::Node => (k, n + 1, p),
+                    EntryKind::Program => (k, n, p + 1),
+                });
         let total_bytes: u64 = self.index.values().map(|e| e.size).sum();
-        SiteMapStats { kv, nodes, programs, total_bytes, root: self.root, weight_root: self.weight_root }
+        SiteMapStats {
+            kv,
+            nodes,
+            programs,
+            total_bytes,
+            root: self.root,
+            weight_root: self.weight_root,
+        }
     }
 
     /// Register a string in the site map's dictionary.json.
@@ -937,7 +1161,7 @@ impl SiteMap {
     pub fn register_string(&self, s: &str) -> Result<u64> {
         let hash = self.hash_string(s);
         let dict_path = self.base.join("dictionary.json");
-        
+
         let mut dict = if dict_path.exists() {
             let raw = fs::read_to_string(&dict_path)?;
             serde_json::from_str::<HashMap<String, String>>(&raw).unwrap_or_default()
@@ -1019,7 +1243,13 @@ impl SiteMap {
 
     fn write_node(node: &NdaNode, buf: &mut Vec<u8>) {
         match node {
-            NdaNode::Matrix { rows, cols, scale, sign, extra } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                scale,
+                sign,
+                extra,
+            } => {
                 buf.push(b'M');
                 buf.extend_from_slice(&rows.to_le_bytes());
                 buf.extend_from_slice(&cols.to_le_bytes());
@@ -1050,73 +1280,99 @@ impl SiteMap {
             }
             // ── Language extension nodes ──────────────────────────────────
             NdaNode::Loop { count, body } => {
-                buf.push(b'L'); buf.push(b'P');
+                buf.push(b'L');
+                buf.push(b'P');
                 buf.extend_from_slice(&count.to_le_bytes());
                 buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
-                for child in body { Self::write_node(child, buf); }
+                for child in body {
+                    Self::write_node(child, buf);
+                }
             }
             NdaNode::While { cond, body } => {
-                buf.push(b'W'); buf.push(b'H');
+                buf.push(b'W');
+                buf.push(b'H');
                 Self::write_node(cond, buf);
                 buf.extend_from_slice(&(body.len() as u32).to_le_bytes());
-                for child in body { Self::write_node(child, buf); }
+                for child in body {
+                    Self::write_node(child, buf);
+                }
             }
-            NdaNode::If { cond, then_body, else_body } => {
-                buf.push(b'I'); buf.push(b'F');
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                buf.push(b'I');
+                buf.push(b'F');
                 Self::write_node(cond, buf);
                 buf.extend_from_slice(&(then_body.len() as u32).to_le_bytes());
-                for child in then_body { Self::write_node(child, buf); }
+                for child in then_body {
+                    Self::write_node(child, buf);
+                }
                 if let Some(eb) = else_body {
                     buf.push(1u8); // has_else marker
                     buf.extend_from_slice(&(eb.len() as u32).to_le_bytes());
-                    for child in eb { Self::write_node(child, buf); }
+                    for child in eb {
+                        Self::write_node(child, buf);
+                    }
                 } else {
                     buf.push(0u8); // no else
                 }
             }
             NdaNode::Compare { op, lhs, rhs } => {
-                buf.push(b'C'); buf.push(b'M'); buf.push(b'P');
+                buf.push(b'C');
+                buf.push(b'M');
+                buf.push(b'P');
                 buf.push(*op as u8);
                 Self::write_node(lhs, buf);
                 Self::write_node(rhs, buf);
             }
             NdaNode::Break => {
-                buf.push(b'B'); buf.push(b'K');
+                buf.push(b'B');
+                buf.push(b'K');
             }
             NdaNode::Let { name_hash, init } => {
-                buf.push(b'L'); buf.push(b'T');
+                buf.push(b'L');
+                buf.push(b'T');
                 buf.extend_from_slice(&name_hash.to_le_bytes());
                 Self::write_node(init, buf);
             }
             NdaNode::Load { name_hash } => {
-                buf.push(b'L'); buf.push(b'D');
+                buf.push(b'L');
+                buf.push(b'D');
                 buf.extend_from_slice(&name_hash.to_le_bytes());
             }
             NdaNode::Store { name_hash, value } => {
-                buf.push(b'S'); buf.push(b'T');
+                buf.push(b'S');
+                buf.push(b'T');
                 buf.extend_from_slice(&name_hash.to_le_bytes());
                 Self::write_node(value, buf);
             }
             NdaNode::Add { lhs, rhs } => {
-                buf.push(b'A'); buf.push(b'D');
+                buf.push(b'A');
+                buf.push(b'D');
                 Self::write_node(lhs, buf);
                 Self::write_node(rhs, buf);
             }
             NdaNode::VecOp { op, operand } => {
-                buf.push(b'V'); buf.push(b'O');
+                buf.push(b'V');
+                buf.push(b'O');
                 buf.push(*op as u8);
                 Self::write_node(operand, buf);
             }
             NdaNode::Print { source } => {
-                buf.push(b'P'); buf.push(b'R');
+                buf.push(b'P');
+                buf.push(b'R');
                 Self::write_node(source, buf);
             }
             NdaNode::Return { value } => {
-                buf.push(b'R'); buf.push(b'T');
+                buf.push(b'R');
+                buf.push(b'T');
                 Self::write_node(value, buf);
             }
             NdaNode::Bitwise { op, lhs, rhs } => {
-                buf.push(b'B'); buf.push(b'W');
+                buf.push(b'B');
+                buf.push(b'W');
                 buf.push(*op as u8);
                 Self::write_node(lhs, buf);
                 if let Some(r) = rhs {
@@ -1127,41 +1383,49 @@ impl SiteMap {
                 }
             }
             NdaNode::Float { value } => {
-                buf.push(b'F'); buf.push(b'L');
+                buf.push(b'F');
+                buf.push(b'L');
                 buf.extend_from_slice(&value.to_le_bytes());
             }
             NdaNode::Math { op, lhs, rhs } => {
-                buf.push(b'M'); buf.push(b'H');
+                buf.push(b'M');
+                buf.push(b'H');
                 buf.push(*op as u8);
                 Self::write_node(lhs, buf);
                 Self::write_node(rhs, buf);
             }
             NdaNode::MathFunc { func, operand } => {
-                buf.push(b'M'); buf.push(b'F');
+                buf.push(b'M');
+                buf.push(b'F');
                 buf.push(*func as u8);
                 Self::write_node(operand, buf);
             }
             NdaNode::Peek { addr } => {
-                buf.push(b'P'); buf.push(b'K');
+                buf.push(b'P');
+                buf.push(b'K');
                 Self::write_node(addr, buf);
             }
             NdaNode::Poke { addr, value } => {
-                buf.push(b'P'); buf.push(b'O');
+                buf.push(b'P');
+                buf.push(b'O');
                 Self::write_node(addr, buf);
                 Self::write_node(value, buf);
             }
             NdaNode::Gemv { matrix, vector } => {
-                buf.push(b'G'); buf.push(b'M');
+                buf.push(b'G');
+                buf.push(b'M');
                 Self::write_node(matrix, buf);
                 Self::write_node(vector, buf);
             }
             NdaNode::Dot { lhs, rhs } => {
-                buf.push(b'D'); buf.push(b'T');
+                buf.push(b'D');
+                buf.push(b'T');
                 Self::write_node(lhs, buf);
                 Self::write_node(rhs, buf);
             }
             NdaNode::Syscall { num, args } => {
-                buf.push(b'S'); buf.push(b'C');
+                buf.push(b'S');
+                buf.push(b'C');
                 buf.extend_from_slice(&num.to_le_bytes());
                 buf.extend_from_slice(&(args.len() as u32).to_le_bytes());
                 for arg in args {
@@ -1169,43 +1433,61 @@ impl SiteMap {
                 }
             }
             NdaNode::Spawn { scope_hash } => {
-                buf.push(b'S'); buf.push(b'W');
+                buf.push(b'S');
+                buf.push(b'W');
                 buf.extend_from_slice(&scope_hash.to_le_bytes());
             }
             NdaNode::Atomic { op, addr, val } => {
-                buf.push(b'A'); buf.push(b'T');
+                buf.push(b'A');
+                buf.push(b'T');
                 buf.push(*op as u8);
                 Self::write_node(addr, buf);
                 Self::write_node(val, buf);
             }
             NdaNode::Alloc { size } => {
-                buf.push(b'A'); buf.push(b'L');
+                buf.push(b'A');
+                buf.push(b'L');
                 Self::write_node(size, buf);
             }
             NdaNode::Free { addr } => {
-                buf.push(b'F'); buf.push(b'R');
+                buf.push(b'F');
+                buf.push(b'R');
                 Self::write_node(addr, buf);
             }
-            NdaNode::RegInt { vector, handler_hash } => {
-                buf.push(b'R'); buf.push(b'I');
+            NdaNode::RegInt {
+                vector,
+                handler_hash,
+            } => {
+                buf.push(b'R');
+                buf.push(b'I');
                 buf.extend_from_slice(&vector.to_le_bytes());
                 buf.extend_from_slice(&handler_hash.to_le_bytes());
             }
-            NdaNode::Cast { from_type, to_type, operand } => {
-                buf.push(b'C'); buf.push(b'S');
+            NdaNode::Cast {
+                from_type,
+                to_type,
+                operand,
+            } => {
+                buf.push(b'C');
+                buf.push(b'S');
                 buf.push(*from_type as u8);
                 buf.push(*to_type as u8);
                 Self::write_node(operand, buf);
             }
             NdaNode::GpuDispatch { shader_hash, args } => {
-                buf.push(b'G'); buf.push(b'D');
+                buf.push(b'G');
+                buf.push(b'D');
                 buf.extend_from_slice(&shader_hash.to_le_bytes());
                 buf.extend_from_slice(&(args.len() as u32).to_le_bytes());
                 for arg in args {
                     Self::write_node(arg, buf);
                 }
             }
-            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+            NdaNode::Triple {
+                subject_hash,
+                predicate_id,
+                object_hash,
+            } => {
                 buf.push(b'T');
                 buf.extend_from_slice(&subject_hash.to_le_bytes());
                 buf.extend_from_slice(&predicate_id.to_le_bytes());
@@ -1219,11 +1501,11 @@ impl SiteMap {
 
 #[derive(Debug)]
 pub struct SiteMapStats {
-    pub kv:          usize,
-    pub nodes:       usize,
-    pub programs:    usize,
+    pub kv: usize,
+    pub nodes: usize,
+    pub programs: usize,
     pub total_bytes: u64,
-    pub root:        u64,
+    pub root: u64,
     pub weight_root: u64,
 }
 
@@ -1252,7 +1534,7 @@ mod tests {
         NdaVec {
             len,
             log2_scale: 0,
-            sign:  vec![val; bytes].into(),
+            sign: vec![val; bytes].into(),
             extra: vec![val; bytes].into(),
         }
     }
@@ -1309,7 +1591,7 @@ mod tests {
         sm.flush().unwrap();
         // Corrupt the file.
         let entry = sm.index.values().next().unwrap();
-        let path  = dir.path().join(&entry.file);
+        let path = dir.path().join(&entry.file);
         let mut data = fs::read(&path).unwrap();
         data[4] ^= 0xFF;
         fs::write(&path, &data).unwrap();
@@ -1335,6 +1617,50 @@ mod tests {
     }
 
     #[test]
+    fn persists_weight_root_to_nda_metadata() {
+        let dir = TempDir::new().unwrap();
+        let sm = SiteMap::open(dir.path(), 0x1234_ABCD).unwrap();
+        sm.flush().unwrap();
+
+        let metadata = fs::read_to_string(dir.path().join("metadata.nda")).unwrap();
+        assert!(metadata.contains("metadata version 1"));
+        assert!(metadata.contains("weight_root 000000001234abcd"));
+        assert_eq!(
+            SiteMap::read_persisted_weight_root(dir.path()),
+            Some(0x1234_ABCD)
+        );
+    }
+
+    #[test]
+    fn prefers_nda_weight_root_over_json_metadata() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("metadata.nda"),
+            "metadata version 1\nweight_root 00000000000000aa\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("metadata.json"),
+            "{\n  \"weight_root\": \"00000000000000bb\"\n}",
+        )
+        .unwrap();
+
+        assert_eq!(SiteMap::read_persisted_weight_root(dir.path()), Some(0xAA));
+    }
+
+    #[test]
+    fn falls_back_to_json_weight_root_metadata() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("metadata.json"),
+            "{\n  \"weight_root\": \"00000000000000cc\"\n}",
+        )
+        .unwrap();
+
+        assert_eq!(SiteMap::read_persisted_weight_root(dir.path()), Some(0xCC));
+    }
+
+    #[test]
     fn round_trip_triple_node() {
         let dir = TempDir::new().unwrap();
         let mut sm = SiteMap::open(dir.path(), 0).unwrap();
@@ -1346,7 +1672,11 @@ mod tests {
         let hash = sm.put_node(&n).unwrap();
         let n_decoded = sm.get_node(hash).unwrap();
         match n_decoded {
-            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+            NdaNode::Triple {
+                subject_hash,
+                predicate_id,
+                object_hash,
+            } => {
                 assert_eq!(subject_hash, 0xAAAA_BBBB_CCCC_DDDD);
                 assert_eq!(predicate_id, 42);
                 assert_eq!(object_hash, 0x1111_2222_3333_4444);
@@ -1360,11 +1690,25 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut sm = SiteMap::open(dir.path(), 0).unwrap();
 
-        let t1 = NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 2 };
-        let t2 = NdaNode::Triple { subject_hash: 2, predicate_id: 2, object_hash: 3 };
-        let t3 = NdaNode::Triple { subject_hash: 1, predicate_id: 2, object_hash: 3 };
+        let t1 = NdaNode::Triple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 2,
+        };
+        let t2 = NdaNode::Triple {
+            subject_hash: 2,
+            predicate_id: 2,
+            object_hash: 3,
+        };
+        let t3 = NdaNode::Triple {
+            subject_hash: 1,
+            predicate_id: 2,
+            object_hash: 3,
+        };
 
-        let program = NdaNode::Scope { children: vec![t1, t2, t3] };
+        let program = NdaNode::Scope {
+            children: vec![t1, t2, t3],
+        };
         sm.put_node(&program).unwrap();
 
         let triples = sm.find_triples(Some(1), Some(2), None);
