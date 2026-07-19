@@ -18,3 +18,6 @@ pub mod agent_ui_render;
 
 // Agentic UI Phase 2 - Task timeline
 pub mod task_timeline;
+
+// Agentic UI Phase 2 - Smart sidebar
+pub mod smart_sidebar;

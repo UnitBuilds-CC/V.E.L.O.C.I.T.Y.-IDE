@@ -23,6 +23,8 @@ pub enum TaskEventType {
     ToolResult = 5,
     PhaseChange = 6,
     TokenBudgetUpdate = 7,
+    SessionMarker = 8,
+    AgentMarker = 9,
 }
 
 /// Single task event entry (fixed 64 bytes)
@@ -226,6 +228,28 @@ impl TaskTimelineState {
         );
     }
 
+    pub fn session_marker(&mut self, name: &str, description: &str) {
+        self.add_event(
+            TaskEventType::SessionMarker,
+            name,
+            description,
+            0,
+            0,
+            0, 0, 0,
+        );
+    }
+
+    pub fn agent_marker(&mut self, name: &str, description: &str, task_id: u32) {
+        self.add_event(
+            TaskEventType::AgentMarker,
+            name,
+            description,
+            task_id,
+            0,
+            0, 0, 0,
+        );
+    }
+
     /// Get visible events in chronological order (newest first for UI)
     pub fn visible_events(&self) -> impl Iterator<Item = (usize, &TaskEventEntry)> {
         let count = self.count.min(TASK_BUFFER_SIZE);
@@ -332,23 +356,27 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                         TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(34, 197, 94)),
                         TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
                         TaskEventType::TokenBudgetUpdate => ("$", egui::Color32::from_rgb(236, 72, 153)),
+                        TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
+                        TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
                     };
 
                     let name = snapshot.state.get_text(event.name_offset, event.name_len);
                     let desc = snapshot.state.get_text(event.description_offset, event.description_len);
 
-                    let indent = depth as f32 * 16.0;
+                    let is_marker = matches!(event.event_type, TaskEventType::SessionMarker | TaskEventType::AgentMarker);
+                    let indent = if is_marker { 0.0 } else { depth as f32 * 16.0 };
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
                         ui.label(
                             egui::RichText::new(icon)
-                                .size(11.0)
+                                .size(if is_marker { 13.0 } else { 11.0 })
                                 .color(color),
                         );
                         ui.label(
                             egui::RichText::new(name)
-                                .size(10.0)
-                                .color(egui::Color32::from_rgb(226, 227, 243)),
+                                .size(if is_marker { 11.0 } else { 10.0 })
+                                .strong()
+                                .color(if is_marker { color } else { egui::Color32::from_rgb(226, 227, 243) }),
                         );
                         if !desc.is_empty() {
                             ui.label(
