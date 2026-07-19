@@ -12,7 +12,7 @@ pub enum TaskStatus {
     Pending,
     Running,
     Done(WorkerResult),
-    Failed(String),
+    Failed(WorkerResult),
 }
 
 #[derive(Debug, Default)]

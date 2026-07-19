@@ -18,5 +18,5 @@ pub use mediator::MediatorArena;
 pub use coordinator::WorkspaceCoordinator;
 pub use instruction_registry::{AgentTaskKind, InstructionRegistry, InstructionTemplate};
 pub use model_quality::{ModelCandidate, ModelQualityIndex, ProviderCapability, TaskRequirements};
-pub use task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedSubAgentTask, SiteMapTaskRouter};
+pub use task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedModelRoute, RoutedSubAgentTask, SiteMapTaskRouter};
 pub use site_map_support::{open_workspace_site_map, resolve_weight_root};

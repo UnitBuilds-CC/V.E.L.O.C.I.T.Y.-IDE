@@ -243,6 +243,19 @@ impl OrchestratorPanel {
                                                 .color(egui::Color32::from_rgb(168, 85, 247)),
                                         );
                                     }
+                                    if !task.fallback_chain.is_empty() {
+                                        let fallback = task
+                                            .fallback_chain
+                                            .iter()
+                                            .map(|route| format!("{} / {} [{}]", route.provider.label(), route.model_label, route.score))
+                                            .collect::<Vec<_>>()
+                                            .join(" -> ");
+                                        ui.label(
+                                            egui::RichText::new(format!("Fallbacks: {fallback}"))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(244, 114, 182)),
+                                        );
+                                    }
                                 });
                             }
                         });
@@ -496,14 +509,13 @@ impl OrchestratorPanel {
             self.running_workers.remove(&id);
             let report = validator::validate(&result);
             if result.success && report.ok {
-                reg.outputs.insert(id, result.outputs.clone());
+                let mut outputs = result.outputs.clone();
+                outputs.extend(result.created_files.clone());
+                outputs.extend(result.deleted_files.clone());
+                reg.outputs.insert(id, outputs);
                 reg.statuses.insert(id, TaskStatus::Done(result));
             } else {
-                let mut messages = report.messages;
-                if !result.success || messages.is_empty() {
-                    messages.insert(0, result.message.clone());
-                }
-                reg.statuses.insert(id, TaskStatus::Failed(messages.join(" | ")));
+                reg.statuses.insert(id, TaskStatus::Failed(result));
             }
         }
 
@@ -528,7 +540,8 @@ impl OrchestratorPanel {
                     provider_label: routed_task.provider.label().to_string(),
                     model_id: routed_task.model_id.clone(),
                     model_label: routed_task.model_label.clone(),
-                    thinking: true,
+                    thinking: routed_task.thinking,
+                    fallback_chain: routed_task.fallback_chain.clone(),
                 },
                 mediator.clone(),
                 weight_root,
@@ -553,7 +566,7 @@ impl OrchestratorPanel {
             .cloned()
             .unwrap_or(TaskStatus::Pending);
 
-        let (status_label, bg_color) = match status {
+        let (status_label, bg_color) = match &status {
             TaskStatus::Pending => ("⏳ Pending", egui::Color32::from_rgb(156, 163, 175)),
             TaskStatus::Running => ("🔵 Running", egui::Color32::from_rgb(96, 165, 250)),
             TaskStatus::Done(_) => ("✅ Done", egui::Color32::from_rgb(74, 222, 128)),
@@ -577,6 +590,71 @@ impl OrchestratorPanel {
                     let scope_str = task.scope.join(", ");
                     ui.label(egui::RichText::new(format!("Scope: {scope_str}")).small().color(egui::Color32::from_rgb(168, 85, 247)));
                 });
+            }
+            match &status {
+                TaskStatus::Done(result) | TaskStatus::Failed(result) => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Route: {} / {} | Duration: {:.2?}",
+                                result.provider_label,
+                                result.model_label,
+                                result.duration,
+                            ))
+                            .small()
+                            .color(egui::Color32::from_rgb(34, 211, 238)),
+                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(egui::RichText::new(&result.message).small().weak());
+                    });
+                    if !result.outputs.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new(format!("Changed: {}", result.outputs.join(", "))).small().color(egui::Color32::from_rgb(74, 222, 128)));
+                        });
+                    }
+                    if !result.created_files.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new(format!("Created: {}", result.created_files.join(", "))).small().color(egui::Color32::from_rgb(250, 204, 21)));
+                        });
+                    }
+                    if !result.deleted_files.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new(format!("Deleted: {}", result.deleted_files.join(", "))).small().color(egui::Color32::from_rgb(248, 113, 113)));
+                        });
+                    }
+                    if !result.attempts.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            let attempts = result
+                                .attempts
+                                .iter()
+                                .map(|attempt| format!("{} / {} ({})", attempt.provider_label, attempt.model_label, if attempt.success { "ok" } else { "miss" }))
+                                .collect::<Vec<_>>()
+                                .join(" -> ");
+                            ui.label(egui::RichText::new(format!("Attempts: {attempts}")).small().color(egui::Color32::from_rgb(244, 114, 182)));
+                        });
+                    }
+                    if !result.status_updates.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new(format!("Status: {}", result.status_updates.join(" | "))).small().weak());
+                        });
+                    }
+                    if !result.transcript.trim().is_empty() {
+                        let preview: String = result.transcript.chars().take(240).collect();
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new(format!("Transcript: {}{}", preview, if result.transcript.len() > preview.len() { "…" } else { "" })).small().color(egui::Color32::from_rgb(226, 227, 243)));
+                        });
+                    }
+                }
+                _ => {}
             }
         }
     }

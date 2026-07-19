@@ -36,8 +36,8 @@ pub fn validate(result: &WorkerResult) -> ValidationReport {
         return ValidationReport::fail(format!("Worker failed: {}", result.message));
     }
     let mut r = ValidationReport::ok();
-    if result.outputs.iter().map(|s| s.trim()).collect::<String>().is_empty() {
-        r = r.and(ValidationReport::fail("Task produced no textual output."));
+    if result.outputs.is_empty() && result.created_files.is_empty() && result.deleted_files.is_empty() {
+        r = r.and(ValidationReport::fail("Task produced no scoped file changes."));
     }
     r
 }

@@ -7,7 +7,7 @@ use crate::agent::{AiProvider, ModelInfo};
 use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;
 use crate::automation::site_map_support::resolve_weight_root;
-use crate::automation::task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedSubAgentTask, SiteMapTaskRouter};
+use crate::automation::task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedModelRoute, RoutedSubAgentTask, SiteMapTaskRouter};
 use crate::orchestrator::blueprint::Task;
 use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment};
 use crate::orchestrator::TaskId;
@@ -20,6 +20,7 @@ pub struct CoordinatorTask {
     pub model_id: String,
     pub model_label: String,
     pub thinking: bool,
+    pub fallback_chain: Vec<RoutedModelRoute>,
 }
 
 pub struct WorkspaceCoordinator {
@@ -93,6 +94,7 @@ impl WorkspaceCoordinator {
                     model_id: task.model_id.clone(),
                     model_label: task.model_label.clone(),
                     thinking: task.thinking,
+                    fallback_chain: task.fallback_chain.clone(),
                 },
                 self.mediator.clone(),
                 weight_root,
@@ -169,6 +171,7 @@ mod tests {
                 model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
                 model_label: "llama-3.1-8b-instruct".to_string(),
                 thinking: false,
+                fallback_chain: Vec::new(),
             },
         ];
 

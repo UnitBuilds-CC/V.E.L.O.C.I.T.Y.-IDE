@@ -13,6 +13,15 @@ pub struct ProviderModelCatalog {
 }
 
 #[derive(Debug, Clone)]
+pub struct RoutedModelRoute {
+    pub provider: AiProvider,
+    pub model_id: String,
+    pub model_label: String,
+    pub thinking: bool,
+    pub score: i32,
+}
+
+#[derive(Debug, Clone)]
 pub struct RoutedSubAgentTask {
     pub task_id: String,
     pub files: Vec<PathBuf>,
@@ -20,6 +29,8 @@ pub struct RoutedSubAgentTask {
     pub provider: AiProvider,
     pub model_id: String,
     pub model_label: String,
+    pub thinking: bool,
+    pub fallback_chain: Vec<RoutedModelRoute>,
     pub instruction_template_id: String,
     pub instructions: String,
     pub rationale: String,
@@ -56,17 +67,20 @@ impl SiteMapTaskRouter {
             .into_iter()
             .enumerate()
             .map(|(idx, partition)| {
-                let selected = ranked_models.first().cloned().unwrap_or_else(|| fallback_candidate());
+                let fallback_chain = build_fallback_chain(&ranked_models);
+                let selected = fallback_chain.first().cloned().unwrap_or_else(fallback_route);
                 let instruction_template_id = template.map(|item| item.id.clone()).unwrap_or_else(|| "default".to_string());
-                let instructions = build_instruction_payload(goal, kind, &partition, site_map, template, &selected);
-                let rationale = build_rationale(kind, &partition, site_map, &selected);
+                let instructions = build_instruction_payload(goal, kind, &partition, site_map, template, &selected, &fallback_chain);
+                let rationale = build_rationale(kind, &partition, site_map, &selected, fallback_chain.len());
                 RoutedSubAgentTask {
                     task_id: format!("subagent-{:02}", idx + 1),
                     files: partition,
                     task_kind: kind,
                     provider: selected.provider,
-                    model_id: selected.model_id,
-                    model_label: selected.label,
+                    model_id: selected.model_id.clone(),
+                    model_label: selected.model_label.clone(),
+                    thinking: selected.thinking,
+                    fallback_chain,
                     instruction_template_id,
                     instructions,
                     rationale,
@@ -130,7 +144,8 @@ fn build_instruction_payload(
     files: &[PathBuf],
     site_map: &SiteMap,
     template: Option<&InstructionTemplate>,
-    model: &ModelCandidate,
+    model: &RoutedModelRoute,
+    fallback_chain: &[RoutedModelRoute],
 ) -> String {
     let mut out = String::new();
     if let Some(template) = template {
@@ -152,7 +167,17 @@ fn build_instruction_payload(
     out.push_str("\nMODEL ROUTE: ");
     out.push_str(model.provider.label());
     out.push_str(" :: ");
-    out.push_str(&model.label);
+    out.push_str(&model.model_label);
+    out.push_str("\nFALLBACK CHAIN:\n");
+    for route in fallback_chain {
+        out.push_str("- ");
+        out.push_str(route.provider.label());
+        out.push_str(" :: ");
+        out.push_str(&route.model_label);
+        out.push_str(" (score ");
+        out.push_str(&route.score.to_string());
+        out.push_str(")\n");
+    }
     out.push_str("\nSCOPE FILES:\n");
     for file in files {
         out.push_str("- ");
@@ -170,7 +195,8 @@ fn build_rationale(
     kind: AgentTaskKind,
     files: &[PathBuf],
     site_map: &SiteMap,
-    model: &ModelCandidate,
+    model: &RoutedModelRoute,
+    fallback_count: usize,
 ) -> String {
     let mut coupling_edges = 0usize;
     for file in files {
@@ -181,25 +207,47 @@ fn build_rationale(
     }
 
     format!(
-        "Task kind '{}' routed to {} / {} with score {} across {} file(s) and {} observed coupling edge(s).",
+        "Task kind '{}' routed to {} / {} with score {} across {} file(s), {} observed coupling edge(s), and {} route candidate(s).",
         kind.as_str(),
         model.provider.label(),
-        model.label,
+        model.model_label,
         model.score,
         files.len(),
         coupling_edges,
+        fallback_count,
     )
 }
 
-fn fallback_candidate() -> ModelCandidate {
-    ModelCandidate {
+fn build_fallback_chain(ranked_models: &[ModelCandidate]) -> Vec<RoutedModelRoute> {
+    let mut chain = Vec::new();
+    for candidate in ranked_models {
+        if chain.iter().any(|route: &RoutedModelRoute| route.provider == candidate.provider && route.model_id == candidate.model_id) {
+            continue;
+        }
+        chain.push(RoutedModelRoute {
+            provider: candidate.provider,
+            model_id: candidate.model_id.clone(),
+            model_label: candidate.label.clone(),
+            thinking: candidate.supports_thinking,
+            score: candidate.score,
+        });
+        if chain.len() >= 3 {
+            break;
+        }
+    }
+    if chain.is_empty() {
+        chain.push(fallback_route());
+    }
+    chain
+}
+
+fn fallback_route() -> RoutedModelRoute {
+    RoutedModelRoute {
         provider: AiProvider::CloudflareWorkersAi,
         model_id: "auto".to_string(),
-        label: "auto".to_string(),
+        model_label: "auto".to_string(),
+        thinking: false,
         score: 0,
-        supports_tools: false,
-        supports_thinking: false,
-        api_style: crate::agent::ApiStyle::OpenAiChat,
     }
 }
 
@@ -251,5 +299,7 @@ mod tests {
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].files.len(), 2);
         assert_eq!(routes[0].provider, AiProvider::CloudflareWorkersAi);
+        assert!(!routes[0].fallback_chain.is_empty());
+        assert_eq!(routes[0].fallback_chain[0].model_label, "kimi-k2");
     }
 }
