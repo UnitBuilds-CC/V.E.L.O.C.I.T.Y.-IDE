@@ -1209,11 +1209,110 @@ fn url_encode(input: &str) -> String {
     out
 }
 
+fn normalize_match_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn string_match_score(haystack: &str, needle: &str) -> Option<i32> {
+    let haystack = normalize_match_text(haystack);
+    let needle = normalize_match_text(needle);
+    if needle.is_empty() {
+        return Some(1);
+    }
+    if haystack.is_empty() {
+        return None;
+    }
+    if haystack == needle {
+        return Some(1_000);
+    }
+    if haystack.starts_with(&needle) {
+        return Some(700);
+    }
+    if haystack.contains(&needle) {
+        return Some(500);
+    }
+
+    let needle_terms = needle.split(' ').collect::<Vec<_>>();
+    let mut matched_terms = 0;
+    for term in &needle_terms {
+        if haystack.contains(term) {
+            matched_terms += 1;
+        }
+    }
+    if matched_terms == 0 {
+        return None;
+    }
+    Some(200 + matched_terms * 40 - (haystack.len() as i32 - needle.len() as i32).abs().min(120))
+}
+
+fn element_actionability_score(element: &AomElement) -> i32 {
+    let mut score = match element.role.to_ascii_lowercase().as_str() {
+        "link" => 80,
+        "button" => 70,
+        "textbox" => 40,
+        _ => 10,
+    };
+    if element.target_url.is_some() {
+        score += 30;
+    }
+    if !element.value.is_empty() {
+        score += 5;
+    }
+    score
+}
+
+fn element_match_score(element: &AomElement, role: &str, name: &str) -> Option<i32> {
+    if !element.role.eq_ignore_ascii_case(role) {
+        return None;
+    }
+
+    let mut score = element_actionability_score(element);
+    if let Some(name_score) = string_match_score(&element.name, name) {
+        score += name_score;
+    } else {
+        let value_score = string_match_score(&element.value, name);
+        let target_score = element
+            .target_url
+            .as_deref()
+            .and_then(|target| string_match_score(target, name));
+        score += value_score.max(target_score).unwrap_or_default();
+        if value_score.is_none() && target_score.is_none() {
+            return None;
+        }
+    }
+
+    if let Some(target_url) = element.target_url.as_deref() {
+        if let Some(target_score) = string_match_score(target_url, name) {
+            score += target_score / 4;
+        }
+    }
+    Some(score)
+}
+
+fn form_field_match_score(field: &BrowserFormField, field_name: &str) -> Option<i32> {
+    let label_score = string_match_score(&field.label, field_name);
+    let name_score = string_match_score(&field.name, field_name);
+    let value_score = string_match_score(&field.value, field_name);
+    let best = label_score.max(name_score).max(value_score)?;
+    Some(best + if field.input_type.eq_ignore_ascii_case("hidden") { 0 } else { 25 })
+}
+
 fn find_element<'a>(snapshot: &'a BrowserPageSnapshot, role: &str, name: &str) -> Option<&'a AomElement> {
     snapshot
         .elements
         .iter()
-        .find(|element| element.role.eq_ignore_ascii_case(role) && element.name.eq_ignore_ascii_case(name))
+        .filter_map(|element| element_match_score(element, role, name).map(|score| (score, element)))
+        .max_by(|(left_score, left_element), (right_score, right_element)| {
+            left_score
+                .cmp(right_score)
+                .then_with(|| right_element.name.len().cmp(&left_element.name.len()))
+        })
+        .map(|(_, element)| element)
 }
 
 fn find_form<'a>(snapshot: &'a BrowserPageSnapshot, form_id: Option<&str>) -> Option<&'a BrowserForm> {
@@ -1224,14 +1323,17 @@ fn find_form<'a>(snapshot: &'a BrowserPageSnapshot, form_id: Option<&str>) -> Op
 }
 
 fn find_form_field<'a>(snapshot: &'a BrowserPageSnapshot, field_name: &str) -> Option<&'a BrowserFormField> {
-    for form in &snapshot.forms {
-        for field in &form.fields {
-            if field.name.eq_ignore_ascii_case(field_name) || field.label.eq_ignore_ascii_case(field_name) {
-                return Some(field);
-            }
-        }
-    }
-    None
+    snapshot
+        .forms
+        .iter()
+        .flat_map(|form| form.fields.iter())
+        .filter_map(|field| form_field_match_score(field, field_name).map(|score| (score, field)))
+        .max_by(|(left_score, left_field), (right_score, right_field)| {
+            left_score
+                .cmp(right_score)
+                .then_with(|| right_field.label.len().cmp(&left_field.label.len()))
+        })
+        .map(|(_, field)| field)
 }
 
 fn snapshot_contains_text(snapshot: &BrowserPageSnapshot, needle: &str) -> bool {
@@ -1592,10 +1694,24 @@ fn extract_snapshot_value(
 }
 
 fn apply_fill_field(state: &mut BrowserReplayState, field_name: &str, value: &str) -> Result<(), String> {
+    let best_field_name = find_form_field(&state.snapshot, field_name).map(|field| field.name.clone());
+    let best_element_name = state
+        .snapshot
+        .elements
+        .iter()
+        .filter(|element| element.role.eq_ignore_ascii_case("textbox"))
+        .filter_map(|element| string_match_score(&element.name, field_name).map(|score| (score, element.name.clone())))
+        .max_by(|(left_score, left_name), (right_score, right_name)| {
+            left_score
+                .cmp(right_score)
+                .then_with(|| right_name.len().cmp(&left_name.len()))
+        })
+        .map(|(_, name)| name);
+
     let mut matched = false;
     for form in &mut state.snapshot.forms {
         for field in &mut form.fields {
-            if field.name.eq_ignore_ascii_case(field_name) || field.label.eq_ignore_ascii_case(field_name) {
+            if best_field_name.as_deref() == Some(field.name.as_str()) {
                 field.value = value.to_string();
                 state.filled_fields.insert(field.name.clone(), value.to_string());
                 matched = true;
@@ -1603,7 +1719,9 @@ fn apply_fill_field(state: &mut BrowserReplayState, field_name: &str, value: &st
         }
     }
     for element in &mut state.snapshot.elements {
-        if element.role.eq_ignore_ascii_case("textbox") && element.name.eq_ignore_ascii_case(field_name) {
+        if element.role.eq_ignore_ascii_case("textbox")
+            && best_element_name.as_deref() == Some(element.name.as_str())
+        {
             element.value = value.to_string();
             matched = true;
         }
@@ -2650,6 +2768,23 @@ mod tests {
         assert!(summary.contains("Passed: 1"));
         assert!(summary.contains("Failed: 1"));
         assert!(summary.contains("Suite Report:"));
+    }
+
+    #[test]
+    fn ranks_semantic_element_and_field_matches() {
+        let snapshot = parse_html_to_snapshot(
+            "https://example.com/app",
+            "<html><head><title>Portal</title></head><body><a href='/settings/billing'>Billing Settings</a><a href='/settings'>Settings</a><form id='profile'><input name='user_email' placeholder='Work Email'></form></body></html>",
+            &[],
+            &[],
+        );
+
+        let matched_link = super::find_element(&snapshot, "link", "billing").unwrap();
+        assert_eq!(matched_link.name, "Billing Settings");
+        assert_eq!(matched_link.target_url.as_deref(), Some("https://example.com/settings/billing"));
+
+        let matched_field = super::find_form_field(&snapshot, "email").unwrap();
+        assert_eq!(matched_field.name, "user_email");
     }
 
     #[test]
