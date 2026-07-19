@@ -131,6 +131,29 @@ pub struct BrowserWorkflowRunReport {
     pub log: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserWorkflowSuite {
+    pub name: String,
+    pub workflows: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserWorkflowSuiteRunItem {
+    pub workflow_path: String,
+    pub workflow_name: String,
+    pub status: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserWorkflowSuiteRunReport {
+    pub suite_name: String,
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub items: Vec<BrowserWorkflowSuiteRunItem>,
+}
+
 struct BrowserHttpResponse {
     html: String,
     cookies: Vec<BrowserCookie>,
@@ -322,6 +345,20 @@ fn browser_workflow_run_path(workspace_root: &Path, workflow_name: &str, session
             sanitize_file_stem(workflow_name),
             sanitize_file_stem(session_id)
         ))
+}
+
+fn browser_workflow_suite_json_path(workspace_root: &Path, suite_name: &str) -> PathBuf {
+    workspace_root
+        .join(".velocity")
+        .join("browser-suites")
+        .join(format!("{}.suite.json", sanitize_file_stem(suite_name)))
+}
+
+fn browser_workflow_suite_run_path(workspace_root: &Path, suite_name: &str) -> PathBuf {
+    workspace_root
+        .join(".velocity")
+        .join("browser-suite-runs")
+        .join(format!("{}.suite-run.json", sanitize_file_stem(suite_name)))
 }
 
 fn browser_session_checkpoint_path(
@@ -1486,6 +1523,21 @@ pub fn load_workflow(path: &Path) -> Result<BrowserWorkflow, String> {
     serde_json::from_slice(&raw).map_err(|err| format!("parse workflow: {err}"))
 }
 
+pub fn save_workflow_suite(workspace_root: &Path, suite: &BrowserWorkflowSuite) -> Result<PathBuf, String> {
+    let path = browser_workflow_suite_json_path(workspace_root, &suite.name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create workflow suite dir: {err}"))?;
+    }
+    let json = serde_json::to_vec_pretty(suite).map_err(|err| format!("serialise workflow suite: {err}"))?;
+    fs::write(&path, json).map_err(|err| format!("write workflow suite: {err}"))?;
+    Ok(path)
+}
+
+pub fn load_workflow_suite(path: &Path) -> Result<BrowserWorkflowSuite, String> {
+    let raw = fs::read(path).map_err(|err| format!("read workflow suite: {err}"))?;
+    serde_json::from_slice(&raw).map_err(|err| format!("parse workflow suite: {err}"))
+}
+
 fn replay_workflow_with_state(
     workflow: &BrowserWorkflow,
     mut state: BrowserReplayState,
@@ -1685,6 +1737,19 @@ fn persist_run_report(
     Ok(path)
 }
 
+fn persist_suite_run_report(
+    workspace_root: &Path,
+    report: &BrowserWorkflowSuiteRunReport,
+) -> Result<PathBuf, String> {
+    let path = browser_workflow_suite_run_path(workspace_root, &report.suite_name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create browser suite run dir: {err}"))?;
+    }
+    let json = serde_json::to_vec_pretty(report).map_err(|err| format!("serialise browser suite run report: {err}"))?;
+    fs::write(&path, json).map_err(|err| format!("write browser suite run report: {err}"))?;
+    Ok(path)
+}
+
 pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
     let mut session = BrowserSessionState {
         id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
@@ -1734,6 +1799,68 @@ pub fn replay_workflow_with_artifacts(
     ))
 }
 
+pub fn run_workflow_suite(
+    workspace_root: &Path,
+    suite: &BrowserWorkflowSuite,
+    sitemap_path: &Path,
+) -> Result<String, String> {
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut items = Vec::with_capacity(suite.workflows.len());
+
+    for workflow_path in &suite.workflows {
+        let full_path = workspace_root.join(workflow_path);
+        match load_workflow(&full_path) {
+            Ok(workflow) => match replay_workflow_with_artifacts(workspace_root, &workflow, sitemap_path) {
+                Ok(summary) => {
+                    passed += 1;
+                    items.push(BrowserWorkflowSuiteRunItem {
+                        workflow_path: workflow_path.clone(),
+                        workflow_name: workflow.name,
+                        status: "passed".to_string(),
+                        summary: truncate_string(&summary, 400),
+                    });
+                }
+                Err(err) => {
+                    failed += 1;
+                    items.push(BrowserWorkflowSuiteRunItem {
+                        workflow_path: workflow_path.clone(),
+                        workflow_name: workflow.name,
+                        status: "failed".to_string(),
+                        summary: err,
+                    });
+                }
+            },
+            Err(err) => {
+                failed += 1;
+                items.push(BrowserWorkflowSuiteRunItem {
+                    workflow_path: workflow_path.clone(),
+                    workflow_name: workflow_path.clone(),
+                    status: "failed".to_string(),
+                    summary: err,
+                });
+            }
+        }
+    }
+
+    let report = BrowserWorkflowSuiteRunReport {
+        suite_name: suite.name.clone(),
+        total: suite.workflows.len(),
+        passed,
+        failed,
+        items,
+    };
+    let report_path = persist_suite_run_report(workspace_root, &report)?;
+    Ok(format!(
+        "Workflow suite '{}' completed.\nTotal: {}\nPassed: {}\nFailed: {}\nSuite Report: {}",
+        suite.name,
+        report.total,
+        report.passed,
+        report.failed,
+        report_path.display()
+    ))
+}
+
 pub fn replay_workflow_in_session(
     workspace_root: &Path,
     session_id: &str,
@@ -1772,10 +1899,11 @@ pub fn replay_workflow_in_session(
 mod tests {
     use super::{
         crawl_facts_path, create_session, diff_snapshots, load_session_state, load_workflow,
-        load_snapshot_json, navigate_session, parse_html_to_snapshot, render_workflow_dsl,
-        replay_workflow, replay_workflow_in_session, restore_session_checkpoint,
-        save_session_checkpoint, save_workflow, wait_for_session, write_crawl_facts, AomElement,
-        BrowserCookie, BrowserWorkflow, BrowserWorkflowStep,
+        load_snapshot_json, load_workflow_suite, navigate_session, parse_html_to_snapshot,
+        render_workflow_dsl, replay_workflow, replay_workflow_in_session, restore_session_checkpoint,
+        run_workflow_suite, save_session_checkpoint, save_workflow, save_workflow_suite,
+        wait_for_session, write_crawl_facts, AomElement, BrowserCookie, BrowserWorkflow,
+        BrowserWorkflowStep, BrowserWorkflowSuite,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1902,6 +2030,66 @@ mod tests {
         assert!(dsl.contains("fill_field"));
         assert!(dsl.contains("wait_for_text"));
         assert!(dsl.contains("submit_form"));
+    }
+
+    #[test]
+    fn saves_and_runs_browser_workflow_suite() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let body = if first_line.starts_with("POST /login") {
+                        "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
+                    } else {
+                        "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let workflow = BrowserWorkflow {
+            name: "Login Flow".to_string(),
+            start_url: base_url,
+            variables: HashMap::new(),
+            steps: vec![
+                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "rust@example.com".to_string() },
+                BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },
+                BrowserWorkflowStep::AssertTextContains { text: "Welcome back".to_string() },
+            ],
+        };
+        let (workflow_path, _) = save_workflow(root, &workflow).unwrap();
+        let suite = BrowserWorkflowSuite {
+            name: "Smoke Pack".to_string(),
+            workflows: vec![
+                workflow_path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"),
+                ".velocity/browser-workflows/missing.browser.json".to_string(),
+            ],
+        };
+        let suite_path = save_workflow_suite(root, &suite).unwrap();
+        let loaded = load_workflow_suite(&suite_path).unwrap();
+        assert_eq!(loaded, suite);
+
+        let sitemap_path = root.join("site_map");
+        let summary = run_workflow_suite(root, &suite, &sitemap_path).unwrap();
+        assert!(summary.contains("Workflow suite 'Smoke Pack' completed."));
+        assert!(summary.contains("Total: 2"));
+        assert!(summary.contains("Passed: 1"));
+        assert!(summary.contains("Failed: 1"));
+        assert!(summary.contains("Suite Report:"));
     }
 
     #[test]

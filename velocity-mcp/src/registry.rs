@@ -255,6 +255,44 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["relativeFilePath"]
             }),
         },
+        Tool {
+            name: "browser_save_workflow_suite".to_string(),
+            description: "Persist a semantic browser workflow suite as JSON so multiple saved workflows can run as a lightweight regression pack.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Suite name." },
+                    "workflows": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Relative paths to saved .browser.json workflows."
+                    }
+                },
+                "required": ["name", "workflows"]
+            }),
+        },
+        Tool {
+            name: "browser_read_workflow_suite".to_string(),
+            description: "Read a saved browser workflow suite JSON artifact from the workspace.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .suite.json file relative to the workspace root." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "browser_run_workflow_suite".to_string(),
+            description: "Execute a saved semantic browser workflow suite and persist an aggregated suite run report.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .suite.json file relative to the workspace root." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
     ]
 }
 
@@ -434,6 +472,39 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 crate::editor::browser::replay_workflow_with_artifacts(&root, &workflow, &sitemap_path)
                     .map_err(|e| e.into())
             }
+        }
+        "browser_save_workflow_suite" => {
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let workflows = arguments["workflows"].as_array().ok_or("workflows must be an array")?;
+            let suite = crate::editor::browser::BrowserWorkflowSuite {
+                name: name.to_string(),
+                workflows: workflows
+                    .iter()
+                    .map(|entry| entry.as_str().ok_or("workflow suite entries must be strings"))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|value| value.to_string())
+                    .collect(),
+            };
+            let path = crate::editor::browser::save_workflow_suite(&root, &suite)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(format!("Saved browser workflow suite '{}'\nJSON: {}", suite.name, path.display()))
+        }
+        "browser_read_workflow_suite" => {
+            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let suite = crate::editor::browser::load_workflow_suite(&full_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(serde_json::to_string_pretty(&suite)?)
+        }
+        "browser_run_workflow_suite" => {
+            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let suite = crate::editor::browser::load_workflow_suite(&full_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let sitemap_path = root.join(".velocity").join("site_map");
+            crate::editor::browser::run_workflow_suite(&root, &suite, &sitemap_path)
+                .map_err(|e| e.into())
         }
         "run_command" => {
             let command_str = arguments["command"].as_str().ok_or("command is required")?;
@@ -938,6 +1009,91 @@ mod tests {
         assert!(replay.contains("Cookies: 1"));
         assert!(replay.contains("Outputs: 1"));
         assert!(replay.contains("Run Report:"));
+    }
+
+    #[test]
+    fn browser_workflow_suite_tools_round_trip() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let body = if first_line.starts_with("POST /login") {
+                        "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
+                    } else {
+                        "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(
+            &root,
+            "browser_save_workflow",
+            &json!({
+                "name": "Login Flow",
+                "startUrl": base_url,
+                "steps": [
+                    {"kind": "fill_field", "field": "email", "value": "rust@example.com"},
+                    {"kind": "submit_form", "form": "login"},
+                    {"kind": "assert_text_contains", "text": "Welcome back"}
+                ]
+            }),
+        )
+        .unwrap();
+
+        let suite_save = call_tool_in_workspace(
+            &root,
+            "browser_save_workflow_suite",
+            &json!({
+                "name": "Smoke Pack",
+                "workflows": [
+                    ".velocity/browser-workflows/login-flow.browser.json",
+                    ".velocity/browser-workflows/missing.browser.json"
+                ]
+            }),
+        )
+        .unwrap();
+        assert!(suite_save.contains("Saved browser workflow suite 'Smoke Pack'"));
+
+        let suite_read = call_tool_in_workspace(
+            &root,
+            "browser_read_workflow_suite",
+            &json!({"relativeFilePath": ".velocity/browser-suites/smoke-pack.suite.json"}),
+        )
+        .unwrap();
+        assert!(suite_read.contains("Smoke Pack"));
+        assert!(suite_read.contains("login-flow.browser.json"));
+
+        let suite_run = call_tool_in_workspace(
+            &root,
+            "browser_run_workflow_suite",
+            &json!({"relativeFilePath": ".velocity/browser-suites/smoke-pack.suite.json"}),
+        )
+        .unwrap();
+        assert!(suite_run.contains("Workflow suite 'Smoke Pack' completed."));
+        assert!(suite_run.contains("Total: 2"));
+        assert!(suite_run.contains("Passed: 1"));
+        assert!(suite_run.contains("Failed: 1"));
+        assert!(suite_run.contains("Suite Report:"));
     }
 
     #[test]
