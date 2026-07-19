@@ -719,42 +719,48 @@ fn unpack_ndav(data: &[u8]) -> Option<(String, Vec<u8>)> {
 }
 
 fn generate_sitemap_text(workspace_root: &std::path::Path) -> String {
-    let mut text = String::new();
-    text.push_str("V.E.L.O.C.I.T.Y. Codebase Sitemap Registry\n");
-    text.push_str("=========================================\n");
-    
-    fn scan_sitemap(dir: &std::path::Path, base: &std::path::Path, text: &mut String) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
+    let mut entries: Vec<(String, String, Option<u64>)> = Vec::new();
+
+    fn scan_sitemap(dir: &std::path::Path, base: &std::path::Path, entries: &mut Vec<(String, String, Option<u64>)>) {
+        if let Ok(read_dir) = std::fs::read_dir(dir) {
+            for entry in read_dir.flatten() {
                 let path = entry.path();
                 let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if file_name == ".git" || file_name == "target" || file_name == "node_modules" || file_name == ".velocity" {
                     continue;
                 }
-                
+
                 if let Ok(meta) = entry.metadata() {
                     let rel_path = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
                     if meta.is_dir() {
-                        text.push_str(&format!("dir\t{}\n", rel_path));
-                        scan_sitemap(&path, base, text);
+                        entries.push(("dir".to_string(), rel_path.clone(), None));
+                        scan_sitemap(&path, base, entries);
                     } else {
-                        text.push_str(&format!("file\t{}\t{}\n", rel_path, meta.len()));
+                        entries.push(("file".to_string(), rel_path, Some(meta.len())));
                     }
                 }
             }
         }
     }
-    
-    scan_sitemap(workspace_root, workspace_root, &mut text);
-    text
+
+    scan_sitemap(workspace_root, workspace_root, &mut entries);
+    entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+    let mut lines = vec!["sitemap version 1".to_string()];
+    for (kind, rel_path, size) in entries {
+        match size {
+            Some(size) => lines.push(format!("entry\t{}\t{}\t{}", kind, encode_nda_text(&rel_path), size)),
+            None => lines.push(format!("entry\t{}\t{}", kind, encode_nda_text(&rel_path))),
+        }
+    }
+    lines.join("\n") + "\n"
 }
 
 fn write_sitemap_nda(workspace_root: &std::path::Path) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
     let sitemap_text = generate_sitemap_text(workspace_root);
-    let nda_data = pack_ndav("sitemap.txt", sitemap_text.as_bytes());
-    let _ = std::fs::write(sitemap_dir.join("sitemap.nda"), nda_data);
+    let _ = std::fs::write(sitemap_dir.join("sitemap.nda"), sitemap_text);
 }
 
 fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage>> {
@@ -2438,6 +2444,26 @@ mod tests {
         assert!(nda.contains("message\t1\tassistant\t-\t-\tcalling tool\t["));
         assert!(nda.contains("read_file"));
         assert!(nda.contains("tool\t0\tread_file\tRead a file"));
+    }
+
+    #[test]
+    fn writes_plaintext_sitemap_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src").join("nested")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".velocity")).unwrap();
+        std::fs::write(tmp.path().join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(tmp.path().join("src").join("nested").join("lib.rs"), "pub fn x() {}\n").unwrap();
+        std::fs::write(tmp.path().join(".velocity").join("ignored.txt"), "ignore me").unwrap();
+
+        write_sitemap_nda(tmp.path());
+        let sitemap = std::fs::read_to_string(tmp.path().join(".velocity").join("sitemap.nda")).unwrap();
+        assert!(sitemap.starts_with("sitemap version 1\n"));
+        assert!(sitemap.contains("entry\tdir\tsrc"));
+        assert!(sitemap.contains("entry\tdir\tsrc\\\\nested"));
+        assert!(sitemap.contains("entry\tfile\tsrc\\\\main.rs\t"));
+        assert!(sitemap.contains("entry\tfile\tsrc\\\\nested\\\\lib.rs\t"));
+        assert!(!sitemap.contains("V.E.L.O.C.I.T.Y. Codebase Sitemap Registry"));
+        assert!(!sitemap.contains("ignored.txt"));
     }
 
     #[test]
