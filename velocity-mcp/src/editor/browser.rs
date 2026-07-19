@@ -112,21 +112,25 @@ fn write_crawl_facts(
         fs::create_dir_all(parent).map_err(|err| format!("create browser capture dir: {err}"))?;
     }
 
-    let mut facts = Vec::new();
-    facts.push("browser-capture version 1".to_string());
-    facts.push(format!("kind page-crawl"));
-    facts.push(format!("page\turl\t{}", encode_nda_text(url)));
-    facts.push(format!("page\ttitle\t{}", encode_nda_text(title)));
-    facts.push(format!("page\tsummary\t{}", encode_nda_text(summary)));
-    facts.push(format!("page\telement_count\t{}", elements.len()));
+    let mut facts = vec![
+        "browser-capture version 2".to_string(),
+        "field_count 2".to_string(),
+        "field\tkind\tpage-crawl".to_string(),
+        format!("field\telement_count\t{}", elements.len()),
+        "page_field_count 3".to_string(),
+        format!("page_field\turl\t{}", encode_nda_text(url)),
+        format!("page_field\ttitle\t{}", encode_nda_text(title)),
+        format!("page_field\tsummary\t{}", encode_nda_text(summary)),
+    ];
 
     for (idx, element) in elements.iter().enumerate() {
+        facts.push(format!("element\t{}", idx));
+        facts.push(format!("element_field\t{}\trole\t{}", idx, encode_nda_text(&element.role)));
+        facts.push(format!("element_field\t{}\tname\t{}", idx, encode_nda_text(&element.name)));
+        facts.push(format!("element_field\t{}\tvalue\t{}", idx, encode_nda_text(&element.value)));
         facts.push(format!(
-            "element\t{}\t{}\t{}\t{}\t{}",
+            "element_field\t{}\ttarget_url\t{}",
             idx,
-            encode_nda_text(&element.role),
-            encode_nda_text(&element.name),
-            encode_nda_text(&element.value),
             encode_nda_text(element.target_url.as_deref().unwrap_or("-")),
         ));
     }
@@ -381,11 +385,18 @@ mod tests {
 
         assert_eq!(facts_path, crawl_facts_path("https://example.com/docs", &sitemap_path));
         let facts = fs::read_to_string(facts_path).unwrap();
-        assert!(facts.starts_with("browser-capture version 1\n"));
-        assert!(facts.contains("kind page-crawl"));
-        assert!(facts.contains("page\ttitle\tDocs"));
-        assert!(facts.contains("page\telement_count\t2"));
-        assert!(facts.contains("element\t0\tlink\tAPI\thttps://example.com/api\thttps://example.com/api"));
-        assert!(facts.contains("element\t1\tbutton\tSearch\t\t-"));
+        assert!(facts.starts_with("browser-capture version 2\n"));
+        assert!(facts.contains("field_count 2\n"));
+        assert!(facts.contains("field\tkind\tpage-crawl\n"));
+        assert!(facts.contains("field\telement_count\t2\n"));
+        assert!(facts.contains("page_field\ttitle\tDocs"));
+        assert!(facts.contains("element\t0\n"));
+        assert!(facts.contains("element_field\t0\trole\tlink"));
+        assert!(facts.contains("element_field\t0\tname\tAPI"));
+        assert!(facts.contains("element_field\t0\tvalue\thttps://example.com/api"));
+        assert!(facts.contains("element_field\t0\ttarget_url\thttps://example.com/api"));
+        assert!(facts.contains("element_field\t1\trole\tbutton"));
+        assert!(facts.contains("element_field\t1\tname\tSearch"));
+        assert!(facts.contains("element_field\t1\ttarget_url\t-"));
     }
 }

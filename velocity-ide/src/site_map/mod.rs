@@ -229,6 +229,23 @@ impl SiteMap {
     fn read_weight_root_nda(base_dir: &Path) -> Option<u64> {
         let metadata_path = base_dir.join("metadata.nda");
         let raw = fs::read_to_string(metadata_path).ok()?;
+        let mut lines = raw.lines();
+        let header = lines.find(|line| !line.trim().is_empty()).map(str::trim).unwrap_or("");
+
+        if header == "metadata version 2" {
+            for line in lines {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with("field_count ") {
+                    continue;
+                }
+                let parts = line.split('\t').collect::<Vec<_>>();
+                if parts.len() == 3 && parts[0] == "field" && parts[1] == "weight_root" {
+                    return u64::from_str_radix(parts[2].trim_start_matches("0x"), 16).ok();
+                }
+            }
+            return None;
+        }
+
         for line in raw.lines() {
             let line = line.trim();
             if let Some(value) = line.strip_prefix("weight_root ") {
@@ -1080,7 +1097,7 @@ impl SiteMap {
         fs::write(
             self.base.join("metadata.nda"),
             format!(
-                "metadata version 1\nweight_root {:016x}\n",
+                "metadata version 2\nfield_count 1\nfield\tweight_root\t{:016x}\n",
                 self.weight_root
             ),
         )?;
@@ -1623,8 +1640,9 @@ mod tests {
         sm.flush().unwrap();
 
         let metadata = fs::read_to_string(dir.path().join("metadata.nda")).unwrap();
-        assert!(metadata.contains("metadata version 1"));
-        assert!(metadata.contains("weight_root 000000001234abcd"));
+        assert!(metadata.contains("metadata version 2"));
+        assert!(metadata.contains("field_count 1"));
+        assert!(metadata.contains("field\tweight_root\t000000001234abcd"));
         assert_eq!(
             SiteMap::read_persisted_weight_root(dir.path()),
             Some(0x1234_ABCD)
@@ -1636,7 +1654,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join("metadata.nda"),
-            "metadata version 1\nweight_root 00000000000000aa\n",
+            "metadata version 2\nfield_count 1\nfield\tweight_root\t00000000000000aa\n",
         )
         .unwrap();
         fs::write(

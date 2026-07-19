@@ -746,12 +746,18 @@ fn generate_sitemap_text(workspace_root: &std::path::Path) -> String {
     scan_sitemap(workspace_root, workspace_root, &mut entries);
     entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
-    let mut lines = vec!["sitemap version 1".to_string()];
-    for (kind, rel_path, size) in entries {
-        match size {
-            Some(size) => lines.push(format!("entry\t{}\t{}\t{}", kind, encode_nda_text(&rel_path), size)),
-            None => lines.push(format!("entry\t{}\t{}", kind, encode_nda_text(&rel_path))),
-        }
+    let mut lines = vec![
+        "sitemap version 2".to_string(),
+        format!("entry_count {}", entries.len()),
+    ];
+    for (index, (kind, rel_path, size)) in entries.into_iter().enumerate() {
+        lines.push(format!(
+            "entry\t{}\t{}\t{}\t{}",
+            index,
+            kind,
+            encode_nda_text(&rel_path),
+            size.map(|value| value.to_string()).unwrap_or_else(|| "-".to_string())
+        ));
     }
     lines.join("\n") + "\n"
 }
@@ -1635,12 +1641,15 @@ pub fn run_agent_thread(
 
 fn serialize_transcript_nda(content: &[u8]) -> String {
     let text = String::from_utf8_lossy(content);
-    let mut lines = vec!["transcript version 1".to_string(), "source jsonl".to_string()];
+    let mut lines = vec![
+        "transcript version 2".to_string(),
+        "field_count 2".to_string(),
+        "field\tsource\tjsonl".to_string(),
+        format!("field\ttrailing_newline\t{}", text.ends_with('\n')),
+        format!("line_count {}", text.lines().count()),
+    ];
     for (index, line) in text.lines().enumerate() {
         lines.push(format!("line\t{}\t{}", index, encode_nda_text(line)));
-    }
-    if text.ends_with('\n') {
-        lines.push("trailing_newline true".to_string());
     }
     lines.join("\n") + "\n"
 }
@@ -2724,11 +2733,13 @@ mod tests {
 
         write_workspace_transcript_nda(tmp.path(), content);
         let transcript = std::fs::read_to_string(tmp.path().join(".velocity").join("transcript.nda")).unwrap();
-        assert!(transcript.starts_with("transcript version 1\n"));
-        assert!(transcript.contains("source jsonl\n"));
+        assert!(transcript.starts_with("transcript version 2\n"));
+        assert!(transcript.contains("field_count 2\n"));
+        assert!(transcript.contains("field\tsource\tjsonl\n"));
+        assert!(transcript.contains("field\ttrailing_newline\ttrue\n"));
+        assert!(transcript.contains("line_count 2\n"));
         assert!(transcript.contains("line\t0\t{\"role\":\"user\"}"));
         assert!(transcript.contains("line\t1\t{\"role\":\"assistant\"}"));
-        assert!(transcript.contains("trailing_newline true\n"));
     }
 
     #[test]
@@ -2742,11 +2753,12 @@ mod tests {
 
         write_sitemap_nda(tmp.path());
         let sitemap = std::fs::read_to_string(tmp.path().join(".velocity").join("sitemap.nda")).unwrap();
-        assert!(sitemap.starts_with("sitemap version 1\n"));
-        assert!(sitemap.contains("entry\tdir\tsrc"));
-        assert!(sitemap.contains("entry\tdir\tsrc\\\\nested"));
-        assert!(sitemap.contains("entry\tfile\tsrc\\\\main.rs\t"));
-        assert!(sitemap.contains("entry\tfile\tsrc\\\\nested\\\\lib.rs\t"));
+        assert!(sitemap.starts_with("sitemap version 2\n"));
+        assert!(sitemap.contains("entry_count 4\n"));
+        assert!(sitemap.contains("\tdir\tsrc\t-"));
+        assert!(sitemap.contains("\tdir\tsrc\\\\nested\t-"));
+        assert!(sitemap.contains("\tfile\tsrc\\\\main.rs\t"));
+        assert!(sitemap.contains("\tfile\tsrc\\\\nested\\\\lib.rs\t"));
         assert!(!sitemap.contains("V.E.L.O.C.I.T.Y. Codebase Sitemap Registry"));
         assert!(!sitemap.contains("ignored.txt"));
     }
