@@ -793,23 +793,49 @@ impl OrchestratorPanel {
             let Some(routed_task) = routed_task_for_id(&self.routed_plan, id) else {
                 continue;
             };
-            let handle = spawn_live_worker(
-                WorkerAssignment {
-                    task,
-                    workspace_root: workspace_root.to_path_buf(),
-                    instructions: routed_task.execution_contract.clone(),
-                    provider: routed_task.provider,
-                    provider_label: routed_task.provider.label().to_string(),
-                    model_id: routed_task.model_id.clone(),
-                    model_label: routed_task.model_label.clone(),
-                    thinking: routed_task.thinking,
-                    fallback_chain: routed_task.fallback_chain.clone(),
-                },
-                mediator.clone(),
-                weight_root,
-            );
-            reg.statuses.insert(id, TaskStatus::Running);
-            self.running_workers.insert(id, handle);
+            let site_map_path = workspace_root.join(".velocity").join("site_map");
+            let current_site_map_root = velocity_ide::site_map::SiteMap::open(&site_map_path, weight_root)
+                .map(|site_map| site_map.root());
+            match current_site_map_root {
+                Ok(current_root) if current_root == routed_task.planned_site_map_root => {
+                    let handle = spawn_live_worker(
+                        WorkerAssignment {
+                            task,
+                            workspace_root: workspace_root.to_path_buf(),
+                            instructions: routed_task.execution_contract.clone(),
+                            planned_site_map_root: routed_task.planned_site_map_root,
+                            provider: routed_task.provider,
+                            provider_label: routed_task.provider.label().to_string(),
+                            model_id: routed_task.model_id.clone(),
+                            model_label: routed_task.model_label.clone(),
+                            thinking: routed_task.thinking,
+                            fallback_chain: routed_task.fallback_chain.clone(),
+                        },
+                        mediator.clone(),
+                        weight_root,
+                    );
+                    reg.statuses.insert(id, TaskStatus::Running);
+                    self.running_workers.insert(id, handle);
+                }
+                Ok(current_root) => {
+                    let mut result = WorkerResult::new(&task);
+                    result.success = false;
+                    result.message = format!(
+                        "stale routed plan: planned SiteMap root {:016x} but current root is {:016x}",
+                        routed_task.planned_site_map_root,
+                        current_root
+                    );
+                    result.status_updates.push(result.message.clone());
+                    reg.statuses.insert(id, TaskStatus::Blocked(result));
+                }
+                Err(err) => {
+                    let mut result = WorkerResult::new(&task);
+                    result.success = false;
+                    result.message = format!("failed to open site map for freshness check: {err}");
+                    result.status_updates.push(result.message.clone());
+                    reg.statuses.insert(id, TaskStatus::Blocked(result));
+                }
+            }
         }
 
         self.execution_running = !self.running_workers.is_empty();
@@ -1044,6 +1070,54 @@ mod tests {
     }
 
     #[test]
+    fn stale_routed_plan_blocks_dispatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path();
+        let site_map_dir = workspace_root.join(".velocity").join("site_map");
+        std::fs::create_dir_all(&site_map_dir).unwrap();
+        let mut site_map = velocity_ide::site_map::SiteMap::open(&site_map_dir, 0).unwrap();
+        site_map
+            .put_node(&velocity_ide::site_map::NdaNode::Triple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 2,
+            })
+            .unwrap();
+        let current_root = site_map.root();
+
+        let mut panel = OrchestratorPanel::new();
+        panel.set_routed_tasks(
+            "goal".to_string(),
+            AgentTaskKind::Refactor,
+            1,
+            vec![RoutedSubAgentTask {
+                task_id: "task-1".to_string(),
+                task_kind: AgentTaskKind::Refactor,
+                planned_site_map_root: current_root.wrapping_add(1),
+                files: vec![std::path::PathBuf::from("src/main.rs")],
+                provider: crate::agent::AiProvider::CloudflareWorkersAi,
+                model_id: "model".to_string(),
+                model_label: "model".to_string(),
+                thinking: false,
+                fallback_chain: Vec::new(),
+                instruction_template_id: "template".to_string(),
+                decomposition_policy_id: "policy".to_string(),
+                decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
+                execution_contract: String::new(),
+                summary: String::new(),
+                rationale: String::new(),
+            }],
+        );
+
+        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+        panel.poll_live_workers(workspace_root, &mediator);
+
+        let registry = panel.registry.as_ref().unwrap();
+        assert!(matches!(registry.statuses.get(&TaskId(2)), Some(TaskStatus::Blocked(_))));
+        assert!(panel.running_workers.is_empty());
+    }
+
+    #[test]
     fn reconcile_root_completes_after_successful_children() {
         let graph = build_routed_graph("goal", &[]);
         let mut registry = OrchestratorRegistry::new(&graph);
@@ -1056,6 +1130,7 @@ mod tests {
             &[RoutedSubAgentTask {
                 task_id: "task-1".to_string(),
                 task_kind: AgentTaskKind::Refactor,
+                planned_site_map_root: 0,
                 files: Vec::new(),
                 provider: crate::agent::AiProvider::CloudflareWorkersAi,
                 model_id: "model".to_string(),

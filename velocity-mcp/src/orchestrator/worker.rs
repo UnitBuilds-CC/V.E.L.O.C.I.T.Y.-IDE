@@ -84,6 +84,7 @@ pub struct WorkerAssignment {
     pub task: Task,
     pub workspace_root: PathBuf,
     pub instructions: String,
+    pub planned_site_map_root: u64,
     pub provider: AiProvider,
     pub provider_label: String,
     pub model_id: String,
@@ -129,6 +130,18 @@ fn run_assignment(
             return result;
         }
     };
+
+    if site_map.root() != assignment.planned_site_map_root {
+        result.success = false;
+        result.duration = start.elapsed();
+        result.message = format!(
+            "stale routed plan: planned SiteMap root {:016x} but current root is {:016x}",
+            assignment.planned_site_map_root,
+            site_map.root()
+        );
+        result.status_updates.push(result.message.clone());
+        return result;
+    }
 
     let mut locked_files = Vec::new();
     for scope in &task.scope {

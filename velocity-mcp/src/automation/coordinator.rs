@@ -67,7 +67,7 @@ impl WorkspaceCoordinator {
         &self,
         tasks: Vec<CoordinatorTask>,
         base_workspace: &Path,
-        _site_map: &SiteMap,
+        site_map: &SiteMap,
     ) -> Result<String, String> {
         let weight_root = resolve_weight_root(base_workspace);
         let mut workers = Vec::new();
@@ -90,6 +90,7 @@ impl WorkspaceCoordinator {
                     task: orchestrator_task,
                     workspace_root: base_workspace.to_path_buf(),
                     instructions: task.execution_contract.clone(),
+                    planned_site_map_root: site_map.root(),
                     provider: task.provider,
                     provider_label: task.provider.label().to_string(),
                     model_id: task.model_id.clone(),
