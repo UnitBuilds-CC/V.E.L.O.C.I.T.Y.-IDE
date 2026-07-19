@@ -1,6 +1,7 @@
 use std::env;
 use std::process;
 use eframe::egui;
+use velocity_ide::site_map::{NdaNode, SiteMap};
 
 mod protocol;
 mod ipc;
@@ -12,6 +13,34 @@ mod compiler;
 mod orchestrator;
 mod automation;
 mod usage;
+
+fn persist_ast_update(
+    site_map: &mut SiteMap,
+    file_path: &str,
+    triples: &[(u64, u16, u64)],
+) -> Result<(), String> {
+    let file_hash = hash_str(file_path);
+
+    for (subject_hash, predicate_id, object_hash) in triples {
+        let triple = NdaNode::Triple {
+            subject_hash: if *subject_hash == file_hash { file_hash } else { *subject_hash },
+            predicate_id: *predicate_id,
+            object_hash: *object_hash,
+        };
+        site_map.put_node(&triple).map_err(|e| e.to_string())?;
+    }
+
+    site_map.flush().map_err(|e| e.to_string())
+}
+
+fn hash_str(s: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let d = h.finalize();
+    u64::from_le_bytes(d[..8].try_into().unwrap())
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -131,7 +160,9 @@ fn main() {
         let presence_file_path_server = presence_file_path.clone();
 
         // Open SiteMap for semantic queries inside telemetry callbacks
-        let site_map = automation::open_workspace_site_map(&workspace_root).ok();
+        let site_map = automation::open_workspace_site_map(&workspace_root)
+            .map(std::sync::Mutex::new)
+            .ok();
         const PRESENCE_LOCK_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
         std::thread::spawn(move || {
@@ -142,13 +173,28 @@ fn main() {
                          ipc::telemetry_share::TelemetryRequest::AstUpdate { file_path, triples } => {
                             let start_time = std::time::Instant::now();
                             println!("[server] Received AST update for {}: {} triples", file_path, triples.len());
+
+                            let warning = if let Some(sm) = &site_map {
+                                match sm.lock() {
+                                    Ok(mut guard) => match persist_ast_update(&mut guard, &file_path, &triples) {
+                                        Ok(()) => None,
+                                        Err(err) => Some(format!("Failed to persist AST update for {}: {}", file_path, err)),
+                                    },
+                                    Err(err) => Some(format!("Failed to lock SiteMap for AST update {}: {}", file_path, err)),
+                                }
+                            } else {
+                                Some("SiteMap unavailable; AST update was not persisted".to_string())
+                            };
+                            if let Some(message) = &warning {
+                                eprintln!("[server] {}", message);
+                            }
                             
                             let elapsed = start_time.elapsed().as_micros() as u64;
                             ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
 
                             ipc::telemetry_share::TelemetryResponse {
-                                success: true,
-                                warning: None,
+                                success: warning.is_none(),
+                                warning,
                             }
                         }
                         ipc::telemetry_share::TelemetryRequest::PresenceUpdate { cursor_line, cursor_col } => {
@@ -163,10 +209,12 @@ fn main() {
                             mediator_clone.prune_stale_locks(PRESENCE_LOCK_TTL);
                             mediator_clone.release_locks_for_agent(&agent_id);
                             if let Some(sm) = &site_map {
-                                if let Err(conflict) = mediator_clone.acquire_lock(file_path, line_range, agent_id.clone(), sm) {
-                                    let warning_msg = mediator_clone.resolve_conflict(&conflict);
-                                    println!("[mediator] Conflict detected! {}", warning_msg);
-                                    warning = Some(warning_msg);
+                                if let Ok(guard) = sm.lock() {
+                                    if let Err(conflict) = mediator_clone.acquire_lock(file_path, line_range, agent_id.clone(), &guard) {
+                                        let warning_msg = mediator_clone.resolve_conflict(&conflict);
+                                        println!("[mediator] Conflict detected! {}", warning_msg);
+                                        warning = Some(warning_msg);
+                                    }
                                 }
                             }
 
