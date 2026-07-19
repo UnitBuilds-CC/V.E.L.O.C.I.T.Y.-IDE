@@ -513,11 +513,11 @@ impl OrchestratorPanel {
             let outputs = task_result_outputs(&result);
             let report = validator::validate(&result);
             let reconciliation_error = reconciliation_error(&self.graph, &reg.outputs, id, &outputs);
-            if result.success && report.ok && reconciliation_error.is_none() {
+            let needs_follow_up = reconciliation_error.is_some() || requires_follow_up(&result);
+            if result.success && report.ok && reconciliation_error.is_none() && !needs_follow_up {
                 reg.outputs.insert(id, outputs);
                 reg.statuses.insert(id, TaskStatus::Done(result));
             } else {
-                let needs_follow_up = reconciliation_error.is_some() || requires_follow_up(&result);
                 if let Some(error) = reconciliation_error {
                     result.success = false;
                     result.status_updates.push(error.clone());
@@ -658,6 +658,19 @@ impl OrchestratorPanel {
                             ui.label(egui::RichText::new(format!("Deleted: {}", result.deleted_files.join(", "))).small().color(egui::Color32::from_rgb(248, 113, 113)));
                         });
                     }
+                    if !result.out_of_scope_created_files.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Out-of-scope created: {}",
+                                    result.out_of_scope_created_files.join(", ")
+                                ))
+                                .small()
+                                .color(egui::Color32::from_rgb(251, 191, 36)),
+                            );
+                        });
+                    }
                     if !result.attempts.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
@@ -766,6 +779,7 @@ mod tests {
             attempts: Vec::new(),
             created_files: Vec::new(),
             deleted_files: Vec::new(),
+            out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
         }
     }
@@ -774,6 +788,9 @@ mod tests {
     fn follow_up_detection_matches_mediation_and_reconciliation() {
         assert!(requires_follow_up(&sample_result(TaskId(2), "MEDIATION CONTRACT:\nConflict Type: DIRECT LINE COLLISION")));
         assert!(requires_follow_up(&sample_result(TaskId(2), "Reconciliation blocked: overlapping outputs detected")));
+        let mut out_of_scope = sample_result(TaskId(2), "provider call succeeded");
+        out_of_scope.out_of_scope_created_files.push("docs/rogue.md".to_string());
+        assert!(requires_follow_up(&out_of_scope));
         assert!(!requires_follow_up(&sample_result(TaskId(2), "provider call failed")));
     }
 
@@ -827,7 +844,8 @@ mod tests {
 }
 
 fn requires_follow_up(result: &WorkerResult) -> bool {
-    result.message.contains("MEDIATION CONTRACT:")
+    !result.out_of_scope_created_files.is_empty()
+        || result.message.contains("MEDIATION CONTRACT:")
         || result.message.contains("Reconciliation blocked:")
         || result
             .status_updates

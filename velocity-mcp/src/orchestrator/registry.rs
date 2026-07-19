@@ -76,6 +76,7 @@ mod tests {
             attempts: Vec::new(),
             created_files: Vec::new(),
             deleted_files: Vec::new(),
+            out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
         }
     }

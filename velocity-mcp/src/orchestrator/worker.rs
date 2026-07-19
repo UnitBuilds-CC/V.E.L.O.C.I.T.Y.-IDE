@@ -39,6 +39,7 @@ pub struct WorkerResult {
     pub attempts: Vec<WorkerAttempt>,
     pub created_files: Vec<String>,
     pub deleted_files: Vec<String>,
+    pub out_of_scope_created_files: Vec<String>,
     pub run_summary_path: Option<PathBuf>,
 }
 
@@ -57,6 +58,7 @@ impl WorkerResult {
             attempts: Vec::new(),
             created_files: Vec::new(),
             deleted_files: Vec::new(),
+            out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
         }
     }
@@ -158,6 +160,7 @@ fn run_assignment(
             result.outputs = execution.changed_files;
             result.created_files = execution.created_files;
             result.deleted_files = execution.deleted_files;
+            result.out_of_scope_created_files = execution.out_of_scope_created_files;
             result.provider_label = execution.provider_label;
             result.model_label = execution.model_label;
             result.transcript = execution.transcript;
@@ -172,6 +175,7 @@ fn run_assignment(
             result.outputs = execution.changed_files;
             result.created_files = execution.created_files;
             result.deleted_files = execution.deleted_files;
+            result.out_of_scope_created_files = execution.out_of_scope_created_files;
             result.provider_label = execution.provider_label;
             result.model_label = execution.model_label;
             result.transcript = execution.transcript;
@@ -194,6 +198,7 @@ struct ExecutionOutcome {
     changed_files: Vec<String>,
     created_files: Vec<String>,
     deleted_files: Vec<String>,
+    out_of_scope_created_files: Vec<String>,
     transcript: String,
     status_updates: Vec<String>,
     attempts: Vec<WorkerAttempt>,
@@ -220,6 +225,8 @@ fn execute_live_task(
 
     let scoped_paths = collect_scoped_paths(&assignment.workspace_root, scope);
     let before_contents = snapshot_scope(&scoped_paths, &assignment.workspace_root, &snapshot_root)
+        .map_err(|err| failed_execution(assignment, err))?;
+    let before_workspace_files = collect_workspace_files(&assignment.workspace_root)
         .map_err(|err| failed_execution(assignment, err))?;
 
     let routes = if assignment.fallback_chain.is_empty() {
@@ -255,6 +262,12 @@ fn execute_live_task(
 
         let (changed_files, created_files, deleted_files) = detect_scoped_changes(&scoped_paths, &before_contents, &assignment.workspace_root)
             .map_err(|err| failed_execution(assignment, err))?;
+        let out_of_scope_created_files = detect_out_of_scope_created_files(
+            &scoped_paths,
+            &before_workspace_files,
+            &assignment.workspace_root,
+        )
+        .map_err(|err| failed_execution(assignment, err))?;
         let success = !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty();
         let message = if success {
             format!(
@@ -277,6 +290,13 @@ fn execute_live_task(
         });
 
         if success {
+            let mut status_updates = last_status_updates;
+            if !out_of_scope_created_files.is_empty() {
+                status_updates.push(format!(
+                    "Out-of-scope created files detected: {}",
+                    out_of_scope_created_files.join(", ")
+                ));
+            }
             let outcome = ExecutionOutcome {
                 success: true,
                 provider_label: final_provider_label,
@@ -284,8 +304,9 @@ fn execute_live_task(
                 changed_files,
                 created_files,
                 deleted_files,
+                out_of_scope_created_files,
                 transcript: last_transcript,
-                status_updates: last_status_updates,
+                status_updates,
                 attempts,
                 message,
             };
@@ -301,6 +322,7 @@ fn execute_live_task(
         changed_files: Vec::new(),
         created_files: Vec::new(),
         deleted_files: Vec::new(),
+        out_of_scope_created_files: Vec::new(),
         transcript: last_transcript,
         status_updates: last_status_updates,
         attempts,
@@ -318,6 +340,7 @@ fn failed_execution(assignment: &WorkerAssignment, message: String) -> Execution
         changed_files: Vec::new(),
         created_files: Vec::new(),
         deleted_files: Vec::new(),
+        out_of_scope_created_files: Vec::new(),
         transcript: String::new(),
         status_updates: Vec::new(),
         attempts: Vec::new(),
@@ -369,6 +392,14 @@ fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result
     if !outcome.deleted_files.is_empty() {
         summary.push_str("\nDeleted files:\n");
         for path in &outcome.deleted_files {
+            summary.push_str("- ");
+            summary.push_str(path);
+            summary.push('\n');
+        }
+    }
+    if !outcome.out_of_scope_created_files.is_empty() {
+        summary.push_str("\nOut-of-scope created files:\n");
+        for path in &outcome.out_of_scope_created_files {
             summary.push_str("- ");
             summary.push_str(path);
             summary.push('\n');
@@ -502,9 +533,79 @@ fn read_scoped_file(path: &Path) -> Result<Option<Vec<u8>>, std::io::Error> {
     }
 }
 
+fn detect_out_of_scope_created_files(
+    scoped_paths: &ScopedPaths,
+    before_workspace_files: &BTreeSet<PathBuf>,
+    workspace_root: &Path,
+) -> Result<Vec<String>, String> {
+    let after_workspace_files = collect_workspace_files(workspace_root)?;
+    let mut created = after_workspace_files
+        .difference(before_workspace_files)
+        .filter(|path| !is_path_within_scope(path, scoped_paths, workspace_root))
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    created.sort();
+    Ok(created)
+}
+
+fn collect_workspace_files(workspace_root: &Path) -> Result<BTreeSet<PathBuf>, String> {
+    let mut files = BTreeSet::new();
+    collect_workspace_files_recursive(workspace_root, workspace_root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_workspace_files_recursive(
+    workspace_root: &Path,
+    current: &Path,
+    files: &mut BTreeSet<PathBuf>,
+) -> Result<(), String> {
+    if !current.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(current).map_err(|err| format!("read workspace dir {}: {err}", current.display()))? {
+        let entry = entry.map_err(|err| format!("read workspace dir entry {}: {err}", current.display()))?;
+        let entry_path = entry.path();
+        let rel_path = entry_path
+            .strip_prefix(workspace_root)
+            .unwrap_or(&entry_path)
+            .to_path_buf();
+        if entry_path.is_dir() {
+            if should_skip_workspace_dir(&rel_path) {
+                continue;
+            }
+            collect_workspace_files_recursive(workspace_root, &entry_path, files)?;
+        } else if entry_path.is_file() && !should_skip_workspace_file(&rel_path) {
+            files.insert(rel_path);
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_workspace_dir(rel_path: &Path) -> bool {
+    rel_path
+        .components()
+        .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".velocity" | "target" | "node_modules" | "archive")))
+}
+
+fn should_skip_workspace_file(rel_path: &Path) -> bool {
+    rel_path
+        .components()
+        .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".velocity" | "target" | "node_modules" | "archive")))
+}
+
+fn is_path_within_scope(rel_path: &Path, scoped_paths: &ScopedPaths, workspace_root: &Path) -> bool {
+    scoped_paths.scope_roots.iter().any(|root| {
+        let root_rel = root.strip_prefix(workspace_root).unwrap_or(root);
+        rel_path == root_rel || rel_path.starts_with(root_rel)
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{collect_scoped_paths, detect_scoped_changes, snapshot_scope};
+    use super::{
+        collect_scoped_paths, collect_workspace_files, detect_out_of_scope_created_files,
+        detect_scoped_changes, snapshot_scope,
+    };
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -548,5 +649,24 @@ mod tests {
         assert!(changed.is_empty());
         assert!(created.is_empty());
         assert!(deleted.is_empty());
+    }
+
+    #[test]
+    fn detects_out_of_scope_created_files() {
+        let workspace = tempdir().unwrap();
+        let workspace_root = workspace.path();
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        fs::create_dir_all(workspace_root.join("docs")).unwrap();
+        let scoped_paths = collect_scoped_paths(workspace_root, &["src".to_string()]);
+        let before_workspace = collect_workspace_files(workspace_root).unwrap();
+
+        fs::write(workspace_root.join("src").join("in_scope.rs"), "fn scoped() {}\n").unwrap();
+        fs::write(workspace_root.join("docs").join("rogue.md"), "rogue\n").unwrap();
+        fs::create_dir_all(workspace_root.join(".velocity").join("agentic")).unwrap();
+        fs::write(workspace_root.join(".velocity").join("agentic").join("ignored.txt"), "ignore\n").unwrap();
+
+        let out_of_scope = detect_out_of_scope_created_files(&scoped_paths, &before_workspace, workspace_root).unwrap();
+
+        assert_eq!(out_of_scope, vec![PathBuf::from("docs").join("rogue.md").display().to_string()]);
     }
 }
