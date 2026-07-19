@@ -129,3 +129,5 @@ If conversion is required:
 - NDA remains the source of truth
 - JSON is derived from NDA
 - JSON imports should normalize back into canonical NDA
+
+For where NDA should be canonical versus where JSON must remain at the boundary, see `docs/NDA_BOUNDARIES.md`.

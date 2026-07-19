@@ -3,6 +3,7 @@
 V.E.L.O.C.I.T.Y. is a hybrid AI-native IDE written in Rust. Its core responsibilities are: editing code, running an agentic reasoning loop, compiling user projects, and serializing artifacts into the `.nda` binary format.
 
 For agent-facing NDA authoring guidance, see `docs/NDA_FORMAT.md`.
+For NDA-vs-JSON boundary decisions, see `docs/NDA_BOUNDARIES.md`.
 
 ## Crate layout
 
