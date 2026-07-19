@@ -4,11 +4,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
+use crossbeam_channel::{unbounded, Sender as CrossbeamSender};
 use std::time::{Duration, Instant};
 
 use velocity_ide::site_map::SiteMap;
 
-use crate::agent::{AiProvider, HeadlessSubAgentRequest, run_headless_subagent};
+use crate::agent::{AiProvider, HeadlessSubAgentEvent, HeadlessSubAgentEventKind, HeadlessSubAgentProgress, HeadlessSubAgentRequest, run_headless_subagent};
 use crate::automation::mediator::MediatorArena;
 use crate::automation::task_router::RoutedModelRoute;
 
@@ -44,6 +45,32 @@ pub struct WorkerResult {
     pub run_facts_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkerThreadEvent {
+    pub kind: WorkerThreadEventKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerThreadEventKind {
+    Status,
+    Transcript,
+    FileChange,
+    OperatorNote,
+    ToolApproval,
+    ToolStarted,
+    ToolFinished,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkerThreadSnapshot {
+    pub events: Vec<WorkerThreadEvent>,
+    pub status_updates: Vec<String>,
+    pub transcript: String,
+    pub changed_files: Vec<String>,
+    pub operator_notes: Vec<String>,
+}
+
 impl WorkerResult {
     pub fn new(task: &Task) -> Self {
         Self {
@@ -69,15 +96,63 @@ impl WorkerResult {
 /// Abstract handle for launching and polling a worker task.
 pub trait WorkerHandle {
     fn poll(&mut self) -> Option<WorkerResult>;
+    fn cancel(&mut self) -> bool;
+    fn send_note(&mut self, note: String) -> bool;
+    fn snapshot(&self) -> WorkerThreadSnapshot;
 }
 
 pub struct LiveWorkerHandle {
     rx: mpsc::Receiver<WorkerResult>,
+    control_tx: CrossbeamSender<crate::agent::UiToAgentMessage>,
+    cancel_sent: bool,
+    progress: Arc<std::sync::Mutex<HeadlessSubAgentProgress>>,
 }
 
 impl WorkerHandle for LiveWorkerHandle {
     fn poll(&mut self) -> Option<WorkerResult> {
         self.rx.try_recv().ok()
+    }
+
+    fn cancel(&mut self) -> bool {
+        if self.cancel_sent {
+            return false;
+        }
+        if self.control_tx.send(crate::agent::UiToAgentMessage::CancelTask).is_ok() {
+            self.cancel_sent = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn send_note(&mut self, note: String) -> bool {
+        self.control_tx.send(crate::agent::UiToAgentMessage::UserPrompt(note)).is_ok()
+    }
+
+    fn snapshot(&self) -> WorkerThreadSnapshot {
+        let progress = self.progress.lock().unwrap();
+        WorkerThreadSnapshot {
+            events: progress
+                .events
+                .iter()
+                .map(|event| WorkerThreadEvent {
+                    kind: match event.kind {
+                        HeadlessSubAgentEventKind::Status => WorkerThreadEventKind::Status,
+                        HeadlessSubAgentEventKind::Transcript => WorkerThreadEventKind::Transcript,
+                        HeadlessSubAgentEventKind::FileChange => WorkerThreadEventKind::FileChange,
+                        HeadlessSubAgentEventKind::OperatorNote => WorkerThreadEventKind::OperatorNote,
+                        HeadlessSubAgentEventKind::ToolApproval => WorkerThreadEventKind::ToolApproval,
+                        HeadlessSubAgentEventKind::ToolStarted => WorkerThreadEventKind::ToolStarted,
+                        HeadlessSubAgentEventKind::ToolFinished => WorkerThreadEventKind::ToolFinished,
+                    },
+                    message: event.message.clone(),
+                })
+                .collect(),
+            status_updates: progress.status_updates.clone(),
+            transcript: progress.transcript.clone(),
+            changed_files: progress.changed_files.clone(),
+            operator_notes: progress.operator_notes.clone(),
+        }
     }
 }
 
@@ -101,17 +176,22 @@ pub fn spawn_live_worker(
     weight_root: u64,
 ) -> Box<dyn WorkerHandle> {
     let (tx, rx) = mpsc::channel();
+    let (control_tx, control_rx) = unbounded();
+    let progress = Arc::new(std::sync::Mutex::new(HeadlessSubAgentProgress::default()));
+    let progress_for_thread = progress.clone();
     std::thread::spawn(move || {
-        let result = run_assignment(assignment, mediator, weight_root);
+        let result = run_assignment(assignment, mediator, weight_root, control_rx, progress_for_thread);
         let _ = tx.send(result);
     });
-    Box::new(LiveWorkerHandle { rx })
+    Box::new(LiveWorkerHandle { rx, control_tx, cancel_sent: false, progress })
 }
 
 fn run_assignment(
     assignment: WorkerAssignment,
     mediator: Arc<MediatorArena>,
     weight_root: u64,
+    cancel_rx: crossbeam_channel::Receiver<crate::agent::UiToAgentMessage>,
+    progress: Arc<std::sync::Mutex<HeadlessSubAgentProgress>>,
 ) -> WorkerResult {
     let start = Instant::now();
     let task = assignment.task.clone();
@@ -155,7 +235,7 @@ fn run_assignment(
         }
     };
 
-    let outcome = execute_live_task(&assignment, &run_dir, &task.scope);
+    let outcome = execute_live_task(&assignment, &run_dir, &task.scope, &cancel_rx, &progress);
 
     for scope in &locked_scopes {
         mediator.release_lock(scope, &format!("task-{}", task.id.0));
@@ -244,6 +324,8 @@ fn execute_live_task(
     assignment: &WorkerAssignment,
     run_dir: &Path,
     scope: &[String],
+    cancel_rx: &crossbeam_channel::Receiver<crate::agent::UiToAgentMessage>,
+    progress: &Arc<std::sync::Mutex<HeadlessSubAgentProgress>>,
 ) -> Result<ExecutionOutcome, ExecutionOutcome> {
     fs::create_dir_all(run_dir).map_err(|err| failed_execution(assignment, format!("create run dir: {err}")))?;
     write_execution_contract_artifacts(run_dir, assignment)
@@ -283,6 +365,8 @@ fn execute_live_task(
             model: route.model_id.clone(),
             thinking: route.thinking,
             prompt: assignment.instructions.clone(),
+            cancel_rx: Some(cancel_rx.clone()),
+            progress: Some(progress.clone()),
         });
         last_status_updates = subagent.status_updates.clone();
         last_transcript = subagent.transcript.clone();
@@ -344,6 +428,14 @@ fn execute_live_task(
         }
     }
 
+    let cancelled = last_status_updates
+        .iter()
+        .any(|update| update.contains("cancelled by operator"));
+    let message = if cancelled {
+        "cancelled by operator before scoped changes were produced".to_string()
+    } else {
+        "No scoped file changes were produced by any provider-backed sub-agent route.".to_string()
+    };
     let outcome = ExecutionOutcome {
         success: false,
         provider_label: final_provider_label,
@@ -355,7 +447,7 @@ fn execute_live_task(
         transcript: last_transcript,
         status_updates: last_status_updates,
         attempts,
-        message: "No scoped file changes were produced by any provider-backed sub-agent route.".to_string(),
+        message,
     };
     write_execution_artifacts(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
     Err(outcome)

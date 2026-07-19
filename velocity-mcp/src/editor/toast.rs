@@ -1,3 +1,4 @@
+use crate::editor::theme::IdePalette;
 use eframe::egui::{self, Align2, Color32, CornerRadius, Frame, Id, Margin, Order, ProgressBar, RichText, Vec2};
 use std::time::{Duration, Instant};
 
@@ -10,12 +11,12 @@ pub enum ToastLevel {
 }
 
 impl ToastLevel {
-    fn color(&self) -> Color32 {
+    fn color(&self, palette: IdePalette) -> Color32 {
         match self {
-            ToastLevel::Info => Color32::from_rgb(96, 165, 250),
-            ToastLevel::Success => Color32::from_rgb(74, 222, 128),
-            ToastLevel::Warning => Color32::from_rgb(250, 204, 21),
-            ToastLevel::Error => Color32::from_rgb(248, 113, 113),
+            ToastLevel::Info => palette.accent,
+            ToastLevel::Success => palette.success,
+            ToastLevel::Warning => palette.warning,
+            ToastLevel::Error => palette.error,
         }
     }
 }
@@ -61,6 +62,7 @@ impl ToastQueue {
     }
 
     pub fn ui(&mut self, ctx: &egui::Context) {
+        let palette = IdePalette::dark();
         let now = Instant::now();
         self.toasts.retain(|t| now.duration_since(t.created) < t.ttl);
         if self.toasts.is_empty() {
@@ -77,9 +79,9 @@ impl ToastQueue {
                 for (idx, toast) in self.toasts.iter_mut().enumerate() {
                     let remaining = toast.remaining();
                     let alpha = ((remaining * 2.0).min(1.0) * 255.0) as u8;
-                    let mut base_color = Color32::from_rgb(18, 18, 24);
+                    let mut base_color = palette.bg_secondary;
                     base_color[3] = alpha;
-                    let stroke_color = toast.level.color();
+                    let stroke_color = toast.level.color(palette);
 
                     Frame::new()
                         .fill(base_color)

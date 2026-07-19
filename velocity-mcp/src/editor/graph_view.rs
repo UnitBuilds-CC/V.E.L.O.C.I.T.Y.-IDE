@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use crate::automation::mediator::MediatorArena;
 
 pub struct MerkleGraphView {
@@ -23,7 +24,7 @@ impl MerkleGraphView {
     ) {
         ui.vertical(|ui| {
             ui.label(egui::RichText::new("🌲 MERKLE SEMANTIC GRAPH EXPLORER").size(14.0).strong().color(Color32::from_rgb(34, 211, 238)));
-            ui.label("Interactive visualization of declarations, method calls, and active edit locks.");
+            ui.label("Interactive visualization of declarations, method calls, and active edit locks using canonical workspace-relative path identities.");
             ui.separator();
 
             let sm = match crate::automation::open_workspace_site_map(workspace_root) {
@@ -99,7 +100,7 @@ impl MerkleGraphView {
                     let matching_locks: Vec<_> = mediator
                         .active_locks()
                         .into_iter()
-                        .filter(|lock| hash_str(lock.file_path.file_name().and_then(|n| n.to_str()).unwrap_or("")) == node)
+                        .filter(|lock| path_identity_hash(&lock.file_path) == node)
                         .collect();
                     let is_locked = !matching_locks.is_empty();
                     let is_conflict = matching_locks.len() > 1;
@@ -145,11 +146,47 @@ impl MerkleGraphView {
     }
 }
 
-fn hash_str(s: &str) -> u64 {
-    use sha2::{Digest, Sha256};
+fn path_identity_hash(path: &Path) -> u64 {
+    hash_str(&canonicalize_scope_path(path))
+}
 
+fn canonicalize_scope_path(path: &Path) -> String {
+    let normalized = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().replace('\\', "/")),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    normalized.join("/")
+}
+
+fn hash_str(s: &str) -> u64 {
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     let d = h.finalize();
     u64::from_le_bytes(d[..8].try_into().unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_scope_path_distinguishes_same_named_files() {
+        let left = canonicalize_scope_path(Path::new(r"src\auth\main.rs"));
+        let right = canonicalize_scope_path(Path::new(r"src\ui\main.rs"));
+        assert_ne!(left, right);
+        assert_eq!(left, "src/auth/main.rs");
+        assert_eq!(right, "src/ui/main.rs");
+    }
+
+    #[test]
+    fn path_identity_hash_uses_canonical_relative_path() {
+        let windows_style = path_identity_hash(Path::new(r"src\nested\file.rs"));
+        let normalized = path_identity_hash(Path::new("src/nested/file.rs"));
+        let sibling = path_identity_hash(Path::new(r"src\other\file.rs"));
+        assert_eq!(windows_style, normalized);
+        assert_ne!(windows_style, sibling);
+    }
 }

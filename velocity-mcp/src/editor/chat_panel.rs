@@ -209,30 +209,11 @@ fn render_model_bar(
 fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalette) {
     let scroll_height = ui.available_height() - 160.0;
 
-    let mut scroll_delta = egui::Vec2::ZERO;
-    if let Some(pointer_pos) = ui.input(|i| i.pointer.latest_pos()) {
-        if ui.input(|i| i.pointer.primary_down()) {
-            let screen_rect = ui.max_rect();
-            if screen_rect.contains(pointer_pos) {
-                let top_threshold = screen_rect.top() + 45.0;
-                let bottom_threshold = screen_rect.bottom() - 45.0;
-                if pointer_pos.y < top_threshold {
-                    scroll_delta.y = 15.0;
-                } else if pointer_pos.y > bottom_threshold {
-                    scroll_delta.y = -15.0;
-                }
-            }
-        }
-    }
-
     egui::ScrollArea::vertical()
         .max_height(scroll_height.max(120.0))
         .auto_shrink([false, false])
         .stick_to_bottom(true)
         .show(ui, |ui| {
-            if scroll_delta != egui::Vec2::ZERO {
-                ui.scroll_with_delta(scroll_delta);
-            }
             ui.spacing_mut().item_spacing.y = 12.0;
 
             if state.messages.is_empty() {
@@ -325,8 +306,8 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
             if in_code_block {
                 let mut code = code_accumulator.trim_end().to_string();
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(15, 17, 26))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 45, 60)))
+                    .fill(palette.bg_secondary)
+                    .stroke(egui::Stroke::new(1.0, palette.border))
                     .corner_radius(egui::CornerRadius::same(4))
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
@@ -337,7 +318,7 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                                     .font(egui::FontId::monospace(12.5))
                                     .code_editor()
                                     .desired_width(f32::INFINITY)
-                                    .text_color(egui::Color32::from_rgb(226, 227, 243))
+                                    .text_color(palette.text)
                                     .interactive(false)
                             );
                         });
@@ -359,15 +340,15 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
 
         if line.starts_with("# ") {
             current_list_number = 0;
-            ui.label(egui::RichText::new(&line[2..]).size(17.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+            ui.label(egui::RichText::new(&line[2..]).size(17.0).strong().color(palette.accent));
             ui.add_space(2.0);
         } else if line.starts_with("## ") {
             current_list_number = 0;
-            ui.label(egui::RichText::new(&line[3..]).size(15.5).strong().color(egui::Color32::from_rgb(226, 227, 243)));
+            ui.label(egui::RichText::new(&line[3..]).size(15.5).strong().color(palette.text));
             ui.add_space(2.0);
         } else if line.starts_with("### ") {
             current_list_number = 0;
-            ui.label(egui::RichText::new(&line[4..]).size(14.0).strong().color(egui::Color32::from_rgb(226, 227, 243)));
+            ui.label(egui::RichText::new(&line[4..]).size(14.0).strong().color(palette.text));
             ui.add_space(1.0);
         } else if line.starts_with("- ") || line.starts_with("* ") {
             current_list_number = 0;
@@ -478,8 +459,8 @@ fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                 rt = rt.italics();
             } else if is_code {
                 rt = rt.monospace()
-                    .color(egui::Color32::from_rgb(34, 211, 238))
-                    .background_color(egui::Color32::from_rgb(20, 22, 34));
+                    .color(palette.accent)
+                    .background_color(palette.bg_secondary);
             } else {
                 rt = rt.color(palette.text);
             }
@@ -492,22 +473,22 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
     let (role_label, bg, border, align, accent) = match msg.role {
         ChatRole::User => (
             "You",
-            egui::Color32::from_rgb(45, 25, 78),
+            palette.accent.gamma_multiply(0.22),
             palette.accent,
             egui::Align::RIGHT,
             palette.accent,
         ),
         ChatRole::Agent => (
             "Agent",
-            egui::Color32::from_rgb(20, 22, 34),
+            palette.bg_secondary,
             palette.border,
             egui::Align::LEFT,
-            egui::Color32::from_rgb(34, 211, 238),
+            palette.accent,
         ),
         ChatRole::Thought => (
             "Reasoning",
-            egui::Color32::from_rgb(28, 24, 18),
-            egui::Color32::from_rgb(120, 90, 40),
+            palette.warning.gamma_multiply(0.12),
+            palette.warning.gamma_multiply(0.5),
             egui::Align::LEFT,
             palette.warning,
         ),
@@ -584,7 +565,7 @@ fn render_pending_approvals(
     }
 
     egui::Frame::new()
-        .fill(egui::Color32::from_rgb(12, 10, 20))
+        .fill(palette.bg_primary)
         .stroke(egui::Stroke::new(1.0, palette.warning))
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::same(8))
@@ -597,7 +578,7 @@ fn render_pending_approvals(
                         ui.label(
                             egui::RichText::new(format!("Tool: {tool_name}"))
                                 .strong()
-                                .color(egui::Color32::LIGHT_BLUE),
+                                .color(palette.accent),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Decline").clicked() {

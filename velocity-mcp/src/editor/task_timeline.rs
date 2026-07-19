@@ -4,6 +4,7 @@
 
 use crate::editor::agent_ui_state::{AgentState, WarningLevel};
 use eframe::egui;
+use std::path::Path;
 use std::time::Instant;
 
 /// Maximum number of task events in ring buffer
@@ -86,6 +87,59 @@ impl Default for TaskTimelineState {
             start_time: Instant::now(),
         }
     }
+}
+
+fn encode_nda_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn event_type_label(event_type: TaskEventType) -> &'static str {
+    match event_type {
+        TaskEventType::Started => "started",
+        TaskEventType::Completed => "completed",
+        TaskEventType::Failed => "failed",
+        TaskEventType::Cancelled => "cancelled",
+        TaskEventType::ToolCall => "tool_call",
+        TaskEventType::ToolResult => "tool_result",
+        TaskEventType::PhaseChange => "phase_change",
+        TaskEventType::TokenBudgetUpdate => "token_budget_update",
+        TaskEventType::SessionMarker => "session_marker",
+        TaskEventType::AgentMarker => "agent_marker",
+    }
+}
+
+pub fn serialize_mission_activity_nda(state: &TaskTimelineState) -> String {
+    let mut lines = vec![
+        "mission-activity version 2".to_string(),
+        format!("entry_count {}", state.event_count()),
+    ];
+    for (index, (_, event)) in state.chronological_events().enumerate() {
+        lines.push(format!(
+            "entry\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            index,
+            event_type_label(event.event_type),
+            event.task_id,
+            event.parent_task_id,
+            encode_nda_text(state.get_text(event.name_offset, event.name_len)),
+            encode_nda_text(state.get_text(event.description_offset, event.description_len)),
+            event.timestamp_ms,
+            event.duration_ms,
+            event.metadata_u32_0,
+            event.metadata_u32_1,
+            event.metadata_u32_2,
+        ));
+    }
+    lines.join("\n") + "\n"
+}
+
+pub fn persist_mission_activity_nda(workspace_root: &Path, state: &TaskTimelineState) {
+    let agentic_dir = workspace_root.join(".velocity").join("agentic");
+    let _ = std::fs::create_dir_all(&agentic_dir);
+    let _ = std::fs::write(agentic_dir.join("mission_activity.nda"), serialize_mission_activity_nda(state));
 }
 
 impl TaskTimelineState {
@@ -296,6 +350,79 @@ impl<'a> TaskTimelineSnapshot<'a> {
     }
 }
 
+pub fn render_mission_activity_feed(
+    ui: &mut egui::Ui,
+    snapshot: &TaskTimelineSnapshot,
+    selected_task_id: Option<u64>,
+    max_items: usize,
+) {
+    ui.label(egui::RichText::new("Mission activity").strong());
+    if snapshot.state.event_count() == 0 {
+        ui.label(
+            egui::RichText::new("No mission activity recorded yet")
+                .small()
+                .color(egui::Color32::from_rgb(125, 131, 166)),
+        );
+        return;
+    }
+
+    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+        for (_, event) in snapshot
+            .state
+            .visible_events()
+            .filter(|(_, event)| {
+                selected_task_id
+                    .map(|selected| event.task_id == 0 || event.task_id as u64 == selected || event.parent_task_id as u64 == selected)
+                    .unwrap_or(true)
+            })
+            .take(max_items)
+        {
+            let (icon, color) = match event.event_type {
+                TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
+                TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
+                TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
+                TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
+                TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
+                TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(74, 222, 128)),
+                TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
+                TaskEventType::TokenBudgetUpdate => ("$", egui::Color32::from_rgb(236, 72, 153)),
+                TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
+                TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
+            };
+            let name = snapshot.state.get_text(event.name_offset, event.name_len);
+            let desc = snapshot.state.get_text(event.description_offset, event.description_len);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(icon).color(color));
+                let task_scope = if event.task_id == 0 {
+                    "Mission".to_string()
+                } else {
+                    format!("Task #{}", event.task_id)
+                };
+                ui.label(
+                    egui::RichText::new(format!("{} · {}", task_scope, name))
+                        .small()
+                        .strong(),
+                );
+                if !desc.is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!("— {}", desc))
+                            .small()
+                            .color(egui::Color32::from_rgb(125, 131, 166)),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{:.1}s", event.timestamp_ms as f32 / 1000.0))
+                            .size(9.0)
+                            .color(egui::Color32::from_rgb(125, 131, 166)),
+                    );
+                });
+            });
+            ui.separator();
+        }
+    });
+}
+
 /// Render task timeline panel
 pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) {
     let frame = egui::Frame::new()
@@ -451,5 +578,38 @@ mod tests {
         assert_eq!(event.duration_ms, 1500);
         assert_eq!(event.metadata_u32_0, 500); // tokens
         assert_eq!(event.metadata_u32_1, 100); // cost
+    }
+
+    #[test]
+    fn mission_activity_nda_serializes_structured_entries() {
+        let mut timeline = TaskTimelineState::default();
+        let task_id = timeline.task_started("Build\tUI", "compile\nproject", 0);
+        timeline.agent_marker("Status", "ready", task_id);
+
+        let nda = serialize_mission_activity_nda(&timeline);
+        assert!(nda.starts_with("mission-activity version 2\n"));
+        assert!(nda.contains("entry_count 2\n"));
+        assert!(nda.contains("entry\t0\tstarted\t1\t0\tBuild\\tUI\tcompile\\nproject\t"));
+        assert!(nda.contains("entry\t1\tagent_marker\t2\t1\tStatus\tready\t"));
+    }
+
+    #[test]
+    fn persist_mission_activity_nda_writes_agentic_artifact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut timeline = TaskTimelineState::default();
+        timeline.session_marker("IDE session ready", "agentic workspace initialized");
+
+        persist_mission_activity_nda(tmp.path(), &timeline);
+
+        let artifact = std::fs::read_to_string(
+            tmp.path()
+                .join(".velocity")
+                .join("agentic")
+                .join("mission_activity.nda"),
+        )
+        .unwrap();
+        assert!(artifact.starts_with("mission-activity version 2\n"));
+        assert!(artifact.contains("entry_count 1\n"));
+        assert!(artifact.contains("entry\t0\tsession_marker\t1\t0\tIDE session ready\tagentic workspace initialized\t"));
     }
 }

@@ -3,12 +3,19 @@ use crate::automation::{read_latest_diagnostics, AgentTaskKind, WorkspaceCoordin
 use crate::editor::buffer::EditorBuffer;
 use crate::editor::chat_panel::{ChatPanelState, render_chat_panel};
 use crate::editor::code_editor::CodeEditor;
+use crate::editor::mission_control::{InterventionDisposition, MissionControlState};
 use crate::editor::orchestrator_panel::OrchestratorPanel;
 use crate::editor::theme::IdePalette;
 use crate::editor::usage_panel::{render_usage_compact, render_usage_panel};
 use crate::editor::agent_ui_state::AgentUiState;
 use crate::editor::agent_ui_render::{RenderSnapshot, render_thinking_panel, render_pending_approvals, render_agent_metrics};
-use crate::editor::task_timeline::{TaskTimelineState as TTState, TaskTimelineSnapshot, render_task_timeline};
+use crate::editor::task_timeline::{
+    TaskTimelineSnapshot,
+    TaskTimelineState as TTState,
+    persist_mission_activity_nda,
+    render_mission_activity_feed,
+    render_task_timeline,
+};
 use crate::editor::smart_sidebar::{SmartSidebarSnapshot, SmartSidebarState, render_smart_sidebar};
 use crate::usage::AccountUsageView;
 use crossbeam_channel::{Receiver, Sender};
@@ -44,6 +51,7 @@ impl Tab {
             TabKind::Chat => "Agent Chat".into(),
             TabKind::Output => "Output".into(),
             TabKind::Orchestrator => "Orchestrator".into(),
+            TabKind::MissionControl => "Mission Control".into(),
             TabKind::Usage => "Usage".into(),
             TabKind::Search => "Search".into(),
             TabKind::Graph => "Merkle Graph".into(),
@@ -68,6 +76,7 @@ pub enum TabKind {
     Chat,
     Output,
     Orchestrator,
+    MissionControl,
     Usage,
     Search,
     Graph,
@@ -150,6 +159,8 @@ pub struct VelocityApp {
     pub last_tree_update: std::time::Instant,
     pub toasts: crate::editor::toast::ToastQueue,
     pub orchestrator: crate::editor::orchestrator_panel::OrchestratorPanel,
+    pub mission_control: MissionControlState,
+    pub next_intervention_id: u64,
 
     pub mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
     pub graph_view: crate::editor::graph_view::MerkleGraphView,
@@ -161,7 +172,66 @@ pub struct VelocityApp {
     pub chat_history: String,
 }
 
+fn append_worker_event_to_timeline(
+    task_timeline: &mut TTState,
+    task_id: u32,
+    event: &crate::orchestrator::worker::WorkerThreadEvent,
+) {
+    match event.kind {
+        crate::orchestrator::worker::WorkerThreadEventKind::Status => {
+            task_timeline.agent_marker("Worker status", &event.message, task_id);
+        }
+        crate::orchestrator::worker::WorkerThreadEventKind::Transcript => {
+            task_timeline.agent_marker("Worker output", &event.message, task_id);
+        }
+        crate::orchestrator::worker::WorkerThreadEventKind::FileChange => {
+            task_timeline.agent_marker("File change", &event.message, task_id);
+        }
+        crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote => {
+            task_timeline.agent_marker("Operator note", &event.message, task_id);
+        }
+        crate::orchestrator::worker::WorkerThreadEventKind::ToolApproval => {
+            task_timeline.tool_call(task_id, "tool approval", &event.message);
+        }
+        crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => {
+            task_timeline.tool_call(task_id, "tool started", &event.message);
+        }
+        crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => {
+            task_timeline.tool_result(task_id, "tool finished", true, 0);
+            task_timeline.agent_marker("Tool finished", &event.message, task_id);
+        }
+    }
+}
+
+fn mirror_worker_events_into_timeline_state(
+    task_timeline: &mut TTState,
+    mission_control: &mut MissionControlState,
+    snapshot: &crate::editor::orchestrator_panel::OrchestratorDashboardSnapshot,
+) {
+    for task in &snapshot.tasks {
+        let Some(thread) = &task.live_thread else {
+            continue;
+        };
+        let mirrored_count = mission_control.mirrored_worker_event_count(task.id);
+        if thread.events.len() <= mirrored_count {
+            continue;
+        }
+        let task_id = match u32::try_from(task.id) {
+            Ok(task_id) => task_id,
+            Err(_) => continue,
+        };
+        for event in thread.events.iter().skip(mirrored_count) {
+            append_worker_event_to_timeline(task_timeline, task_id, event);
+        }
+        mission_control.set_mirrored_worker_event_count(task.id, thread.events.len());
+    }
+}
+
 impl VelocityApp {
+    fn persist_mission_activity(&self) {
+        persist_mission_activity_nda(&self.workspace_root, &self.task_timeline);
+    }
+
     pub fn new(
         _cc: &eframe::CreationContext<'_>,
         workspace_root: PathBuf,
@@ -183,11 +253,15 @@ impl VelocityApp {
             id: TabId::next(&mut tab_counter),
             kind: TabKind::Orchestrator,
         };
+        let mission_control = Tab {
+            id: TabId::next(&mut tab_counter),
+            kind: TabKind::MissionControl,
+        };
         let graph = Tab {
             id: TabId::next(&mut tab_counter),
             kind: TabKind::Graph,
         };
-        let tabs = vec![output.clone(), chat.clone(), orchestrator.clone(), graph.clone()];
+        let tabs = vec![mission_control.clone(), output.clone(), chat.clone(), orchestrator.clone(), graph.clone()];
 
         // Register default projects from nearby directories
         let mut projects = vec![workspace_root.clone()];
@@ -205,9 +279,9 @@ impl VelocityApp {
                     agent_rx,
                     workspace_root,
                     tabs,
-                    active_tab: Some(output.id.clone()),
+                    active_tab: Some(mission_control.id.clone()),
                     buffers: HashMap::new(),
-                    dock_state: Some(DockState::new(vec![output, chat, orchestrator, graph])),
+                    dock_state: Some(DockState::new(vec![mission_control, output, chat, orchestrator, graph])),
                     chat_input: String::new(),
                     command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
                     chat_history: String::new(),
@@ -254,6 +328,8 @@ impl VelocityApp {
             last_tree_update: std::time::Instant::now(),
             toasts: crate::editor::toast::ToastQueue::default(),
             orchestrator: crate::editor::orchestrator_panel::OrchestratorPanel::new(),
+            mission_control: MissionControlState::new(),
+            next_intervention_id: 1,
             chat: crate::editor::chat_panel::ChatPanelState {
                 messages: Vec::new(),
                 input: String::new(),
@@ -276,8 +352,24 @@ impl VelocityApp {
         };
         app.open_editor(None);
         app.task_timeline.session_marker("IDE session ready", "agentic workspace initialized");
+        app.persist_mission_activity();
         let _ = app.agent_tx.send(UiToAgentMessage::RefreshModels);
         app
+    }
+
+    fn mirror_worker_events_into_timeline(
+        &mut self,
+        snapshot: &crate::editor::orchestrator_panel::OrchestratorDashboardSnapshot,
+    ) {
+        let before = self.task_timeline.event_count();
+        mirror_worker_events_into_timeline_state(
+            &mut self.task_timeline,
+            &mut self.mission_control,
+            snapshot,
+        );
+        if self.task_timeline.event_count() != before {
+            self.persist_mission_activity();
+        }
     }
 
     fn commands(&self) -> Vec<Command> {
@@ -287,6 +379,7 @@ impl VelocityApp {
             Command { label: "Approve All Pending Tools", action: |a| a.approve_all_pending_tools() },
             Command { label: "Decline All Pending Tools", action: |a| a.reject_all_pending_tools() },
             Command { label: "Focus Agent Chat", action: |a| a.toggle_panel(TabKind::Chat) },
+            Command { label: "Focus Mission Control", action: |a| a.toggle_panel(TabKind::MissionControl) },
             Command { label: "Focus Orchestrator", action: |a| a.toggle_panel(TabKind::Orchestrator) },
             Command { label: "Plan Routed Sub-Agents", action: |a| a.plan_routed_subagents() },
             Command { label: "New File", action: |a| a.open_editor(None) },
@@ -300,6 +393,7 @@ impl VelocityApp {
             Command { label: "Toggle Output", action: |a| a.toggle_panel(TabKind::Output) },
             Command { label: "Toggle Chat", action: |a| a.toggle_panel(TabKind::Chat) },
             Command { label: "Toggle Orchestrator", action: |a| a.toggle_panel(TabKind::Orchestrator) },
+            Command { label: "Toggle Mission Control", action: |a| a.toggle_panel(TabKind::MissionControl) },
             Command { label: "Toggle Usage", action: |a| a.toggle_panel(TabKind::Usage) },
             Command { label: "Toggle Search", action: |a| a.toggle_panel(TabKind::Search) },
         ]
@@ -720,6 +814,8 @@ impl VelocityApp {
     }
 
     fn plan_routed_subagents(&mut self) {
+        self.mission_control.set_selected_task(None);
+        self.mission_control.clear_worker_event_tracking();
         let Some(goal) = self.current_routing_goal() else {
             self.status_message = "Enter a chat prompt or keep a recent user goal to route".into();
             self.toasts.push(crate::editor::toast::Toast::warn("No goal available for routed planning"));
@@ -763,6 +859,8 @@ impl VelocityApp {
 
         let routed_count = routed_tasks.len();
         let scope_count = scope_files.len();
+        self.mission_control.brief = goal.clone();
+        self.mission_control.set_selected_task(None);
         self.orchestrator
             .set_routed_tasks(goal.clone(), task_kind, scope_count, routed_tasks.clone());
         self.task_timeline
@@ -787,7 +885,13 @@ impl VelocityApp {
             "Planned {} routed sub-agent task(s)",
             routed_count,
         )));
-        self.focus_orchestrator_tab();
+        if self.mission_control.auto_execute {
+            self.orchestrator
+                .execute_routed_tasks(&self.workspace_root, &self.mediator);
+            self.status_message = format!("Planned and launched {} routed sub-agent task(s)", routed_count);
+            self.toasts.push(crate::editor::toast::Toast::info("Mission Control auto-launched routed tasks"));
+        }
+        self.toggle_mission_control();
     }
 
     fn current_routing_goal(&self) -> Option<String> {
@@ -927,6 +1031,9 @@ impl eframe::App for VelocityApp {
                 if ui.button("🧭 Route").clicked() {
                     self.plan_routed_subagents();
                 }
+                if ui.button("🎛 Mission").clicked() {
+                    self.toggle_panel(TabKind::MissionControl);
+                }
                 if ui.button("🧠 Orchestrate").clicked() {
                     self.toggle_panel(TabKind::Orchestrator);
                 }
@@ -944,7 +1051,7 @@ impl eframe::App for VelocityApp {
                     ui.label(
                         egui::RichText::new(format!("Δ {} dirty", dirty_buffer_count))
                             .strong()
-                            .color(egui::Color32::from_rgb(250, 204, 21)),
+                            .color(IdePalette::dark().warning),
                     );
                 }
             });
@@ -959,7 +1066,7 @@ impl eframe::App for VelocityApp {
                 ui.vertical(|ui: &mut egui::Ui| {
                     // --- Projects section ---
                     ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.label(egui::RichText::new("📁 PROJECTS").size(12.0).strong().color(egui::Color32::from_rgb(168, 85, 247)));
+                        ui.label(egui::RichText::new("📁 PROJECTS").size(12.0).strong().color(IdePalette::dark().accent));
                         ui.spacing_mut().item_spacing.x = 4.0;
                         if ui.button("➕ Register").on_hover_text("Register Project Directory").clicked() {
                             self.show_add_project_ui = !self.show_add_project_ui;
@@ -1010,7 +1117,7 @@ impl eframe::App for VelocityApp {
                     render_task_timeline(ui, &timeline_snapshot);
 
                     ui.separator();
-                    ui.label(egui::RichText::new("🌲 FILE EXPLORER").size(12.0).strong().color(egui::Color32::from_rgb(168, 85, 247)));
+                    ui.label(egui::RichText::new("🌲 FILE EXPLORER").size(12.0).strong().color(IdePalette::dark().accent));
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(tree) = self.file_tree.take() {
                             render_file_tree(ui, &tree, self);
@@ -1036,7 +1143,7 @@ impl eframe::App for VelocityApp {
             .show(ui, |ui: &mut egui::Ui| {
                 ui.add_space(4.0);
                 ui.vertical(|ui: &mut egui::Ui| {
-                    ui.label(egui::RichText::new("🧠 SEMANTIC HISTORY").size(12.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                    ui.label(egui::RichText::new("🧠 SEMANTIC HISTORY").size(12.0).strong().color(IdePalette::dark().accent));
                     ui.separator();
 
                     self.smart_sidebar.clear();
@@ -1053,12 +1160,12 @@ impl eframe::App for VelocityApp {
                             ui.label(
                                 egui::RichText::new(format!("Δ Active changes: {}", change_preview.file_label))
                                     .strong()
-                                    .color(egui::Color32::from_rgb(250, 204, 21)),
+                                    .color(IdePalette::dark().warning),
                             );
                             ui.label(
                                 egui::RichText::new(format!("+{} / -{} lines", change_preview.added_lines, change_preview.removed_lines))
                                     .size(10.0)
-                                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                                    .color(IdePalette::dark().text_muted),
                             );
                             ui.horizontal(|ui| {
                                 if ui.small_button("Save").clicked() {
@@ -1082,7 +1189,7 @@ impl eframe::App for VelocityApp {
                                 egui::RichText::new(change_preview.preview.as_str())
                                     .monospace()
                                     .size(10.0)
-                                    .color(egui::Color32::from_rgb(226, 227, 243)),
+                                    .color(IdePalette::dark().text),
                             );
                         });
                         ui.separator();
@@ -1091,7 +1198,7 @@ impl eframe::App for VelocityApp {
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
                         self.smart_sidebar.add_quick_action(0, "Inspect semantic history", symbol, 2);
-                        ui.label(egui::RichText::new(format!("Symbol: {}()", symbol)).strong().color(egui::Color32::from_rgb(168, 85, 247)));
+                        ui.label(egui::RichText::new(format!("Symbol: {}()", symbol)).strong().color(IdePalette::dark().accent));
                         
                         let symbol_hash = hash_str(symbol);
                         ui.label(egui::RichText::new(format!("Hash: {:016x}", symbol_hash)).size(10.0).weak());
@@ -1101,7 +1208,7 @@ impl eframe::App for VelocityApp {
                             // Find callers
                             let callers = sm.get_callers(symbol_hash);
                             ui.add_space(6.0);
-                            ui.label(egui::RichText::new("📞 CALLERS").size(11.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                            ui.label(egui::RichText::new("📞 CALLERS").size(11.0).strong().color(IdePalette::dark().accent));
                             if callers.is_empty() {
                                 ui.label("No active callers found in graph.");
                             } else {
@@ -1113,7 +1220,7 @@ impl eframe::App for VelocityApp {
                             // Find dependencies
                             let deps = sm.get_dependencies(symbol_hash);
                             ui.add_space(6.0);
-                            ui.label(egui::RichText::new("⚙️ DEPENDENCIES").size(11.0).strong().color(egui::Color32::from_rgb(34, 211, 238)));
+                            ui.label(egui::RichText::new("⚙️ DEPENDENCIES").size(11.0).strong().color(IdePalette::dark().accent));
                             if deps.is_empty() {
                                 ui.label("No dependencies found.");
                             } else {
@@ -1125,7 +1232,7 @@ impl eframe::App for VelocityApp {
                             // Find intent conversations link
                             let intent_triples = sm.find_triples(Some(symbol_hash), Some(3), None);
                             ui.add_space(6.0);
-                            ui.label(egui::RichText::new("💬 AI INTENT & TRANSCRIPTS").size(11.0).strong().color(egui::Color32::from_rgb(168, 85, 247)));
+                            ui.label(egui::RichText::new("💬 AI INTENT & TRANSCRIPTS").size(11.0).strong().color(IdePalette::dark().accent));
                             if intent_triples.is_empty() {
                                 ui.label("No agent sessions linked to this symbol.");
                             } else {
@@ -1199,7 +1306,7 @@ impl eframe::App for VelocityApp {
                     if !self.pending_approvals.is_empty() {
                         ui.separator();
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Direct approval actions").size(10.0).color(egui::Color32::from_rgb(125, 131, 166)));
+                            ui.label(egui::RichText::new("Direct approval actions").size(10.0).color(IdePalette::dark().text_muted));
                             if ui.button("Approve all").clicked() {
                                 self.approve_all_pending_tools();
                             }
@@ -1212,7 +1319,7 @@ impl eframe::App for VelocityApp {
                         for idx in 0..approval_count {
                             let tool_name = self.pending_approvals[idx].1.clone();
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(tool_name.as_str()).size(10.0).color(egui::Color32::from_rgb(226, 227, 243)));
+                                ui.label(egui::RichText::new(tool_name.as_str()).size(10.0).color(IdePalette::dark().text));
                                 if ui.small_button("Approve").clicked() {
                                     self.approve_pending_tool_at(idx);
                                 }
@@ -1333,6 +1440,10 @@ impl VelocityApp {
         self.toggle_panel(TabKind::Orchestrator);
     }
 
+    fn toggle_mission_control(&mut self) {
+        self.toggle_panel(TabKind::MissionControl);
+    }
+
     fn toggle_search(&mut self) {
         self.toggle_panel(TabKind::Search);
     }
@@ -1433,6 +1544,7 @@ impl VelocityApp {
     fn handle_agent_messages(&mut self) {
         self.handle_terminal_messages();
         while let Ok(msg) = self.agent_rx.try_recv() {
+            let mut timeline_dirty = false;
             match msg {
                 AgentToUiMessage::OutputToken(token) => {
                     let mut last_you_idx = None;
@@ -1463,6 +1575,7 @@ impl VelocityApp {
                     if self.current_agent_task_id == 0 {
                         self.current_agent_task_id = self.task_timeline.task_started("Agent response", "reasoning", 0);
                         self.task_timeline.agent_marker("Agent session start", "reasoning stream opened", self.current_agent_task_id);
+                        timeline_dirty = true;
                     }
                     let _ = self.agent_ui_state.thinking.append_token(&token);
                     self.chat.append_thought_token(&token);
@@ -1475,6 +1588,7 @@ impl VelocityApp {
                     }
                     self.task_timeline.agent_marker("Approval requested", &tool_name, self.current_agent_task_id);
                     self.task_timeline.tool_call(self.current_agent_task_id, &tool_name, "approval required");
+                    timeline_dirty = true;
 
                     self.command_output.push_str(&format!("[tool-approval-request] {}: {:?}\n", tool_name, arguments));
                     let should_auto = self.chat.auto_approve || self.auto_approve;
@@ -1499,6 +1613,7 @@ impl VelocityApp {
                     }
                     self.task_timeline.agent_marker("Tool phase", &tool_name, self.current_agent_task_id);
                     self.task_timeline.tool_call(self.current_agent_task_id, &tool_name, "started");
+                    timeline_dirty = true;
 
                     self.command_output.push_str(&format!("[tool-start] {}\n", tool_name));
                     self.status_message = format!("Running tool: {}", tool_name);
@@ -1508,6 +1623,7 @@ impl VelocityApp {
                     self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Running;
                     if self.current_agent_task_id != 0 {
                         self.task_timeline.tool_result(self.current_agent_task_id, &tool_name, true, 0);
+                        timeline_dirty = true;
                     }
 
                     self.command_output
@@ -1524,6 +1640,7 @@ impl VelocityApp {
                     } else {
                         self.task_timeline.agent_marker("Status", &message, self.current_agent_task_id);
                     }
+                    timeline_dirty = true;
                     if self.current_agent_task_id == 0 {
                         self.current_agent_task_id = self.task_timeline.task_started("Status update", &message, 0);
                     }
@@ -1535,6 +1652,7 @@ impl VelocityApp {
                         self.task_timeline.agent_marker("Agent session end", "response completed", self.current_agent_task_id);
                         self.task_timeline.task_completed(self.current_agent_task_id, 0, 0, 0);
                         self.current_agent_task_id = 0;
+                        timeline_dirty = true;
                     }
 
                     self.status_message = "Agent finished".into();
@@ -1555,6 +1673,7 @@ impl VelocityApp {
                         self.tools_supported = model.supports_tools;
                     }
                     self.task_timeline.session_marker("Model selected", &selected);
+                    timeline_dirty = true;
                     // Update metrics (thinking feature state)
                     self.agent_ui_state.metrics.thinking_enabled = thinking;
 
@@ -1573,6 +1692,7 @@ impl VelocityApp {
                 AgentToUiMessage::ProviderChanged(new_provider) => {
                     let provider_name = new_provider.label();
                     self.task_timeline.session_marker("Provider changed", provider_name);
+                    timeline_dirty = true;
                     self.provider = new_provider;
                 }
                 AgentToUiMessage::AccountUsage { accounts, date } => {
@@ -1587,6 +1707,9 @@ impl VelocityApp {
                     }
                     self.chat.restore_history(history);
                 }
+            }
+            if timeline_dirty {
+                self.persist_mission_activity();
             }
         }
         self.cap_logs();
@@ -1783,7 +1906,7 @@ impl VelocityApp {
                     ui.label(
                         egui::RichText::new(format!("{}  (+{} / -{})", change_preview.file_label, change_preview.added_lines, change_preview.removed_lines))
                             .strong()
-                            .color(egui::Color32::from_rgb(250, 204, 21)),
+                            .color(IdePalette::dark().warning),
                     );
                     ui.add_space(6.0);
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1791,7 +1914,7 @@ impl VelocityApp {
                             egui::RichText::new(change_preview.full_diff.as_str())
                                 .monospace()
                                 .size(10.0)
-                                .color(egui::Color32::from_rgb(226, 227, 243)),
+                            .color(IdePalette::dark().text),
                         );
                     });
                 } else {
@@ -1841,6 +1964,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Orchestrator => {
                 self.app.orchestrator.ui(ui, &self.app.workspace_root, &self.app.mediator);
             }
+            TabKind::MissionControl => {
+                self.mission_control_panel(ui);
+            }
             TabKind::Usage => {
                 render_usage_panel(ui, &self.app.account_usage, &self.app.usage_date, || {
                     let _ = self.app.agent_tx.send(UiToAgentMessage::RefreshUsage);
@@ -1857,11 +1983,476 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 }
 
 impl<'a> TabViewerImpl<'a> {
+    fn mission_control_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = IdePalette::dark();
+        let snapshot = self.app.orchestrator.dashboard_snapshot();
+        let valid_task_ids: Vec<u64> = snapshot.tasks.iter().map(|task| task.id).collect();
+        self.app.mission_control.sync_selected_task(&valid_task_ids);
+        self.app.mirror_worker_events_into_timeline(&snapshot);
+        egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            ui.heading("🎛 Mission Control");
+            ui.label(
+                egui::RichText::new("One brief → routed plan → live swarm → operator interventions")
+                    .small()
+                    .color(palette.text_muted),
+            );
+            ui.add_space(8.0);
+
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Mission brief:");
+                    ui.checkbox(&mut self.app.mission_control.auto_execute, "Auto-launch after planning");
+                });
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.app.mission_control.brief)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Build me a full app..."),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Plan mission").clicked() {
+                        self.app.chat.input = self.app.mission_control.brief.clone();
+                        self.app.plan_routed_subagents();
+                    }
+                    if ui.button("Launch routed tasks").clicked() {
+                        self.app
+                            .orchestrator
+                            .execute_routed_tasks(&self.app.workspace_root, &self.app.mediator);
+                    }
+                    if ui
+                        .add_enabled(
+                            snapshot.retryable_blocked_tasks > 0,
+                            egui::Button::new(format!("Retry blocked ({})", snapshot.retryable_blocked_tasks)),
+                        )
+                        .clicked()
+                    {
+                        self.app
+                            .orchestrator
+                            .retry_blocked_tasks_action(&self.app.workspace_root, &self.app.mediator);
+                    }
+                    if ui.button("Reset runtime").clicked() {
+                        self.app.orchestrator.reset_runtime_action();
+                    }
+                });
+            });
+
+            ui.add_space(8.0);
+            ui.columns(2, |columns| {
+                columns[0].vertical(|ui| {
+                    let selected_task = self
+                        .app
+                        .mission_control
+                        .selected_task_id
+                        .and_then(|selected_id| snapshot.tasks.iter().find(|task| task.id == selected_id));
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Mission status").strong());
+                        ui.label(format!("Plan: {}", snapshot.planning_status));
+                        ui.label(format!("Runtime: {}", snapshot.runtime_status));
+                        if let Some(goal) = &snapshot.goal {
+                            ui.label(format!("Goal: {}", goal));
+                        }
+                        if let Some(kind) = &snapshot.task_kind {
+                            ui.label(format!("Kind: {}", kind));
+                        }
+                        ui.label(format!("Scoped files: {}", snapshot.scope_count));
+                        if let Some(task) = selected_task {
+                            ui.separator();
+                            ui.label(egui::RichText::new(format!("Selected task: #{} {}", task.id, task.title)).strong());
+                            ui.label(
+                                egui::RichText::new(format!("Targeted scope: {}", if task.scope.is_empty() { "(inherits routed scope)".to_string() } else { task.scope.join(", ") }))
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        }
+                    });
+
+                    ui.add_space(6.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Swarm scoreboard").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("Pending {}", snapshot.pending_tasks));
+                            ui.separator();
+                            ui.label(format!("Running {}", snapshot.running_tasks));
+                            ui.separator();
+                            ui.label(format!("Done {}", snapshot.done_tasks));
+                            ui.separator();
+                            ui.label(format!("Failed {}", snapshot.failed_tasks));
+                            ui.separator();
+                            ui.label(format!("Blocked {}", snapshot.blocked_tasks));
+                            ui.separator();
+                            ui.label(format!("Workers {}", snapshot.active_workers));
+                        });
+                    });
+
+                    ui.add_space(6.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Selected task thread").strong());
+                        if let Some(task) = selected_task {
+                            ui.label(egui::RichText::new(format!("#{} {}", task.id, task.title)).strong());
+                            if task.status_label == "Running" {
+                                ui.label(
+                                    egui::RichText::new("Live worker thread is active. Notes sent here go directly to the routed worker. Stop is supported; pause/resume is intentionally unavailable until the runtime can suspend honestly.")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("Task is not currently running. Direct worker notes are only available during live execution.")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                            }
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.app.mission_control.selected_task_note_input)
+                                    .desired_rows(3)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Send a note to the selected routed worker..."),
+                            );
+                            let can_send_task_note = task.status_label == "Running";
+                            if ui
+                                .add_enabled(can_send_task_note, egui::Button::new("Send to selected task"))
+                                .clicked()
+                            {
+                                let note = self.app.mission_control.selected_task_note_input.trim().to_string();
+                                if !note.is_empty()
+                                    && self
+                                        .app
+                                        .orchestrator
+                                        .send_task_note_action(crate::orchestrator::TaskId(task.id), note)
+                                {
+                                    self.app.status_message = format!("Sent note to task #{}", task.id);
+                                    self.app.toasts.push(crate::editor::toast::Toast::info(format!("Sent note to task #{}", task.id)));
+                                    self.app.mission_control.selected_task_note_input.clear();
+                                }
+                            }
+                            if let Some(thread) = &task.live_thread {
+                                egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, false]).show(ui, |ui| {
+                                    if !thread.events.is_empty() {
+                                        ui.separator();
+                                        ui.label(egui::RichText::new("Worker event stream").small().strong());
+                                        egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
+                                            for event in thread.events.iter().rev().take(12) {
+                                                let color = match event.kind {
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::Status => palette.accent,
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::Transcript => palette.text,
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::FileChange => palette.success,
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote => palette.warning,
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolApproval => palette.accent,
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => palette.accent.gamma_multiply(0.8),
+                                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => palette.accent.gamma_multiply(0.6),
+                                                };
+                                                ui.label(egui::RichText::new(&event.message).small().color(color));
+                                            }
+                                        });
+                                    }
+                                    if !thread.operator_notes.is_empty() {
+                                        ui.separator();
+                                        ui.label(egui::RichText::new("Operator notes").small().strong());
+                                        for note in thread.operator_notes.iter().rev().take(4) {
+                                            ui.label(egui::RichText::new(note).small().color(palette.warning));
+                                        }
+                                    }
+                                    if !thread.changed_files.is_empty() {
+                                        ui.separator();
+                                        ui.label(
+                                            egui::RichText::new(format!("Observed file activity: {}", thread.changed_files.join(", ")))
+                                                .small()
+                                                .color(palette.success),
+                                        );
+                                    }
+                                    if !thread.transcript.trim().is_empty() {
+                                        ui.separator();
+                                        ui.label(egui::RichText::new("Live transcript").small().strong());
+                                        let mut transcript = thread.transcript.clone();
+                                        ui.add(
+                                            egui::TextEdit::multiline(&mut transcript)
+                                                .desired_rows(8)
+                                                .desired_width(f32::INFINITY)
+                                                .interactive(false),
+                                        );
+                                    }
+                                });
+                            } else if !task.message.is_empty() {
+                                ui.separator();
+                                ui.label(egui::RichText::new(task.message.clone()).small().color(palette.warning));
+                            }
+                        } else {
+                            ui.label(
+                                egui::RichText::new("Select a routed task to inspect its dedicated worker thread.")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        }
+                    });
+
+                    ui.add_space(6.0);
+                    ui.group(|ui| {
+                        let timeline_snapshot = TaskTimelineSnapshot::new(&self.app.task_timeline);
+                        render_mission_activity_feed(
+                            ui,
+                            &timeline_snapshot,
+                            self.app.mission_control.selected_task_id,
+                            14,
+                        );
+                    });
+
+                    ui.add_space(6.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Operator intervention inbox").strong());
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.app.mission_control.intervention_input)
+                                .desired_rows(3)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Mid-flight change, tweak, expansion, or correction..."),
+                        );
+                        if ui.button("Queue intervention").clicked() {
+                            let note = self.app.mission_control.intervention_input.trim().to_string();
+                            if !note.is_empty() {
+                                let id = self.app.next_intervention_id;
+                                self.app.next_intervention_id += 1;
+                                self.app.mission_control.queue_intervention(id, note.clone());
+                                self.app.mission_control.intervention_input.clear();
+                                self.app.status_message = format!("Queued intervention #{id}");
+                            }
+                        }
+
+                        let mut queued_action: Option<(u64, InterventionDisposition, String)> = None;
+                        for item in &self.app.mission_control.interventions {
+                            ui.separator();
+                            ui.label(egui::RichText::new(format!("#{}", item.id)).strong());
+                            ui.label(&item.note);
+                            ui.label(
+                                egui::RichText::new(&item.status)
+                                    .small()
+                                    .color(IdePalette::dark().text_muted),
+                            );
+                            ui.horizontal(|ui| {
+                                let action_label = if selected_task.map(|task| task.status_label == "Running").unwrap_or(false) {
+                                    "Send to selected task"
+                                } else {
+                                    "Apply to running agent"
+                                };
+                                if ui.small_button(action_label).clicked() {
+                                    queued_action = Some((item.id, InterventionDisposition::ApplyToRunningAgent, item.note.clone()));
+                                }
+                                if ui.small_button("Spawn routed task").clicked() {
+                                    queued_action = Some((item.id, InterventionDisposition::SpawnRoutedFollowUp, item.note.clone()));
+                                }
+                                if ui.small_button("Dismiss").clicked() {
+                                    queued_action = Some((item.id, InterventionDisposition::Dismissed, item.note.clone()));
+                                }
+                            });
+                        }
+
+                        if let Some((id, disposition, note)) = queued_action {
+                            let targeted_context = self
+                                .app
+                                .mission_control
+                                .selected_task_id
+                                .and_then(|selected_id| snapshot.tasks.iter().find(|task| task.id == selected_id))
+                                .map(|task| {
+                                    let scope = if task.scope.is_empty() {
+                                        "(inherits routed scope)".to_string()
+                                    } else {
+                                        task.scope.join(", ")
+                                    };
+                                    format!("Task #{} {}\nScope: {}", task.id, task.title, scope)
+                                });
+                            if let Some(item) = self
+                                .app
+                                .mission_control
+                                .interventions
+                                .iter_mut()
+                                .find(|entry| entry.id == id)
+                            {
+                                item.disposition = Some(disposition.clone());
+                                item.status = match disposition {
+                                    InterventionDisposition::ApplyToRunningAgent => {
+                                        if selected_task
+                                            .and_then(|task| (task.status_label == "Running").then_some(task.id))
+                                            .is_some()
+                                        {
+                                            "Sent to selected worker thread".to_string()
+                                        } else {
+                                            "Sent to agent chat for live steering".to_string()
+                                        }
+                                    }
+                                    InterventionDisposition::SpawnRoutedFollowUp => "Prepared as a new routed mission brief".to_string(),
+                                    InterventionDisposition::Dismissed => "Dismissed by operator".to_string(),
+                                };
+                            }
+
+                            match disposition {
+                                InterventionDisposition::ApplyToRunningAgent => {
+                                    let sent_to_task = selected_task
+                                        .and_then(|task| (task.status_label == "Running").then_some(task.id))
+                                        .map(|task_id| {
+                                            self.app.orchestrator.send_task_note_action(
+                                                crate::orchestrator::TaskId(task_id),
+                                                note.clone(),
+                                            )
+                                        })
+                                        .unwrap_or(false);
+                                    if sent_to_task {
+                                        self.app.status_message = "Sent intervention to selected worker thread".to_string();
+                                        self.app.toasts.push(crate::editor::toast::Toast::info("Sent intervention to selected worker thread".to_string()));
+                                    } else {
+                                        let prompt = if let Some(context) = &targeted_context {
+                                            format!("Apply this operator intervention with priority to the targeted routed task context below.\n\n{context}\n\nOperator intervention:\n{note}")
+                                        } else {
+                                            note.clone()
+                                        };
+                                        self.app.chat.push_user(prompt.clone());
+                                        self.app.chat_history.push_str("\nYou: ");
+                                        self.app.chat_history.push_str(&prompt);
+                                        self.app.agent_active = true;
+                                        self.app.chat.agent_active = true;
+                                        let _ = self.app.agent_tx.send(UiToAgentMessage::UserPrompt(prompt));
+                                    }
+                                }
+                                InterventionDisposition::SpawnRoutedFollowUp => {
+                                    let brief = if let Some(context) = &targeted_context {
+                                        format!("{note}\n\nTarget this routed follow-up at:\n{context}")
+                                    } else {
+                                        note.clone()
+                                    };
+                                    self.app.mission_control.brief = brief.clone();
+                                    self.app.chat.input = brief;
+                                    self.app.plan_routed_subagents();
+                                }
+                                InterventionDisposition::Dismissed => {}
+                            }
+                        }
+                    });
+                });
+
+                columns[1].vertical(|ui| {
+                    ui.group(|ui| {
+                        let agent_snapshot = RenderSnapshot::new(&self.app.agent_ui_state);
+                        ui.label(egui::RichText::new("Approvals, metrics, and reasoning").strong());
+                        render_agent_metrics(ui, &agent_snapshot);
+                        ui.separator();
+                        render_pending_approvals(ui, &agent_snapshot);
+                        ui.separator();
+                        render_thinking_panel(ui, &agent_snapshot, (226, 227, 243));
+                    });
+
+                    ui.add_space(6.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Live agent cards").strong());
+                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                            for task in &snapshot.tasks {
+                                let is_selected = self.app.mission_control.selected_task_id == Some(task.id);
+                                ui.group(|ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.selectable_label(is_selected, format!("#{} {}", task.id, task.title)).clicked() {
+                                            self.app.mission_control.set_selected_task(Some(task.id));
+                                        }
+                                        ui.label(
+                                            egui::RichText::new(&task.status_label)
+                                                .small()
+                                                .color(IdePalette::dark().accent),
+                                        );
+                                    });
+                                    if !task.provider_label.is_empty() || !task.model_label.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(format!("{} / {}", task.provider_label, task.model_label))
+                                                .small()
+                                                .color(IdePalette::dark().accent),
+                                        );
+                                    }
+                                    ui.label(egui::RichText::new(&task.description).small().weak());
+                                    if !task.scope.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(format!("Scope: {}", task.scope.join(", ")))
+                                                .small()
+                                                .color(IdePalette::dark().text_muted),
+                                        );
+                                    }
+                                    if !task.rationale.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(format!("Why: {}", task.rationale))
+                                                .small()
+                                                .color(IdePalette::dark().text),
+                                        );
+                                    }
+                                    if !task.outputs.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(format!("Outputs: {}", task.outputs.join(", ")))
+                                                .small()
+                                                .color(IdePalette::dark().success),
+                                        );
+                                    }
+                                    if !task.message.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(format!("Status: {}", task.message))
+                                                .small()
+                                                .color(IdePalette::dark().warning),
+                                        );
+                                    }
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.small_button(if is_selected { "Selected" } else { "Select" }).clicked() {
+                                            self.app.mission_control.set_selected_task(Some(task.id));
+                                        }
+                                        let can_retry_task = task.status_label == "Follow-up";
+                                        let can_stop_task = task.status_label == "Running";
+                                        if ui
+                                            .add_enabled(can_stop_task, egui::Button::new("Stop task"))
+                                            .clicked()
+                                        {
+                                            if self.app.orchestrator.stop_task_action(crate::orchestrator::TaskId(task.id)) {
+                                                self.app.status_message = format!("Stopping task #{}", task.id);
+                                                self.app.toasts.push(crate::editor::toast::Toast::warn(format!("Stopping task #{}", task.id)));
+                                            }
+                                        }
+                                        if ui
+                                            .add_enabled(can_retry_task, egui::Button::new("Retry task"))
+                                            .clicked()
+                                        {
+                                            if self
+                                                .app
+                                                .orchestrator
+                                                .retry_task_action(crate::orchestrator::TaskId(task.id), &self.app.workspace_root, &self.app.mediator)
+                                            {
+                                                self.app.status_message = format!("Retrying task #{}", task.id);
+                                                self.app.toasts.push(crate::editor::toast::Toast::info(format!("Retrying task #{}", task.id)));
+                                            }
+                                        }
+                                        if ui.small_button("Reset task").clicked() {
+                                            if self.app.orchestrator.reset_task_action(crate::orchestrator::TaskId(task.id)) {
+                                                self.app.status_message = format!("Reset task #{}", task.id);
+                                                self.app.toasts.push(crate::editor::toast::Toast::warn(format!("Reset task #{} to pending", task.id)));
+                                            }
+                                        }
+                                        if ui.small_button("Route follow-up").clicked() {
+                                            self.app.mission_control.set_selected_task(Some(task.id));
+                                            let scope = if task.scope.is_empty() {
+                                                "(inherits routed scope)".to_string()
+                                            } else {
+                                                task.scope.join(", ")
+                                            };
+                                            self.app.mission_control.brief = format!(
+                                                "Follow up on routed task #{} {}.\n\nFocus scope: {}\n\nGoal:\n",
+                                                task.id,
+                                                task.title,
+                                                scope
+                                            );
+                                        }
+                                    });
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    }
 
     fn output_panel(&mut self, ui: &mut egui::Ui) {
         egui::Frame::new()
             .inner_margin(egui::Margin::same(10))
-            .fill(egui::Color32::from_rgb(7, 8, 12))
+            .fill(IdePalette::dark().bg_primary)
             .show(ui, |ui: &mut egui::Ui| {
                 ui.vertical(|ui: &mut egui::Ui| {
                     let scroll_height = ui.available_height() - 75.0;
@@ -1876,7 +2467,7 @@ impl<'a> TabViewerImpl<'a> {
                                     .code_editor()
                                     .font(egui::FontId::monospace(13.0))
                                     .desired_width(f32::INFINITY)
-                                    .text_color(egui::Color32::from_rgb(34, 211, 238)),
+                                    .text_color(IdePalette::dark().accent),
                             );
                         });
 
@@ -1884,12 +2475,12 @@ impl<'a> TabViewerImpl<'a> {
 
                     let mut run_command = false;
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("> ").monospace().color(egui::Color32::from_rgb(34, 211, 238)));
+                        ui.label(egui::RichText::new("> ").monospace().color(IdePalette::dark().accent));
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.app.terminal_input)
                                 .font(egui::FontId::monospace(13.0))
                                 .desired_width(ui.available_width() - 120.0)
-                                .text_color(egui::Color32::from_rgb(226, 227, 243))
+                                .text_color(IdePalette::dark().text)
                         );
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             run_command = true;
@@ -2040,4 +2631,128 @@ fn get_active_symbol(content: &str, cursor_line: usize) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::orchestrator_panel::{OrchestratorDashboardSnapshot, OrchestratorTaskSnapshot};
+    use crate::orchestrator::worker::{WorkerThreadEvent, WorkerThreadEventKind, WorkerThreadSnapshot};
+
+    fn task_snapshot(task_id: u64, events: Vec<WorkerThreadEvent>) -> OrchestratorTaskSnapshot {
+        OrchestratorTaskSnapshot {
+            id: task_id,
+            title: "Worker".to_string(),
+            description: "Worker task".to_string(),
+            status_label: "Running".to_string(),
+            provider_label: String::new(),
+            model_label: String::new(),
+            scope: Vec::new(),
+            rationale: String::new(),
+            outputs: Vec::new(),
+            message: String::new(),
+            live_thread: Some(WorkerThreadSnapshot {
+                events,
+                status_updates: Vec::new(),
+                transcript: String::new(),
+                changed_files: Vec::new(),
+                operator_notes: Vec::new(),
+            }),
+        }
+    }
+
+    fn dashboard_snapshot(task_id: u64, events: Vec<WorkerThreadEvent>) -> OrchestratorDashboardSnapshot {
+        OrchestratorDashboardSnapshot {
+            tasks: vec![task_snapshot(task_id, events)],
+            ..OrchestratorDashboardSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn mirror_worker_events_into_timeline_appends_only_new_events() {
+        let mut timeline = TTState::default();
+        let mut mission_control = MissionControlState::new();
+        let first_snapshot = dashboard_snapshot(
+            7,
+            vec![
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::Status,
+                    message: "Planning step ready".to_string(),
+                },
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::OperatorNote,
+                    message: "Keep auth flow".to_string(),
+                },
+            ],
+        );
+
+        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &first_snapshot);
+        assert_eq!(timeline.event_count(), 2);
+        assert_eq!(mission_control.mirrored_worker_event_count(7), 2);
+
+        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &first_snapshot);
+        assert_eq!(timeline.event_count(), 2);
+
+        let second_snapshot = dashboard_snapshot(
+            7,
+            vec![
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::Status,
+                    message: "Planning step ready".to_string(),
+                },
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::OperatorNote,
+                    message: "Keep auth flow".to_string(),
+                },
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::Transcript,
+                    message: "Generated component outline".to_string(),
+                },
+            ],
+        );
+
+        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &second_snapshot);
+        assert_eq!(timeline.event_count(), 3);
+        assert_eq!(mission_control.mirrored_worker_event_count(7), 3);
+
+        let newest = timeline.visible_events().next().unwrap().1;
+        assert_eq!(timeline.get_text(newest.name_offset, newest.name_len), "Worker output");
+        assert_eq!(timeline.get_text(newest.description_offset, newest.description_len), "Generated component outline");
+    }
+
+    #[test]
+    fn clearing_worker_event_tracking_allows_replay_after_replan() {
+        let mut timeline = TTState::default();
+        let mut mission_control = MissionControlState::new();
+        let snapshot = dashboard_snapshot(
+            3,
+            vec![WorkerThreadEvent {
+                kind: WorkerThreadEventKind::Status,
+                message: "Queued follow-up".to_string(),
+            }],
+        );
+
+        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &snapshot);
+        assert_eq!(timeline.event_count(), 1);
+
+        mission_control.clear_worker_event_tracking();
+        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &snapshot);
+        assert_eq!(timeline.event_count(), 2);
+        assert_eq!(mission_control.mirrored_worker_event_count(3), 1);
+    }
+
+    #[test]
+    fn sync_selected_task_prunes_stale_worker_event_trackers() {
+        let mut mission_control = MissionControlState::new();
+        mission_control.set_mirrored_worker_event_count(1, 2);
+        mission_control.set_mirrored_worker_event_count(2, 4);
+        mission_control.set_selected_task(Some(2));
+
+        mission_control.sync_selected_task(&[1]);
+
+        assert_eq!(mission_control.selected_task_id, Some(1));
+        assert_eq!(mission_control.mirrored_worker_event_count(1), 2);
+        assert_eq!(mission_control.mirrored_worker_event_count(2), 0);
+        assert_eq!(mission_control.mirrored_worker_event_counts.len(), 1);
+    }
 }

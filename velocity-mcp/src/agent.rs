@@ -20,6 +20,7 @@ pub enum UiToAgentMessage {
     RejectTool { id: String, tool_name: String },
     RunLocalBuild,
     RunLocalRun,
+    CancelTask,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +40,32 @@ pub enum AgentToUiMessage {
     ProviderChanged(AiProvider),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadlessSubAgentEventKind {
+    Status,
+    Transcript,
+    FileChange,
+    OperatorNote,
+    ToolApproval,
+    ToolStarted,
+    ToolFinished,
+}
+
+#[derive(Debug, Clone)]
+pub struct HeadlessSubAgentEvent {
+    pub kind: HeadlessSubAgentEventKind,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HeadlessSubAgentProgress {
+    pub events: Vec<HeadlessSubAgentEvent>,
+    pub status_updates: Vec<String>,
+    pub transcript: String,
+    pub changed_files: Vec<String>,
+    pub operator_notes: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HeadlessSubAgentRequest {
     pub workspace_root: PathBuf,
@@ -46,6 +73,8 @@ pub struct HeadlessSubAgentRequest {
     pub model: String,
     pub thinking: bool,
     pub prompt: String,
+    pub cancel_rx: Option<Receiver<UiToAgentMessage>>,
+    pub progress: Option<Arc<Mutex<HeadlessSubAgentProgress>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1570,6 +1599,8 @@ pub fn run_agent_thread(
                     &mut message_history,
                     &mut usage_tracker,
                     &ui_rx,
+                    None,
+                    None,
                     &ui_tx,
                 );
             }
@@ -1712,6 +1743,67 @@ fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String>
     }
 }
 
+fn apply_headless_control_messages(
+    control_rx: Option<&Receiver<UiToAgentMessage>>,
+    message_history: &mut Vec<ChatMessage>,
+    ui_tx: &Sender<AgentToUiMessage>,
+    progress: Option<&Arc<Mutex<HeadlessSubAgentProgress>>>,
+) -> bool {
+    let Some(control_rx) = control_rx else {
+        return false;
+    };
+    loop {
+        match control_rx.try_recv() {
+            Ok(UiToAgentMessage::CancelTask) => {
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(
+                        "Headless sub-agent cancelled by operator.".to_string(),
+                    ))
+                    .ok();
+                return true;
+            }
+            Ok(UiToAgentMessage::UserPrompt(note)) => {
+                let note = note.trim();
+                if note.is_empty() {
+                    continue;
+                }
+                let prompt = format!(
+                    "Operator intervention for this routed task. Treat it as the highest-priority steering update and continue the existing assignment unless it explicitly changes scope.\n\n{}",
+                    note
+                );
+                message_history.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: prompt,
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
+                if let Some(progress) = progress {
+                    let mut guard = progress.lock().unwrap();
+                    guard.operator_notes.push(note.to_string());
+                    guard.status_updates.push("Operator note routed to this worker thread.".to_string());
+                    guard.events.push(HeadlessSubAgentEvent {
+                        kind: HeadlessSubAgentEventKind::OperatorNote,
+                        message: note.to_string(),
+                    });
+                    guard.events.push(HeadlessSubAgentEvent {
+                        kind: HeadlessSubAgentEventKind::Status,
+                        message: "Operator note routed to this worker thread.".to_string(),
+                    });
+                }
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(
+                        "Operator note routed to this worker thread.".to_string(),
+                    ))
+                    .ok();
+            }
+            Ok(_) => {}
+            Err(crossbeam_channel::TryRecvError::Empty) => return false,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => return false,
+        }
+    }
+}
+
 pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
     let accounts = load_accounts_from_env();
     let or_accounts = load_openrouter_accounts_from_env();
@@ -1754,6 +1846,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
 
     let (agent_event_tx, agent_event_rx) = crossbeam_channel::unbounded();
     let (agent_ui_tx, agent_ui_rx) = crossbeam_channel::unbounded();
+    let cancel_rx = request.cancel_rx;
+    let progress = request.progress;
     let status_updates = Arc::new(Mutex::new(Vec::new()));
     let transcript = Arc::new(Mutex::new(String::new()));
     let changed_files = Arc::new(Mutex::new(Vec::new()));
@@ -1761,29 +1855,86 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     let status_updates_collector = status_updates.clone();
     let transcript_collector = transcript.clone();
     let changed_files_collector = changed_files.clone();
+    let progress_collector = progress.clone();
     let auto_approve_tx = agent_ui_tx.clone();
 
     let collector = std::thread::spawn(move || {
         while let Ok(msg) = agent_event_rx.recv() {
             match msg {
                 AgentToUiMessage::StatusUpdate(status) => {
-                    status_updates_collector.lock().unwrap().push(status);
+                    status_updates_collector.lock().unwrap().push(status.clone());
+                    if let Some(progress) = &progress_collector {
+                        let mut progress = progress.lock().unwrap();
+                        progress.status_updates.push(status.clone());
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::Status,
+                            message: status,
+                        });
+                    }
                 }
                 AgentToUiMessage::OutputToken(token) | AgentToUiMessage::ThoughtToken(token) => {
                     transcript_collector.lock().unwrap().push_str(&token);
+                    if let Some(progress) = &progress_collector {
+                        let mut progress = progress.lock().unwrap();
+                        progress.transcript.push_str(&token);
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::Transcript,
+                            message: token,
+                        });
+                    }
                 }
                 AgentToUiMessage::UpdateFileBuffer { path, .. } => {
                     let mut guard = changed_files_collector.lock().unwrap();
                     if !guard.contains(&path) {
-                        guard.push(path);
+                        guard.push(path.clone());
+                    }
+                    if let Some(progress) = &progress_collector {
+                        let changed_path = path.display().to_string();
+                        let mut progress = progress.lock().unwrap();
+                        if !progress.changed_files.contains(&changed_path) {
+                            progress.changed_files.push(changed_path.clone());
+                        }
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::FileChange,
+                            message: changed_path,
+                        });
                     }
                 }
                 AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
+                    let status = format!("Auto-approving tool: {tool_name}");
                     status_updates_collector
                         .lock()
                         .unwrap()
-                        .push(format!("Auto-approving tool: {tool_name}"));
+                        .push(status.clone());
+                    if let Some(progress) = &progress_collector {
+                        let mut progress = progress.lock().unwrap();
+                        progress.status_updates.push(status.clone());
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::ToolApproval,
+                            message: tool_name.clone(),
+                        });
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::Status,
+                            message: status,
+                        });
+                    }
                     let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool { id, tool_name, arguments });
+                }
+                AgentToUiMessage::ToolExecutionStarted { tool_name } => {
+                    if let Some(progress) = &progress_collector {
+                        progress.lock().unwrap().events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::ToolStarted,
+                            message: tool_name,
+                        });
+                    }
+                }
+                AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
+                    if let Some(progress) = &progress_collector {
+                        progress.lock().unwrap().events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::ToolFinished,
+                            message: format!("{} => {}", tool_name, result),
+                        });
+                    }
                 }
                 AgentToUiMessage::AgentFinished => break,
                 _ => {}
@@ -1802,6 +1953,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         &mut message_history,
         &mut usage_tracker,
         &agent_ui_rx,
+        cancel_rx.as_ref(),
+        progress.as_ref(),
         &agent_event_tx,
     );
 
@@ -1829,6 +1982,8 @@ fn run_agent_reasoning_loop(
     message_history: &mut Vec<ChatMessage>,
     usage_tracker: &mut UsageTracker,
     ui_rx: &Receiver<UiToAgentMessage>,
+    cancel_rx: Option<&Receiver<UiToAgentMessage>>,
+    progress: Option<&Arc<Mutex<HeadlessSubAgentProgress>>>,
     ui_tx: &Sender<AgentToUiMessage>,
 ) {
     let mut sitemap_needed = false;
@@ -1849,6 +2004,9 @@ fn run_agent_reasoning_loop(
     }).collect();
 
     while loop_count < max_loops {
+        if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
+            break;
+        }
         loop_count += 1;
         ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
             "Querying {} (Turn {})…",
@@ -2052,6 +2210,9 @@ fn run_agent_reasoning_loop(
         let mut suppressing = false;       // currently inside a <tool_call> block
 
         loop {
+            if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
+                break;
+            }
             line_buf.clear();
             match reader.read_line(&mut line_buf) {
                 Ok(0) => break,
@@ -2421,7 +2582,11 @@ fn run_agent_reasoning_loop(
             let mut resolved_approvals = std::collections::HashMap::new();
             
             while !pending_ids.is_empty() {
-                if let Ok(ui_msg) = ui_rx.recv() {
+                if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
+                    pending_ids.clear();
+                    break;
+                }
+                if let Ok(ui_msg) = ui_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                     match ui_msg {
                         UiToAgentMessage::ApproveTool { id, tool_name: _, arguments } => {
                             if pending_ids.remove(&id) {
@@ -2433,9 +2598,14 @@ fn run_agent_reasoning_loop(
                                 resolved_approvals.insert(id, None);
                             }
                         }
+                        UiToAgentMessage::CancelTask => {
+                            pending_ids.clear();
+                            break;
+                        }
                         _ => {}
                     }
-                } else {
+                } else if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
+                    pending_ids.clear();
                     break;
                 }
             }
