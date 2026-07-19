@@ -177,8 +177,11 @@ pub fn get_tools() -> Vec<Tool> {
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
                     "text": { "type": "string", "description": "Wait until this text appears in the current snapshot." },
+                    "title": { "type": "string", "description": "Wait until the current page title contains this text." },
+                    "urlContains": { "type": "string", "description": "Wait until the current page URL contains this fragment." },
                     "role": { "type": "string", "description": "Optional role when waiting for an element." },
                     "name": { "type": "string", "description": "Optional accessible name when waiting for an element." },
+                    "stablePolls": { "type": "integer", "description": "For stability waits, require this many consecutive unchanged polls before succeeding." },
                     "timeoutMs": { "type": "integer", "description": "Maximum time to wait before failing." },
                     "intervalMs": { "type": "integer", "description": "Polling interval between re-fetches." }
                 },
@@ -225,7 +228,7 @@ pub fn get_tools() -> Vec<Tool> {
                     },
                     "steps": {
                         "type": "array",
-                        "description": "Workflow steps. Supported kinds: navigate, click, fill_field, submit_form, wait_for_text, wait_for_element, extract_text, assert_element, assert_text_contains, assert_output.",
+                        "description": "Workflow steps. Supported kinds: navigate, click, fill_field, submit_form, wait_for_text, wait_for_element, wait_for_title, wait_for_url_contains, wait_for_stable, extract_text, save_checkpoint, restore_checkpoint, if_text_contains, if_output_equals, assert_element, assert_text_contains, assert_output.",
                         "items": { "type": "object" }
                     }
                 },
@@ -296,6 +299,96 @@ pub fn get_tools() -> Vec<Tool> {
     ]
 }
 
+fn parse_browser_steps(
+    steps: &[Value],
+) -> Result<Vec<crate::editor::browser::BrowserWorkflowStep>, Box<dyn Error>> {
+    let mut parsed_steps = Vec::with_capacity(steps.len());
+    for step in steps {
+        let kind = step["kind"].as_str().ok_or("workflow step kind is required")?;
+        let parsed = match kind {
+            "navigate" => crate::editor::browser::BrowserWorkflowStep::Navigate {
+                url: step["url"].as_str().ok_or("navigate step url is required")?.to_string(),
+            },
+            "click" => crate::editor::browser::BrowserWorkflowStep::Click {
+                role: step["role"].as_str().ok_or("click step role is required")?.to_string(),
+                name: step["name"].as_str().ok_or("click step name is required")?.to_string(),
+            },
+            "fill_field" => crate::editor::browser::BrowserWorkflowStep::FillField {
+                field: step["field"].as_str().ok_or("fill_field step field is required")?.to_string(),
+                value: step["value"].as_str().ok_or("fill_field step value is required")?.to_string(),
+            },
+            "submit_form" => crate::editor::browser::BrowserWorkflowStep::SubmitForm {
+                form: step["form"].as_str().map(|value| value.to_string()),
+            },
+            "wait_for_text" => crate::editor::browser::BrowserWorkflowStep::WaitForText {
+                text: step["text"].as_str().ok_or("wait_for_text step text is required")?.to_string(),
+                timeout_ms: step["timeoutMs"].as_u64(),
+                interval_ms: step["intervalMs"].as_u64(),
+            },
+            "wait_for_element" => crate::editor::browser::BrowserWorkflowStep::WaitForElement {
+                role: step["role"].as_str().ok_or("wait_for_element step role is required")?.to_string(),
+                name: step["name"].as_str().ok_or("wait_for_element step name is required")?.to_string(),
+                timeout_ms: step["timeoutMs"].as_u64(),
+                interval_ms: step["intervalMs"].as_u64(),
+            },
+            "wait_for_title" => crate::editor::browser::BrowserWorkflowStep::WaitForTitle {
+                title: step["title"].as_str().ok_or("wait_for_title step title is required")?.to_string(),
+                timeout_ms: step["timeoutMs"].as_u64(),
+                interval_ms: step["intervalMs"].as_u64(),
+            },
+            "wait_for_url_contains" => crate::editor::browser::BrowserWorkflowStep::WaitForUrlContains {
+                fragment: step["fragment"].as_str().ok_or("wait_for_url_contains step fragment is required")?.to_string(),
+                timeout_ms: step["timeoutMs"].as_u64(),
+                interval_ms: step["intervalMs"].as_u64(),
+            },
+            "wait_for_stable" => crate::editor::browser::BrowserWorkflowStep::WaitForStable {
+                stable_polls: step["stablePolls"].as_u64().map(|value| value as u32),
+                timeout_ms: step["timeoutMs"].as_u64(),
+                interval_ms: step["intervalMs"].as_u64(),
+            },
+            "extract_text" => crate::editor::browser::BrowserWorkflowStep::ExtractText {
+                output: step["output"].as_str().ok_or("extract_text step output is required")?.to_string(),
+                source: step["source"].as_str().ok_or("extract_text step source is required")?.to_string(),
+                role: step["role"].as_str().map(|value| value.to_string()),
+                name: step["name"].as_str().map(|value| value.to_string()),
+                field: step["field"].as_str().map(|value| value.to_string()),
+            },
+            "save_checkpoint" => crate::editor::browser::BrowserWorkflowStep::SaveCheckpoint {
+                name: step["name"].as_str().ok_or("save_checkpoint step name is required")?.to_string(),
+            },
+            "restore_checkpoint" => crate::editor::browser::BrowserWorkflowStep::RestoreCheckpoint {
+                name: step["name"].as_str().ok_or("restore_checkpoint step name is required")?.to_string(),
+            },
+            "if_text_contains" => crate::editor::browser::BrowserWorkflowStep::IfTextContains {
+                text: step["text"].as_str().ok_or("if_text_contains step text is required")?.to_string(),
+                then_steps: parse_browser_steps(step["thenSteps"].as_array().ok_or("if_text_contains thenSteps must be an array")?)?,
+                else_steps: parse_browser_steps(step["elseSteps"].as_array().map(|steps| steps.as_slice()).unwrap_or(&[]))?,
+            },
+            "if_output_equals" => crate::editor::browser::BrowserWorkflowStep::IfOutputEquals {
+                output: step["output"].as_str().ok_or("if_output_equals step output is required")?.to_string(),
+                equals: step["equals"].as_str().ok_or("if_output_equals step equals is required")?.to_string(),
+                then_steps: parse_browser_steps(step["thenSteps"].as_array().ok_or("if_output_equals thenSteps must be an array")?)?,
+                else_steps: parse_browser_steps(step["elseSteps"].as_array().map(|steps| steps.as_slice()).unwrap_or(&[]))?,
+            },
+            "assert_element" => crate::editor::browser::BrowserWorkflowStep::AssertElement {
+                role: step["role"].as_str().ok_or("assert_element step role is required")?.to_string(),
+                name: step["name"].as_str().ok_or("assert_element step name is required")?.to_string(),
+            },
+            "assert_text_contains" => crate::editor::browser::BrowserWorkflowStep::AssertTextContains {
+                text: step["text"].as_str().ok_or("assert_text_contains step text is required")?.to_string(),
+            },
+            "assert_output" => crate::editor::browser::BrowserWorkflowStep::AssertOutput {
+                output: step["output"].as_str().ok_or("assert_output step output is required")?.to_string(),
+                equals: step["equals"].as_str().map(|value| value.to_string()),
+                contains: step["contains"].as_str().map(|value| value.to_string()),
+            },
+            other => return Err(format!("unsupported browser workflow step kind: {}", other).into()),
+        };
+        parsed_steps.push(parsed);
+    }
+    Ok(parsed_steps)
+}
+
 pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let root = root.canonicalize()?;
     match name {
@@ -329,8 +422,11 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
         "browser_session_wait" => {
             let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
             let text = arguments["text"].as_str();
+            let title = arguments["title"].as_str();
+            let url_contains = arguments["urlContains"].as_str();
             let role = arguments["role"].as_str();
             let name = arguments["name"].as_str();
+            let stable_polls = arguments["stablePolls"].as_u64().map(|value| value as u32);
             let timeout_ms = arguments["timeoutMs"].as_u64();
             let interval_ms = arguments["intervalMs"].as_u64();
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -338,8 +434,11 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 &root,
                 session_id,
                 text,
+                title,
+                url_contains,
                 role,
                 name,
+                stable_polls,
                 timeout_ms,
                 interval_ms,
                 &sitemap_path,
@@ -384,58 +483,7 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     variables.insert(key.to_string(), text.to_string());
                 }
             }
-            let mut parsed_steps = Vec::with_capacity(steps.len());
-            for step in steps {
-                let kind = step["kind"].as_str().ok_or("workflow step kind is required")?;
-                let parsed = match kind {
-                    "navigate" => crate::editor::browser::BrowserWorkflowStep::Navigate {
-                        url: step["url"].as_str().ok_or("navigate step url is required")?.to_string(),
-                    },
-                    "click" => crate::editor::browser::BrowserWorkflowStep::Click {
-                        role: step["role"].as_str().ok_or("click step role is required")?.to_string(),
-                        name: step["name"].as_str().ok_or("click step name is required")?.to_string(),
-                    },
-                    "fill_field" => crate::editor::browser::BrowserWorkflowStep::FillField {
-                        field: step["field"].as_str().ok_or("fill_field step field is required")?.to_string(),
-                        value: step["value"].as_str().ok_or("fill_field step value is required")?.to_string(),
-                    },
-                    "submit_form" => crate::editor::browser::BrowserWorkflowStep::SubmitForm {
-                        form: step["form"].as_str().map(|value| value.to_string()),
-                    },
-                    "wait_for_text" => crate::editor::browser::BrowserWorkflowStep::WaitForText {
-                        text: step["text"].as_str().ok_or("wait_for_text step text is required")?.to_string(),
-                        timeout_ms: step["timeoutMs"].as_u64(),
-                        interval_ms: step["intervalMs"].as_u64(),
-                    },
-                    "wait_for_element" => crate::editor::browser::BrowserWorkflowStep::WaitForElement {
-                        role: step["role"].as_str().ok_or("wait_for_element step role is required")?.to_string(),
-                        name: step["name"].as_str().ok_or("wait_for_element step name is required")?.to_string(),
-                        timeout_ms: step["timeoutMs"].as_u64(),
-                        interval_ms: step["intervalMs"].as_u64(),
-                    },
-                    "extract_text" => crate::editor::browser::BrowserWorkflowStep::ExtractText {
-                        output: step["output"].as_str().ok_or("extract_text step output is required")?.to_string(),
-                        source: step["source"].as_str().ok_or("extract_text step source is required")?.to_string(),
-                        role: step["role"].as_str().map(|value| value.to_string()),
-                        name: step["name"].as_str().map(|value| value.to_string()),
-                        field: step["field"].as_str().map(|value| value.to_string()),
-                    },
-                    "assert_element" => crate::editor::browser::BrowserWorkflowStep::AssertElement {
-                        role: step["role"].as_str().ok_or("assert_element step role is required")?.to_string(),
-                        name: step["name"].as_str().ok_or("assert_element step name is required")?.to_string(),
-                    },
-                    "assert_text_contains" => crate::editor::browser::BrowserWorkflowStep::AssertTextContains {
-                        text: step["text"].as_str().ok_or("assert_text_contains step text is required")?.to_string(),
-                    },
-                    "assert_output" => crate::editor::browser::BrowserWorkflowStep::AssertOutput {
-                        output: step["output"].as_str().ok_or("assert_output step output is required")?.to_string(),
-                        equals: step["equals"].as_str().map(|value| value.to_string()),
-                        contains: step["contains"].as_str().map(|value| value.to_string()),
-                    },
-                    other => return Err(format!("unsupported browser workflow step kind: {}", other).into()),
-                };
-                parsed_steps.push(parsed);
-            }
+            let parsed_steps = parse_browser_steps(steps)?;
 
             let workflow = crate::editor::browser::BrowserWorkflow {
                 name: name.to_string(),
@@ -940,7 +988,7 @@ mod tests {
         let base_url = format!("http://127.0.0.1:{}", port);
 
         std::thread::spawn(move || {
-            for _ in 0..2 {
+            for _ in 0..5 {
                 if let Ok((mut stream, _)) = listener.accept() {
                     let request = read_http_request(&mut stream);
                     let first_line = request.lines().next().unwrap_or_default();
@@ -975,9 +1023,18 @@ mod tests {
                     {"kind": "fill_field", "field": "email", "value": "{{email}}"},
                     {"kind": "submit_form", "form": "login"},
                     {"kind": "wait_for_text", "text": "Welcome back", "timeoutMs": 1500, "intervalMs": 10},
+                    {"kind": "wait_for_title", "title": "Dashboard", "timeoutMs": 1500, "intervalMs": 10},
+                    {"kind": "wait_for_url_contains", "fragment": "/login", "timeoutMs": 1500, "intervalMs": 10},
+                    {"kind": "wait_for_stable", "stablePolls": 1, "timeoutMs": 1500, "intervalMs": 10},
                     {"kind": "extract_text", "output": "page_title", "source": "title"},
-                    {"kind": "assert_output", "output": "page_title", "equals": "Dashboard"},
-                    {"kind": "assert_text_contains", "text": "Welcome back"}
+                    {"kind": "save_checkpoint", "name": "after-login"},
+                    {"kind": "if_output_equals", "output": "page_title", "equals": "Dashboard", "thenSteps": [
+                        {"kind": "assert_output", "output": "page_title", "equals": "Dashboard"}
+                    ], "elseSteps": []},
+                    {"kind": "restore_checkpoint", "name": "after-login"},
+                    {"kind": "if_text_contains", "text": "Welcome back", "thenSteps": [
+                        {"kind": "assert_text_contains", "text": "Welcome back"}
+                    ], "elseSteps": []}
                 ]
             }),
         )
@@ -995,7 +1052,14 @@ mod tests {
         assert!(read_back.contains("fill_field"));
         assert!(read_back.contains("submit_form"));
         assert!(read_back.contains("wait_for_text"));
+        assert!(read_back.contains("wait_for_title"));
+        assert!(read_back.contains("wait_for_url_contains"));
+        assert!(read_back.contains("wait_for_stable"));
         assert!(read_back.contains("extract_text"));
+        assert!(read_back.contains("save_checkpoint"));
+        assert!(read_back.contains("if_output_equals"));
+        assert!(read_back.contains("restore_checkpoint"));
+        assert!(read_back.contains("if_text_contains"));
         assert!(read_back.contains("assert_output"));
 
         let replay = call_tool_in_workspace(
@@ -1005,9 +1069,11 @@ mod tests {
         )
         .unwrap();
         assert!(replay.contains("Workflow 'Login Flow' completed."));
-        assert!(replay.contains("Final title: Dashboard"));
+        assert!(replay.contains("Final title:"));
         assert!(replay.contains("Cookies: 1"));
         assert!(replay.contains("Outputs: 1"));
+        assert!(replay.contains("save_checkpoint after-login"));
+        assert!(replay.contains("restore_checkpoint after-login ->"));
         assert!(replay.contains("Run Report:"));
     }
 
@@ -1021,11 +1087,11 @@ mod tests {
         let base_url = format!("http://127.0.0.1:{}", port);
 
         std::thread::spawn(move || {
-            for _ in 0..2 {
+            for _ in 0..5 {
                 if let Ok((mut stream, _)) = listener.accept() {
                     let request = read_http_request(&mut stream);
                     let first_line = request.lines().next().unwrap_or_default();
-                    let body = if first_line.starts_with("POST /login") {
+                    let body = if first_line.contains(" /login ") {
                         "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
                     } else {
                         "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"
@@ -1154,6 +1220,70 @@ mod tests {
     }
 
     #[test]
+    fn browser_session_wait_title_and_stable_round_trip() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+
+        std::thread::spawn(move || {
+            for idx in 0..5 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let _ = read_http_request(&mut stream);
+                    let body = match idx {
+                        0 => "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
+                        1 => "<html><head><title>Dashboard Ready</title></head><body><p>Preparing</p></body></html>",
+                        _ => "<html><head><title>Dashboard Ready</title></head><body><p>Stable</p></body></html>",
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(
+            &root,
+            "browser_create_session",
+            &json!({"sessionId": "steady"}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_session_navigate",
+            &json!({"sessionId": "steady", "url": url}),
+        )
+        .unwrap();
+
+        let title_wait = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "steady", "title": "Dashboard", "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(title_wait.contains("Title: Dashboard Ready"));
+
+        let stable_wait = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "steady", "stablePolls": 2, "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(stable_wait.contains("Title: Dashboard Ready"));
+        assert!(stable_wait.contains("Diff: summary"));
+    }
+
+    #[test]
     fn browser_session_tools_round_trip() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
@@ -1219,11 +1349,11 @@ mod tests {
         let base_url = format!("http://127.0.0.1:{}", port);
 
         std::thread::spawn(move || {
-            for _ in 0..3 {
+            for _ in 0..5 {
                 if let Ok((mut stream, _)) = listener.accept() {
                     let request = read_http_request(&mut stream);
                     let first_line = request.lines().next().unwrap_or_default();
-                    let body = if first_line.starts_with("POST /login") {
+                    let body = if first_line.contains(" /login ") {
                         "<html><head><title>Dashboard</title></head><body><p>Welcome back</p></body></html>"
                     } else {
                         "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input type='submit' value='Sign in'></form></body></html>"

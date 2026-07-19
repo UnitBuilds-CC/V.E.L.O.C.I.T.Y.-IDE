@@ -82,12 +82,40 @@ pub enum BrowserWorkflowStep {
         timeout_ms: Option<u64>,
         interval_ms: Option<u64>,
     },
+    WaitForTitle {
+        title: String,
+        timeout_ms: Option<u64>,
+        interval_ms: Option<u64>,
+    },
+    WaitForUrlContains {
+        fragment: String,
+        timeout_ms: Option<u64>,
+        interval_ms: Option<u64>,
+    },
+    WaitForStable {
+        stable_polls: Option<u32>,
+        timeout_ms: Option<u64>,
+        interval_ms: Option<u64>,
+    },
     ExtractText {
         output: String,
         source: String,
         role: Option<String>,
         name: Option<String>,
         field: Option<String>,
+    },
+    SaveCheckpoint { name: String },
+    RestoreCheckpoint { name: String },
+    IfTextContains {
+        text: String,
+        then_steps: Vec<BrowserWorkflowStep>,
+        else_steps: Vec<BrowserWorkflowStep>,
+    },
+    IfOutputEquals {
+        output: String,
+        equals: String,
+        then_steps: Vec<BrowserWorkflowStep>,
+        else_steps: Vec<BrowserWorkflowStep>,
     },
     AssertElement { role: String, name: String },
     AssertTextContains { text: String },
@@ -159,6 +187,7 @@ struct BrowserHttpResponse {
     cookies: Vec<BrowserCookie>,
 }
 
+#[derive(Debug, Clone)]
 struct BrowserReplayState {
     session: BrowserSessionState,
     snapshot: BrowserPageSnapshot,
@@ -169,6 +198,7 @@ struct BrowserReplayState {
 
 const DEFAULT_WAIT_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_WAIT_INTERVAL_MS: u64 = 250;
+const DEFAULT_STABLE_POLLS: u32 = 2;
 
 fn replay_lookup<'a>(state: &'a BrowserReplayState, key: &str) -> Option<&'a str> {
     state
@@ -872,6 +902,34 @@ pub fn session_state_to_json(session: &BrowserSessionState) -> Result<String, St
     serde_json::to_string_pretty(session).map_err(|err| format!("serialise browser session state: {err}"))
 }
 
+fn write_session_checkpoint(
+    workspace_root: &Path,
+    checkpoint: &BrowserSessionCheckpoint,
+) -> Result<PathBuf, String> {
+    let path = browser_session_checkpoint_path(workspace_root, &checkpoint.session.id, &checkpoint.name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create checkpoint dir: {err}"))?;
+    }
+    let json = serde_json::to_vec_pretty(checkpoint)
+        .map_err(|err| format!("serialise browser checkpoint: {err}"))?;
+    fs::write(&path, json).map_err(|err| format!("write browser checkpoint: {err}"))?;
+    Ok(path)
+}
+
+fn persist_checkpoint_from_replay_state(
+    workspace_root: &Path,
+    state: &BrowserReplayState,
+    checkpoint_name: &str,
+) -> Result<PathBuf, String> {
+    save_session_state(workspace_root, &state.session)?;
+    let checkpoint = BrowserSessionCheckpoint {
+        name: checkpoint_name.to_string(),
+        session: state.session.clone(),
+        snapshot: Some(state.snapshot.clone()),
+    };
+    write_session_checkpoint(workspace_root, &checkpoint)
+}
+
 pub fn save_session_checkpoint(
     workspace_root: &Path,
     session_id: &str,
@@ -888,14 +946,7 @@ pub fn save_session_checkpoint(
         session,
         snapshot,
     };
-    let path = browser_session_checkpoint_path(workspace_root, session_id, checkpoint_name);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create checkpoint dir: {err}"))?;
-    }
-    let json = serde_json::to_vec_pretty(&checkpoint)
-        .map_err(|err| format!("serialise browser checkpoint: {err}"))?;
-    fs::write(&path, json).map_err(|err| format!("write browser checkpoint: {err}"))?;
-    Ok(path)
+    write_session_checkpoint(workspace_root, &checkpoint)
 }
 
 pub fn restore_session_checkpoint(
@@ -1169,6 +1220,17 @@ fn render_snapshot_diff(diff: &BrowserSnapshotDiff) -> String {
     }
 }
 
+fn is_semantically_stable(diff: &BrowserSnapshotDiff) -> bool {
+    !diff.title_changed
+        && !diff.summary_changed
+        && diff.added_elements.is_empty()
+        && diff.removed_elements.is_empty()
+        && diff.added_forms.is_empty()
+        && diff.removed_forms.is_empty()
+        && diff.added_cookies.is_empty()
+        && diff.removed_cookies.is_empty()
+}
+
 fn wait_for_condition<F>(
     session: &mut BrowserSessionState,
     current_snapshot: &mut BrowserPageSnapshot,
@@ -1206,12 +1268,55 @@ where
     }
 }
 
+fn wait_for_stable_snapshot(
+    session: &mut BrowserSessionState,
+    current_snapshot: &mut BrowserPageSnapshot,
+    stable_polls: Option<u32>,
+    timeout_ms: Option<u64>,
+    interval_ms: Option<u64>,
+) -> Result<BrowserSnapshotDiff, String> {
+    let required_stable = stable_polls.unwrap_or(DEFAULT_STABLE_POLLS).max(1);
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS));
+    let interval = Duration::from_millis(interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS));
+    let started = Instant::now();
+    let original = current_snapshot.clone();
+    let mut previous = current_snapshot.clone();
+    let mut consecutive_stable = 0u32;
+
+    loop {
+        if started.elapsed() >= timeout {
+            return Err(format!("wait for stable snapshot not satisfied within {}ms", timeout.as_millis()));
+        }
+        thread::sleep(interval);
+        let url = session
+            .current_url
+            .clone()
+            .unwrap_or_else(|| current_snapshot.url.clone());
+        let refreshed = crawl_page_snapshot_with_session(session, &url)?;
+        let poll_diff = diff_snapshots(&previous, &refreshed);
+        if is_semantically_stable(&poll_diff) {
+            consecutive_stable += 1;
+        } else {
+            consecutive_stable = 0;
+        }
+        previous = refreshed.clone();
+        if consecutive_stable >= required_stable {
+            let final_diff = diff_snapshots(&original, &refreshed);
+            *current_snapshot = refreshed;
+            return Ok(final_diff);
+        }
+    }
+}
+
 pub fn wait_for_session(
     workspace_root: &Path,
     session_id: &str,
     text: Option<&str>,
+    title: Option<&str>,
+    url_contains: Option<&str>,
     role: Option<&str>,
     name: Option<&str>,
+    stable_polls: Option<u32>,
     timeout_ms: Option<u64>,
     interval_ms: Option<u64>,
     sitemap_path: &Path,
@@ -1234,12 +1339,22 @@ pub fn wait_for_session(
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
             snapshot_contains_text(candidate, wait_text)
         })?
+    } else if let Some(wait_title) = title {
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate.title.to_ascii_lowercase().contains(&wait_title.to_ascii_lowercase())
+        })?
+    } else if let Some(wait_fragment) = url_contains {
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate.url.contains(wait_fragment)
+        })?
     } else if let (Some(wait_role), Some(wait_name)) = (role, name) {
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
             find_element(candidate, wait_role, wait_name).is_some()
         })?
+    } else if stable_polls.is_some() {
+        wait_for_stable_snapshot(&mut session, &mut snapshot, stable_polls, timeout_ms, interval_ms)?
     } else {
-        return Err("browser_session_wait requires either text or both role and name".to_string());
+        return Err("browser_session_wait requires text, title, urlContains, stablePolls, or both role and name".to_string());
     };
 
     persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
@@ -1396,6 +1511,183 @@ pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, 
     ))
 }
 
+fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowStep, prefix: &str) {
+    match step {
+        BrowserWorkflowStep::Navigate { url } => {
+            lines.push(format!("{}\tnavigate\t{}", prefix, encode_nda_text(url)));
+        }
+        BrowserWorkflowStep::Click { role, name } => {
+            lines.push(format!(
+                "{}\tclick\trole={}\tname={}"
+                ,prefix,
+                encode_nda_text(role),
+                encode_nda_text(name)
+            ));
+        }
+        BrowserWorkflowStep::FillField { field, value } => {
+            lines.push(format!(
+                "{}\tfill_field\tfield={}\tvalue={}"
+                ,prefix,
+                encode_nda_text(field),
+                encode_nda_text(value)
+            ));
+        }
+        BrowserWorkflowStep::SubmitForm { form } => {
+            lines.push(format!(
+                "{}\tsubmit_form\tform={}"
+                ,prefix,
+                encode_nda_text(form.as_deref().unwrap_or("default"))
+            ));
+        }
+        BrowserWorkflowStep::WaitForText {
+            text,
+            timeout_ms,
+            interval_ms,
+        } => {
+            lines.push(format!(
+                "{}\twait_for_text\ttext={}\ttimeout_ms={}\tinterval_ms={}"
+                ,prefix,
+                encode_nda_text(text),
+                timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+                interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
+            ));
+        }
+        BrowserWorkflowStep::WaitForElement {
+            role,
+            name,
+            timeout_ms,
+            interval_ms,
+        } => {
+            lines.push(format!(
+                "{}\twait_for_element\trole={}\tname={}\ttimeout_ms={}\tinterval_ms={}"
+                ,prefix,
+                encode_nda_text(role),
+                encode_nda_text(name),
+                timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+                interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
+            ));
+        }
+        BrowserWorkflowStep::WaitForTitle {
+            title,
+            timeout_ms,
+            interval_ms,
+        } => {
+            lines.push(format!(
+                "{}\twait_for_title\ttitle={}\ttimeout_ms={}\tinterval_ms={}"
+                ,prefix,
+                encode_nda_text(title),
+                timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+                interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
+            ));
+        }
+        BrowserWorkflowStep::WaitForUrlContains {
+            fragment,
+            timeout_ms,
+            interval_ms,
+        } => {
+            lines.push(format!(
+                "{}\twait_for_url_contains\tfragment={}\ttimeout_ms={}\tinterval_ms={}"
+                ,prefix,
+                encode_nda_text(fragment),
+                timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+                interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
+            ));
+        }
+        BrowserWorkflowStep::WaitForStable {
+            stable_polls,
+            timeout_ms,
+            interval_ms,
+        } => {
+            lines.push(format!(
+                "{}\twait_for_stable\tstable_polls={}\ttimeout_ms={}\tinterval_ms={}"
+                ,prefix,
+                stable_polls.unwrap_or(DEFAULT_STABLE_POLLS),
+                timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+                interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
+            ));
+        }
+        BrowserWorkflowStep::ExtractText {
+            output,
+            source,
+            role,
+            name,
+            field,
+        } => {
+            lines.push(format!(
+                "{}\textract_text\toutput={}\tsource={}\trole={}\tname={}\tfield={}"
+                ,prefix,
+                encode_nda_text(output),
+                encode_nda_text(source),
+                encode_nda_text(role.as_deref().unwrap_or_default()),
+                encode_nda_text(name.as_deref().unwrap_or_default()),
+                encode_nda_text(field.as_deref().unwrap_or_default())
+            ));
+        }
+        BrowserWorkflowStep::SaveCheckpoint { name } => {
+            lines.push(format!("{}\tsave_checkpoint\tname={}", prefix, encode_nda_text(name)));
+        }
+        BrowserWorkflowStep::RestoreCheckpoint { name } => {
+            lines.push(format!("{}\trestore_checkpoint\tname={}", prefix, encode_nda_text(name)));
+        }
+        BrowserWorkflowStep::IfTextContains {
+            text,
+            then_steps,
+            else_steps,
+        } => {
+            lines.push(format!("{}\tif_text_contains\ttext={}", prefix, encode_nda_text(text)));
+            for (idx, nested) in then_steps.iter().enumerate() {
+                render_workflow_step_lines(lines, nested, &format!("{}:then:{}", prefix, idx));
+            }
+            for (idx, nested) in else_steps.iter().enumerate() {
+                render_workflow_step_lines(lines, nested, &format!("{}:else:{}", prefix, idx));
+            }
+        }
+        BrowserWorkflowStep::IfOutputEquals {
+            output,
+            equals,
+            then_steps,
+            else_steps,
+        } => {
+            lines.push(format!(
+                "{}\tif_output_equals\toutput={}\tequals={}"
+                ,prefix,
+                encode_nda_text(output),
+                encode_nda_text(equals)
+            ));
+            for (idx, nested) in then_steps.iter().enumerate() {
+                render_workflow_step_lines(lines, nested, &format!("{}:then:{}", prefix, idx));
+            }
+            for (idx, nested) in else_steps.iter().enumerate() {
+                render_workflow_step_lines(lines, nested, &format!("{}:else:{}", prefix, idx));
+            }
+        }
+        BrowserWorkflowStep::AssertElement { role, name } => {
+            lines.push(format!(
+                "{}\tassert_element\trole={}\tname={}"
+                ,prefix,
+                encode_nda_text(role),
+                encode_nda_text(name)
+            ));
+        }
+        BrowserWorkflowStep::AssertTextContains { text } => {
+            lines.push(format!("{}\tassert_text\t{}", prefix, encode_nda_text(text)));
+        }
+        BrowserWorkflowStep::AssertOutput {
+            output,
+            equals,
+            contains,
+        } => {
+            lines.push(format!(
+                "{}\tassert_output\toutput={}\tequals={}\tcontains={}"
+                ,prefix,
+                encode_nda_text(output),
+                encode_nda_text(equals.as_deref().unwrap_or_default()),
+                encode_nda_text(contains.as_deref().unwrap_or_default())
+            ));
+        }
+    }
+}
+
 pub fn render_workflow_dsl(workflow: &BrowserWorkflow) -> String {
     let mut lines = vec![
         "browser-workflow version 2".to_string(),
@@ -1404,103 +1696,8 @@ pub fn render_workflow_dsl(workflow: &BrowserWorkflow) -> String {
     ];
 
     for (idx, step) in workflow.steps.iter().enumerate() {
-        match step {
-            BrowserWorkflowStep::Navigate { url } => {
-                lines.push(format!("step\t{}\tnavigate\t{}", idx, encode_nda_text(url)));
-            }
-            BrowserWorkflowStep::Click { role, name } => {
-                lines.push(format!(
-                    "step\t{}\tclick\trole={}\tname={}",
-                    idx,
-                    encode_nda_text(role),
-                    encode_nda_text(name)
-                ));
-            }
-            BrowserWorkflowStep::FillField { field, value } => {
-                lines.push(format!(
-                    "step\t{}\tfill_field\tfield={}\tvalue={}",
-                    idx,
-                    encode_nda_text(field),
-                    encode_nda_text(value)
-                ));
-            }
-            BrowserWorkflowStep::SubmitForm { form } => {
-                lines.push(format!(
-                    "step\t{}\tsubmit_form\tform={}",
-                    idx,
-                    encode_nda_text(form.as_deref().unwrap_or("default"))
-                ));
-            }
-            BrowserWorkflowStep::WaitForText {
-                text,
-                timeout_ms,
-                interval_ms,
-            } => {
-                lines.push(format!(
-                    "step\t{}\twait_for_text\ttext={}\ttimeout_ms={}\tinterval_ms={}",
-                    idx,
-                    encode_nda_text(text),
-                    timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
-                    interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
-                ));
-            }
-            BrowserWorkflowStep::WaitForElement {
-                role,
-                name,
-                timeout_ms,
-                interval_ms,
-            } => {
-                lines.push(format!(
-                    "step\t{}\twait_for_element\trole={}\tname={}\ttimeout_ms={}\tinterval_ms={}",
-                    idx,
-                    encode_nda_text(role),
-                    encode_nda_text(name),
-                    timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
-                    interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
-                ));
-            }
-            BrowserWorkflowStep::ExtractText {
-                output,
-                source,
-                role,
-                name,
-                field,
-            } => {
-                lines.push(format!(
-                    "step\t{}\textract_text\toutput={}\tsource={}\trole={}\tname={}\tfield={}",
-                    idx,
-                    encode_nda_text(output),
-                    encode_nda_text(source),
-                    encode_nda_text(role.as_deref().unwrap_or_default()),
-                    encode_nda_text(name.as_deref().unwrap_or_default()),
-                    encode_nda_text(field.as_deref().unwrap_or_default())
-                ));
-            }
-            BrowserWorkflowStep::AssertElement { role, name } => {
-                lines.push(format!(
-                    "step\t{}\tassert_element\trole={}\tname={}",
-                    idx,
-                    encode_nda_text(role),
-                    encode_nda_text(name)
-                ));
-            }
-            BrowserWorkflowStep::AssertTextContains { text } => {
-                lines.push(format!("step\t{}\tassert_text\t{}", idx, encode_nda_text(text)));
-            }
-            BrowserWorkflowStep::AssertOutput {
-                output,
-                equals,
-                contains,
-            } => {
-                lines.push(format!(
-                    "step\t{}\tassert_output\toutput={}\tequals={}\tcontains={}",
-                    idx,
-                    encode_nda_text(output),
-                    encode_nda_text(equals.as_deref().unwrap_or_default()),
-                    encode_nda_text(contains.as_deref().unwrap_or_default())
-                ));
-            }
-        }
+        let prefix = format!("step\t{}", idx);
+        render_workflow_step_lines(&mut lines, step, &prefix);
     }
 
     lines.join("\n") + "\n"
@@ -1538,22 +1735,23 @@ pub fn load_workflow_suite(path: &Path) -> Result<BrowserWorkflowSuite, String> 
     serde_json::from_slice(&raw).map_err(|err| format!("parse workflow suite: {err}"))
 }
 
-fn replay_workflow_with_state(
-    workflow: &BrowserWorkflow,
-    mut state: BrowserReplayState,
-) -> Result<(String, BrowserReplayState, BrowserWorkflowRunReport), String> {
-    let mut log = vec![format!("start {} -> {}", state.snapshot.url, state.snapshot.title)];
-
-    for step in &workflow.steps {
+fn execute_workflow_steps(
+    steps: &[BrowserWorkflowStep],
+    state: &mut BrowserReplayState,
+    log: &mut Vec<String>,
+    checkpoints: &mut HashMap<String, BrowserReplayState>,
+    workspace_root: Option<&Path>,
+) -> Result<(), String> {
+    for step in steps {
         match step {
             BrowserWorkflowStep::Navigate { url } => {
-                let resolved_url = resolve_template(url, &state);
+                let resolved_url = resolve_template(url, state);
                 state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &resolved_url)?;
                 log.push(format!("navigate {} -> {}", resolved_url, state.snapshot.title));
             }
             BrowserWorkflowStep::Click { role, name } => {
-                let resolved_role = resolve_template(role, &state);
-                let resolved_name = resolve_template(name, &state);
+                let resolved_role = resolve_template(role, state);
+                let resolved_name = resolve_template(name, state);
                 let target = find_element(&state.snapshot, &resolved_role, &resolved_name)
                     .ok_or_else(|| format!("workflow click target not found: role='{}' name='{}'", resolved_role, resolved_name))?;
                 let target_url = target.target_url.clone().ok_or_else(|| {
@@ -1566,14 +1764,14 @@ fn replay_workflow_with_state(
                 log.push(format!("click {}:{} -> {}", resolved_role, resolved_name, state.snapshot.title));
             }
             BrowserWorkflowStep::FillField { field, value } => {
-                let resolved_field = resolve_template(field, &state);
-                let resolved_value = resolve_template(value, &state);
-                apply_fill_field(&mut state, &resolved_field, &resolved_value)?;
+                let resolved_field = resolve_template(field, state);
+                let resolved_value = resolve_template(value, state);
+                apply_fill_field(state, &resolved_field, &resolved_value)?;
                 log.push(format!("fill_field {} ok", resolved_field));
             }
             BrowserWorkflowStep::SubmitForm { form } => {
-                let resolved_form = form.as_ref().map(|value| resolve_template(value, &state));
-                submit_current_form(&mut state, resolved_form.as_deref())?;
+                let resolved_form = form.as_ref().map(|value| resolve_template(value, state));
+                submit_current_form(state, resolved_form.as_deref())?;
                 log.push(format!(
                     "submit_form {} -> {}",
                     resolved_form.as_deref().unwrap_or("default"),
@@ -1585,7 +1783,7 @@ fn replay_workflow_with_state(
                 timeout_ms,
                 interval_ms,
             } => {
-                let resolved_text = resolve_template(text, &state);
+                let resolved_text = resolve_template(text, state);
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
@@ -1601,8 +1799,8 @@ fn replay_workflow_with_state(
                 timeout_ms,
                 interval_ms,
             } => {
-                let resolved_role = resolve_template(role, &state);
-                let resolved_name = resolve_template(name, &state);
+                let resolved_role = resolve_template(role, state);
+                let resolved_name = resolve_template(name, state);
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
@@ -1617,6 +1815,59 @@ fn replay_workflow_with_state(
                     render_snapshot_diff(&diff)
                 ));
             }
+            BrowserWorkflowStep::WaitForTitle {
+                title,
+                timeout_ms,
+                interval_ms,
+            } => {
+                let resolved_title = resolve_template(title, state);
+                let lowered = resolved_title.to_ascii_lowercase();
+                let diff = wait_for_condition(
+                    &mut state.session,
+                    &mut state.snapshot,
+                    *timeout_ms,
+                    *interval_ms,
+                    |candidate| candidate.title.to_ascii_lowercase().contains(&lowered),
+                )?;
+                log.push(format!("wait_for_title '{}' -> {}", resolved_title, render_snapshot_diff(&diff)));
+            }
+            BrowserWorkflowStep::WaitForUrlContains {
+                fragment,
+                timeout_ms,
+                interval_ms,
+            } => {
+                let resolved_fragment = resolve_template(fragment, state);
+                let diff = wait_for_condition(
+                    &mut state.session,
+                    &mut state.snapshot,
+                    *timeout_ms,
+                    *interval_ms,
+                    |candidate| candidate.url.contains(&resolved_fragment),
+                )?;
+                log.push(format!(
+                    "wait_for_url_contains '{}' -> {}",
+                    resolved_fragment,
+                    render_snapshot_diff(&diff)
+                ));
+            }
+            BrowserWorkflowStep::WaitForStable {
+                stable_polls,
+                timeout_ms,
+                interval_ms,
+            } => {
+                let diff = wait_for_stable_snapshot(
+                    &mut state.session,
+                    &mut state.snapshot,
+                    *stable_polls,
+                    *timeout_ms,
+                    *interval_ms,
+                )?;
+                log.push(format!(
+                    "wait_for_stable polls={} -> {}",
+                    stable_polls.unwrap_or(DEFAULT_STABLE_POLLS),
+                    render_snapshot_diff(&diff)
+                ));
+            }
             BrowserWorkflowStep::ExtractText {
                 output,
                 source,
@@ -1624,10 +1875,10 @@ fn replay_workflow_with_state(
                 name,
                 field,
             } => {
-                let resolved_source = resolve_template(source, &state);
-                let resolved_role = role.as_ref().map(|value| resolve_template(value, &state));
-                let resolved_name = name.as_ref().map(|value| resolve_template(value, &state));
-                let resolved_field = field.as_ref().map(|value| resolve_template(value, &state));
+                let resolved_source = resolve_template(source, state);
+                let resolved_role = role.as_ref().map(|value| resolve_template(value, state));
+                let resolved_name = name.as_ref().map(|value| resolve_template(value, state));
+                let resolved_field = field.as_ref().map(|value| resolve_template(value, state));
                 let extracted = extract_snapshot_value(
                     &state.snapshot,
                     &resolved_source,
@@ -1638,16 +1889,59 @@ fn replay_workflow_with_state(
                 state.outputs.insert(output.clone(), extracted.clone());
                 log.push(format!("extract_text {}='{}'", output, truncate_string(&extracted, 80)));
             }
+            BrowserWorkflowStep::SaveCheckpoint { name } => {
+                let resolved_name = resolve_template(name, state);
+                checkpoints.insert(resolved_name.clone(), state.clone());
+                if let Some(root) = workspace_root {
+                    let path = persist_checkpoint_from_replay_state(root, state, &resolved_name)?;
+                    log.push(format!("save_checkpoint {} -> {}", resolved_name, path.display()));
+                } else {
+                    log.push(format!("save_checkpoint {} ok", resolved_name));
+                }
+            }
+            BrowserWorkflowStep::RestoreCheckpoint { name } => {
+                let resolved_name = resolve_template(name, state);
+                let restored = checkpoints
+                    .get(&resolved_name)
+                    .cloned()
+                    .ok_or_else(|| format!("workflow restore checkpoint not found: '{}'", resolved_name))?;
+                *state = restored;
+                log.push(format!("restore_checkpoint {} -> {}", resolved_name, state.snapshot.title));
+            }
+            BrowserWorkflowStep::IfTextContains {
+                text,
+                then_steps,
+                else_steps,
+            } => {
+                let resolved_text = resolve_template(text, state);
+                let matched = snapshot_contains_text(&state.snapshot, &resolved_text);
+                log.push(format!("if_text_contains '{}' -> {}", resolved_text, if matched { "then" } else { "else" }));
+                let branch = if matched { then_steps } else { else_steps };
+                execute_workflow_steps(branch, state, log, checkpoints, workspace_root)?;
+            }
+            BrowserWorkflowStep::IfOutputEquals {
+                output,
+                equals,
+                then_steps,
+                else_steps,
+            } => {
+                let actual = state.outputs.get(output).cloned().unwrap_or_default();
+                let resolved_expected = resolve_template(equals, state);
+                let matched = actual == resolved_expected;
+                log.push(format!("if_output_equals {}='{}' -> {}", output, truncate_string(&actual, 80), if matched { "then" } else { "else" }));
+                let branch = if matched { then_steps } else { else_steps };
+                execute_workflow_steps(branch, state, log, checkpoints, workspace_root)?;
+            }
             BrowserWorkflowStep::AssertElement { role, name } => {
-                let resolved_role = resolve_template(role, &state);
-                let resolved_name = resolve_template(name, &state);
+                let resolved_role = resolve_template(role, state);
+                let resolved_name = resolve_template(name, state);
                 find_element(&state.snapshot, &resolved_role, &resolved_name).ok_or_else(|| {
                     format!("workflow assertion failed: missing element role='{}' name='{}'", resolved_role, resolved_name)
                 })?;
                 log.push(format!("assert_element {}:{} ok", resolved_role, resolved_name));
             }
             BrowserWorkflowStep::AssertTextContains { text } => {
-                let resolved_text = resolve_template(text, &state);
+                let resolved_text = resolve_template(text, state);
                 if !snapshot_contains_text(&state.snapshot, &resolved_text) {
                     return Err(format!("workflow assertion failed: text '{}' not present", resolved_text));
                 }
@@ -1664,13 +1958,13 @@ fn replay_workflow_with_state(
                     .cloned()
                     .ok_or_else(|| format!("workflow assertion failed: output '{}' not present", output))?;
                 if let Some(expected) = equals {
-                    let resolved_expected = resolve_template(expected, &state);
+                    let resolved_expected = resolve_template(expected, state);
                     if actual != resolved_expected {
                         return Err(format!("workflow assertion failed: output '{}' expected '{}' but was '{}'", output, resolved_expected, actual));
                     }
                 }
                 if let Some(expected_fragment) = contains {
-                    let resolved_fragment = resolve_template(expected_fragment, &state);
+                    let resolved_fragment = resolve_template(expected_fragment, state);
                     if !actual.contains(&resolved_fragment) {
                         return Err(format!("workflow assertion failed: output '{}' does not contain '{}'", output, resolved_fragment));
                     }
@@ -1679,6 +1973,17 @@ fn replay_workflow_with_state(
             }
         }
     }
+    Ok(())
+}
+
+fn replay_workflow_with_state(
+    workflow: &BrowserWorkflow,
+    mut state: BrowserReplayState,
+    workspace_root: Option<&Path>,
+) -> Result<(String, BrowserReplayState, BrowserWorkflowRunReport), String> {
+    let mut log = vec![format!("start {} -> {}", state.snapshot.url, state.snapshot.title)];
+    let mut checkpoints = HashMap::new();
+    execute_workflow_steps(&workflow.steps, &mut state, &mut log, &mut checkpoints, workspace_root)?;
 
     let report = BrowserWorkflowRunReport {
         workflow_name: workflow.name.clone(),
@@ -1764,7 +2069,7 @@ pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
         variables: workflow.variables.clone(),
         outputs: HashMap::new(),
     };
-    let (result, _, _) = replay_workflow_with_state(workflow, state)?;
+    let (result, _, _) = replay_workflow_with_state(workflow, state, None)?;
     Ok(result)
 }
 
@@ -1786,7 +2091,7 @@ pub fn replay_workflow_with_artifacts(
         variables: workflow.variables.clone(),
         outputs: HashMap::new(),
     };
-    let (result, final_state, report) = replay_workflow_with_state(workflow, state)?;
+    let (result, final_state, report) = replay_workflow_with_state(workflow, state, Some(workspace_root))?;
     let (snapshot_path, session_path, facts_path) = persist_replay_state(workspace_root, &final_state, sitemap_path)?;
     let report_path = persist_run_report(workspace_root, &report)?;
     Ok(format!(
@@ -1881,7 +2186,7 @@ pub fn replay_workflow_in_session(
         variables: workflow.variables.clone(),
         outputs: HashMap::new(),
     };
-    let (result, final_state, report) = replay_workflow_with_state(workflow, state)?;
+    let (result, final_state, report) = replay_workflow_with_state(workflow, state, Some(workspace_root))?;
     let (snapshot_path, session_path, facts_path) =
         persist_replay_state(workspace_root, &final_state, sitemap_path)?;
     let report_path = persist_run_report(workspace_root, &report)?;
@@ -2030,6 +2335,64 @@ mod tests {
         assert!(dsl.contains("fill_field"));
         assert!(dsl.contains("wait_for_text"));
         assert!(dsl.contains("submit_form"));
+    }
+
+    #[test]
+    fn replays_branching_and_checkpoints_deterministically() {
+        let workflow = BrowserWorkflow {
+            name: "Branching Flow".to_string(),
+            start_url: "https://example.com".to_string(),
+            variables: HashMap::new(),
+            steps: vec![
+                BrowserWorkflowStep::ExtractText {
+                    output: "page_title".to_string(),
+                    source: "title".to_string(),
+                    role: None,
+                    name: None,
+                    field: None,
+                },
+                BrowserWorkflowStep::SaveCheckpoint { name: "initial".to_string() },
+                BrowserWorkflowStep::IfOutputEquals {
+                    output: "page_title".to_string(),
+                    equals: "Checkout".to_string(),
+                    then_steps: vec![BrowserWorkflowStep::FillField {
+                        field: "email".to_string(),
+                        value: "branch@example.com".to_string(),
+                    }],
+                    else_steps: vec![BrowserWorkflowStep::AssertTextContains { text: "Never".to_string() }],
+                },
+                BrowserWorkflowStep::RestoreCheckpoint { name: "initial".to_string() },
+                BrowserWorkflowStep::IfTextContains {
+                    text: "Checkout".to_string(),
+                    then_steps: vec![BrowserWorkflowStep::AssertTextContains { text: "Checkout".to_string() }],
+                    else_steps: vec![BrowserWorkflowStep::AssertTextContains { text: "Never".to_string() }],
+                },
+            ],
+        };
+        let snapshot = parse_html_to_snapshot(
+            "https://example.com",
+            "<html><head><title>Checkout</title></head><body><form id='login'><input name='email' placeholder='Email'></form><p>Checkout ready</p></body></html>",
+            &[],
+        );
+        let state = super::BrowserReplayState {
+            session: super::BrowserSessionState {
+                id: "branch-session".to_string(),
+                current_url: Some("https://example.com".to_string()),
+                cookies: Vec::new(),
+            },
+            snapshot,
+            filled_fields: HashMap::new(),
+            variables: HashMap::new(),
+            outputs: HashMap::new(),
+        };
+
+        let (summary, final_state, report) = super::replay_workflow_with_state(&workflow, state, None).unwrap();
+        assert!(summary.contains("Workflow 'Branching Flow' completed."));
+        assert!(summary.contains("Outputs: 1"));
+        assert_eq!(final_state.outputs.get("page_title").map(String::as_str), Some("Checkout"));
+        assert!(report.log.iter().any(|entry| entry.contains("if_output_equals page_title='Checkout' -> then")));
+        assert!(report.log.iter().any(|entry| entry.contains("restore_checkpoint initial -> Checkout")));
+        assert!(report.log.iter().any(|entry| entry.contains("if_text_contains 'Checkout' -> then")));
     }
 
     #[test]
@@ -2226,6 +2589,9 @@ mod tests {
             Some("Ready"),
             None,
             None,
+            None,
+            None,
+            None,
             Some(1500),
             Some(10),
             &sitemap_path,
@@ -2234,6 +2600,142 @@ mod tests {
         assert!(result.contains("Session wait complete."));
         assert!(result.contains("Title: Dashboard"));
         assert!(result.contains("Diff: title,summary"));
+    }
+
+    #[test]
+    fn waits_for_session_title_and_stability() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+        std::thread::spawn(move || {
+            for idx in 0..5 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let _ = read_http_request(&mut stream);
+                    let body = match idx {
+                        0 => "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
+                        1 => "<html><head><title>Dashboard Ready</title></head><body><p>Preparing</p></body></html>",
+                        _ => "<html><head><title>Dashboard Ready</title></head><body><p>Stable</p></body></html>",
+                    };
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let sitemap_path = root.join("site_map");
+        create_session(root, "title-session").unwrap();
+        navigate_session(root, "title-session", &url, &sitemap_path).unwrap();
+
+        let title_result = wait_for_session(
+            root,
+            "title-session",
+            None,
+            Some("Dashboard"),
+            None,
+            None,
+            None,
+            None,
+            Some(1500),
+            Some(10),
+            &sitemap_path,
+        )
+        .unwrap();
+        assert!(title_result.contains("Title: Dashboard Ready"));
+
+        let stable_result = wait_for_session(
+            root,
+            "title-session",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(2),
+            Some(1500),
+            Some(10),
+            &sitemap_path,
+        )
+        .unwrap();
+        assert!(stable_result.contains("Title: Dashboard Ready"));
+        assert!(stable_result.contains("Diff: summary"));
+    }
+
+    #[test]
+    fn replays_new_wait_workflow_steps() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let start_url = format!("http://127.0.0.1:{}/start", port);
+
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let _request = read_http_request(&mut stream);
+                    let body = "<html><head><title>Dashboard</title></head><body><p>Stable</p></body></html>";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let workflow = BrowserWorkflow {
+            name: "Static Wait Flow".to_string(),
+            start_url: start_url.clone(),
+            variables: HashMap::new(),
+            steps: vec![
+                BrowserWorkflowStep::WaitForTitle {
+                    title: "Dashboard".to_string(),
+                    timeout_ms: Some(50),
+                    interval_ms: Some(5),
+                },
+                BrowserWorkflowStep::WaitForUrlContains {
+                    fragment: "/start".to_string(),
+                    timeout_ms: Some(50),
+                    interval_ms: Some(5),
+                },
+                BrowserWorkflowStep::WaitForStable {
+                    stable_polls: Some(1),
+                    timeout_ms: Some(50),
+                    interval_ms: Some(5),
+                },
+            ],
+        };
+        let snapshot = parse_html_to_snapshot(
+            &start_url,
+            "<html><head><title>Dashboard</title></head><body><p>Stable</p></body></html>",
+            &[],
+        );
+        let state = super::BrowserReplayState {
+            session: super::BrowserSessionState {
+                id: "static-wait-session".to_string(),
+                current_url: Some(start_url),
+                cookies: Vec::new(),
+            },
+            snapshot,
+            filled_fields: HashMap::new(),
+            variables: HashMap::new(),
+            outputs: HashMap::new(),
+        };
+
+        let (summary, _, report) = super::replay_workflow_with_state(&workflow, state, None).unwrap();
+        assert!(summary.contains("Workflow 'Static Wait Flow' completed."));
+        assert!(report.log.iter().any(|entry| entry.contains("wait_for_title 'Dashboard'")));
+        assert!(report.log.iter().any(|entry| entry.contains("wait_for_url_contains '/start'")));
+        assert!(report.log.iter().any(|entry| entry.contains("wait_for_stable polls=1 -> no_semantic_change")));
     }
 
     #[test]
