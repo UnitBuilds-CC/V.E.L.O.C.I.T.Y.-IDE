@@ -1049,6 +1049,34 @@ fn load_changelog_entries(changelog_path: &std::path::Path) -> Vec<(u64, String,
 }
 
 fn parse_changelog_entries(raw: &str) -> Vec<(u64, String, String)> {
+    let mut lines = raw.lines();
+    let header = lines.find(|line| !line.trim().is_empty()).map(str::trim).unwrap_or("");
+
+    if header == "changelog version 2" {
+        let mut entries = Vec::new();
+        for line in lines {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with("entry_count ") {
+                continue;
+            }
+            let parts = line.split('\t').collect::<Vec<_>>();
+            if parts.len() != 4 || parts[0] != "entry" {
+                continue;
+            }
+            if let Ok(timestamp) = parts[1].parse() {
+                entries.push((
+                    timestamp,
+                    decode_nda_text(parts[2]),
+                    decode_nda_text(parts[3]),
+                ));
+            }
+        }
+        return entries;
+    }
+
     let mut entries = Vec::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -1071,7 +1099,10 @@ fn parse_changelog_entries(raw: &str) -> Vec<(u64, String, String)> {
 }
 
 fn serialize_changelog_nda(entries: &[(u64, String, String)]) -> String {
-    let mut lines = vec!["changelog version 1".to_string()];
+    let mut lines = vec![
+        "changelog version 2".to_string(),
+        format!("entry_count {}", entries.len()),
+    ];
     for (timestamp, file_path, action) in entries {
         lines.push(format!(
             "entry\t{}\t{}\t{}",
@@ -2843,9 +2874,10 @@ mod tests {
         append_changelog_nda(tmp.path(), "src/main.rs", "edited");
         append_changelog_nda(tmp.path(), "src/lib.rs", "created");
         let changelog = std::fs::read_to_string(tmp.path().join(".velocity").join("changelog.nda")).unwrap();
-        assert!(changelog.starts_with("changelog version 1\n"));
-        assert!(changelog.contains("src/main.rs\tedited"));
-        assert!(changelog.contains("src/lib.rs\tcreated"));
+        assert!(changelog.starts_with("changelog version 2\n"));
+        assert!(changelog.contains("entry_count 2\n"));
+        assert!(changelog.contains("\tsrc/main.rs\tedited"));
+        assert!(changelog.contains("\tsrc/lib.rs\tcreated"));
     }
 
     #[test]
@@ -2861,9 +2893,10 @@ mod tests {
 
         append_changelog_nda(tmp.path(), "src/new.rs", "created");
         let changelog = std::fs::read_to_string(velocity_dir.join("changelog.nda")).unwrap();
-        assert!(changelog.starts_with("changelog version 1\n"));
-        assert!(changelog.contains("src/old.rs\tupdated"));
-        assert!(changelog.contains("src/new.rs\tcreated"));
+        assert!(changelog.starts_with("changelog version 2\n"));
+        assert!(changelog.contains("entry_count 2\n"));
+        assert!(changelog.contains("\tsrc/old.rs\tupdated"));
+        assert!(changelog.contains("\tsrc/new.rs\tcreated"));
     }
 
     #[test]
