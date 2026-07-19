@@ -18,7 +18,17 @@ pub fn diagnostics_path(workspace_root: &std::path::Path) -> PathBuf {
     workspace_root.join(".velocity").join("build_diagnostics.json")
 }
 
+pub fn diagnostics_nda_path(workspace_root: &std::path::Path) -> PathBuf {
+    workspace_root.join(".velocity").join("build_diagnostics.nda")
+}
+
 pub fn read_latest_diagnostics(workspace_root: &std::path::Path) -> BuildDiagnostics {
+    let nda_path = diagnostics_nda_path(workspace_root);
+    if let Ok(raw) = std::fs::read_to_string(&nda_path) {
+        if let Some(d) = parse_diagnostics_nda(&raw) {
+            return d;
+        }
+    }
     let path = diagnostics_path(workspace_root);
     if let Ok(bytes) = std::fs::read(&path) {
         if let Ok(d) = serde_json::from_slice::<BuildDiagnostics>(&bytes) {
@@ -113,7 +123,79 @@ pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
 }
 
 pub fn write_diagnostics(workspace_root: &std::path::Path, diag: &BuildDiagnostics) -> std::io::Result<()> {
+    if let Some(parent) = diagnostics_nda_path(workspace_root).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(diagnostics_nda_path(workspace_root), serialize_diagnostics_nda(diag))?;
     std::fs::write(diagnostics_path(workspace_root), serde_json::to_string_pretty(diag)?)
+}
+
+fn serialize_diagnostics_nda(diag: &BuildDiagnostics) -> String {
+    let mut lines = vec![
+        "build-diagnostics version 1".to_string(),
+        format!("timestamp_ms {}", diag.timestamp_ms),
+        format!("success {}", diag.success),
+        format!("summary {}", encode_nda_text(&diag.summary)),
+    ];
+    for error in &diag.errors {
+        lines.push(format!("error {}", encode_nda_text(error)));
+    }
+    for warning in &diag.warnings {
+        lines.push(format!("warning {}", encode_nda_text(warning)));
+    }
+    lines.join("\n") + "\n"
+}
+
+fn parse_diagnostics_nda(raw: &str) -> Option<BuildDiagnostics> {
+    let mut diag = BuildDiagnostics::default();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line == "build-diagnostics version 1" {
+            continue;
+        }
+        let (key, value) = line.split_once(' ')?;
+        match key {
+            "timestamp_ms" => diag.timestamp_ms = value.parse().ok()?,
+            "success" => diag.success = value.parse().ok()?,
+            "summary" => diag.summary = decode_nda_text(value),
+            "error" => diag.errors.push(decode_nda_text(value)),
+            "warning" => diag.warnings.push(decode_nda_text(value)),
+            _ => {}
+        }
+    }
+    if diag.summary.is_empty() {
+        None
+    } else {
+        Some(diag)
+    }
+}
+
+fn encode_nda_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn decode_nda_text(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 pub fn now_ms() -> u64 {
@@ -135,5 +217,52 @@ pub fn run_self_check() {
             eprintln!("{}", e);
         }
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_nda_build_diagnostics() {
+        let tmp = tempfile::tempdir().unwrap();
+        let diag = BuildDiagnostics {
+            timestamp_ms: 123,
+            success: false,
+            errors: vec!["error: failure".to_string()],
+            warnings: vec!["warning: caution".to_string()],
+            summary: "cargo check FAILED (1 errors, 1 warnings)".to_string(),
+        };
+
+        write_diagnostics(tmp.path(), &diag).unwrap();
+        let nda = std::fs::read_to_string(diagnostics_nda_path(tmp.path())).unwrap();
+        let json = std::fs::read_to_string(diagnostics_path(tmp.path())).unwrap();
+
+        assert!(nda.starts_with("build-diagnostics version 1\n"));
+        assert!(nda.contains("summary cargo check FAILED (1 errors, 1 warnings)"));
+        assert!(json.contains("\"summary\": \"cargo check FAILED (1 errors, 1 warnings)\""));
+    }
+
+    #[test]
+    fn reads_nda_build_diagnostics_before_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".velocity")).unwrap();
+        std::fs::write(
+            diagnostics_nda_path(tmp.path()),
+            "build-diagnostics version 1\ntimestamp_ms 7\nsuccess true\nsummary nda summary\nwarning nda warning\n",
+        )
+        .unwrap();
+        std::fs::write(
+            diagnostics_path(tmp.path()),
+            "{\"timestamp_ms\":999,\"success\":false,\"errors\":[],\"warnings\":[],\"summary\":\"json summary\"}",
+        )
+        .unwrap();
+
+        let diag = read_latest_diagnostics(tmp.path());
+        assert_eq!(diag.timestamp_ms, 7);
+        assert!(diag.success);
+        assert_eq!(diag.summary, "nda summary");
+        assert_eq!(diag.warnings, vec!["nda warning".to_string()]);
     }
 }
