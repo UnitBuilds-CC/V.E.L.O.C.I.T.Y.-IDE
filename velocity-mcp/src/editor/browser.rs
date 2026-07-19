@@ -15,6 +15,12 @@ pub struct AomElement {
     pub name: String,
     pub value: String,
     pub target_url: Option<String>,
+    #[serde(default)]
+    pub supported_actions: Vec<String>,
+    #[serde(default)]
+    pub provenance: String,
+    #[serde(default)]
+    pub actionability: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -710,6 +716,9 @@ fn parse_html_to_snapshot(
                         name: if clean_text.is_empty() { absolute_href.clone() } else { clean_text },
                         value: absolute_href.clone(),
                         target_url: Some(absolute_href),
+                        supported_actions: vec!["open".to_string(), "click".to_string()],
+                        provenance: "native-static".to_string(),
+                        actionability: role_actionability("link"),
                     });
                 }
             } else if lower.starts_with("button") {
@@ -730,6 +739,9 @@ fn parse_html_to_snapshot(
                         name: final_name,
                         value: String::new(),
                         target_url: None,
+                        supported_actions: vec!["click".to_string()],
+                        provenance: "native-static".to_string(),
+                        actionability: role_actionability("button"),
                     });
                 }
             } else if lower.starts_with("input") {
@@ -748,11 +760,19 @@ fn parse_html_to_snapshot(
                     "button" | "submit" => "button",
                     _ => "textbox",
                 };
+                let supported_actions = if role == "button" {
+                    vec!["click".to_string()]
+                } else {
+                    vec!["focus".to_string(), "type".to_string()]
+                };
                 elements.push(AomElement {
                     role: role.to_string(),
                     name,
                     value: value_attr,
                     target_url: None,
+                    supported_actions,
+                    provenance: "native-static".to_string(),
+                    actionability: role_actionability(role),
                 });
             }
         } else {
@@ -1250,13 +1270,17 @@ fn string_match_score(haystack: &str, needle: &str) -> Option<i32> {
     Some(200 + matched_terms * 40 - (haystack.len() as i32 - needle.len() as i32).abs().min(120))
 }
 
-fn element_actionability_score(element: &AomElement) -> i32 {
-    let mut score = match element.role.to_ascii_lowercase().as_str() {
+fn role_actionability(role: &str) -> u8 {
+    match role.to_ascii_lowercase().as_str() {
         "link" => 80,
         "button" => 70,
         "textbox" => 40,
         _ => 10,
-    };
+    }
+}
+
+fn element_actionability_score(element: &AomElement) -> i32 {
+    let mut score = i32::from(role_actionability(&element.role));
     if element.target_url.is_some() {
         score += 30;
     }
@@ -2575,12 +2599,18 @@ mod tests {
                     name: "API".to_string(),
                     value: "https://example.com/api".to_string(),
                     target_url: Some("https://example.com/api".to_string()),
+                    supported_actions: vec!["open".to_string(), "click".to_string()],
+                    provenance: "native-static".to_string(),
+                    actionability: super::role_actionability("link"),
                 },
                 AomElement {
                     role: "button".to_string(),
                     name: "Search".to_string(),
                     value: String::new(),
                     target_url: None,
+                    supported_actions: vec!["click".to_string()],
+                    provenance: "native-static".to_string(),
+                    actionability: super::role_actionability("button"),
                 },
             ],
             &[],
@@ -2782,6 +2812,9 @@ mod tests {
         let matched_link = super::find_element(&snapshot, "link", "billing").unwrap();
         assert_eq!(matched_link.name, "Billing Settings");
         assert_eq!(matched_link.target_url.as_deref(), Some("https://example.com/settings/billing"));
+        assert!(matched_link.supported_actions.iter().any(|action| action == "open"));
+        assert_eq!(matched_link.provenance, "native-static");
+        assert!(matched_link.actionability >= 80);
 
         let matched_field = super::find_form_field(&snapshot, "email").unwrap();
         assert_eq!(matched_field.name, "user_email");
