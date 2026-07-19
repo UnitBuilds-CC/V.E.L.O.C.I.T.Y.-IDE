@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use velocity_ide::site_map::SiteMap;
 
 #[derive(Clone, Debug)]
@@ -66,23 +66,18 @@ impl MediatorArena {
             }
         }
 
-        // 2. Semantic coupling check across different files/methods
-        // If Bob's agent edits MethodB and Alice's agent edits MethodA (which calls MethodB),
-        // we check caller dependencies from the SiteMap.
-        // We use dummy symbol hash calculations for the comparison.
-        let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let file_name_hash = hash_str(file_name);
+        // 2. Semantic coupling check across different files/methods.
+        // Use canonical workspace-relative path identities so same-named files in
+        // different directories do not collide.
+        let file_identity_hash = path_identity_hash(&file_path);
+        let callers = site_map.get_callers(file_identity_hash);
 
         for (other_path, other_locks) in locks_guard.iter() {
             if other_path != &file_path {
                 for existing in other_locks {
                     if existing.agent_id != agent_id {
-                        let other_file_name = other_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        let other_file_name_hash = hash_str(other_file_name);
-
-                        // If file_path is called by existing's file_path, raise semantic warning
-                        let callers = site_map.get_callers(file_name_hash);
-                        if callers.contains(&other_file_name_hash) {
+                        let other_identity_hash = path_identity_hash(other_path);
+                        if callers.contains(&other_identity_hash) {
                             return Err(Conflict {
                                 file_path: file_path.clone(),
                                 existing_lock: existing.clone(),
@@ -153,8 +148,27 @@ impl MediatorArena {
     }
 }
 
+fn path_identity_hash(path: &Path) -> u64 {
+    let canonical = canonicalize_scope_path(path);
+    hash_str(&canonical)
+}
+
+fn canonicalize_scope_path(path: &Path) -> String {
+    let mut normalized = Vec::new();
+    for component in path.components() {
+        use std::path::Component;
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => normalized.push("..".to_string()),
+            Component::Normal(part) => normalized.push(part.to_string_lossy().replace('\\', "/")),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized.join("/")
+}
+
 fn hash_str(s: &str) -> u64 {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     let d = h.finalize();
@@ -190,9 +204,9 @@ mod tests {
         arena.acquire_lock(file_a.clone(), (30, 40), "AgentBob".to_string(), &sm).unwrap();
 
         // 2. Check semantic coupling lock block
-        // Setup SiteMap: "lib.rs" calls "main.rs"
-        let lib_hash = hash_str("lib.rs");
-        let main_hash = hash_str("main.rs");
+        // Setup SiteMap: "src/lib.rs" calls "src/main.rs"
+        let lib_hash = path_identity_hash(&file_b);
+        let main_hash = path_identity_hash(&file_a);
         let triple = NdaNode::Triple { subject_hash: lib_hash, predicate_id: 2, object_hash: main_hash };
         sm.put_node(&triple).unwrap();
 
@@ -210,5 +224,33 @@ mod tests {
         // Verify conflict resolution text output
         let contract = arena.resolve_conflict(&conflict_sem);
         assert!(contract.contains("Conflict Type: SEMANTIC COUPLING"));
+    }
+
+    #[test]
+    fn semantic_conflicts_use_canonical_paths_for_same_named_files() {
+        let arena = MediatorArena::new();
+        let caller = PathBuf::from("src/feature/a.rs");
+        let callee = PathBuf::from("src/shared/a.rs");
+        let unrelated = PathBuf::from("src/other/a.rs");
+
+        let temp_dir = TempDir::new().unwrap();
+        let mut sm = SiteMap::open(temp_dir.path(), 0).unwrap();
+        sm.put_node(&NdaNode::Triple {
+            subject_hash: path_identity_hash(&caller),
+            predicate_id: 2,
+            object_hash: path_identity_hash(&callee),
+        })
+        .unwrap();
+
+        arena.acquire_lock(caller.clone(), (1, 5), "AgentAlice".to_string(), &sm).unwrap();
+
+        let conflict = arena.acquire_lock(callee.clone(), (1, 5), "AgentBob".to_string(), &sm);
+        assert!(conflict.is_err());
+        assert!(conflict.as_ref().err().unwrap().is_semantic);
+
+        arena.release_lock(&caller, "AgentAlice");
+
+        let unrelated_result = arena.acquire_lock(unrelated.clone(), (1, 5), "AgentBob".to_string(), &sm);
+        assert!(unrelated_result.is_ok());
     }
 }
