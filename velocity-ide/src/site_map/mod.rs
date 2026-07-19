@@ -31,6 +31,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::nda_int::NdaVec;
@@ -170,12 +171,13 @@ impl SiteMap {
         } else {
             (HashMap::new(), 0u64)
         };
+        let persisted_weight_root = Self::read_weight_root(base_dir).unwrap_or(weight_root);
 
         Ok(Self {
             base: base_dir.to_path_buf(),
             index,
             root,
-            weight_root,
+            weight_root: persisted_weight_root,
             kv_cache: HashMap::new(),
         })
     }
@@ -206,6 +208,18 @@ impl SiteMap {
         }
         let digest = h.finalize();
         u64::from_le_bytes(digest[..8].try_into().unwrap())
+    }
+
+    pub fn read_persisted_weight_root(base_dir: &Path) -> Option<u64> {
+        Self::read_weight_root(base_dir)
+    }
+
+    fn read_weight_root(base_dir: &Path) -> Option<u64> {
+        let metadata_path = base_dir.join("metadata.json");
+        let raw = fs::read_to_string(metadata_path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let hex = value.get("weight_root")?.as_str()?;
+        u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
     }
 
     // ── KV access (hot path) ──────────────────────────────────────────────────
@@ -863,6 +877,10 @@ impl SiteMap {
         let entries: Vec<&SiteMapEntry> = self.index.values().collect();
         let json = serde_json::to_string_pretty(&entries)?;
         fs::write(self.base.join("index.json"), json)?;
+        fs::write(
+            self.base.join("metadata.json"),
+            serde_json::to_string_pretty(&json!({ "weight_root": format!("{:016x}", self.weight_root) }))?,
+        )?;
         Ok(())
     }
 
@@ -891,6 +909,9 @@ impl SiteMap {
     /// Current Merkle root of the site map index.
     pub fn root(&self) -> u64 { self.root }
 
+    /// Canonical weight root associated with this site map.
+    pub fn weight_root(&self) -> u64 { self.weight_root }
+
     /// Number of entries in the site map.
     pub fn len(&self) -> usize { self.index.len() }
 
@@ -908,7 +929,7 @@ impl SiteMap {
             },
         );
         let total_bytes: u64 = self.index.values().map(|e| e.size).sum();
-        SiteMapStats { kv, nodes, programs, total_bytes, root: self.root }
+        SiteMapStats { kv, nodes, programs, total_bytes, root: self.root, weight_root: self.weight_root }
     }
 
     /// Register a string in the site map's dictionary.json.
@@ -1203,16 +1224,18 @@ pub struct SiteMapStats {
     pub programs:    usize,
     pub total_bytes: u64,
     pub root:        u64,
+    pub weight_root: u64,
 }
 
 impl std::fmt::Display for SiteMapStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "SiteMap: {} KV entries, {} nodes, {} programs | {:.1} KB on disk | root={:016x}",
+            "SiteMap: {} KV entries, {} nodes, {} programs | {:.1} KB on disk | root={:016x} | weight_root={:016x}",
             self.kv, self.nodes, self.programs,
             self.total_bytes as f64 / 1024.0,
-            self.root
+            self.root,
+            self.weight_root,
         )
     }
 }
