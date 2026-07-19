@@ -823,38 +823,77 @@ fn append_changelog_nda(workspace_root: &std::path::Path, file_path: &str, actio
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
     let changelog_path = sitemap_dir.join("changelog.nda");
-    
-    let mut current_changelog = String::new();
-    if changelog_path.exists() {
-        if let Ok(data) = std::fs::read(&changelog_path) {
-            if let Some((_filename, payload)) = unpack_ndav(&data) {
-                current_changelog = String::from_utf8_lossy(&payload).to_string();
-            }
-        }
-    }
-    
+
+    let mut entries = load_changelog_entries(&changelog_path);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let entry = format!("{}\t{}\t{}\n", now, file_path, action);
-    current_changelog.push_str(&entry);
-    
-    let nda_data = pack_ndav("changelog.txt", current_changelog.as_bytes());
-    let _ = std::fs::write(changelog_path, nda_data);
+    entries.push((now, file_path.to_string(), action.to_string()));
+    let _ = std::fs::write(changelog_path, serialize_changelog_nda(&entries));
+}
+
+fn load_changelog_entries(changelog_path: &std::path::Path) -> Vec<(u64, String, String)> {
+    let raw = if let Ok(data) = std::fs::read(changelog_path) {
+        if let Some((_filename, payload)) = unpack_ndav(&data) {
+            String::from_utf8_lossy(&payload).to_string()
+        } else {
+            String::from_utf8_lossy(&data).to_string()
+        }
+    } else {
+        String::new()
+    };
+    parse_changelog_entries(&raw)
+}
+
+fn parse_changelog_entries(raw: &str) -> Vec<(u64, String, String)> {
+    let mut entries = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line == "changelog version 1" {
+            continue;
+        }
+        let parts: Vec<&str> = if let Some(rest) = line.strip_prefix("entry\t") {
+            rest.split('\t').collect()
+        } else {
+            line.split('\t').collect()
+        };
+        if parts.len() != 3 {
+            continue;
+        }
+        if let Ok(timestamp) = parts[0].parse() {
+            entries.push((timestamp, decode_nda_text(parts[1]), decode_nda_text(parts[2])));
+        }
+    }
+    entries
+}
+
+fn serialize_changelog_nda(entries: &[(u64, String, String)]) -> String {
+    let mut lines = vec!["changelog version 1".to_string()];
+    for (timestamp, file_path, action) in entries {
+        lines.push(format!(
+            "entry\t{}\t{}\t{}",
+            timestamp,
+            encode_nda_text(file_path),
+            encode_nda_text(action),
+        ));
+    }
+    lines.join("\n") + "\n"
 }
 
 fn write_handover_nda(workspace_root: &std::path::Path, task_state: &str, last_active_turn: usize, build_status: &str, interrupted: bool) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
     let handover_path = sitemap_dir.join("handover.nda");
-    
+
     let payload = format!(
-        "state: {}\nturn: {}\nbuild: {}\ninterrupted: {}\n",
-        task_state, last_active_turn, build_status, interrupted
+        "handover version 1\nstate {}\nturn {}\nbuild {}\ninterrupted {}\n",
+        encode_nda_text(task_state),
+        last_active_turn,
+        encode_nda_text(build_status),
+        interrupted,
     );
-    let nda_data = pack_ndav("handover.txt", payload.as_bytes());
-    let _ = std::fs::write(handover_path, nda_data);
+    let _ = std::fs::write(handover_path, payload);
 }
 
 fn write_last_request_artifacts(
@@ -985,6 +1024,26 @@ fn encode_nda_text(value: &str) -> String {
         .replace('\t', "\\t")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+fn decode_nda_text(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('t') => out.push('\t'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some(other) => out.push(other),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn encode_optional_nda_text(value: Option<&str>) -> String {
@@ -2329,6 +2388,47 @@ mod tests {
         assert!(nda.contains("message\t1\tassistant\t-\t-\tcalling tool\t["));
         assert!(nda.contains("read_file"));
         assert!(nda.contains("tool\t0\tread_file\tRead a file"));
+    }
+
+    #[test]
+    fn writes_plaintext_handover_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_handover_nda(tmp.path(), "self_correcting", 7, "compile failed", true);
+        let handover = std::fs::read_to_string(tmp.path().join(".velocity").join("handover.nda")).unwrap();
+        assert!(handover.starts_with("handover version 1\n"));
+        assert!(handover.contains("state self_correcting"));
+        assert!(handover.contains("turn 7"));
+        assert!(handover.contains("build compile failed"));
+        assert!(handover.contains("interrupted true"));
+    }
+
+    #[test]
+    fn appends_plaintext_changelog_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        append_changelog_nda(tmp.path(), "src/main.rs", "edited");
+        append_changelog_nda(tmp.path(), "src/lib.rs", "created");
+        let changelog = std::fs::read_to_string(tmp.path().join(".velocity").join("changelog.nda")).unwrap();
+        assert!(changelog.starts_with("changelog version 1\n"));
+        assert!(changelog.contains("src/main.rs\tedited"));
+        assert!(changelog.contains("src/lib.rs\tcreated"));
+    }
+
+    #[test]
+    fn appends_to_legacy_ndav_changelog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let velocity_dir = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        std::fs::write(
+            velocity_dir.join("changelog.nda"),
+            pack_ndav("changelog.txt", b"123\tsrc/old.rs\tupdated\n"),
+        )
+        .unwrap();
+
+        append_changelog_nda(tmp.path(), "src/new.rs", "created");
+        let changelog = std::fs::read_to_string(velocity_dir.join("changelog.nda")).unwrap();
+        assert!(changelog.starts_with("changelog version 1\n"));
+        assert!(changelog.contains("src/old.rs\tupdated"));
+        assert!(changelog.contains("src/new.rs\tcreated"));
     }
 
     #[test]
