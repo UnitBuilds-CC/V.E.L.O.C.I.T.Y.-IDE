@@ -763,8 +763,45 @@ fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage
         return None;
     }
     let data = std::fs::read(&nda_path).ok()?;
-    let (_filename, payload) = unpack_ndav(&data)?;
-    let text = String::from_utf8_lossy(&payload);
+    let text = if let Some((_filename, payload)) = unpack_ndav(&data) {
+        String::from_utf8_lossy(&payload).to_string()
+    } else {
+        String::from_utf8_lossy(&data).to_string()
+    };
+    let messages = parse_chatlogs_nda(&text);
+    if messages.is_empty() { None } else { Some(messages) }
+}
+
+fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
+    if text.starts_with("chatlogs version 1\n") {
+        let mut messages = Vec::new();
+        for line in text.lines() {
+            if line.trim().is_empty() || line == "chatlogs version 1" {
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("message\t") else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.split('\t').collect();
+            if parts.len() != 6 {
+                continue;
+            }
+            let tool_calls = if parts[5] == "-" {
+                None
+            } else {
+                serde_json::from_str(&decode_nda_text(parts[5])).ok()
+            };
+            messages.push(ChatMessage {
+                role: decode_nda_text(parts[1]),
+                content: decode_nda_text(parts[4]),
+                name: decode_optional_nda_text(parts[2]),
+                tool_call_id: decode_optional_nda_text(parts[3]),
+                tool_calls,
+            });
+        }
+        return messages;
+    }
+
     let mut messages = Vec::new();
     for msg_block in text.split("\n---\n") {
         if msg_block.trim().is_empty() {
@@ -795,28 +832,33 @@ fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage
             });
         }
     }
-    if messages.is_empty() { None } else { Some(messages) }
+    messages
+}
+
+fn serialize_chatlogs_nda(messages: &[ChatMessage]) -> String {
+    let mut lines = vec!["chatlogs version 1".to_string()];
+    for (index, msg) in messages.iter().enumerate() {
+        let tool_calls = msg
+            .tool_calls
+            .as_ref()
+            .and_then(|value| serde_json::to_string(value).ok());
+        lines.push(format!(
+            "message\t{}\t{}\t{}\t{}\t{}\t{}",
+            index,
+            encode_nda_text(&msg.role),
+            encode_optional_nda_text(msg.name.as_deref()),
+            encode_optional_nda_text(msg.tool_call_id.as_deref()),
+            encode_nda_text(&msg.content),
+            encode_optional_nda_text(tool_calls.as_deref()),
+        ));
+    }
+    lines.join("\n") + "\n"
 }
 
 fn save_chatlogs_nda(workspace_root: &std::path::Path, messages: &[ChatMessage]) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
-    let mut text = String::new();
-    for (i, msg) in messages.iter().enumerate() {
-        if i > 0 {
-            text.push_str("\n---\n");
-        }
-        text.push_str(&msg.role);
-        text.push('\n');
-        if msg.role == "tool" {
-            let name = msg.name.as_deref().unwrap_or("unknown");
-            let call_id = msg.tool_call_id.as_deref().unwrap_or("unknown");
-            text.push_str(&format!("{}\t{}\n", name, call_id));
-        }
-        text.push_str(&msg.content);
-    }
-    let nda_data = pack_ndav("chatlogs.txt", text.as_bytes());
-    let _ = std::fs::write(sitemap_dir.join("chatlogs.nda"), nda_data);
+    let _ = std::fs::write(sitemap_dir.join("chatlogs.nda"), serialize_chatlogs_nda(messages));
 }
 
 fn append_changelog_nda(workspace_root: &std::path::Path, file_path: &str, action: &str) {
@@ -1044,6 +1086,14 @@ fn decode_nda_text(value: &str) -> String {
         }
     }
     out
+}
+
+fn decode_optional_nda_text(value: &str) -> Option<String> {
+    if value == "-" {
+        None
+    } else {
+        Some(decode_nda_text(value))
+    }
 }
 
 fn encode_optional_nda_text(value: Option<&str>) -> String {
@@ -2388,6 +2438,62 @@ mod tests {
         assert!(nda.contains("message\t1\tassistant\t-\t-\tcalling tool\t["));
         assert!(nda.contains("read_file"));
         assert!(nda.contains("tool\t0\tread_file\tRead a file"));
+    }
+
+    #[test]
+    fn writes_plaintext_chatlogs_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".into(),
+                content: "hello\nworld".into(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Some(json!([{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}])),
+            },
+            ChatMessage {
+                role: "tool".into(),
+                content: "done".into(),
+                name: Some("read_file".into()),
+                tool_call_id: Some("call_1".into()),
+                tool_calls: None,
+            },
+        ];
+
+        save_chatlogs_nda(tmp.path(), &messages);
+        let chatlogs = std::fs::read_to_string(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
+        assert!(chatlogs.starts_with("chatlogs version 1\n"));
+        assert!(chatlogs.contains("message\t0\tassistant\t-\t-\thello\\nworld\t["));
+        assert!(chatlogs.contains("message\t1\ttool\tread_file\tcall_1\tdone\t-"));
+
+        let loaded = load_chatlogs_nda(tmp.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].content, "hello\nworld");
+        assert!(loaded[0].tool_calls.is_some());
+        assert_eq!(loaded[1].name.as_deref(), Some("read_file"));
+        assert_eq!(loaded[1].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn loads_legacy_ndav_chatlogs_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        let velocity_dir = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        let legacy = "user\nhello\n---\ntool\nread_file\tcall_1\ndone";
+        std::fs::write(
+            velocity_dir.join("chatlogs.nda"),
+            pack_ndav("chatlogs.txt", legacy.as_bytes()),
+        )
+        .unwrap();
+
+        let loaded = load_chatlogs_nda(tmp.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].role, "user");
+        assert_eq!(loaded[0].content, "hello");
+        assert_eq!(loaded[1].role, "tool");
+        assert_eq!(loaded[1].name.as_deref(), Some("read_file"));
+        assert_eq!(loaded[1].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(loaded[1].content, "done");
     }
 
     #[test]
