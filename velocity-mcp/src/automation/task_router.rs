@@ -181,62 +181,60 @@ fn build_execution_contract(
     fallback_chain: &[RoutedModelRoute],
     policy: &DecompositionPolicy,
 ) -> String {
+    let structural_expectations = [
+        "Respect the live Merkle SiteMap and avoid edits outside the assigned scope.",
+        "Preserve compatibility for any caller/dependency relationships touching this scope.",
+        "Return concise notes suitable for reconciliation and validation.",
+    ];
+    let checklist_count = template.map(|item| item.checklist.len()).unwrap_or(0);
+
     let mut lines = vec![
-        "contract version 1".to_string(),
-        format!("task {} kind {}", task_id, kind.as_str()),
-        format!("task {} goal {}", task_id, escape_contract_value(goal)),
-        format!("task {} site_map_root {:016x}", task_id, site_map.root()),
-        format!("task {} policy_id {}", task_id, escape_contract_value(&policy.id)),
-        format!("task {} policy_label {}", task_id, escape_contract_value(&policy.label)),
-        format!("task {} decomposition_style {}", task_id, policy.decomposition_style.as_str()),
-        format!("task {} route_provider {}", task_id, escape_contract_value(model.provider.label())),
-        format!("task {} route_model {}", task_id, escape_contract_value(&model.model_label)),
-        format!("task {} route_model_id {}", task_id, escape_contract_value(&model.model_id)),
-        format!("task {} route_thinking {}", task_id, if model.thinking { "true" } else { "false" }),
+        "contract version 2".to_string(),
+        format!("field\ttask_id\t{}", escape_contract_value(task_id)),
+        format!("field\tkind\t{}", kind.as_str()),
+        format!("field\tgoal\t{}", escape_contract_value(goal)),
+        format!("field\tsite_map_root\t{:016x}", site_map.root()),
+        format!("field\tpolicy_id\t{}", escape_contract_value(&policy.id)),
+        format!("field\tpolicy_label\t{}", escape_contract_value(&policy.label)),
+        format!("field\tdecomposition_style\t{}", policy.decomposition_style.as_str()),
+        format!("field\troute_provider\t{}", escape_contract_value(model.provider.label())),
+        format!("field\troute_model\t{}", escape_contract_value(&model.model_label)),
+        format!("field\troute_model_id\t{}", escape_contract_value(&model.model_id)),
+        format!("field\troute_thinking\t{}", if model.thinking { "true" } else { "false" }),
+        format!("scope_count {}", files.len()),
+        format!("fallback_count {}", fallback_chain.len()),
+        format!("structural_expectation_count {}", structural_expectations.len()),
+        format!("policy_expectation_count {}", policy.shared_expectations.len()),
+        format!("checklist_count {}", checklist_count),
     ];
 
     if let Some(template) = template {
-        lines.push(format!("task {} template_id {}", task_id, escape_contract_value(&template.id)));
-        lines.push(format!("task {} system_prompt {}", task_id, escape_contract_value(&template.system_prompt)));
-        for item in &template.checklist {
-            lines.push(format!("task {} checklist {}", task_id, escape_contract_value(item)));
+        lines.push(format!("field\ttemplate_id\t{}", escape_contract_value(&template.id)));
+        lines.push(format!("field\tsystem_prompt\t{}", escape_contract_value(&template.system_prompt)));
+        for (index, item) in template.checklist.iter().enumerate() {
+            lines.push(format!("checklist\t{}\t{}", index, escape_contract_value(item)));
         }
     }
 
-    for route in fallback_chain {
-        lines.push(format!(
-            "task {} fallback {}|{}|{}|{}|{}",
-            task_id,
-            escape_contract_value(route.provider.label()),
-            escape_contract_value(&route.model_label),
-            escape_contract_value(&route.model_id),
-            route.score,
-            if route.thinking { "true" } else { "false" }
-        ));
+    for (index, route) in fallback_chain.iter().enumerate() {
+        lines.push(format!("fallback\t{}", index));
+        lines.push(format!("fallback_field\t{}\tprovider\t{}", index, escape_contract_value(route.provider.label())));
+        lines.push(format!("fallback_field\t{}\tmodel\t{}", index, escape_contract_value(&route.model_label)));
+        lines.push(format!("fallback_field\t{}\tmodel_id\t{}", index, escape_contract_value(&route.model_id)));
+        lines.push(format!("fallback_field\t{}\tscore\t{}", index, route.score));
+        lines.push(format!("fallback_field\t{}\tthinking\t{}", index, if route.thinking { "true" } else { "false" }));
     }
 
-    for file in files {
-        lines.push(format!("task {} scope_file {}", task_id, escape_contract_value(&file.display().to_string())));
+    for (index, file) in files.iter().enumerate() {
+        lines.push(format!("scope\t{}\t{}", index, escape_contract_value(&file.display().to_string())));
     }
 
-    lines.push(format!(
-        "task {} structural_expectation {}",
-        task_id,
-        escape_contract_value("Respect the live Merkle SiteMap and avoid edits outside the assigned scope.")
-    ));
-    lines.push(format!(
-        "task {} structural_expectation {}",
-        task_id,
-        escape_contract_value("Preserve compatibility for any caller/dependency relationships touching this scope.")
-    ));
-    lines.push(format!(
-        "task {} structural_expectation {}",
-        task_id,
-        escape_contract_value("Return concise notes suitable for reconciliation and validation.")
-    ));
+    for (index, expectation) in structural_expectations.iter().enumerate() {
+        lines.push(format!("structural_expectation\t{}\t{}", index, escape_contract_value(expectation)));
+    }
 
-    for expectation in &policy.shared_expectations {
-        lines.push(format!("task {} policy_expectation {}", task_id, escape_contract_value(expectation)));
+    for (index, expectation) in policy.shared_expectations.iter().enumerate() {
+        lines.push(format!("policy_expectation\t{}\t{}", index, escape_contract_value(expectation)));
     }
 
     lines.join("\n") + "\n"
@@ -430,8 +428,12 @@ mod tests {
         assert_eq!(routes[0].fallback_chain[0].model_label, "kimi-k2");
         assert_eq!(routes[0].decomposition_policy_id, "refactor-coupled");
         assert_eq!(routes[0].decomposition_style, DecompositionStyle::CoupledComponents);
-        assert!(routes[0].execution_contract.contains("contract version 1"));
-        assert!(routes[0].execution_contract.contains("policy_label Refactor coupled"));
+        assert!(routes[0].execution_contract.contains("contract version 2"));
+        assert!(routes[0].execution_contract.contains("field\tpolicy_label\tRefactor coupled"));
+        assert!(routes[0].execution_contract.contains("field\ttask_id\tsubagent-01"));
+        assert!(routes[0].execution_contract.contains("scope_count 2"));
+        assert!(routes[0].execution_contract.contains("fallback_count 1"));
+        assert!(routes[0].execution_contract.contains("scope\t0\tsrc/a.rs") || routes[0].execution_contract.contains("scope\t1\tsrc/a.rs"));
         assert!(routes[0].summary.contains("Refactor coupled"));
     }
 
