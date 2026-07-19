@@ -159,6 +159,11 @@ impl ThinkingPanelState {
             (idx, &self.steps[idx])
         })
     }
+
+    /// Get total number of thinking steps recorded
+    pub fn step_count(&self) -> usize {
+        self.step_count
+    }
 }
 
 /// Tool approval entry (64 bytes, fixed size)
@@ -266,6 +271,11 @@ impl ApprovalManagerState {
             .iter()
             .filter(|e| !e.auto_approve)
             .count()
+    }
+
+    /// Get total approvals count
+    pub fn total_count(&self) -> usize {
+        self.count
     }
 }
 

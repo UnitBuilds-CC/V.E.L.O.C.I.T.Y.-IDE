@@ -12,5 +12,6 @@ pub mod usage_panel;
 pub mod graph_view;
 pub mod browser;
 
-// Agentic UI Phase 1 - Zero-allocation ring-buffer based components
+// Agentic UI Phase 1 - Zero-allocation components
 pub mod agent_ui_state;
+pub mod agent_ui_render;
