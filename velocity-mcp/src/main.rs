@@ -1,7 +1,7 @@
 use std::env;
 use std::process;
 use eframe::egui;
-use velocity_ide::site_map::{NdaNode, SiteMap};
+use velocity_ide::site_map::{NdaNode, SiteMap, VcTriple};
 
 mod protocol;
 mod ipc;
@@ -20,16 +20,29 @@ fn persist_ast_update(
     triples: &[(u64, u16, u64)],
 ) -> Result<(), String> {
     let file_hash = hash_str(file_path);
+    let mut live_triples = Vec::with_capacity(triples.len());
 
     for (subject_hash, predicate_id, object_hash) in triples {
+        let normalized_subject = if *subject_hash == file_hash { file_hash } else { *subject_hash };
         let triple = NdaNode::Triple {
-            subject_hash: if *subject_hash == file_hash { file_hash } else { *subject_hash },
+            subject_hash: normalized_subject,
             predicate_id: *predicate_id,
             object_hash: *object_hash,
         };
         site_map.put_node(&triple).map_err(|e| e.to_string())?;
+        live_triples.push(VcTriple {
+            subject_hash: normalized_subject,
+            predicate_id: *predicate_id,
+            object_hash: *object_hash,
+        });
     }
 
+    site_map.put_file_snapshot(file_path, &live_triples).map_err(|e| e.to_string())?;
+    site_map.flush().map_err(|e| e.to_string())
+}
+
+fn remove_ast_update(site_map: &mut SiteMap, file_path: &str) -> Result<(), String> {
+    site_map.remove_file_snapshot(file_path).map_err(|e| e.to_string())?;
     site_map.flush().map_err(|e| e.to_string())
 }
 
@@ -189,6 +202,33 @@ fn main() {
                                 eprintln!("[server] {}", message);
                             }
                             
+                            let elapsed = start_time.elapsed().as_micros() as u64;
+                            ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
+
+                            ipc::telemetry_share::TelemetryResponse {
+                                success: warning.is_none(),
+                                warning,
+                            }
+                        }
+                        ipc::telemetry_share::TelemetryRequest::AstDelete { file_path } => {
+                            let start_time = std::time::Instant::now();
+                            println!("[server] Received AST delete for {}", file_path);
+
+                            let warning = if let Some(sm) = &site_map {
+                                match sm.lock() {
+                                    Ok(mut guard) => match remove_ast_update(&mut guard, &file_path) {
+                                        Ok(()) => None,
+                                        Err(err) => Some(format!("Failed to remove AST update for {}: {}", file_path, err)),
+                                    },
+                                    Err(err) => Some(format!("Failed to lock SiteMap for AST delete {}: {}", file_path, err)),
+                                }
+                            } else {
+                                Some("SiteMap unavailable; AST delete was not persisted".to_string())
+                            };
+                            if let Some(message) = &warning {
+                                eprintln!("[server] {}", message);
+                            }
+
                             let elapsed = start_time.elapsed().as_micros() as u64;
                             ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
 

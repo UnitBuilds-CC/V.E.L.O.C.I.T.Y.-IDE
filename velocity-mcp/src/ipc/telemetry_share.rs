@@ -12,6 +12,9 @@ pub enum TelemetryRequest {
         file_path: String,
         triples: Vec<(u64, u16, u64)>, // Subject, Predicate, Object
     },
+    AstDelete {
+        file_path: String,
+    },
     PresenceUpdate {
         cursor_line: usize,
         cursor_col: usize,
@@ -162,6 +165,13 @@ mod tests {
                     TelemetryRequest::AstUpdate { file_path, triples } => {
                         assert_eq!(file_path, "src/main.rs");
                         assert_eq!(triples.len(), 2);
+                        TelemetryResponse {
+                            success: true,
+                            warning: None,
+                        }
+                    }
+                    TelemetryRequest::AstDelete { file_path } => {
+                        assert_eq!(file_path, "src/deleted.rs");
                         TelemetryResponse {
                             success: true,
                             warning: None,

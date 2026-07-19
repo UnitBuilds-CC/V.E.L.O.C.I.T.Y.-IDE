@@ -26,11 +26,23 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
 
         loop {
             let mut changed_files = Vec::new();
-            scan_directory(&workspace_root, &mut file_timestamps, &mut known_files, &mut changed_files, false);
+            let deleted_files = scan_directory(&workspace_root, &mut file_timestamps, &mut known_files, &mut changed_files, false);
+            publish_ast_deletes(&workspace_root, &mut client, deleted_files);
             publish_ast_updates(&workspace_root, &mut client, changed_files);
             thread::sleep(Duration::from_millis(500));
         }
     });
+}
+
+fn publish_ast_deletes(workspace_root: &Path, client: &mut TelemetryClient, deleted_files: Vec<PathBuf>) {
+    for file in deleted_files {
+        let req = TelemetryRequest::AstDelete {
+            file_path: relative_path_string(&file, workspace_root),
+        };
+        if let Err(e) = client.send(&req) {
+            eprintln!("[watcher] Failed to stream AST delete telemetry: {}", e);
+        }
+    }
 }
 
 fn publish_ast_updates(workspace_root: &Path, client: &mut TelemetryClient, changed_files: Vec<PathBuf>) {
@@ -70,13 +82,18 @@ fn scan_directory(
     known_files: &mut HashSet<PathBuf>,
     changed: &mut Vec<PathBuf>,
     initial_scan: bool,
-) {
+) -> Vec<PathBuf> {
     let mut current_files = HashSet::new();
     scan_directory_inner(dir, stamps, changed, initial_scan, &mut current_files);
 
+    let deleted_files = known_files
+        .difference(&current_files)
+        .cloned()
+        .collect::<Vec<_>>();
     stamps.retain(|path, _| current_files.contains(path));
     known_files.clear();
     known_files.extend(current_files);
+    deleted_files
 }
 
 fn scan_directory_inner(
@@ -245,8 +262,9 @@ mod tests {
         let mut stamps = HashMap::new();
         let mut known = HashSet::new();
         let mut changed = Vec::new();
-        scan_directory(temp.path(), &mut stamps, &mut known, &mut changed, true);
+        let deleted = scan_directory(temp.path(), &mut stamps, &mut known, &mut changed, true);
 
+        assert!(deleted.is_empty());
         assert_eq!(changed, vec![file.clone()]);
         assert!(known.contains(&file));
     }
@@ -262,13 +280,15 @@ mod tests {
         let mut stamps = HashMap::new();
         let mut known = HashSet::new();
         let mut changed = Vec::new();
-        scan_directory(temp.path(), &mut stamps, &mut known, &mut changed, true);
+        let deleted = scan_directory(temp.path(), &mut stamps, &mut known, &mut changed, true);
+        assert!(deleted.is_empty());
 
         std::fs::remove_file(&file).unwrap();
         changed.clear();
-        scan_directory(temp.path(), &mut stamps, &mut known, &mut changed, false);
+        let deleted = scan_directory(temp.path(), &mut stamps, &mut known, &mut changed, false);
 
         assert!(changed.is_empty());
+        assert_eq!(deleted, vec![file.clone()]);
         assert!(!known.contains(&file));
         assert!(!stamps.contains_key(&file));
     }

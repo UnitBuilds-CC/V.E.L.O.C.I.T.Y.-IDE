@@ -38,8 +38,8 @@ impl MerkleGraphView {
                 }
             };
 
-            // Query all triples
-            let triples = sm.find_triples(None, None, None);
+            // Query live triples only so the graph reflects the latest watcher snapshot state.
+            let triples = sm.find_live_triples(None, None, None);
             if triples.is_empty() {
                 ui.label("No semantic triples recorded in database.");
                 return;

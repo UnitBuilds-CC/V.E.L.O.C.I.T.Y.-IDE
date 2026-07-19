@@ -64,9 +64,10 @@ pub struct SiteMapEntry {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EntryKind {
-    Kv,      // token K/V pair
-    Node,    // NDA program node
-    Program, // complete NDA program (root reference)
+    Kv,       // token K/V pair
+    Node,     // NDA program node
+    Program,  // complete NDA program (root reference)
+    Snapshot, // overwriteable file-scoped live semantic snapshot
 }
 
 // ─── On-disk KV record ─────────────────────────────────────────────────────────
@@ -1007,58 +1008,76 @@ impl SiteMap {
         }
     }
 
-    /// Query the Triple Store.
+    /// Query the historical Triple Store across all persisted node entries.
     pub fn find_triples(
         &self,
         subject: Option<u64>,
         predicate: Option<u16>,
         object: Option<u64>,
     ) -> Vec<VcTriple> {
-        let mut all_triples = Vec::new();
-        for entry in self.index.values() {
-            if entry.kind == EntryKind::Node {
-                if let Some(node) = self.get_node(entry.hash) {
-                    Self::extract_triples_recursive(&node, &mut all_triples);
-                }
-            }
-        }
-        all_triples
-            .into_iter()
-            .filter(|t| {
-                if let Some(s) = subject {
-                    if t.subject_hash != s {
-                        return false;
-                    }
-                }
-                if let Some(p) = predicate {
-                    if t.predicate_id != p {
-                        return false;
-                    }
-                }
-                if let Some(o) = object {
-                    if t.object_hash != o {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect()
+        self.filter_triples(self.collect_historical_triples(), subject, predicate, object)
     }
 
-    /// Query call-graph callers of a method.
+    /// Query only the latest live semantic triples from per-file snapshots.
+    pub fn find_live_triples(
+        &self,
+        subject: Option<u64>,
+        predicate: Option<u16>,
+        object: Option<u64>,
+    ) -> Vec<VcTriple> {
+        self.filter_triples(self.collect_live_snapshot_triples(), subject, predicate, object)
+    }
+
+    /// Query call-graph callers of a method from live file snapshots.
     pub fn get_callers(&self, method_hash: u64) -> Vec<u64> {
-        self.find_triples(None, Some(2), Some(method_hash))
+        self.find_live_triples(None, Some(2), Some(method_hash))
             .into_iter()
             .map(|t| t.subject_hash)
             .collect()
     }
 
-    /// Query call-graph dependencies of a method.
+    /// Query call-graph dependencies of a method from live file snapshots.
     pub fn get_dependencies(&self, method_hash: u64) -> Vec<u64> {
-        self.find_triples(Some(method_hash), None, None)
+        self.find_live_triples(Some(method_hash), None, None)
             .into_iter()
             .map(|t| t.object_hash)
             .collect()
+    }
+
+    pub fn put_file_snapshot(&mut self, file_path: &str, triples: &[VcTriple]) -> Result<u64> {
+        let key = self.snapshot_hash(file_path);
+        let data = serde_json::to_vec(triples)?;
+        let sha = Self::file_sha(&data);
+        let name = format!("snapshots/{:016x}.json", key);
+        let path = self.base.join(&name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
+
+        let entry = SiteMapEntry {
+            kind: EntryKind::Snapshot,
+            hash: key,
+            file: name,
+            file_sha: sha,
+            size: data.len() as u64,
+        };
+        self.index.insert(key, entry);
+        self.recompute_root();
+        Ok(key)
+    }
+
+    pub fn remove_file_snapshot(&mut self, file_path: &str) -> Result<bool> {
+        let key = self.snapshot_hash(file_path);
+        if let Some(entry) = self.index.remove(&key) {
+            let path = self.base.join(entry.file);
+            if path.exists() {
+                fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+            }
+            self.recompute_root();
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Store a complete NDA program (by its root node hash).
@@ -1154,19 +1173,21 @@ impl SiteMap {
     // ── Statistics ────────────────────────────────────────────────────────────
 
     pub fn stats(&self) -> SiteMapStats {
-        let (kv, nodes, programs) =
+        let (kv, nodes, programs, snapshots) =
             self.index
                 .values()
-                .fold((0usize, 0usize, 0usize), |(k, n, p), e| match e.kind {
-                    EntryKind::Kv => (k + 1, n, p),
-                    EntryKind::Node => (k, n + 1, p),
-                    EntryKind::Program => (k, n, p + 1),
+                .fold((0usize, 0usize, 0usize, 0usize), |(k, n, p, s), e| match e.kind {
+                    EntryKind::Kv => (k + 1, n, p, s),
+                    EntryKind::Node => (k, n + 1, p, s),
+                    EntryKind::Program => (k, n, p + 1, s),
+                    EntryKind::Snapshot => (k, n, p, s + 1),
                 });
         let total_bytes: u64 = self.index.values().map(|e| e.size).sum();
         SiteMapStats {
             kv,
             nodes,
             programs,
+            snapshots,
             total_bytes,
             root: self.root,
             weight_root: self.weight_root,
@@ -1238,6 +1259,77 @@ impl SiteMap {
         h.update(node_hash.to_le_bytes());
         let d = h.finalize();
         u64::from_le_bytes(d[..8].try_into().unwrap())
+    }
+
+    fn snapshot_hash(&self, file_path: &str) -> u64 {
+        let mut h = Sha256::new();
+        h.update(b"snapshot");
+        h.update(file_path.as_bytes());
+        let d = h.finalize();
+        u64::from_le_bytes(d[..8].try_into().unwrap())
+    }
+
+    fn collect_historical_triples(&self) -> Vec<VcTriple> {
+        let mut all_triples = Vec::new();
+        for entry in self.index.values() {
+            if entry.kind == EntryKind::Node {
+                if let Some(node) = self.get_node(entry.hash) {
+                    Self::extract_triples_recursive(&node, &mut all_triples);
+                }
+            }
+        }
+        all_triples
+    }
+
+    fn collect_live_snapshot_triples(&self) -> Vec<VcTriple> {
+        let mut all_triples = Vec::new();
+        for entry in self.index.values() {
+            if entry.kind != EntryKind::Snapshot {
+                continue;
+            }
+            let path = self.base.join(&entry.file);
+            let data = match fs::read(&path) {
+                Ok(data) => data,
+                Err(_) => continue,
+            };
+            if !Self::verify_file_sha(&data, &entry.file_sha) {
+                continue;
+            }
+            if let Ok(triples) = serde_json::from_slice::<Vec<VcTriple>>(&data) {
+                all_triples.extend(triples);
+            }
+        }
+        all_triples
+    }
+
+    fn filter_triples(
+        &self,
+        triples: Vec<VcTriple>,
+        subject: Option<u64>,
+        predicate: Option<u16>,
+        object: Option<u64>,
+    ) -> Vec<VcTriple> {
+        triples
+            .into_iter()
+            .filter(|t| {
+                if let Some(s) = subject {
+                    if t.subject_hash != s {
+                        return false;
+                    }
+                }
+                if let Some(p) = predicate {
+                    if t.predicate_id != p {
+                        return false;
+                    }
+                }
+                if let Some(o) = object {
+                    if t.object_hash != o {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
     }
 
     fn file_sha(data: &[u8]) -> String {
@@ -1521,6 +1613,7 @@ pub struct SiteMapStats {
     pub kv: usize,
     pub nodes: usize,
     pub programs: usize,
+    pub snapshots: usize,
     pub total_bytes: u64,
     pub root: u64,
     pub weight_root: u64,
@@ -1530,8 +1623,8 @@ impl std::fmt::Display for SiteMapStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "SiteMap: {} KV entries, {} nodes, {} programs | {:.1} KB on disk | root={:016x} | weight_root={:016x}",
-            self.kv, self.nodes, self.programs,
+            "SiteMap: {} KV entries, {} nodes, {} programs, {} snapshots | {:.1} KB on disk | root={:016x} | weight_root={:016x}",
+            self.kv, self.nodes, self.programs, self.snapshots,
             self.total_bytes as f64 / 1024.0,
             self.root,
             self.weight_root,
@@ -1732,14 +1825,46 @@ mod tests {
         let triples = sm.find_triples(Some(1), Some(2), None);
         assert_eq!(triples.len(), 2);
 
+        sm.put_file_snapshot(
+            "src/main.rs",
+            &vec![
+                VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 2 },
+                VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            ],
+        ).unwrap();
+        let live_triples = sm.find_live_triples(Some(1), Some(2), None);
+        assert_eq!(live_triples.len(), 2);
+
         let callers = sm.get_callers(3);
-        assert_eq!(callers.len(), 2);
+        assert_eq!(callers.len(), 1);
         assert!(callers.contains(&1));
-        assert!(callers.contains(&2));
 
         let deps = sm.get_dependencies(1);
         assert_eq!(deps.len(), 2);
         assert!(deps.contains(&2));
         assert!(deps.contains(&3));
+    }
+
+    #[test]
+    fn file_snapshots_replace_live_semantic_state() {
+        let dir = TempDir::new().unwrap();
+        let mut sm = SiteMap::open(dir.path(), 0).unwrap();
+
+        sm.put_file_snapshot(
+            "src/main.rs",
+            &vec![VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 20 }],
+        ).unwrap();
+        assert_eq!(sm.find_live_triples(Some(10), Some(2), None).len(), 1);
+
+        sm.put_file_snapshot(
+            "src/main.rs",
+            &vec![VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 30 }],
+        ).unwrap();
+        let live = sm.find_live_triples(Some(10), Some(2), None);
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].object_hash, 30);
+
+        assert!(sm.remove_file_snapshot("src/main.rs").unwrap());
+        assert!(sm.find_live_triples(Some(10), Some(2), None).is_empty());
     }
 }
