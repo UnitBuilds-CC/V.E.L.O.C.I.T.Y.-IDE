@@ -1025,35 +1025,38 @@ fn serialize_last_request_nda(
     request_body: &Value,
 ) -> String {
     let mut lines = vec![
-        "last-request version 1".to_string(),
-        format!("provider {}", nda_atom(provider.label())),
-        format!("provider_label {}", encode_nda_text(provider.label())),
-        format!("model {}", encode_nda_text(model)),
-        format!("api_style {}", nda_atom(api_style_name(profile.api_style))),
-        format!("supports_tools {}", profile.supports_tools),
-        format!("supports_thinking {}", profile.supports_thinking),
-        format!("thinking {}", thinking),
-        format!("stream {}", request_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)),
+        "last-request version 2".to_string(),
+        format!("field\tprovider\t{}", nda_atom(provider.label())),
+        format!("field\tprovider_label\t{}", encode_nda_text(provider.label())),
+        format!("field\tmodel\t{}", encode_nda_text(model)),
+        format!("field\tprofile_id\t{}", encode_nda_text(&profile.id)),
+        format!("field\tprofile_label\t{}", encode_nda_text(&profile.label)),
+        format!("field\tapi_style\t{}", nda_atom(api_style_name(profile.api_style))),
+        format!("field\tsupports_tools\t{}", profile.supports_tools),
+        format!("field\tsupports_thinking\t{}", profile.supports_thinking),
+        format!("field\tthinking\t{}", thinking),
+        format!("field\tstream\t{}", request_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)),
         format!("message_count {}", messages.len()),
         format!("tool_count {}", tools.len()),
     ];
 
     if let Some(prompt) = request_body.get("prompt").and_then(|v| v.as_str()) {
-        lines.push(format!("prompt {}", encode_nda_text(prompt)));
+        lines.push(format!("field\tprompt\t{}", encode_nda_text(prompt)));
     }
 
     if let Some(reasoning) = request_body.get("reasoning") {
-        lines.push(format!("reasoning {}", encode_nda_text(&reasoning.to_string())));
+        lines.push(format!("field\treasoning\t{}", encode_nda_text(&reasoning.to_string())));
     }
 
     for (index, message) in messages.iter().enumerate() {
+        lines.push(format!("message\t{}", index));
+        lines.push(format!("message_field\t{}\trole\t{}", index, nda_atom(&message.role)));
+        lines.push(format!("message_field\t{}\tname\t{}", index, encode_optional_nda_text(message.name.as_deref())));
+        lines.push(format!("message_field\t{}\ttool_call_id\t{}", index, encode_optional_nda_text(message.tool_call_id.as_deref())));
+        lines.push(format!("message_field\t{}\tcontent\t{}", index, encode_nda_text(&message.content)));
         lines.push(format!(
-            "message\t{}\t{}\t{}\t{}\t{}\t{}",
+            "message_field\t{}\ttool_calls\t{}",
             index,
-            nda_atom(&message.role),
-            encode_optional_nda_text(message.name.as_deref()),
-            encode_optional_nda_text(message.tool_call_id.as_deref()),
-            encode_nda_text(&message.content),
             encode_optional_nda_text(message.tool_calls.as_ref().map(|v| v.to_string()).as_deref()),
         ));
     }
@@ -1069,12 +1072,14 @@ fn serialize_last_request_nda(
             .and_then(|f| f.get("description"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        lines.push(format!(
-            "tool\t{}\t{}\t{}",
-            index,
-            encode_nda_text(name),
-            encode_nda_text(description),
-        ));
+        let parameters = tool
+            .get("function")
+            .and_then(|f| f.get("parameters"))
+            .map(|v| v.to_string());
+        lines.push(format!("tool\t{}", index));
+        lines.push(format!("tool_field\t{}\tname\t{}", index, encode_nda_text(name)));
+        lines.push(format!("tool_field\t{}\tdescription\t{}", index, encode_nda_text(description)));
+        lines.push(format!("tool_field\t{}\tparameters\t{}", index, encode_optional_nda_text(parameters.as_deref())));
     }
 
     lines.join("\n") + "\n"
@@ -2502,14 +2507,17 @@ mod tests {
             &request,
         );
 
-        assert!(nda.starts_with("last-request version 1\n"));
-        assert!(nda.contains("provider cloudflare-workers-ai"));
-        assert!(nda.contains("api_style openai-tools"));
+        assert!(nda.starts_with("last-request version 2\n"));
+        assert!(nda.contains("field\tprovider\tcloudflare-workers-ai"));
+        assert!(nda.contains("field\tapi_style\topenai-tools"));
+        assert!(nda.contains("field\tprofile_id\t@cf/example/chat"));
         assert!(nda.contains("message_count 2"));
         assert!(nda.contains("tool_count 1"));
-        assert!(nda.contains("message\t1\tassistant\t-\t-\tcalling tool\t["));
-        assert!(nda.contains("read_file"));
-        assert!(nda.contains("tool\t0\tread_file\tRead a file"));
+        assert!(nda.contains("message_field\t1\trole\tassistant"));
+        assert!(nda.contains("message_field\t1\tcontent\tcalling tool"));
+        assert!(nda.contains("tool_field\t0\tname\tread_file"));
+        assert!(nda.contains("tool_field\t0\tdescription\tRead a file"));
+        assert!(nda.contains("tool_field\t0\tparameters\t{\"type\":\"object\"}"));
     }
 
     #[test]
@@ -2760,7 +2768,8 @@ mod tests {
 
         let nda = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
         let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json")).unwrap();
-        assert!(nda.contains("last-request version 1"));
+        assert!(nda.contains("last-request version 2"));
+        assert!(nda.contains("field\tmodel\t@cf/example/chat"));
         assert!(json.contains("\"model\""));
     }
 
