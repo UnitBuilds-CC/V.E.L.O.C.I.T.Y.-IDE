@@ -12,8 +12,5 @@ pub mod usage_panel;
 pub mod graph_view;
 pub mod browser;
 
-// Agentic UI enhancements (Phase 1)
-pub mod layout;
-pub mod thinking_panel;
-pub mod approval_panel;
-pub mod agent_status;
+// Agentic UI Phase 1 - Zero-allocation ring-buffer based components
+pub mod agent_ui_state;
