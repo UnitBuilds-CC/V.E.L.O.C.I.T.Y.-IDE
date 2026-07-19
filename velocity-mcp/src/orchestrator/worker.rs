@@ -365,14 +365,41 @@ fn write_execution_artifacts(run_dir: &Path, outcome: &ExecutionOutcome) -> Resu
 }
 
 fn serialize_execution_contract_nda(assignment: &WorkerAssignment) -> String {
-    format!(
-        "worker-execution-contract version 1\nprovider {}\nmodel {}\nmodel_id {}\nthinking {}\ninstructions {}\n",
-        encode_nda_text(&assignment.provider_label),
-        encode_nda_text(&assignment.model_label),
-        encode_nda_text(&assignment.model_id),
-        assignment.thinking,
-        encode_nda_text(&assignment.instructions),
-    )
+    let mut lines = vec![
+        "worker-execution-contract version 2".to_string(),
+        format!("field\tprovider\t{}", encode_nda_text(&assignment.provider_label)),
+        format!("field\tmodel\t{}", encode_nda_text(&assignment.model_label)),
+        format!("field\tmodel_id\t{}", encode_nda_text(&assignment.model_id)),
+        format!("field\tthinking\t{}", assignment.thinking),
+        format!("field\ttask_id\t{}", assignment.task.id.0),
+        format!("field\ttask_title\t{}", encode_nda_text(&assignment.task.title)),
+        format!("field\ttask_description\t{}", encode_nda_text(&assignment.task.description)),
+        format!("field\tplanned_site_map_root\t{:016x}", assignment.planned_site_map_root),
+        format!("scope_count {}", assignment.task.scope.len()),
+        format!("fallback_route_count {}", assignment.fallback_chain.len()),
+    ];
+
+    let instruction_lines: Vec<&str> = assignment.instructions.split('\n').collect();
+    lines.push(format!("instruction_line_count {}", instruction_lines.len()));
+
+    for (index, scope) in assignment.task.scope.iter().enumerate() {
+        lines.push(format!("scope\t{}\t{}", index, encode_nda_text(scope)));
+    }
+
+    for (index, route) in assignment.fallback_chain.iter().enumerate() {
+        lines.push(format!("fallback_route\t{}", index));
+        lines.push(format!("fallback_route_field\t{}\tprovider\t{}", index, encode_nda_text(route.provider.label())));
+        lines.push(format!("fallback_route_field\t{}\tmodel\t{}", index, encode_nda_text(&route.model_label)));
+        lines.push(format!("fallback_route_field\t{}\tmodel_id\t{}", index, encode_nda_text(&route.model_id)));
+        lines.push(format!("fallback_route_field\t{}\tthinking\t{}", index, route.thinking));
+        lines.push(format!("fallback_route_field\t{}\tscore\t{}", index, route.score));
+    }
+
+    for (index, instruction_line) in instruction_lines.iter().enumerate() {
+        lines.push(format!("instruction_line\t{}\t{}", index, encode_nda_text(instruction_line)));
+    }
+
+    lines.join("\n") + "\n"
 }
 
 fn write_execution_contract_artifacts(run_dir: &Path, assignment: &WorkerAssignment) -> Result<(), String> {
@@ -720,6 +747,7 @@ mod tests {
         write_execution_facts, ExecutionOutcome, WorkerAssignment, WorkerAttempt,
     };
     use crate::agent::AiProvider;
+    use crate::automation::RoutedModelRoute;
     use crate::orchestrator::blueprint::Task;
     use std::fs;
     use std::path::PathBuf;
@@ -805,17 +833,31 @@ mod tests {
             model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
             model_label: "Llama 3.1 8B".to_string(),
             thinking: true,
-            fallback_chain: Vec::new(),
+            fallback_chain: vec![RoutedModelRoute {
+                provider: AiProvider::OpenRouter,
+                model_id: "openrouter/sonnet".to_string(),
+                model_label: "Sonnet".to_string(),
+                thinking: false,
+                score: 7,
+            }],
         };
 
         write_execution_contract_artifacts(workspace.path(), &assignment).unwrap();
         let nda = fs::read_to_string(workspace.path().join("instructions.nda")).unwrap();
         let txt = fs::read_to_string(workspace.path().join("instructions.txt")).unwrap();
 
-        assert!(nda.starts_with("worker-execution-contract version 1\n"));
-        assert!(nda.contains("provider Workers AI"));
-        assert!(nda.contains("thinking true"));
-        assert!(nda.contains("instructions step one\\nstep two"));
+        assert!(nda.starts_with("worker-execution-contract version 2\n"));
+        assert!(nda.contains("field\tprovider\tWorkers AI"));
+        assert!(nda.contains("field\tthinking\ttrue"));
+        assert!(nda.contains("field\ttask_id\t1"));
+        assert!(nda.contains("field\tplanned_site_map_root\t000000000000002a"));
+        assert!(nda.contains("scope\t0\tsrc/main.rs"));
+        assert!(nda.contains("fallback_route\t0"));
+        assert!(nda.contains("fallback_route_field\t0\tprovider\tOpenRouter"));
+        assert!(nda.contains("fallback_route_field\t0\tmodel\tSonnet"));
+        assert!(nda.contains("instruction_line_count 2"));
+        assert!(nda.contains("instruction_line\t0\tstep one"));
+        assert!(nda.contains("instruction_line\t1\tstep two"));
         assert!(txt.contains("provider: Workers AI"));
         assert!(txt.contains("thinking: true"));
     }
