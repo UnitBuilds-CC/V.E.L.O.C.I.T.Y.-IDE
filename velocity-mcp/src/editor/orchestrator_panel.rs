@@ -1,5 +1,6 @@
 //! Optional IDE panel showing the orchestrator task graph.
 
+use crate::automation::{AgentTaskKind, RoutedSubAgentTask};
 use crate::orchestrator::blueprint::{Task, TaskGraph};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
@@ -9,11 +10,21 @@ use eframe::egui;
 use egui::{ScrollArea, Ui};
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Clone)]
+struct RoutedPlanState {
+    goal: String,
+    kind: AgentTaskKind,
+    scope_count: usize,
+    tasks: Vec<RoutedSubAgentTask>,
+}
+
 #[derive(Debug)]
 pub struct OrchestratorPanel {
     pub graph: TaskGraph,
     pub registry: Option<OrchestratorRegistry>,
     pub expanded: bool,
+    routed_plan: Option<RoutedPlanState>,
+    planning_status: String,
     // Simulation state
     pub simulation_running: bool,
     pub last_simulation_step: Option<Instant>,
@@ -39,6 +50,8 @@ impl OrchestratorPanel {
             graph,
             registry: Some(registry),
             expanded: true,
+            routed_plan: None,
+            planning_status: "No routed sub-agent plan yet.".to_string(),
             simulation_running: false,
             last_simulation_step: None,
             builder_title: String::new(),
@@ -47,6 +60,34 @@ impl OrchestratorPanel {
             builder_scope: String::new(),
             next_task_id: 10,
         }
+    }
+
+    pub fn set_routed_tasks(
+        &mut self,
+        goal: String,
+        kind: AgentTaskKind,
+        scope_count: usize,
+        tasks: Vec<RoutedSubAgentTask>,
+    ) {
+        self.planning_status = if tasks.is_empty() {
+            "No routed tasks were produced for the requested goal.".to_string()
+        } else {
+            format!(
+                "Planned {} routed task(s) from {} scoped file(s).",
+                tasks.len(),
+                scope_count,
+            )
+        };
+        self.routed_plan = Some(RoutedPlanState {
+            goal: goal.clone(),
+            kind,
+            scope_count,
+            tasks: tasks.clone(),
+        });
+        self.graph = build_routed_graph(&goal, &tasks);
+        self.registry = Some(OrchestratorRegistry::new(&self.graph));
+        self.simulation_running = false;
+        self.last_simulation_step = None;
     }
 
     pub fn step_simulation(&mut self) {
@@ -131,6 +172,21 @@ impl OrchestratorPanel {
         });
         ui.separator();
 
+        if let Some(plan) = &self.routed_plan {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("🧭 Routed sub-agent plan").strong());
+                ui.label(
+                    egui::RichText::new(&self.planning_status)
+                        .small()
+                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                );
+                ui.label(format!("Goal: {}", plan.goal));
+                ui.label(format!("Task kind: {}", plan.kind.as_str()));
+                ui.label(format!("Scoped files: {} | Planned agents: {}", plan.scope_count, plan.tasks.len()));
+            });
+            ui.add_space(6.0);
+        }
+
         // Cycle Warning
         let has_cycle = scheduler::detect_cycle(&self.graph);
         if has_cycle {
@@ -203,6 +259,56 @@ impl OrchestratorPanel {
             // Left column: Scroll area with lists and form
             columns[0].vertical(|ui: &mut egui::Ui| {
                 ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
+                    if let Some(route_plan) = &self.routed_plan {
+                        ui.group(|ui| {
+                            ui.label(egui::RichText::new("Planned routed assignments").strong());
+                            for task in &route_plan.tasks {
+                                ui.add_space(4.0);
+                                ui.group(|ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(egui::RichText::new(&task.task_id).strong());
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} / {} / {}",
+                                                task.task_kind.as_str(),
+                                                task.provider.label(),
+                                                task.model_label,
+                                            ))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(34, 211, 238)),
+                                        );
+                                    });
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Template: {}",
+                                            task.instruction_template_id,
+                                        ))
+                                        .small()
+                                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&task.rationale)
+                                            .small()
+                                            .color(egui::Color32::from_rgb(226, 227, 243)),
+                                    );
+                                    if !task.files.is_empty() {
+                                        let scope = task
+                                            .files
+                                            .iter()
+                                            .map(|file| file.display().to_string())
+                                            .collect::<Vec<_>>()
+                                            .join(", ");
+                                        ui.label(
+                                            egui::RichText::new(format!("Files: {scope}"))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(168, 85, 247)),
+                                        );
+                                    }
+                                });
+                            }
+                        });
+                        ui.add_space(8.0);
+                    }
                     if !has_cycle {
                         for (phase_idx, phase) in plan.phases.iter().enumerate() {
                             ui.group(|ui: &mut egui::Ui| {
@@ -447,4 +553,35 @@ impl OrchestratorPanel {
             }
         }
     }
+}
+
+fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {
+    let mut graph = TaskGraph::default();
+    graph.root = TaskId(1);
+    graph.add(
+        TaskId(1),
+        "Reconcile routed plan",
+        format!("Reconcile sub-agent outputs for goal: {goal}"),
+        vec![".velocity/agentic".to_string()],
+        vec![],
+        None,
+    );
+
+    for (idx, task) in tasks.iter().enumerate() {
+        let scope = task
+            .files
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect::<Vec<_>>();
+        graph.add(
+            TaskId(idx as u64 + 2),
+            format!("{} {}", task.task_kind.as_str(), idx + 1),
+            format!("{} [{} / {}]", task.rationale, task.provider.label(), task.model_label),
+            scope,
+            vec![],
+            Some(TaskId(1)),
+        );
+    }
+
+    graph
 }

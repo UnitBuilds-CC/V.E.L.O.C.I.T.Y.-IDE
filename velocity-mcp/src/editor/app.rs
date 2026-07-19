@@ -1,5 +1,5 @@
 use crate::agent::{AgentToUiMessage, ModelInfo, UiToAgentMessage, AiProvider};
-use crate::automation::read_latest_diagnostics;
+use crate::automation::{read_latest_diagnostics, AgentTaskKind, WorkspaceCoordinator};
 use crate::editor::buffer::EditorBuffer;
 use crate::editor::chat_panel::{ChatPanelState, render_chat_panel};
 use crate::editor::code_editor::CodeEditor;
@@ -14,8 +14,8 @@ use crate::usage::AccountUsageView;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::{DockArea, DockState, Style as DockStyle, TabViewer};
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TabId(pub u64);
@@ -288,6 +288,7 @@ impl VelocityApp {
             Command { label: "Decline All Pending Tools", action: |a| a.reject_all_pending_tools() },
             Command { label: "Focus Agent Chat", action: |a| a.toggle_panel(TabKind::Chat) },
             Command { label: "Focus Orchestrator", action: |a| a.toggle_panel(TabKind::Orchestrator) },
+            Command { label: "Plan Routed Sub-Agents", action: |a| a.plan_routed_subagents() },
             Command { label: "New File", action: |a| a.open_editor(None) },
             Command { label: "Open File…", action: |a| a.open_file_dialog() },
             Command { label: "Save", action: |a| a.save_active() },
@@ -718,6 +719,129 @@ impl VelocityApp {
         let _ = self.agent_tx.send(UiToAgentMessage::RunLocalBuild);
     }
 
+    fn plan_routed_subagents(&mut self) {
+        let Some(goal) = self.current_routing_goal() else {
+            self.status_message = "Enter a chat prompt or keep a recent user goal to route".into();
+            self.toasts.push(crate::editor::toast::Toast::warn("No goal available for routed planning"));
+            return;
+        };
+        let task_kind = infer_task_kind_from_goal(&goal);
+        let scope_files = self.collect_routing_scope_files(&goal);
+        if scope_files.is_empty() {
+            self.status_message = "No scoped files available for routed planning".into();
+            self.toasts.push(crate::editor::toast::Toast::warn("No files found for routed planning"));
+            return;
+        }
+
+        let sitemap_dir = self.workspace_root.join(".velocity").join("site_map");
+        let site_map = match velocity_ide::site_map::SiteMap::open(&sitemap_dir, 0xDEAD) {
+            Ok(site_map) => site_map,
+            Err(err) => {
+                self.status_message = format!("SiteMap unavailable: {err}");
+                self.toasts.push(crate::editor::toast::Toast::error(format!("SiteMap unavailable: {err}")));
+                return;
+            }
+        };
+
+        let model_catalogs = vec![(self.provider, self.available_models.clone())];
+        let coordinator = WorkspaceCoordinator::new(self.mediator.clone());
+        let routed_tasks = coordinator.plan_routed_tasks(
+            &self.workspace_root,
+            &goal,
+            task_kind,
+            &scope_files,
+            &site_map,
+            &model_catalogs,
+        );
+
+        if routed_tasks.is_empty() {
+            self.status_message = "Routing produced no sub-agent tasks".into();
+            self.toasts.push(crate::editor::toast::Toast::warn("Routing produced no sub-agent tasks"));
+            return;
+        }
+
+        let routed_count = routed_tasks.len();
+        let scope_count = scope_files.len();
+        self.orchestrator
+            .set_routed_tasks(goal.clone(), task_kind, scope_count, routed_tasks.clone());
+        self.task_timeline
+            .session_marker("Sub-agent route planned", &format!("{} tasks for {}", routed_count, task_kind.as_str()));
+        self.command_output.push_str(&format!(
+            "[routed-plan] goal={goal}\n[routed-plan] kind={} scope_files={} tasks={}\n",
+            task_kind.as_str(),
+            scope_count,
+            routed_count,
+        ));
+        for task in &routed_tasks {
+            self.command_output.push_str(&format!(
+                "  - {} :: {} / {} :: {} file(s)\n",
+                task.task_id,
+                task.provider.label(),
+                task.model_label,
+                task.files.len(),
+            ));
+        }
+        self.status_message = format!("Planned {} routed sub-agent task(s)", routed_count);
+        self.toasts.push(crate::editor::toast::Toast::success(format!(
+            "Planned {} routed sub-agent task(s)",
+            routed_count,
+        )));
+        self.focus_orchestrator_tab();
+    }
+
+    fn current_routing_goal(&self) -> Option<String> {
+        let draft = self.chat.input.trim();
+        if !draft.is_empty() {
+            return Some(draft.to_string());
+        }
+        self.chat
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == crate::editor::chat_panel::ChatRole::User)
+            .map(|message| message.content.trim().to_string())
+            .filter(|message| !message.is_empty())
+    }
+
+    fn collect_routing_scope_files(&self, goal: &str) -> Vec<PathBuf> {
+        let use_workspace = wants_workspace_scope(goal);
+        let mut files = if use_workspace {
+            collect_workspace_routing_files(&self.workspace_root, 96)
+        } else {
+            self.collect_open_editor_paths()
+        };
+        if files.is_empty() {
+            files = collect_workspace_routing_files(&self.workspace_root, 96);
+        }
+        files
+    }
+
+    fn collect_open_editor_paths(&self) -> Vec<PathBuf> {
+        let mut seen = HashSet::new();
+        let mut files = Vec::new();
+        for tab in &self.tabs {
+            if let Some(path) = tab.editor_path() {
+                if seen.insert(path.clone()) {
+                    files.push(path.clone());
+                }
+            }
+        }
+        files
+    }
+
+    fn focus_orchestrator_tab(&mut self) {
+        if let Some(tab) = self
+            .tabs
+            .iter()
+            .find(|tab| matches!(tab.kind, TabKind::Orchestrator))
+            .cloned()
+        {
+            self.active_tab = Some(tab.id);
+        } else {
+            self.toggle_orchestrator();
+        }
+    }
+
     fn run_active(&mut self) {
         self.command_output.clear();
         self.status_message = "Running local execute...".into();
@@ -798,6 +922,9 @@ impl eframe::App for VelocityApp {
                 }
                 if ui.button("💬 Chat").clicked() {
                     self.toggle_chat();
+                }
+                if ui.button("🧭 Route").clicked() {
+                    self.plan_routed_subagents();
                 }
                 if ui.button("🧠 Orchestrate").clicked() {
                     self.toggle_panel(TabKind::Orchestrator);
@@ -1107,6 +1234,73 @@ impl eframe::App for VelocityApp {
         self.full_diff_ui(&ctx);
         self.toasts.ui(&ctx);
     }}
+
+fn infer_task_kind_from_goal(goal: &str) -> AgentTaskKind {
+    let lower = goal.to_lowercase();
+    if lower.contains("refactor") {
+        AgentTaskKind::Refactor
+    } else if lower.contains("fix") || lower.contains("bug") || lower.contains("error") {
+        AgentTaskKind::BugFix
+    } else if lower.contains("test") || lower.contains("validate") {
+        AgentTaskKind::Test
+    } else if lower.contains("doc") || lower.contains("readme") {
+        AgentTaskKind::Documentation
+    } else if lower.contains("merge") || lower.contains("reconcile") {
+        AgentTaskKind::Merge
+    } else if lower.contains("analy") || lower.contains("investig") {
+        AgentTaskKind::Analysis
+    } else {
+        AgentTaskKind::Planning
+    }
+}
+
+fn wants_workspace_scope(goal: &str) -> bool {
+    let lower = goal.to_lowercase();
+    lower.contains("codebase")
+        || lower.contains("workspace")
+        || lower.contains("project")
+        || lower.contains("repository")
+        || lower.contains("repo")
+}
+
+fn collect_workspace_routing_files(root: &Path, limit: usize) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_workspace_routing_files_recursive(root, &mut files, limit);
+    files
+}
+
+fn collect_workspace_routing_files_recursive(root: &Path, files: &mut Vec<PathBuf>, limit: usize) {
+    if files.len() >= limit {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if files.len() >= limit {
+            break;
+        }
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            if matches!(name.as_ref(), ".git" | ".velocity" | "target" | "archive" | "node_modules") {
+                continue;
+            }
+            collect_workspace_routing_files_recursive(&path, files, limit);
+            continue;
+        }
+        let include = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| matches!(ext, "rs" | "go" | "toml" | "md" | "json" | "yml" | "yaml"))
+            .unwrap_or(false)
+            || matches!(name.as_ref(), "Cargo.lock" | "Cargo.toml" | "go.mod" | "go.sum");
+        if include {
+            files.push(path);
+        }
+    }
+}
 
 fn render_file_tree(ui: &mut egui::Ui, node: &FileNode, app: &mut VelocityApp) {
     if let Some(children) = &node.children {
