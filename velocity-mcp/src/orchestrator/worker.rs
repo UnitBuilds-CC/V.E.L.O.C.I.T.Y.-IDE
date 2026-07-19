@@ -1,5 +1,6 @@
 //! A worker represents one sub-agent assigned to a single task.
 
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -381,59 +382,68 @@ fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result
     fs::write(run_dir.join("summary.txt"), &summary).map_err(|err| format!("write summary: {err}"))
 }
 
-fn collect_scoped_paths(workspace_root: &Path, scope: &[String]) -> Vec<PathBuf> {
-    scope
+#[derive(Debug, Clone)]
+struct ScopedPaths {
+    explicit_files: Vec<PathBuf>,
+    scope_roots: Vec<PathBuf>,
+}
+
+fn collect_scoped_paths(workspace_root: &Path, scope: &[String]) -> ScopedPaths {
+    let scope_roots = scope
         .iter()
         .map(PathBuf::from)
         .map(|rel_path| if rel_path.is_absolute() { rel_path } else { workspace_root.join(rel_path) })
+        .collect::<Vec<_>>();
+    let explicit_files = scope_roots
+        .iter()
         .filter(|path| !path.is_dir())
-        .collect()
+        .cloned()
+        .collect::<Vec<_>>();
+    ScopedPaths {
+        explicit_files,
+        scope_roots,
+    }
 }
 
 fn snapshot_scope(
-    scoped_paths: &[PathBuf],
+    scoped_paths: &ScopedPaths,
     workspace_root: &Path,
     snapshot_root: &Path,
-) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, String> {
-    let mut before_contents = Vec::new();
-    for abs_path in scoped_paths {
-        let rel_path = abs_path.strip_prefix(workspace_root).unwrap_or(abs_path);
+) -> Result<HashMap<PathBuf, Option<Vec<u8>>>, String> {
+    let mut before_contents = HashMap::new();
+    for abs_path in collect_candidate_files(scoped_paths)? {
+        let rel_path = abs_path.strip_prefix(workspace_root).unwrap_or(&abs_path);
         let dest = snapshot_root.join(rel_path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|err| format!("create snapshot parent: {err}"))?;
         }
-        let bytes = match fs::read(abs_path) {
-            Ok(bytes) => {
-                fs::write(&dest, &bytes).map_err(|err| format!("write snapshot {}: {err}", dest.display()))?;
-                Some(bytes)
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => return Err(format!("snapshot file {}: {err}", abs_path.display())),
-        };
-        before_contents.push((abs_path.clone(), bytes));
+        let bytes = read_scoped_file(&abs_path)
+            .map_err(|err| format!("snapshot file {}: {err}", abs_path.display()))?;
+        if let Some(bytes) = &bytes {
+            fs::write(&dest, bytes).map_err(|err| format!("write snapshot {}: {err}", dest.display()))?;
+        }
+        before_contents.insert(abs_path, bytes);
     }
     Ok(before_contents)
 }
 
 fn detect_scoped_changes(
-    scoped_paths: &[PathBuf],
-    before_contents: &[(PathBuf, Option<Vec<u8>>)],
+    scoped_paths: &ScopedPaths,
+    before_contents: &HashMap<PathBuf, Option<Vec<u8>>>,
     workspace_root: &Path,
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
     let mut changed = Vec::new();
     let mut created = Vec::new();
     let mut deleted = Vec::new();
-    for abs_path in scoped_paths {
-        let before = before_contents
-            .iter()
-            .find(|(path, _)| path == abs_path)
-            .and_then(|(_, bytes)| bytes.clone());
-        let after = match fs::read(abs_path) {
-            Ok(bytes) => Some(bytes),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-            Err(err) => return Err(format!("read post-run file {}: {err}", abs_path.display())),
-        };
-        let rel = abs_path.strip_prefix(workspace_root).unwrap_or(abs_path).display().to_string();
+    let mut candidate_paths = before_contents.keys().cloned().collect::<BTreeSet<_>>();
+    for abs_path in collect_candidate_files(scoped_paths)? {
+        candidate_paths.insert(abs_path);
+    }
+    for abs_path in candidate_paths {
+        let before = before_contents.get(&abs_path).cloned().flatten();
+        let after = read_scoped_file(&abs_path)
+            .map_err(|err| format!("read post-run file {}: {err}", abs_path.display()))?;
+        let rel = abs_path.strip_prefix(workspace_root).unwrap_or(&abs_path).display().to_string();
         match (before, after) {
             (Some(before_bytes), Some(after_bytes)) if before_bytes != after_bytes => changed.push(rel),
             (None, Some(_)) => created.push(rel),
@@ -442,4 +452,101 @@ fn detect_scoped_changes(
         }
     }
     Ok((changed, created, deleted))
+}
+
+fn collect_candidate_files(scoped_paths: &ScopedPaths) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    for path in &scoped_paths.explicit_files {
+        push_unique_path(&mut files, path.clone());
+    }
+    for root in &scoped_paths.scope_roots {
+        collect_existing_files(root, &mut files)?;
+    }
+    Ok(files)
+}
+
+fn collect_existing_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        push_unique_path(files, path.to_path_buf());
+        return Ok(());
+    }
+    if !path.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).map_err(|err| format!("read scope dir {}: {err}", path.display()))? {
+        let entry = entry.map_err(|err| format!("read scope dir entry {}: {err}", path.display()))?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_existing_files(&entry_path, files)?;
+        } else if entry_path.is_file() {
+            push_unique_path(files, entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !paths.iter().any(|path| path == &candidate) {
+        paths.push(candidate);
+    }
+}
+
+fn read_scoped_file(path: &Path) -> Result<Option<Vec<u8>>, std::io::Error> {
+    if path.is_dir() {
+        return Ok(None);
+    }
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_scoped_paths, detect_scoped_changes, snapshot_scope};
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    #[test]
+    fn detects_new_files_inside_directory_scope() {
+        let workspace = tempdir().unwrap();
+        let workspace_root = workspace.path();
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        let snapshot_root = workspace_root.join("snapshot");
+        fs::create_dir_all(&snapshot_root).unwrap();
+
+        let scoped_paths = collect_scoped_paths(workspace_root, &["src".to_string()]);
+        let before = snapshot_scope(&scoped_paths, workspace_root, &snapshot_root).unwrap();
+
+        fs::write(workspace_root.join("src").join("new_file.rs"), "fn main() {}\n").unwrap();
+
+        let (changed, created, deleted) = detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
+        assert!(changed.is_empty());
+        assert!(deleted.is_empty());
+        assert_eq!(
+            created,
+            vec![PathBuf::from("src").join("new_file.rs").display().to_string()]
+        );
+    }
+
+    #[test]
+    fn ignores_new_files_outside_exact_file_scope() {
+        let workspace = tempdir().unwrap();
+        let workspace_root = workspace.path();
+        fs::create_dir_all(workspace_root.join("src")).unwrap();
+        let snapshot_root = workspace_root.join("snapshot");
+        fs::create_dir_all(&snapshot_root).unwrap();
+
+        let scoped_paths = collect_scoped_paths(workspace_root, &["src/lib.rs".to_string()]);
+        let before = snapshot_scope(&scoped_paths, workspace_root, &snapshot_root).unwrap();
+
+        fs::write(workspace_root.join("src").join("new_file.rs"), "pub fn helper() {}\n").unwrap();
+
+        let (changed, created, deleted) = detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
+        assert!(changed.is_empty());
+        assert!(created.is_empty());
+        assert!(deleted.is_empty());
+    }
 }

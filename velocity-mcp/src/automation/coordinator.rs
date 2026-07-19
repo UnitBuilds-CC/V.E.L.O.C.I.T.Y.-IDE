@@ -162,6 +162,7 @@ mod tests {
                 model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
                 model_label: "llama-3.1-8b-instruct".to_string(),
                 thinking: false,
+                fallback_chain: Vec::new(),
             },
             CoordinatorTask {
                 task_id: "Agent_2".to_string(),
