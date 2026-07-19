@@ -779,6 +779,51 @@ fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage
 }
 
 fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
+    if text.starts_with("chatlogs version 2\n") {
+        let mut messages = std::collections::BTreeMap::new();
+        for line in text.lines() {
+            if line.trim().is_empty() || line == "chatlogs version 2" {
+                continue;
+            }
+            if line.starts_with("message_count ") || line.starts_with("message\t") {
+                continue;
+            }
+            let Some(rest) = line.strip_prefix("field\t") else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.split('\t').collect();
+            if parts.len() != 3 {
+                continue;
+            }
+            let Ok(index) = parts[0].parse::<usize>() else {
+                continue;
+            };
+            let field = parts[1];
+            let value = parts[2];
+            let message = messages.entry(index).or_insert_with(|| ChatMessage {
+                role: String::new(),
+                content: String::new(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            match field {
+                "role" => message.role = decode_nda_text(value),
+                "content" => message.content = decode_nda_text(value),
+                "name" => message.name = decode_optional_nda_text(value),
+                "tool_call_id" => message.tool_call_id = decode_optional_nda_text(value),
+                "tool_calls" => {
+                    message.tool_calls = if value == "-" {
+                        None
+                    } else {
+                        serde_json::from_str(&decode_nda_text(value)).ok()
+                    };
+                }
+                _ => {}
+            }
+        }
+        return messages.into_values().collect();
+    }
     if text.starts_with("chatlogs version 1\n") {
         let mut messages = Vec::new();
         for line in text.lines() {
@@ -842,19 +887,23 @@ fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
 }
 
 fn serialize_chatlogs_nda(messages: &[ChatMessage]) -> String {
-    let mut lines = vec!["chatlogs version 1".to_string()];
+    let mut lines = vec![
+        "chatlogs version 2".to_string(),
+        format!("message_count {}", messages.len()),
+    ];
     for (index, msg) in messages.iter().enumerate() {
         let tool_calls = msg
             .tool_calls
             .as_ref()
             .and_then(|value| serde_json::to_string(value).ok());
+        lines.push(format!("message\t{}", index));
+        lines.push(format!("field\t{}\trole\t{}", index, encode_nda_text(&msg.role)));
+        lines.push(format!("field\t{}\tname\t{}", index, encode_optional_nda_text(msg.name.as_deref())));
+        lines.push(format!("field\t{}\ttool_call_id\t{}", index, encode_optional_nda_text(msg.tool_call_id.as_deref())));
+        lines.push(format!("field\t{}\tcontent\t{}", index, encode_nda_text(&msg.content)));
         lines.push(format!(
-            "message\t{}\t{}\t{}\t{}\t{}\t{}",
+            "field\t{}\ttool_calls\t{}",
             index,
-            encode_nda_text(&msg.role),
-            encode_optional_nda_text(msg.name.as_deref()),
-            encode_optional_nda_text(msg.tool_call_id.as_deref()),
-            encode_nda_text(&msg.content),
             encode_optional_nda_text(tool_calls.as_deref()),
         ));
     }
@@ -2519,9 +2568,12 @@ mod tests {
 
         save_chatlogs_nda(tmp.path(), &messages);
         let chatlogs = std::fs::read_to_string(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
-        assert!(chatlogs.starts_with("chatlogs version 1\n"));
-        assert!(chatlogs.contains("message\t0\tassistant\t-\t-\thello\\nworld\t["));
-        assert!(chatlogs.contains("message\t1\ttool\tread_file\tcall_1\tdone\t-"));
+        assert!(chatlogs.starts_with("chatlogs version 2\n"));
+        assert!(chatlogs.contains("message_count 2"));
+        assert!(chatlogs.contains("field\t0\trole\tassistant"));
+        assert!(chatlogs.contains("field\t0\tcontent\thello\\nworld"));
+        assert!(chatlogs.contains("field\t1\tname\tread_file"));
+        assert!(chatlogs.contains("field\t1\ttool_call_id\tcall_1"));
 
         let loaded = load_chatlogs_nda(tmp.path()).unwrap();
         assert_eq!(loaded.len(), 2);
@@ -2529,6 +2581,27 @@ mod tests {
         assert!(loaded[0].tool_calls.is_some());
         assert_eq!(loaded[1].name.as_deref(), Some("read_file"));
         assert_eq!(loaded[1].tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn loads_legacy_v1_chatlogs_nda() {
+        let tmp = tempfile::tempdir().unwrap();
+        let velocity_dir = tmp.path().join(".velocity");
+        std::fs::create_dir_all(&velocity_dir).unwrap();
+        std::fs::write(
+            velocity_dir.join("chatlogs.nda"),
+            "chatlogs version 1\nmessage\t0\tassistant\t-\t-\thello\\nworld\t-\nmessage\t1\ttool\tread_file\tcall_1\tdone\t-\n",
+        )
+        .unwrap();
+
+        let loaded = load_chatlogs_nda(tmp.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].role, "assistant");
+        assert_eq!(loaded[0].content, "hello\nworld");
+        assert_eq!(loaded[1].role, "tool");
+        assert_eq!(loaded[1].name.as_deref(), Some("read_file"));
+        assert_eq!(loaded[1].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(loaded[1].content, "done");
     }
 
     #[test]
