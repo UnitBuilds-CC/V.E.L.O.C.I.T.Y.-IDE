@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
 use velocity_ide::site_map::SiteMap;
 use velocity_ide::site_map::verifier::NdaNode;
 
@@ -74,6 +75,63 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len])
     }
+}
+
+fn escape_nda_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+}
+
+fn crawl_facts_path(url: &str, sitemap_path: &Path) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(url.as_bytes());
+    let digest = hasher.finalize();
+    let capture_id = digest[..8]
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+    sitemap_path
+        .parent()
+        .unwrap_or(sitemap_path)
+        .join("browser-captures")
+        .join(format!("{}.nda", capture_id))
+}
+
+fn write_crawl_facts(
+    url: &str,
+    title: &str,
+    summary: &str,
+    elements: &[AomElement],
+    sitemap_path: &Path,
+) -> Result<PathBuf, String> {
+    let facts_path = crawl_facts_path(url, sitemap_path);
+    if let Some(parent) = facts_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("create browser capture dir: {err}"))?;
+    }
+
+    let mut facts = Vec::new();
+    facts.push("artifact:browser-capture kind page-crawl".to_string());
+    facts.push(format!("artifact:browser-capture page_url \"{}\"", escape_nda_text(url)));
+    facts.push(format!("artifact:browser-capture page_title \"{}\"", escape_nda_text(title)));
+    facts.push(format!("artifact:browser-capture page_summary \"{}\"", escape_nda_text(summary)));
+    facts.push(format!("artifact:browser-capture element_count {}", elements.len()));
+
+    for (idx, element) in elements.iter().enumerate() {
+        let element_id = format!("element:{}", idx + 1);
+        facts.push(format!("artifact:browser-capture element {}", element_id));
+        facts.push(format!("{} role \"{}\"", element_id, escape_nda_text(&element.role)));
+        facts.push(format!("{} name \"{}\"", element_id, escape_nda_text(&element.name)));
+        facts.push(format!("{} value \"{}\"", element_id, escape_nda_text(&element.value)));
+        if let Some(target_url) = &element.target_url {
+            facts.push(format!("{} target_url \"{}\"", element_id, escape_nda_text(target_url)));
+        }
+    }
+
+    fs::write(&facts_path, facts.join("\n")).map_err(|err| format!("write browser capture facts: {err}"))?;
+    Ok(facts_path)
 }
 
 pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, String> {
@@ -189,7 +247,8 @@ pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, 
     // 4. Save structured Merkle Triples directly into the local SiteMap
     let page_hash = sm.register_string(url).map_err(|e| e.to_string())?;
     let title_hash = sm.register_string(&title).map_err(|e| e.to_string())?;
-    let summary_hash = sm.register_string(&truncate_string(&page_text, 1000)).map_err(|e| e.to_string())?;
+    let page_summary = truncate_string(&page_text, 1000);
+    let summary_hash = sm.register_string(&page_summary).map_err(|e| e.to_string())?;
 
     // Page URL metadata triple
     sm.put_node(&NdaNode::Triple {
@@ -221,8 +280,7 @@ pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, 
         let el_val_hash = sm.register_string(&el.value).map_err(|e| e.to_string())?;
 
         // Generate unique structural hash for this instance
-        let mut hasher = sha2::Sha256::new();
-        use sha2::Digest;
+        let mut hasher = Sha256::new();
         hasher.update(page_hash.to_le_bytes());
         hasher.update(el.role.as_bytes());
         hasher.update(el.name.as_bytes());
@@ -281,9 +339,51 @@ pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, 
     }
 
     sm.flush().map_err(|e| e.to_string())?;
+    let facts_path = write_crawl_facts(url, &title, &page_summary, &elements, sitemap_path)?;
 
     Ok(format!(
-        "Crawler finished.\nURL: {}\nTitle: {}\nInteractive Elements: {}\nRegistered in Merkle SiteMap at {:?}",
-        url, title, elements.len(), sitemap_path
+        "Crawler finished.\nURL: {}\nTitle: {}\nInteractive Elements: {}\nRegistered in Merkle SiteMap at {:?}\nNDA Facts: {:?}",
+        url, title, elements.len(), sitemap_path, facts_path
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{crawl_facts_path, write_crawl_facts, AomElement};
+    use std::fs;
+
+    #[test]
+    fn writes_browser_capture_facts() {
+        let temp = tempfile::tempdir().unwrap();
+        let sitemap_path = temp.path().join("site_map");
+        let facts_path = write_crawl_facts(
+            "https://example.com/docs",
+            "Docs",
+            "Documentation landing page",
+            &[
+                AomElement {
+                    role: "link".to_string(),
+                    name: "API".to_string(),
+                    value: "https://example.com/api".to_string(),
+                    target_url: Some("https://example.com/api".to_string()),
+                },
+                AomElement {
+                    role: "button".to_string(),
+                    name: "Search".to_string(),
+                    value: "".to_string(),
+                    target_url: None,
+                },
+            ],
+            &sitemap_path,
+        )
+        .unwrap();
+
+        assert_eq!(facts_path, crawl_facts_path("https://example.com/docs", &sitemap_path));
+        let facts = fs::read_to_string(facts_path).unwrap();
+        assert!(facts.contains("artifact:browser-capture kind page-crawl"));
+        assert!(facts.contains("artifact:browser-capture page_title \"Docs\""));
+        assert!(facts.contains("artifact:browser-capture element_count 2"));
+        assert!(facts.contains("element:1 role \"link\""));
+        assert!(facts.contains("element:2 role \"button\""));
+    }
 }

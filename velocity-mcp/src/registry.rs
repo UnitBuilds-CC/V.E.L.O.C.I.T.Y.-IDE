@@ -523,6 +523,7 @@ mod tests {
         let res = crate::editor::browser::crawl_and_sync_sitemap(&url, &sitemap_path).unwrap();
         assert!(res.contains("Egui Test"));
         assert!(res.contains("Interactive Elements: 1"));
+        assert!(res.contains("NDA Facts:"));
 
         let sm = SiteMap::open(&sitemap_path, 0).unwrap();
         assert!(sm.len() > 0);
