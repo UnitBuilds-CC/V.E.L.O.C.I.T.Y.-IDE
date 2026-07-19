@@ -219,7 +219,9 @@ impl OrchestratorPanel {
                                     });
                                     ui.label(
                                         egui::RichText::new(format!(
-                                            "Template: {}",
+                                            "Policy: {} ({}) | Template: {}",
+                                            task.decomposition_policy_id,
+                                            task.decomposition_style.as_str(),
                                             task.instruction_template_id,
                                         ))
                                         .small()
