@@ -148,13 +148,42 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_get_session".to_string(),
-            description: "Read the current persisted browser session state, including current URL and cookies.".to_string(),
+            description: "Read the current persisted browser session state, including current URL, cookies, and storage state.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." }
                 },
                 "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_get_storage".to_string(),
+            description: "Read persisted browser storage state for a session scope (local or session).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "scope": { "type": "string", "description": "Storage scope: local or session." }
+                },
+                "required": ["sessionId", "scope"]
+            }),
+        },
+        Tool {
+            name: "browser_set_storage".to_string(),
+            description: "Seed or update persisted browser storage state for a session scope (local or session).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "scope": { "type": "string", "description": "Storage scope: local or session." },
+                    "entries": {
+                        "type": "object",
+                        "description": "String key/value storage entries to merge into the selected scope.",
+                        "additionalProperties": { "type": "string" }
+                    }
+                },
+                "required": ["sessionId", "scope", "entries"]
             }),
         },
         Tool {
@@ -411,6 +440,25 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let session = crate::editor::browser::load_session_state(&root, session_id)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             crate::editor::browser::session_state_to_json(&session).map_err(|e| e.into())
+        }
+        "browser_get_storage" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let scope = arguments["scope"].as_str().ok_or("scope is required")?;
+            crate::editor::browser::get_session_storage_entries(&root, session_id, scope)
+                .map_err(|e| e.into())
+        }
+        "browser_set_storage" => {
+            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let scope = arguments["scope"].as_str().ok_or("scope is required")?;
+            let entries_value = arguments["entries"].as_object().ok_or("entries is required")?;
+            let mut entries = std::collections::HashMap::new();
+            for (key, value) in entries_value {
+                let value = value.as_str().ok_or("storage entry values must be strings")?;
+                entries.insert(key.clone(), value.to_string());
+            }
+            let path = crate::editor::browser::set_session_storage_entries(&root, session_id, scope, &entries)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            Ok(format!("Updated browser storage for session '{}' scope '{}'\nSession JSON: {}", session_id, scope, path.display()))
         }
         "browser_session_navigate" => {
             let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
@@ -1337,6 +1385,23 @@ mod tests {
         .unwrap();
         assert!(session.contains("\"id\": \"qa-session\""));
         assert!(session.contains("\"name\": \"token\""));
+
+        let storage_updated = call_tool_in_workspace(
+            &root,
+            "browser_set_storage",
+            &json!({"sessionId": "qa-session", "scope": "local", "entries": {"theme": "dark", "token": "seeded"}}),
+        )
+        .unwrap();
+        assert!(storage_updated.contains("scope 'local'"));
+
+        let storage = call_tool_in_workspace(
+            &root,
+            "browser_get_storage",
+            &json!({"sessionId": "qa-session", "scope": "local"}),
+        )
+        .unwrap();
+        assert!(storage.contains("\"theme\": \"dark\""));
+        assert!(storage.contains("\"token\": \"seeded\""));
     }
 
     #[test]

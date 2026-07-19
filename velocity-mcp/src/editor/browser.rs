@@ -41,6 +41,12 @@ pub struct BrowserForm {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserStorageBucket {
+    pub scope: String,
+    pub entries: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserPageSnapshot {
     pub url: String,
     pub title: String,
@@ -48,6 +54,8 @@ pub struct BrowserPageSnapshot {
     pub elements: Vec<AomElement>,
     pub forms: Vec<BrowserForm>,
     pub cookies: Vec<BrowserCookie>,
+    #[serde(default)]
+    pub storage: Vec<BrowserStorageBucket>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -55,6 +63,10 @@ pub struct BrowserSessionState {
     pub id: String,
     pub current_url: Option<String>,
     pub cookies: Vec<BrowserCookie>,
+    #[serde(default)]
+    pub local_storage: HashMap<String, String>,
+    #[serde(default)]
+    pub session_storage: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +148,8 @@ pub struct BrowserSnapshotDiff {
     pub removed_forms: Vec<String>,
     pub added_cookies: Vec<String>,
     pub removed_cookies: Vec<String>,
+    pub added_storage: Vec<String>,
+    pub removed_storage: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,6 +169,8 @@ pub struct BrowserWorkflowRunReport {
     pub final_title: String,
     pub step_count: usize,
     pub cookie_count: usize,
+    pub local_storage_count: usize,
+    pub session_storage_count: usize,
     pub outputs: HashMap<String, String>,
     pub log: Vec<String>,
 }
@@ -185,6 +201,8 @@ pub struct BrowserWorkflowSuiteRunReport {
 struct BrowserHttpResponse {
     html: String,
     cookies: Vec<BrowserCookie>,
+    local_storage_updates: HashMap<String, String>,
+    session_storage_updates: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -439,6 +457,53 @@ fn cookie_header(cookies: &[BrowserCookie]) -> Option<String> {
     }
 }
 
+fn parse_storage_header(raw: &str) -> HashMap<String, String> {
+    let mut updates = HashMap::new();
+    for pair in raw.split(';') {
+        let trimmed = pair.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            updates.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    updates
+}
+
+fn storage_buckets(session: &BrowserSessionState) -> Vec<BrowserStorageBucket> {
+    let mut buckets = Vec::new();
+    if !session.local_storage.is_empty() {
+        buckets.push(BrowserStorageBucket {
+            scope: "local".to_string(),
+            entries: session.local_storage.clone(),
+        });
+    }
+    if !session.session_storage.is_empty() {
+        buckets.push(BrowserStorageBucket {
+            scope: "session".to_string(),
+            entries: session.session_storage.clone(),
+        });
+    }
+    buckets
+}
+
+fn storage_signature(bucket: &BrowserStorageBucket) -> Vec<String> {
+    let mut entries = bucket
+        .entries
+        .iter()
+        .map(|(key, value)| format!("{}:{}={}", bucket.scope, key, value))
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
+}
+
+fn apply_storage_updates(target: &mut HashMap<String, String>, updates: &HashMap<String, String>) {
+    for (key, value) in updates {
+        target.insert(key.clone(), value.clone());
+    }
+}
+
 fn fetch_with_session(
     url: &str,
     method: &str,
@@ -473,6 +538,14 @@ fn fetch_with_session(
             merge_cookie(&mut response_cookies, cookie);
         }
     }
+    let local_storage_updates = response
+        .header("X-Velocity-Local-Storage")
+        .map(parse_storage_header)
+        .unwrap_or_default();
+    let session_storage_updates = response
+        .header("X-Velocity-Session-Storage")
+        .map(parse_storage_header)
+        .unwrap_or_default();
 
     let html = response
         .into_string()
@@ -480,6 +553,8 @@ fn fetch_with_session(
     Ok(BrowserHttpResponse {
         html,
         cookies: response_cookies,
+        local_storage_updates,
+        session_storage_updates,
     })
 }
 
@@ -589,7 +664,12 @@ fn parse_forms(url: &str, html: &str) -> Vec<BrowserForm> {
     forms
 }
 
-fn parse_html_to_snapshot(url: &str, html: &str, cookies: &[BrowserCookie]) -> BrowserPageSnapshot {
+fn parse_html_to_snapshot(
+    url: &str,
+    html: &str,
+    cookies: &[BrowserCookie],
+    storage: &[BrowserStorageBucket],
+) -> BrowserPageSnapshot {
     let mut elements = Vec::new();
     let mut title = "Untitled Page".to_string();
     let mut page_text = String::new();
@@ -690,6 +770,7 @@ fn parse_html_to_snapshot(url: &str, html: &str, cookies: &[BrowserCookie]) -> B
         elements,
         forms: parse_forms(url, html),
         cookies: cookies.to_vec(),
+        storage: storage.to_vec(),
     }
 }
 
@@ -716,6 +797,7 @@ fn write_crawl_facts(
     elements: &[AomElement],
     forms: &[BrowserForm],
     cookies: &[BrowserCookie],
+    storage: &[BrowserStorageBucket],
     sitemap_path: &Path,
 ) -> Result<PathBuf, String> {
     let facts_path = crawl_facts_path(url, sitemap_path);
@@ -723,13 +805,15 @@ fn write_crawl_facts(
         fs::create_dir_all(parent).map_err(|err| format!("create browser capture dir: {err}"))?;
     }
 
+    let storage_entry_count = storage.iter().map(|bucket| bucket.entries.len()).sum::<usize>();
     let mut facts = vec![
-        "browser-capture version 4".to_string(),
-        "field_count 4".to_string(),
+        "browser-capture version 5".to_string(),
+        "field_count 5".to_string(),
         "field\tkind\tpage-crawl".to_string(),
         format!("field\telement_count\t{}", elements.len()),
         format!("field\tform_count\t{}", forms.len()),
         format!("field\tcookie_count\t{}", cookies.len()),
+        format!("field\tstorage_entry_count\t{}", storage_entry_count),
         "page_field_count 3".to_string(),
         format!("page_field\turl\t{}", encode_nda_text(url)),
         format!("page_field\ttitle\t{}", encode_nda_text(title)),
@@ -783,6 +867,26 @@ fn write_crawl_facts(
         facts.push(format!("cookie\t{}", idx));
         facts.push(format!("cookie_field\t{}\tname\t{}", idx, encode_nda_text(&cookie.name)));
         facts.push(format!("cookie_field\t{}\tvalue\t{}", idx, encode_nda_text(&cookie.value)));
+    }
+
+    for (bucket_idx, bucket) in storage.iter().enumerate() {
+        facts.push(format!("storage\t{}", bucket_idx));
+        facts.push(format!("storage_field\t{}\tscope\t{}", bucket_idx, encode_nda_text(&bucket.scope)));
+        for (entry_idx, (key, value)) in bucket.entries.iter().enumerate() {
+            facts.push(format!("storage_entry\t{}\t{}", bucket_idx, entry_idx));
+            facts.push(format!(
+                "storage_entry_field\t{}\t{}\tkey\t{}",
+                bucket_idx,
+                entry_idx,
+                encode_nda_text(key)
+            ));
+            facts.push(format!(
+                "storage_entry_field\t{}\t{}\tvalue\t{}",
+                bucket_idx,
+                entry_idx,
+                encode_nda_text(value)
+            ));
+        }
     }
 
     fs::write(&facts_path, facts.join("\n") + "\n")
@@ -878,6 +982,8 @@ pub fn create_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf
         id: session_id.to_string(),
         current_url: None,
         cookies: Vec::new(),
+        local_storage: HashMap::new(),
+        session_storage: HashMap::new(),
     };
     save_session_state(workspace_root, &session)
 }
@@ -900,6 +1006,35 @@ pub fn load_session_state(workspace_root: &Path, session_id: &str) -> Result<Bro
 
 pub fn session_state_to_json(session: &BrowserSessionState) -> Result<String, String> {
     serde_json::to_string_pretty(session).map_err(|err| format!("serialise browser session state: {err}"))
+}
+
+pub fn set_session_storage_entries(
+    workspace_root: &Path,
+    session_id: &str,
+    scope: &str,
+    entries: &HashMap<String, String>,
+) -> Result<PathBuf, String> {
+    let mut session = load_session_state(workspace_root, session_id)?;
+    match scope {
+        "local" => apply_storage_updates(&mut session.local_storage, entries),
+        "session" => apply_storage_updates(&mut session.session_storage, entries),
+        _ => return Err(format!("unsupported browser storage scope: '{}'", scope)),
+    }
+    save_session_state(workspace_root, &session)
+}
+
+pub fn get_session_storage_entries(
+    workspace_root: &Path,
+    session_id: &str,
+    scope: &str,
+) -> Result<String, String> {
+    let session = load_session_state(workspace_root, session_id)?;
+    let entries = match scope {
+        "local" => &session.local_storage,
+        "session" => &session.session_storage,
+        _ => return Err(format!("unsupported browser storage scope: '{}'", scope)),
+    };
+    serde_json::to_string_pretty(entries).map_err(|err| format!("serialise browser storage state: {err}"))
 }
 
 fn write_session_checkpoint(
@@ -980,6 +1115,7 @@ pub fn restore_session_checkpoint(
             &snapshot.elements,
             &snapshot.forms,
             &snapshot.cookies,
+            &snapshot.storage,
             sitemap_path,
         )?;
         let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
@@ -1002,6 +1138,8 @@ pub fn navigate_session(
         id: session_id.to_string(),
         current_url: None,
         cookies: Vec::new(),
+        local_storage: HashMap::new(),
+        session_storage: HashMap::new(),
     });
     let snapshot = crawl_page_snapshot_with_session(&mut session, url)?;
     persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
@@ -1012,18 +1150,21 @@ pub fn navigate_session(
         &snapshot.elements,
         &snapshot.forms,
         &snapshot.cookies,
+        &snapshot.storage,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
     let session_path = save_session_state(workspace_root, &session)?;
 
     Ok(format!(
-        "Session navigate complete.\nSession: {}\nURL: {}\nTitle: {}\nForms: {}\nCookies: {}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}",
+        "Session navigate complete.\nSession: {}\nURL: {}\nTitle: {}\nForms: {}\nCookies: {}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}",
         session.id,
         snapshot.url,
         snapshot.title,
         snapshot.forms.len(),
         snapshot.cookies.len(),
+        session.local_storage.len(),
+        session.session_storage.len(),
         snapshot_path.display(),
         session_path.display(),
         facts_path.display(),
@@ -1035,6 +1176,8 @@ pub fn crawl_page_snapshot(url: &str) -> Result<BrowserPageSnapshot, String> {
         id: "ephemeral".to_string(),
         current_url: Some(url.to_string()),
         cookies: Vec::new(),
+        local_storage: HashMap::new(),
+        session_storage: HashMap::new(),
     };
     crawl_page_snapshot_with_session(&mut session, url)
 }
@@ -1047,8 +1190,11 @@ pub fn crawl_page_snapshot_with_session(
     for cookie in response.cookies.iter().cloned() {
         merge_cookie(&mut session.cookies, cookie);
     }
+    apply_storage_updates(&mut session.local_storage, &response.local_storage_updates);
+    apply_storage_updates(&mut session.session_storage, &response.session_storage_updates);
     session.current_url = Some(url.to_string());
-    Ok(parse_html_to_snapshot(url, &response.html, &session.cookies))
+    let storage = storage_buckets(session);
+    Ok(parse_html_to_snapshot(url, &response.html, &session.cookies, &storage))
 }
 
 fn url_encode(input: &str) -> String {
@@ -1136,6 +1282,14 @@ fn cookie_signature(cookie: &BrowserCookie) -> String {
     format!("{}={}", cookie.name, cookie.value)
 }
 
+fn snapshot_storage_signatures(snapshot: &BrowserPageSnapshot) -> HashSet<String> {
+    snapshot
+        .storage
+        .iter()
+        .flat_map(storage_signature)
+        .collect::<HashSet<_>>()
+}
+
 pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot) -> BrowserSnapshotDiff {
     let before_elements = before
         .elements
@@ -1159,6 +1313,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
         .iter()
         .map(cookie_signature)
         .collect::<HashSet<_>>();
+    let before_storage = snapshot_storage_signatures(before);
+    let after_storage = snapshot_storage_signatures(after);
 
     let mut added_elements = after_elements.difference(&before_elements).cloned().collect::<Vec<_>>();
     let mut removed_elements = before_elements.difference(&after_elements).cloned().collect::<Vec<_>>();
@@ -1166,6 +1322,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
     let mut removed_forms = before_forms.difference(&after_forms).cloned().collect::<Vec<_>>();
     let mut added_cookies = after_cookies.difference(&before_cookies).cloned().collect::<Vec<_>>();
     let mut removed_cookies = before_cookies.difference(&after_cookies).cloned().collect::<Vec<_>>();
+    let mut added_storage = after_storage.difference(&before_storage).cloned().collect::<Vec<_>>();
+    let mut removed_storage = before_storage.difference(&after_storage).cloned().collect::<Vec<_>>();
 
     added_elements.sort();
     removed_elements.sort();
@@ -1173,6 +1331,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
     removed_forms.sort();
     added_cookies.sort();
     removed_cookies.sort();
+    added_storage.sort();
+    removed_storage.sort();
 
     BrowserSnapshotDiff {
         title_changed: before.title != after.title,
@@ -1183,6 +1343,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
         removed_forms,
         added_cookies,
         removed_cookies,
+        added_storage,
+        removed_storage,
     }
 }
 
@@ -1212,6 +1374,12 @@ fn render_snapshot_diff(diff: &BrowserSnapshotDiff) -> String {
     if !diff.removed_cookies.is_empty() {
         parts.push(format!("cookies-{}", diff.removed_cookies.len()));
     }
+    if !diff.added_storage.is_empty() {
+        parts.push(format!("storage+{}", diff.added_storage.len()));
+    }
+    if !diff.removed_storage.is_empty() {
+        parts.push(format!("storage-{}", diff.removed_storage.len()));
+    }
 
     if parts.is_empty() {
         "no_semantic_change".to_string()
@@ -1229,6 +1397,8 @@ fn is_semantically_stable(diff: &BrowserSnapshotDiff) -> bool {
         && diff.removed_forms.is_empty()
         && diff.added_cookies.is_empty()
         && diff.removed_cookies.is_empty()
+        && diff.added_storage.is_empty()
+        && diff.removed_storage.is_empty()
 }
 
 fn wait_for_condition<F>(
@@ -1334,6 +1504,7 @@ pub fn wait_for_session(
             elements: Vec::new(),
             forms: Vec::new(),
             cookies: session.cookies.clone(),
+            storage: storage_buckets(&session),
         }));
     let diff = if let Some(wait_text) = text {
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
@@ -1365,17 +1536,20 @@ pub fn wait_for_session(
         &snapshot.elements,
         &snapshot.forms,
         &snapshot.cookies,
+        &snapshot.storage,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
     let session_path = save_session_state(workspace_root, &session)?;
 
     Ok(format!(
-        "Session wait complete.\nSession: {}\nURL: {}\nTitle: {}\nDiff: {}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}",
+        "Session wait complete.\nSession: {}\nURL: {}\nTitle: {}\nDiff: {}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}\nNDA Facts: {}",
         session.id,
         snapshot.url,
         snapshot.title,
         render_snapshot_diff(&diff),
+        session.local_storage.len(),
+        session.session_storage.len(),
         snapshot_path.display(),
         session_path.display(),
         facts_path.display(),
@@ -1478,8 +1652,11 @@ fn submit_current_form(state: &mut BrowserReplayState, form_id: Option<&str>) ->
     for cookie in response.cookies.iter().cloned() {
         merge_cookie(&mut state.session.cookies, cookie);
     }
+    apply_storage_updates(&mut state.session.local_storage, &response.local_storage_updates);
+    apply_storage_updates(&mut state.session.session_storage, &response.session_storage_updates);
     state.session.current_url = Some(target_url.clone());
-    state.snapshot = parse_html_to_snapshot(&target_url, &response.html, &state.session.cookies);
+    let storage = storage_buckets(&state.session);
+    state.snapshot = parse_html_to_snapshot(&target_url, &response.html, &state.session.cookies, &storage);
     state.filled_fields.clear();
     Ok(())
 }
@@ -1494,6 +1671,7 @@ pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, 
         &snapshot.elements,
         &snapshot.forms,
         &snapshot.cookies,
+        &snapshot.storage,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
@@ -1992,17 +2170,21 @@ fn replay_workflow_with_state(
         final_title: state.snapshot.title.clone(),
         step_count: workflow.steps.len(),
         cookie_count: state.session.cookies.len(),
+        local_storage_count: state.session.local_storage.len(),
+        session_storage_count: state.session.session_storage.len(),
         outputs: state.outputs.clone(),
         log: log.clone(),
     };
     let result = format!(
-        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\nOutputs: {}\n{}",
+        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\nLocal storage: {}\nSession storage: {}\nOutputs: {}\n{}",
         workflow.name,
         state.snapshot.url,
         state.snapshot.title,
         state.session.id,
         workflow.steps.len(),
         state.session.cookies.len(),
+        state.session.local_storage.len(),
+        state.session.session_storage.len(),
         state.outputs.len(),
         log.join("\n")
     );
@@ -2022,6 +2204,7 @@ fn persist_replay_state(
         &state.snapshot.elements,
         &state.snapshot.forms,
         &state.snapshot.cookies,
+        &state.snapshot.storage,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&state.snapshot, sitemap_path)?;
@@ -2060,6 +2243,8 @@ pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
         id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
         current_url: Some(workflow.start_url.clone()),
         cookies: Vec::new(),
+        local_storage: HashMap::new(),
+        session_storage: HashMap::new(),
     };
     let snapshot = crawl_page_snapshot_with_session(&mut session, &workflow.start_url)?;
     let state = BrowserReplayState {
@@ -2082,6 +2267,8 @@ pub fn replay_workflow_with_artifacts(
         id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
         current_url: Some(workflow.start_url.clone()),
         cookies: Vec::new(),
+        local_storage: HashMap::new(),
+        session_storage: HashMap::new(),
     };
     let snapshot = crawl_page_snapshot_with_session(&mut session, &workflow.start_url)?;
     let state = BrowserReplayState {
@@ -2280,17 +2467,23 @@ mod tests {
             ],
             &[],
             &[BrowserCookie { name: "sid".to_string(), value: "123".to_string() }],
+            &[super::BrowserStorageBucket {
+                scope: "local".to_string(),
+                entries: HashMap::from([("theme".to_string(), "dark".to_string())]),
+            }],
             &sitemap_path,
         )
         .unwrap();
 
         assert_eq!(facts_path, crawl_facts_path("https://example.com/docs", &sitemap_path));
         let facts = fs::read_to_string(facts_path).unwrap();
-        assert!(facts.starts_with("browser-capture version 4\n"));
-        assert!(facts.contains("field_count 4\n"));
+        assert!(facts.starts_with("browser-capture version 5\n"));
+        assert!(facts.contains("field_count 5\n"));
         assert!(facts.contains("field\tcookie_count\t1\n"));
+        assert!(facts.contains("field\tstorage_entry_count\t1\n"));
         assert!(facts.contains("element_field\t0\trole\tlink"));
         assert!(facts.contains("cookie_field\t0\tname\tsid"));
+        assert!(facts.contains("storage_field\t0\tscope\tlocal"));
     }
 
     #[test]
@@ -2298,6 +2491,7 @@ mod tests {
         let snapshot = parse_html_to_snapshot(
             "https://example.com",
             "<html><head><title>Docs</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input name='password' type='password'><input type='submit' value='Sign in'></form><a href='/api'>API</a></body></html>",
+            &[],
             &[],
         );
         assert_eq!(snapshot.title, "Docs");
@@ -2373,12 +2567,15 @@ mod tests {
             "https://example.com",
             "<html><head><title>Checkout</title></head><body><form id='login'><input name='email' placeholder='Email'></form><p>Checkout ready</p></body></html>",
             &[],
+            &[],
         );
         let state = super::BrowserReplayState {
             session: super::BrowserSessionState {
                 id: "branch-session".to_string(),
                 current_url: Some("https://example.com".to_string()),
                 cookies: Vec::new(),
+                local_storage: HashMap::new(),
+                session_storage: HashMap::new(),
             },
             snapshot,
             filled_fields: HashMap::new(),
@@ -2461,6 +2658,7 @@ mod tests {
             "https://example.com",
             "<html><head><title>Docs</title></head><body><form id='login' action='/login' method='post'><input name='email' value='saved@example.com' placeholder='Email'></form><a href='/api'>API</a></body></html>",
             &[],
+            &[],
         );
         let title = super::extract_snapshot_value(&snapshot, "title", None, None, None).unwrap();
         let link_name = super::extract_snapshot_value(&snapshot, "element_name", Some("link"), Some("API"), None).unwrap();
@@ -2536,11 +2734,16 @@ mod tests {
             "https://example.com",
             "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'></form></body></html>",
             &[],
+            &[],
         );
         let after = parse_html_to_snapshot(
             "https://example.com/dashboard",
             "<html><head><title>Dashboard</title></head><body><a href='/reports'>Reports</a></body></html>",
             &[BrowserCookie { name: "session".to_string(), value: "abc123".to_string() }],
+            &[super::BrowserStorageBucket {
+                scope: "local".to_string(),
+                entries: HashMap::from([("token".to_string(), "abc123".to_string())]),
+            }],
         );
 
         let diff = diff_snapshots(&before, &after);
@@ -2548,6 +2751,7 @@ mod tests {
         assert!(diff.added_elements.iter().any(|entry| entry.contains("link:Reports")));
         assert!(diff.removed_forms.iter().any(|entry| entry.contains("login:POST")));
         assert!(diff.added_cookies.iter().any(|entry| entry == "session=abc123"));
+        assert!(diff.added_storage.iter().any(|entry| entry == "local:token=abc123"));
     }
 
     #[test]
@@ -2718,12 +2922,15 @@ mod tests {
             &start_url,
             "<html><head><title>Dashboard</title></head><body><p>Stable</p></body></html>",
             &[],
+            &[],
         );
         let state = super::BrowserReplayState {
             session: super::BrowserSessionState {
                 id: "static-wait-session".to_string(),
                 current_url: Some(start_url),
                 cookies: Vec::new(),
+                local_storage: HashMap::new(),
+                session_storage: HashMap::new(),
             },
             snapshot,
             filled_fields: HashMap::new(),
