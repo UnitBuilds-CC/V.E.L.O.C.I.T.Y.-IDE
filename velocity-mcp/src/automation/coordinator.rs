@@ -16,6 +16,10 @@ pub struct CoordinatorTask {
     pub task_id: String,
     pub files: Vec<PathBuf>,
     pub instructions: String,
+    pub provider: AiProvider,
+    pub model_id: String,
+    pub model_label: String,
+    pub thinking: bool,
 }
 
 pub struct WorkspaceCoordinator {
@@ -84,8 +88,11 @@ impl WorkspaceCoordinator {
                     task: orchestrator_task,
                     workspace_root: base_workspace.to_path_buf(),
                     instructions: task.instructions.clone(),
-                    provider_label: "coordinator".to_string(),
-                    model_label: "live-runtime".to_string(),
+                    provider: task.provider,
+                    provider_label: task.provider.label().to_string(),
+                    model_id: task.model_id.clone(),
+                    model_label: task.model_label.clone(),
+                    thinking: task.thinking,
                 },
                 self.mediator.clone(),
                 weight_root,
@@ -149,11 +156,19 @@ mod tests {
                 task_id: "Agent_1".to_string(),
                 files: vec![PathBuf::from("src/main.rs")],
                 instructions: "Compile main".to_string(),
+                provider: AiProvider::CloudflareWorkersAi,
+                model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
+                model_label: "llama-3.1-8b-instruct".to_string(),
+                thinking: false,
             },
             CoordinatorTask {
                 task_id: "Agent_2".to_string(),
                 files: vec![PathBuf::from("src/lib.rs")],
                 instructions: "Clean lib".to_string(),
+                provider: AiProvider::CloudflareWorkersAi,
+                model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
+                model_label: "llama-3.1-8b-instruct".to_string(),
+                thinking: false,
             },
         ];
 

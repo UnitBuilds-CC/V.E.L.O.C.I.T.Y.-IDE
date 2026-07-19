@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use velocity_ide::site_map::SiteMap;
 
+use crate::agent::{AiProvider, HeadlessSubAgentRequest, run_headless_subagent};
 use crate::automation::mediator::MediatorArena;
 
 use super::blueprint::Task;
@@ -54,8 +55,11 @@ pub struct WorkerAssignment {
     pub task: Task,
     pub workspace_root: PathBuf,
     pub instructions: String,
+    pub provider: AiProvider,
     pub provider_label: String,
+    pub model_id: String,
     pub model_label: String,
+    pub thinking: bool,
 }
 
 pub fn spawn_live_worker(
@@ -151,8 +155,8 @@ fn execute_live_task(
     fs::write(
         run_dir.join("instructions.txt"),
         format!(
-            "provider: {}\nmodel: {}\n\n{}",
-            assignment.provider_label, assignment.model_label, assignment.instructions
+            "provider: {}\nmodel: {}\nmodel_id: {}\n\n{}",
+            assignment.provider_label, assignment.model_label, assignment.model_id, assignment.instructions
         ),
     )
     .map_err(|err| format!("write instructions: {err}"))?;
@@ -160,29 +164,45 @@ fn execute_live_task(
     let snapshot_root = run_dir.join("scope_snapshot");
     fs::create_dir_all(&snapshot_root).map_err(|err| format!("create snapshot dir: {err}"))?;
 
-    let mut outputs = Vec::new();
-    for entry in scope {
-        let rel_path = PathBuf::from(entry);
-        let abs_path = if rel_path.is_absolute() {
-            rel_path.clone()
-        } else {
-            assignment.workspace_root.join(&rel_path)
-        };
-        if abs_path.is_file() {
-            let dest = snapshot_root.join(&rel_path);
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|err| format!("create snapshot parent: {err}"))?;
-            }
-            fs::copy(&abs_path, &dest).map_err(|err| format!("snapshot file {}: {err}", abs_path.display()))?;
-            outputs.push(rel_path.display().to_string());
-        }
-    }
+    let scoped_paths = collect_scoped_paths(&assignment.workspace_root, scope);
+    let before_contents = snapshot_scope(&scoped_paths, &assignment.workspace_root, &snapshot_root)?;
 
-    let summary = if outputs.is_empty() {
-        "No existing scoped files were available to snapshot.".to_string()
+    let subagent = run_headless_subagent(HeadlessSubAgentRequest {
+        workspace_root: assignment.workspace_root.clone(),
+        provider: assignment.provider,
+        model: assignment.model_id.clone(),
+        thinking: assignment.thinking,
+        prompt: assignment.instructions.clone(),
+    });
+
+    let changed = detect_scoped_changes(&scoped_paths, &before_contents)?;
+    let mut outputs: Vec<String> = changed
+        .into_iter()
+        .map(|path| path.strip_prefix(&assignment.workspace_root).unwrap_or(&path).display().to_string())
+        .collect();
+    outputs.sort();
+    outputs.dedup();
+
+    let mut summary = String::new();
+    if !subagent.status_updates.is_empty() {
+        summary.push_str("Status updates:\n");
+        for line in &subagent.status_updates {
+            summary.push_str("- ");
+            summary.push_str(line);
+            summary.push('\n');
+        }
+        summary.push('\n');
+    }
+    if !subagent.transcript.trim().is_empty() {
+        summary.push_str("Transcript:\n");
+        summary.push_str(subagent.transcript.trim());
+        summary.push_str("\n\n");
+    }
+    if outputs.is_empty() {
+        summary.push_str("No scoped file changes were produced by the provider-backed sub-agent.");
     } else {
-        format!("Snapshotted {} scoped file(s).", outputs.len())
-    };
+        summary.push_str(&format!("Changed {} scoped file(s).", outputs.len()));
+    }
     fs::write(run_dir.join("summary.txt"), &summary).map_err(|err| format!("write summary: {err}"))?;
 
     if outputs.is_empty() {
@@ -190,4 +210,54 @@ fn execute_live_task(
     } else {
         Ok(outputs)
     }
+}
+
+fn collect_scoped_paths(workspace_root: &Path, scope: &[String]) -> Vec<PathBuf> {
+    scope
+        .iter()
+        .map(PathBuf::from)
+        .map(|rel_path| if rel_path.is_absolute() { rel_path } else { workspace_root.join(rel_path) })
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+fn snapshot_scope(
+    scoped_paths: &[PathBuf],
+    workspace_root: &Path,
+    snapshot_root: &Path,
+) -> Result<Vec<(PathBuf, Option<Vec<u8>>)>, String> {
+    let mut before_contents = Vec::new();
+    for abs_path in scoped_paths {
+        let rel_path = abs_path.strip_prefix(workspace_root).unwrap_or(abs_path);
+        let dest = snapshot_root.join(rel_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("create snapshot parent: {err}"))?;
+        }
+        let bytes = fs::read(abs_path).map_err(|err| format!("snapshot file {}: {err}", abs_path.display()))?;
+        fs::write(&dest, &bytes).map_err(|err| format!("write snapshot {}: {err}", dest.display()))?;
+        before_contents.push((abs_path.clone(), Some(bytes)));
+    }
+    Ok(before_contents)
+}
+
+fn detect_scoped_changes(
+    scoped_paths: &[PathBuf],
+    before_contents: &[(PathBuf, Option<Vec<u8>>)],
+) -> Result<Vec<PathBuf>, String> {
+    let mut changed = Vec::new();
+    for abs_path in scoped_paths {
+        let before = before_contents
+            .iter()
+            .find(|(path, _)| path == abs_path)
+            .and_then(|(_, bytes)| bytes.clone());
+        let after = match fs::read(abs_path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => return Err(format!("read post-run file {}: {err}", abs_path.display())),
+        };
+        if after != before {
+            changed.push(abs_path.clone());
+        }
+    }
+    Ok(changed)
 }

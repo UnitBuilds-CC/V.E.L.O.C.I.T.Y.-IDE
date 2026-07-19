@@ -1,5 +1,6 @@
-use std::path::PathBuf;
 use std::io::BufRead;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use crossbeam_channel::{Sender, Receiver};
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
@@ -36,6 +37,22 @@ pub enum AgentToUiMessage {
     AccountUsage { accounts: Vec<crate::usage::AccountUsageView>, date: String },
     ChatHistoryRestored(Vec<(String, String)>),
     ProviderChanged(AiProvider),
+}
+
+#[derive(Debug, Clone)]
+pub struct HeadlessSubAgentRequest {
+    pub workspace_root: PathBuf,
+    pub provider: AiProvider,
+    pub model: String,
+    pub thinking: bool,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HeadlessSubAgentResult {
+    pub status_updates: Vec<String>,
+    pub transcript: String,
+    pub changed_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -339,7 +356,7 @@ fn fetch_openrouter_models(or_accounts: &[OpenRouterAccount], usage_tracker: &Us
     Ok(models)
 }
 
-fn default_model_info(id: &str) -> ModelInfo {
+pub fn default_model_info(id: &str) -> ModelInfo {
     let lower = id.to_lowercase();
     infer_model_info(id.to_string(), &Value::Null).unwrap_or(ModelInfo {
         id: id.to_string(),
@@ -356,7 +373,7 @@ fn default_model_info(id: &str) -> ModelInfo {
     })
 }
 
-fn enrich_model_profile(accounts: &[CloudflareAccount], profile: &ModelInfo) -> ModelInfo {
+pub fn enrich_model_profile(accounts: &[CloudflareAccount], profile: &ModelInfo) -> ModelInfo {
     let Some(account) = accounts.first() else { return profile.clone() };
     let encoded_model = profile.id.replace('%', "%25").replace('/', "%2F").replace('@', "%40");
     let url = format!(
@@ -1171,6 +1188,112 @@ fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String>
             Ok(())
         }
         Err(e) => Err(format!("Failed to execute cargo check: {:?}", e))
+    }
+}
+
+pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
+    let accounts = load_accounts_from_env();
+    let or_accounts = load_openrouter_accounts_from_env();
+    let mut usage_tracker = UsageTracker::new(&request.workspace_root);
+    let selected_profile = match request.provider {
+        AiProvider::OpenRouter => ModelInfo {
+            id: request.model.clone(),
+            label: request.model.rsplit('/').next().unwrap_or(&request.model).to_string(),
+            api_style: ApiStyle::OpenAiChat,
+            supports_tools: false,
+            supports_thinking: false,
+        },
+        AiProvider::CloudflareWorkersAi => {
+            let profile = default_model_info(&request.model);
+            enrich_model_profile(&accounts, &profile)
+        }
+    };
+    let thinking = request.thinking && selected_profile.supports_thinking;
+
+    let use_inline_tools = request.provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
+    let mut message_history = vec![ChatMessage {
+        role: "system".to_string(),
+        content: format!(
+            "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
+            You have access to local workspace files and execution sandboxes via tools. \
+            Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
+            if use_inline_tools { build_inline_tool_docs() } else { String::new() }
+        ),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    }];
+    message_history.push(ChatMessage {
+        role: "user".to_string(),
+        content: request.prompt,
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    });
+
+    let (agent_event_tx, agent_event_rx) = crossbeam_channel::unbounded();
+    let (agent_ui_tx, agent_ui_rx) = crossbeam_channel::unbounded();
+    let status_updates = Arc::new(Mutex::new(Vec::new()));
+    let transcript = Arc::new(Mutex::new(String::new()));
+    let changed_files = Arc::new(Mutex::new(Vec::new()));
+
+    let status_updates_collector = status_updates.clone();
+    let transcript_collector = transcript.clone();
+    let changed_files_collector = changed_files.clone();
+    let auto_approve_tx = agent_ui_tx.clone();
+
+    let collector = std::thread::spawn(move || {
+        while let Ok(msg) = agent_event_rx.recv() {
+            match msg {
+                AgentToUiMessage::StatusUpdate(status) => {
+                    status_updates_collector.lock().unwrap().push(status);
+                }
+                AgentToUiMessage::OutputToken(token) | AgentToUiMessage::ThoughtToken(token) => {
+                    transcript_collector.lock().unwrap().push_str(&token);
+                }
+                AgentToUiMessage::UpdateFileBuffer { path, .. } => {
+                    let mut guard = changed_files_collector.lock().unwrap();
+                    if !guard.contains(&path) {
+                        guard.push(path);
+                    }
+                }
+                AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
+                    status_updates_collector
+                        .lock()
+                        .unwrap()
+                        .push(format!("Auto-approving tool: {tool_name}"));
+                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool { id, tool_name, arguments });
+                }
+                AgentToUiMessage::AgentFinished => break,
+                _ => {}
+            }
+        }
+    });
+
+    run_agent_reasoning_loop(
+        &request.workspace_root,
+        &accounts,
+        &or_accounts,
+        &request.model,
+        &selected_profile,
+        request.provider,
+        thinking,
+        &mut message_history,
+        &mut usage_tracker,
+        &agent_ui_rx,
+        &agent_event_tx,
+    );
+
+    drop(agent_event_tx);
+    let _ = collector.join();
+
+    let status_updates = status_updates.lock().unwrap().clone();
+    let transcript = transcript.lock().unwrap().clone();
+    let changed_files = changed_files.lock().unwrap().clone();
+    HeadlessSubAgentResult {
+        status_updates,
+        transcript,
+        changed_files,
     }
 }
 
