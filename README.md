@@ -4,17 +4,34 @@ A premium, high-performance developer workspace and agentic environment built in
 
 ---
 
-## Key Features
+## Architecture Overview
 
-- **Pure Rust Native Desktop GUI**: Built using `eframe` and `egui` for immediate-mode rendering, utilizing Vulkan GPU enumeration and acceleration for sub-millisecond frame dispatch.
-- **Dockable Workspace Panels**: Powered by `egui_dock`, featuring layout persistence, multi-tab file management, real-time command terminal output, and a dedicated AI agent control panel.
-- **Syntax Highlighting Code Editor**: A zero-allocation code viewer and editor integrated with `syntect` for syntax styling of Rust, Python, and configuration files.
-- **Built-in agent (Antigravity)**:
-  - **Dual Provider Support**: Seamless dynamic switching between **Cloudflare Workers AI** and **OpenRouter** (supporting premium models like `tencent/hy3:free`, `nvidia/nemotron-70b-instruct`, and more).
-  - **Agentic Loop**: The agent loops recursively, executing tools, reading output, and self-correcting.
-  - **Inline Tool Call Parsers**: Built-in parsers for text-based tool-calling models that bypass standard JSON tools (handles both `<tool_call>` XML-like blocks and `[Calling tool 'name' with arguments 'json']` bracket notations).
-  - **Token Suppression & Stream Buffer**: Suppresses raw tool calls and JSON payloads from appearing in the user's chat panel, maintaining a clean chat stream.
-- **Secure Sandbox Execution (`wuias_shield`)**: Integrated with a Windows DLL-level redirect sandbox. Commands and scripts inside `.nda` packages are executed within an isolated file-system environment.
+### Rust IDE (velocity-mcp)
+- **GUI Framework**: `egui` with `egui_dock` for dockable panels
+- **Rendering**: Vulkan GPU acceleration for sub-millisecond frame dispatch
+- **Core Features**:
+  - Syntax highlighting code editor with `syntect`
+  - Real-time command terminal
+  - AI agent control panel with dual providers (OpenRouter, Cloudflare)
+  - DLL-level sandboxing for tool execution
+  - Agent reasoning loops with history budget management
+
+### Go Browser (browsing/)
+- **Orchestration**: Swarm coordination, node agents, graph drivers
+- **API Server**: RESTful API for browser control and automation
+- **Database**: Sitemap, vault, and graph storage
+- **Capabilities**:
+  - Automated web crawling and comparison testing
+  - Session management with security policies
+  - CAPTCHA solving and challenge handling
+  - Orchestrator for distributed browser instances
+  - Native host integration for browser automation
+  - Wireguard VPN integration
+
+### MCP Integration
+- Both Rust IDE and Go browser expose MCP interfaces
+- Tool registry bridges IDE commands to browser/orchestration capabilities
+- Shared protocol for seamless cross-language communication
 
 ---
 
@@ -22,17 +39,31 @@ A premium, high-performance developer workspace and agentic environment built in
 
 ```text
 velocity-workspace/
-├── velocity-mcp/          # Main MCP Server and Native IDE
+├── velocity-mcp/          # Main Rust MCP Server + Native GUI IDE (egui-based)
 │   ├── src/
-│   │   ├── agent.rs       # Agent reasoning loops, SSE streams & history budget management
-│   │   ├── registry.rs    # Tool definitions, DLL sandboxing, & fallback execution
-│   │   ├── main.rs        # App entry point
-│   │   └── editor/        # GUI panels (app, code_editor, theme, chat_panel, status_bar, etc.)
-│   ├── docs/              # System architecture and UI upgrade guides
-│   ├── scripts/           # Python check & helper utilities
-│   └── Cargo.toml         # Rust dependency definitions
-├── ide/                   # Legacy C++ / C# project files (deprecated)
-└── agent/                 # Legacy Python agent components (deprecated)
+│   │   ├── agent.rs              # Agent reasoning loops, SSE streams & history management
+│   │   ├── registry.rs           # Tool definitions, DLL sandboxing, & fallback execution
+│   │   ├── main.rs               # App entry point
+│   │   ├── editor/               # GUI panels (app, code_editor, theme, chat, status_bar, browser)
+│   │   ├── automation/           # Build runner, test orchestration, mediators
+│   │   ├── compiler/             # Tokenizer, JIT, shader compilation
+│   │   ├── protocol/             # NMCP binary & JSON-RPC implementations
+│   │   ├── ipc/                  # Shared memory & telemetry
+│   │   └── orchestrator/         # Worker scheduling, validation, reconciliation
+│   ├── docs/                     # System architecture and UI guides
+│   ├── scripts/                  # Helper utilities
+│   └── Cargo.toml
+├── browsing/              # Go-based browser engine and orchestration
+│   ├── cmd/               # Executables (API, crawler, orchestrator, native_host, mcp, etc.)
+│   ├── pkg/               # Core packages (browser, graph, vault, swarm, db, etc.)
+│   ├── dashboard/         # Web dashboard
+│   ├── extension/         # Browser extension
+│   ├── go.mod             # Go dependencies
+│   └── Sovereign.Containerfile
+├── archive/               # Deprecated components
+│   ├── ide/               # Legacy Python Textual TUI IDE
+│   └── agent/             # Legacy Python agent
+└── Cargo.toml             # Rust workspace manifest
 ```
 
 ---
