@@ -690,6 +690,10 @@ pub fn get_tools() -> Vec<Tool> {
                     "protocolPhase": { "type": "string", "description": "Structured protocol-event wait: require an observed protocol event phase such as start, update, complete, or commit." },
                     "protocolTarget": { "type": "string", "description": "Optional protocol-event target substring to require, such as a final URL, route, or resource identifier." },
                     "protocolDetail": { "type": "string", "description": "Optional protocol-event detail substring to require once the protocol event matches the other fields." },
+                    "networkIdle": { "type": "boolean", "description": "When true, wait for a truthful network-settled signal or equivalent runtime evidence." },
+                    "appReady": { "type": "boolean", "description": "When true, wait for truthful app-ready evidence such as navigation settled plus runtime/store readiness signals." },
+                    "mutationSettled": { "type": "boolean", "description": "When true, wait for truthful mutation/hydration completion evidence from settle or mutation labels." },
+                    "streamComplete": { "type": "boolean", "description": "When true, wait for truthful completion evidence for stream/event style runtime activity." },
                     "role": { "type": "string", "description": "Optional role when waiting for an element." },
                     "name": { "type": "string", "description": "Optional accessible name when waiting for an element." },
                     "requireActionable": { "type": "boolean", "description": "When waiting by role and name, require the matched target to be actionable in the current static browser model." },
@@ -1670,6 +1674,10 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let protocol_phase = arguments["protocolPhase"].as_str();
             let protocol_target = arguments["protocolTarget"].as_str();
             let protocol_detail = arguments["protocolDetail"].as_str();
+            let network_idle = arguments["networkIdle"].as_bool().unwrap_or(false);
+            let app_ready = arguments["appReady"].as_bool().unwrap_or(false);
+            let mutation_settled = arguments["mutationSettled"].as_bool().unwrap_or(false);
+            let stream_complete = arguments["streamComplete"].as_bool().unwrap_or(false);
             let role = arguments["role"].as_str();
             let name = arguments["name"].as_str();
             let require_actionable = arguments["requireActionable"].as_bool().unwrap_or(false);
@@ -1702,6 +1710,10 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     protocol_phase,
                     protocol_target,
                     protocol_detail,
+                    network_idle,
+                    app_ready,
+                    mutation_settled,
+                    stream_complete,
                     role,
                     name,
                     require_actionable,
@@ -1738,6 +1750,10 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     protocol_phase,
                     protocol_target,
                     protocol_detail,
+                    network_idle,
+                    app_ready,
+                    mutation_settled,
+                    stream_complete,
                     role,
                     name,
                     require_actionable,
@@ -3219,6 +3235,68 @@ mod tests {
     }
 
     #[test]
+    fn browser_session_wait_stream_complete_round_trip() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+        let response_url = url.clone();
+
+        std::thread::spawn(move || {
+            for idx in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let _ = read_http_request(&mut stream);
+                    let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
+                    let response = if idx == 0 {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nX-Velocity-Protocol-Events: event_stream|open|{0}/events|connected;event_stream|complete|{0}/events|stream complete\r\nContent-Length: {1}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{2}",
+                            response_url,
+                            body.len(),
+                            body
+                        )
+                    };
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(
+            &root,
+            "browser_create_session",
+            &json!({"sessionId": "stream-waiter"}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_session_navigate",
+            &json!({"sessionId": "stream-waiter", "url": url}),
+        )
+        .unwrap();
+
+        let waited = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "stream-waiter", "streamComplete": true, "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(waited.contains("Protocol events: 2"));
+        assert!(waited.contains("Diff: protocol+2"));
+    }
+
+    #[test]
     fn browser_session_wait_title_and_stable_round_trip() {
         use std::io::Write;
         use std::net::TcpListener;
@@ -3312,6 +3390,30 @@ mod tests {
         .unwrap();
         assert!(stable_wait.contains("Title: Dashboard Ready"));
         assert!(stable_wait.contains("Diff: summary,mutations-2,settle+3,settle-3,runtime-2"));
+
+        let network_idle_wait = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "steady", "networkIdle": true, "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(network_idle_wait.contains("Settle signals: 3"));
+
+        let app_ready_wait = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "steady", "appReady": true, "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(app_ready_wait.contains("Runtime state: 2"));
+
+        let mutation_settled_wait = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "steady", "mutationSettled": true, "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(mutation_settled_wait.contains("Settle signals: 3"));
     }
 
     #[test]

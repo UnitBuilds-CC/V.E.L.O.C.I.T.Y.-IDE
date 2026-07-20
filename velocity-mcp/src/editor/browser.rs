@@ -7241,6 +7241,10 @@ pub fn wait_for_session_report(
     protocol_phase: Option<&str>,
     protocol_target: Option<&str>,
     protocol_detail: Option<&str>,
+    network_idle: bool,
+    app_ready: bool,
+    mutation_settled: bool,
+    stream_complete: bool,
     role: Option<&str>,
     name: Option<&str>,
     require_actionable: bool,
@@ -7352,6 +7356,43 @@ pub fn wait_for_session_report(
                 )
             })
         })?
+    } else if network_idle {
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate
+                .settle_signals
+                .iter()
+                .any(|entry| settle_signal_matches(entry, None, Some("network"), Some("settled")))
+        })?
+    } else if app_ready {
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate
+                .settle_signals
+                .iter()
+                .any(|entry| settle_signal_matches(entry, None, Some("navigation"), Some("settled")))
+                && candidate.runtime_state.iter().any(|entry| {
+                    (entry.scope.eq_ignore_ascii_case("router") && entry.key.eq_ignore_ascii_case("name") && !entry.value.trim().is_empty())
+                        || (entry.scope.eq_ignore_ascii_case("store") && contains_case_insensitive(&entry.value, "ready"))
+                        || (entry.scope.eq_ignore_ascii_case("app") && contains_case_insensitive(&entry.value, "ready"))
+                })
+        })?
+    } else if mutation_settled {
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate
+                .settle_signals
+                .iter()
+                .any(|entry| settle_signal_matches(entry, Some("settled"), None, None))
+                && candidate.mutations.iter().any(|entry| contains_case_insensitive(entry, "hydration") || contains_case_insensitive(entry, "settled") || contains_case_insensitive(entry, "complete"))
+        })?
+    } else if stream_complete {
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate.protocol_events.iter().any(|entry| {
+                (entry.kind.eq_ignore_ascii_case("stream") || entry.kind.eq_ignore_ascii_case("event_stream") || entry.kind.eq_ignore_ascii_case("websocket"))
+                    && (entry.phase.eq_ignore_ascii_case("complete")
+                        || entry.phase.eq_ignore_ascii_case("closed")
+                        || contains_case_insensitive(&entry.detail, "complete")
+                        || contains_case_insensitive(&entry.detail, "closed"))
+            })
+        })?
     } else if let (Some(wait_role), Some(wait_name)) = (role, name) {
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
             find_element(candidate, wait_role, wait_name)
@@ -7361,7 +7402,7 @@ pub fn wait_for_session_report(
     } else if stable_polls.is_some() {
         wait_for_stable_snapshot(&mut session, &mut snapshot, stable_polls, timeout_ms, interval_ms)?
     } else {
-        return Err("browser_session_wait requires text, title, urlContains, mutation, requestMethod/requestUrlContains/requestStatus/requestResource, storageScope+storageKey, settle/settleScope, runtimeScope+runtimeKey, protocolKind/protocolPhase/protocolTarget/protocolDetail, stablePolls, or both role and name".to_string());
+        return Err("browser_session_wait requires text, title, urlContains, mutation, requestMethod/requestUrlContains/requestStatus/requestResource, storageScope+storageKey, settle/settleScope, runtimeScope+runtimeKey, protocolKind/protocolPhase/protocolTarget/protocolDetail, networkIdle, appReady, mutationSettled, streamComplete, stablePolls, or both role and name".to_string());
     };
 
     persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
@@ -7461,6 +7502,10 @@ pub fn wait_for_session(
     protocol_phase: Option<&str>,
     protocol_target: Option<&str>,
     protocol_detail: Option<&str>,
+    network_idle: bool,
+    app_ready: bool,
+    mutation_settled: bool,
+    stream_complete: bool,
     role: Option<&str>,
     name: Option<&str>,
     require_actionable: bool,
@@ -7493,6 +7538,10 @@ pub fn wait_for_session(
         protocol_phase,
         protocol_target,
         protocol_detail,
+        network_idle,
+        app_ready,
+        mutation_settled,
+        stream_complete,
         role,
         name,
         require_actionable,
@@ -10035,6 +10084,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10072,6 +10125,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10157,6 +10214,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10192,6 +10253,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10264,6 +10329,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10335,6 +10404,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10411,6 +10484,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10483,6 +10560,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10547,6 +10628,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             Some("button"),
             Some("Continue"),
             false,
@@ -10583,6 +10668,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             Some("button"),
             Some("Continue"),
             true,
@@ -10711,6 +10800,10 @@ mod tests {
             Some("open"),
             Some("/events"),
             Some("connected"),
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
@@ -10784,6 +10877,10 @@ mod tests {
             None,
             None,
             None,
+            false,
+            false,
+            false,
+            false,
             None,
             None,
             false,
