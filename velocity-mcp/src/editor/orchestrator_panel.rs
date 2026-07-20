@@ -43,6 +43,10 @@ pub struct OrchestratorDashboardSnapshot {
     pub planning_status: String,
     pub runtime_status: String,
     pub execution_running: bool,
+    pub has_routed_plan: bool,
+    pub has_dependency_cycle: bool,
+    pub can_launch_routed_tasks: bool,
+    pub can_reset_runtime: bool,
     pub active_workers: usize,
     pub pending_tasks: usize,
     pub running_tasks: usize,
@@ -65,6 +69,8 @@ pub struct OrchestratorTaskSnapshot {
     pub rationale: String,
     pub outputs: Vec<String>,
     pub message: String,
+    pub run_summary_path: Option<String>,
+    pub run_facts_path: Option<String>,
     pub live_thread: Option<WorkerThreadSnapshot>,
 }
 
@@ -165,6 +171,23 @@ impl OrchestratorPanel {
     }
 
     pub fn dashboard_snapshot(&self) -> OrchestratorDashboardSnapshot {
+        let has_routed_plan = self.routed_plan.is_some();
+        let has_dependency_cycle = scheduler::detect_cycle(&self.graph);
+        let retryable_blocked_tasks = self.retryable_blocked_task_count();
+        let has_runtime_activity = has_routed_plan
+            || self.execution_running
+            || !self.running_workers.is_empty()
+            || self.runtime_status != "Idle"
+            || self
+                .registry
+                .as_ref()
+                .is_some_and(|reg| {
+                    !reg.outputs.is_empty()
+                        || reg
+                            .statuses
+                            .values()
+                            .any(|status| !matches!(status, TaskStatus::Pending))
+                });
         let mut snapshot = OrchestratorDashboardSnapshot {
             goal: self.routed_plan.as_ref().map(|plan| plan.goal.clone()),
             task_kind: self.routed_plan.as_ref().map(|plan| plan.kind.as_str().to_string()),
@@ -172,8 +195,12 @@ impl OrchestratorPanel {
             planning_status: self.planning_status.clone(),
             runtime_status: self.runtime_status.clone(),
             execution_running: self.execution_running,
+            has_routed_plan,
+            has_dependency_cycle,
+            can_launch_routed_tasks: has_routed_plan && !has_dependency_cycle && !self.execution_running,
+            can_reset_runtime: has_runtime_activity,
             active_workers: self.running_workers.len(),
-            retryable_blocked_tasks: self.retryable_blocked_task_count(),
+            retryable_blocked_tasks,
             ..OrchestratorDashboardSnapshot::default()
         };
 
@@ -185,7 +212,7 @@ impl OrchestratorPanel {
                 .cloned()
                 .unwrap_or(TaskStatus::Pending);
             let routed = routed_task_for_id(&self.routed_plan, task.id);
-            let (status_label, outputs, message, provider_label, model_label) = match status {
+            let (status_label, outputs, message, provider_label, model_label, run_summary_path, run_facts_path) = match status {
                 TaskStatus::Pending => {
                     snapshot.pending_tasks += 1;
                     (
@@ -194,6 +221,8 @@ impl OrchestratorPanel {
                         String::new(),
                         routed.map(|task| task.provider.label().to_string()).unwrap_or_default(),
                         routed.map(|task| task.model_label.clone()).unwrap_or_default(),
+                        None,
+                        None,
                     )
                 }
                 TaskStatus::Running => {
@@ -204,6 +233,8 @@ impl OrchestratorPanel {
                         String::new(),
                         routed.map(|task| task.provider.label().to_string()).unwrap_or_default(),
                         routed.map(|task| task.model_label.clone()).unwrap_or_default(),
+                        None,
+                        None,
                     )
                 }
                 TaskStatus::Done(result) => {
@@ -214,6 +245,8 @@ impl OrchestratorPanel {
                         result.message.clone(),
                         result.provider_label,
                         result.model_label,
+                        result.run_summary_path.as_ref().map(|path| path.display().to_string()),
+                        result.run_facts_path.as_ref().map(|path| path.display().to_string()),
                     )
                 }
                 TaskStatus::Failed(result) => {
@@ -224,6 +257,8 @@ impl OrchestratorPanel {
                         result.message.clone(),
                         result.provider_label,
                         result.model_label,
+                        result.run_summary_path.as_ref().map(|path| path.display().to_string()),
+                        result.run_facts_path.as_ref().map(|path| path.display().to_string()),
                     )
                 }
                 TaskStatus::Blocked(result) => {
@@ -234,6 +269,8 @@ impl OrchestratorPanel {
                         result.message.clone(),
                         result.provider_label,
                         result.model_label,
+                        result.run_summary_path.as_ref().map(|path| path.display().to_string()),
+                        result.run_facts_path.as_ref().map(|path| path.display().to_string()),
                     )
                 }
             };
@@ -249,6 +286,8 @@ impl OrchestratorPanel {
                 rationale: routed.map(|task| task.rationale.clone()).unwrap_or_default(),
                 outputs,
                 message,
+                run_summary_path,
+                run_facts_path,
                 live_thread: self.running_workers.get(&task.id).map(|handle| handle.snapshot()),
             });
         }
@@ -917,6 +956,51 @@ impl OrchestratorPanel {
             .unwrap_or(0)
     }
 
+    fn stale_plan_blocked_task_count(&self) -> usize {
+        self.registry
+            .as_ref()
+            .map(|reg| {
+                reg.statuses
+                    .values()
+                    .filter(|status| matches!(status, TaskStatus::Blocked(result) if is_stale_plan_blocked_result(result)))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    fn blocked_task_count(&self) -> usize {
+        self.registry
+            .as_ref()
+            .map(|reg| {
+                reg.statuses
+                    .values()
+                    .filter(|status| matches!(status, TaskStatus::Blocked(_)))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    fn refresh_runtime_status(&mut self) {
+        let blocked = self.blocked_task_count();
+        let retryable = self.retryable_blocked_task_count();
+        let stale_plan = self.stale_plan_blocked_task_count();
+        self.runtime_status = if self.execution_running {
+            format!("Running {} worker(s)", self.running_workers.len())
+        } else if blocked > 0 && retryable == blocked {
+            format!("Waiting for retry on {retryable} blocked task(s)")
+        } else if blocked > 0 && stale_plan == blocked {
+            format!("Waiting for routed plan refresh on {stale_plan} blocked task(s)")
+        } else if blocked > 0 && retryable > 0 {
+            format!("Waiting on {blocked} blocked task(s) ({retryable} retryable)")
+        } else if blocked > 0 {
+            format!("Waiting for follow-up on {blocked} blocked task(s)")
+        } else if self.registry.as_ref().is_some_and(|reg| reg.is_complete()) {
+            "Execution complete".to_string()
+        } else {
+            "Waiting for executable routed tasks".to_string()
+        };
+    }
+
     fn retry_blocked_tasks(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
         if self.registry.is_none() {
             self.registry = Some(OrchestratorRegistry::new(&self.graph));
@@ -1020,7 +1104,7 @@ impl OrchestratorPanel {
         for (id, mut result) in finished_ids {
             self.running_workers.remove(&id);
             let outputs = task_result_outputs(&result);
-            let report = validator::validate(&result);
+            let report = validator::validate_with_workspace(&result, workspace_root);
             let reconciliation_error = reconciliation_error(&self.graph, &reg.outputs, id, &outputs);
             let needs_follow_up = reconciliation_error.is_some() || requires_follow_up(&result);
             if result.success && report.ok && reconciliation_error.is_none() && !needs_follow_up {
@@ -1113,15 +1197,7 @@ impl OrchestratorPanel {
         }
 
         self.execution_running = !self.running_workers.is_empty();
-        self.runtime_status = if self.execution_running {
-            format!("Running {} worker(s)", self.running_workers.len())
-        } else if reg.has_blocked() {
-            "Follow-up required".to_string()
-        } else if reg.is_complete() {
-            "Execution complete".to_string()
-        } else {
-            "Waiting for executable routed tasks".to_string()
-        };
+        self.refresh_runtime_status();
     }
 
     fn task_row(&self, ui: &mut Ui, task: &Task) {
@@ -1567,6 +1643,30 @@ mod tests {
         assert_eq!(thread.changed_files, vec!["src/main.rs"]);
         assert_eq!(thread.transcript, "partial answer");
         assert_eq!(thread.events.len(), 2);
+        assert_eq!(task.run_summary_path, None);
+        assert_eq!(task.run_facts_path, None);
+    }
+
+    #[test]
+    fn dashboard_snapshot_includes_worker_artifact_paths() {
+        let mut panel = OrchestratorPanel::new();
+        panel.graph = TaskGraph::default();
+        panel.graph.root = TaskId(1);
+        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        panel.graph.add(TaskId(2), "worker", "worker", vec!["src/main.rs".to_string()], vec![], None);
+        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+
+        let mut result = WorkerResult::new(panel.graph.tasks.get(&TaskId(2)).unwrap());
+        result.provider_label = "Provider".to_string();
+        result.model_label = "Model".to_string();
+        result.run_summary_path = Some(std::path::PathBuf::from("C:\\temp\\summary.txt"));
+        result.run_facts_path = Some(std::path::PathBuf::from("C:\\temp\\facts.nda"));
+        panel.registry.as_mut().unwrap().statuses.insert(TaskId(2), TaskStatus::Done(result));
+
+        let snapshot = panel.dashboard_snapshot();
+        let task = snapshot.tasks.iter().find(|task| task.id == 2).unwrap();
+        assert_eq!(task.run_summary_path.as_deref(), Some("C:\\temp\\summary.txt"));
+        assert_eq!(task.run_facts_path.as_deref(), Some("C:\\temp\\facts.nda"));
     }
 
     #[test]
@@ -1632,6 +1732,79 @@ mod tests {
         assert!(panel.retry_task(TaskId(2), workspace_root, &mediator));
         assert_eq!(panel.runtime_status, "Waiting for executable routed tasks");
         assert!(matches!(panel.registry.as_ref().unwrap().statuses.get(&TaskId(2)), Some(TaskStatus::Pending)));
+    }
+
+    #[test]
+    fn runtime_status_expands_retry_waits() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path();
+        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+        let mut panel = OrchestratorPanel::new();
+        panel.graph = TaskGraph::default();
+        panel.graph.root = TaskId(2);
+        panel.graph.add(TaskId(2), "worker", "worker", vec![], vec![], None);
+        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+        panel.registry.as_mut().unwrap().statuses.insert(
+            TaskId(2),
+            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT: retry me")),
+        );
+
+        panel.poll_live_workers(workspace_root, &mediator);
+        assert_eq!(panel.runtime_status, "Waiting for retry on 1 blocked task(s)");
+    }
+
+    #[test]
+    fn runtime_status_expands_stale_plan_waits() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path();
+        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+        let mut panel = OrchestratorPanel::new();
+        panel.graph = TaskGraph::default();
+        panel.graph.root = TaskId(2);
+        panel.graph.add(TaskId(2), "worker", "worker", vec![], vec![], None);
+        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+        panel.registry.as_mut().unwrap().statuses.insert(
+            TaskId(2),
+            TaskStatus::Blocked(sample_result(
+                TaskId(2),
+                "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002",
+            )),
+        );
+
+        panel.poll_live_workers(workspace_root, &mediator);
+        assert_eq!(
+            panel.runtime_status,
+            "Waiting for routed plan refresh on 1 blocked task(s)"
+        );
+    }
+
+    #[test]
+    fn runtime_status_expands_mixed_blocked_waits() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path();
+        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
+        let mut panel = OrchestratorPanel::new();
+        panel.graph = TaskGraph::default();
+        panel.graph.root = TaskId(1);
+        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2), TaskId(3)], None);
+        panel.graph.add(TaskId(2), "retryable", "retryable", vec![], vec![], None);
+        panel.graph.add(TaskId(3), "stale", "stale", vec![], vec![], None);
+        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
+        let reg = panel.registry.as_mut().unwrap();
+        reg.statuses.insert(
+            TaskId(2),
+            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT: retry me")),
+        );
+        reg.statuses.insert(
+            TaskId(3),
+            TaskStatus::Blocked(sample_result(
+                TaskId(3),
+                "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002",
+            )),
+        );
+
+        panel.poll_live_workers(workspace_root, &mediator);
+        assert_eq!(panel.runtime_status, "Waiting on 3 blocked task(s) (2 retryable)");
     }
 }
 

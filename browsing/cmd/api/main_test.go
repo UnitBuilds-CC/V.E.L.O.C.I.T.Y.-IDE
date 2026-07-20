@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	browserpkg "github.com/reclamation-admin/agentic-browser-go/pkg/browser"
 )
 
 type stubRuntimeBrowser struct {
@@ -117,5 +120,181 @@ func TestRuntimeVisualArtifactHandlerReportsScreenshotFailure(t *testing.T) {
 	}
 	if !stub.closed {
 		t.Fatal("expected browser session to be closed on failure")
+	}
+}
+
+func TestRuntimeSessionLifecycleEndpoints(t *testing.T) {
+	originalOpen := openRuntimeSessionFn
+	defer func() { openRuntimeSessionFn = originalOpen }()
+
+	var openedReq runtimeOpenSessionRequest
+	ctx, cancel := context.WithCancel(context.Background())
+	stubSession := &browserpkg.Session{Ctx: ctx, Cancel: cancel}
+	createdAt := time.Unix(1700000000, 0).UTC()
+	openRuntimeSessionFn = func(req runtimeOpenSessionRequest) (*runtimeSessionEntry, []string, error) {
+		openedReq = req
+		return &runtimeSessionEntry{
+			ID:         "rt-test",
+			Mode:       "managed",
+			CreatedAt:  createdAt,
+			LastAction: "navigate",
+			Session:    stubSession,
+		}, []string{"navigated"}, nil
+	}
+
+	router := buildRouter(func() (runtimeBrowser, error) { return &stubRuntimeBrowser{}, nil })
+	body, _ := json.Marshal(runtimeOpenSessionRequest{StartURL: "https://example.com", WaitTimeoutMs: 3210})
+	openReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session", bytes.NewReader(body))
+	openReq.Header.Set("Content-Type", "application/json")
+	openRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(openRecorder, openReq)
+
+	if openRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 opening session, got %d with body %s", openRecorder.Code, openRecorder.Body.String())
+	}
+	if openedReq.StartURL != "https://example.com" || openedReq.WaitTimeoutMs != 3210 {
+		t.Fatalf("unexpected open request captured: %+v", openedReq)
+	}
+	var openResp runtimeOpenSessionResponse
+	if err := json.Unmarshal(openRecorder.Body.Bytes(), &openResp); err != nil {
+		t.Fatalf("unmarshal open response: %v", err)
+	}
+	if openResp.SessionID != "rt-test" || !openResp.RuntimeState.Alive || openResp.RuntimeState.LastAction != "navigate" {
+		t.Fatalf("unexpected open response: %+v", openResp)
+	}
+	if len(openResp.Warnings) != 1 || openResp.Warnings[0] != "navigated" {
+		t.Fatalf("unexpected open warnings: %+v", openResp.Warnings)
+	}
+
+	closeReq := httptest.NewRequest(http.MethodDelete, "/api/runtime/session/rt-test", nil)
+	closeRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(closeRecorder, closeReq)
+
+	if closeRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 closing session, got %d with body %s", closeRecorder.Code, closeRecorder.Body.String())
+	}
+	if stubSession.IsAlive() {
+		t.Fatal("expected runtime session context to be canceled on close")
+	}
+
+	missingCloseReq := httptest.NewRequest(http.MethodDelete, "/api/runtime/session/rt-test", nil)
+	missingCloseRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(missingCloseRecorder, missingCloseReq)
+	if missingCloseRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 closing missing session, got %d", missingCloseRecorder.Code)
+	}
+}
+
+func TestRuntimeSessionCaptureEndpointUsesStoredSession(t *testing.T) {
+	originalOpen := openRuntimeSessionFn
+	originalCapture := captureRuntimeSessionFn
+	defer func() {
+		openRuntimeSessionFn = originalOpen
+		captureRuntimeSessionFn = originalCapture
+	}()
+
+	stubSession := &browserpkg.Session{Ctx: context.Background()}
+	entry := &runtimeSessionEntry{ID: "rt-capture", Mode: "managed", CreatedAt: time.Unix(1700000001, 0).UTC(), Session: stubSession}
+	openRuntimeSessionFn = func(req runtimeOpenSessionRequest) (*runtimeSessionEntry, []string, error) {
+		return entry, nil, nil
+	}
+	captureCalls := 0
+	captureRuntimeSessionFn = func(got *runtimeSessionEntry) (*runtimeSessionCaptureResponse, error) {
+		captureCalls++
+		if got != entry {
+			t.Fatalf("capture received wrong session entry: %+v", got)
+		}
+		return &runtimeSessionCaptureResponse{SessionID: got.ID, FinalURL: "https://example.com/final", RuntimeState: runtimeStateFromEntry(got)}, nil
+	}
+
+	router := buildRouter(func() (runtimeBrowser, error) { return &stubRuntimeBrowser{}, nil })
+	openReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session", bytes.NewReader([]byte(`{}`)))
+	openReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), openReq)
+
+	captureReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-capture/capture", bytes.NewReader([]byte(`{}`)))
+	captureReq.Header.Set("Content-Type", "application/json")
+	captureRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(captureRecorder, captureReq)
+
+	if captureRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 capture, got %d with body %s", captureRecorder.Code, captureRecorder.Body.String())
+	}
+	if captureCalls != 1 {
+		t.Fatalf("expected 1 capture call, got %d", captureCalls)
+	}
+
+	missingReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session/missing/capture", bytes.NewReader([]byte(`{}`)))
+	missingReq.Header.Set("Content-Type", "application/json")
+	missingRecorder := httptest.NewRecorder()
+	router.ServeHTTP(missingRecorder, missingReq)
+	if missingRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing capture session, got %d", missingRecorder.Code)
+	}
+}
+
+func TestRuntimeSessionActionEndpointReturnsCaptureWithAction(t *testing.T) {
+	originalOpen := openRuntimeSessionFn
+	originalAction := performRuntimeActionFn
+	originalCapture := captureRuntimeSessionFn
+	defer func() {
+		openRuntimeSessionFn = originalOpen
+		performRuntimeActionFn = originalAction
+		captureRuntimeSessionFn = originalCapture
+	}()
+
+	stubSession := &browserpkg.Session{Ctx: context.Background()}
+	entry := &runtimeSessionEntry{ID: "rt-action", Mode: "managed", CreatedAt: time.Unix(1700000002, 0).UTC(), Session: stubSession}
+	openRuntimeSessionFn = func(req runtimeOpenSessionRequest) (*runtimeSessionEntry, []string, error) {
+		return entry, nil, nil
+	}
+	var actionReq runtimeSessionActionRequest
+	performRuntimeActionFn = func(got *runtimeSessionEntry, req runtimeSessionActionRequest) (*runtimeActionResult, error) {
+		if got != entry {
+			t.Fatalf("action received wrong session entry: %+v", got)
+		}
+		actionReq = req
+		return &runtimeActionResult{Action: "click", Target: "#submit", WaitAppliedMs: 900}, nil
+	}
+	captureRuntimeSessionFn = func(got *runtimeSessionEntry) (*runtimeSessionCaptureResponse, error) {
+		return &runtimeSessionCaptureResponse{SessionID: got.ID, FinalURL: "https://example.com/after", RuntimeState: runtimeStateFromEntry(got)}, nil
+	}
+
+	router := buildRouter(func() (runtimeBrowser, error) { return &stubRuntimeBrowser{}, nil })
+	openReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session", bytes.NewReader([]byte(`{}`)))
+	openReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), openReq)
+
+	actionBody := []byte(`{"action":"click","selector":"#submit","waitTimeoutMs":900}`)
+	actionReqHTTP := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-action/action", bytes.NewReader(actionBody))
+	actionReqHTTP.Header.Set("Content-Type", "application/json")
+	actionRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(actionRecorder, actionReqHTTP)
+
+	if actionRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 action, got %d with body %s", actionRecorder.Code, actionRecorder.Body.String())
+	}
+	if actionReq.Action != "click" || actionReq.Selector != "#submit" || actionReq.WaitTimeoutMs != 900 {
+		t.Fatalf("unexpected action request captured: %+v", actionReq)
+	}
+	var actionResp runtimeSessionCaptureResponse
+	if err := json.Unmarshal(actionRecorder.Body.Bytes(), &actionResp); err != nil {
+		t.Fatalf("unmarshal action response: %v", err)
+	}
+	if actionResp.Action == nil || actionResp.Action.Action != "click" || actionResp.Action.Target != "#submit" {
+		t.Fatalf("unexpected action response payload: %+v", actionResp.Action)
+	}
+
+	badJSONReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-action/action", bytes.NewReader([]byte(`{"action":`)))
+	badJSONReq.Header.Set("Content-Type", "application/json")
+	badJSONRecorder := httptest.NewRecorder()
+	router.ServeHTTP(badJSONRecorder, badJSONReq)
+	if badJSONRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed action JSON, got %d", badJSONRecorder.Code)
 	}
 }

@@ -597,6 +597,7 @@ pub struct BrowserCheckpointSaveReport {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserSessionNavigationReport {
     pub session_id: String,
+    pub requested_url: String,
     pub url: String,
     pub title: String,
     pub form_count: usize,
@@ -705,6 +706,7 @@ pub struct BrowserSessionActionReport {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserSessionWaitReport {
     pub session_id: String,
+    pub requested_url: String,
     pub url: String,
     pub title: String,
     pub diff_summary: String,
@@ -5380,15 +5382,23 @@ pub fn restore_session_checkpoint(
     }
 }
 
+fn describe_url_resolution(requested_url: &str, resolved_url: &str) -> String {
+    if requested_url == resolved_url {
+        format!("URL: {}", resolved_url)
+    } else {
+        format!("Requested URL: {}\nResolved URL: {}", requested_url, resolved_url)
+    }
+}
+
 pub fn render_session_navigation_report(report: &BrowserSessionNavigationReport) -> String {
     let network_summary = render_network_summary(&report.network_summary)
         .map(|value| format!("\nNetwork summary: {}", value))
         .unwrap_or_default();
     let html_fallback = render_html_fallback_line(report.html_fallback_path.as_deref());
     format!(
-        "Session navigate complete.\nSession: {}\nURL: {}\nTitle: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
+        "Session navigate complete.\nSession: {}\n{}\nTitle: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
         report.session_id,
-        report.url,
+        describe_url_resolution(&report.requested_url, &report.url),
         report.title,
         report.form_count,
         report.cookie_count,
@@ -6463,6 +6473,7 @@ pub fn navigate_session_report(
 
     let report = BrowserSessionNavigationReport {
         session_id: session.id,
+        requested_url: url.to_string(),
         url: snapshot.url,
         title: snapshot.title,
         form_count: snapshot.forms.len(),
@@ -7186,9 +7197,9 @@ pub fn render_session_wait_report(report: &BrowserSessionWaitReport) -> String {
         .map(|target| format!("\nMatched target actionability: {} (score {}) - {}", if target.actionable { "actionable" } else { "not actionable" }, target.score, target.reason))
         .unwrap_or_default();
     format!(
-        "Session wait complete.\nSession: {}\nURL: {}\nTitle: {}\nDiff: {}{}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
+        "Session wait complete.\nSession: {}\n{}\nTitle: {}\nDiff: {}{}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
         report.session_id,
-        report.url,
+        describe_url_resolution(&report.requested_url, &report.url),
         report.title,
         report.diff_summary,
         matched_target_actionability,
@@ -7380,6 +7391,7 @@ pub fn wait_for_session_report(
     };
     let report = BrowserSessionWaitReport {
         session_id: session.id,
+        requested_url: current_url,
         url: snapshot.url,
         title: snapshot.title,
         diff_summary: render_snapshot_diff(&diff),
@@ -9114,8 +9126,8 @@ pub fn replay_workflow_in_session(
 mod tests {
     use super::{
         access_diagnostics_report, apply_auth_profile_report, auth_diagnostics_report, crawl_and_sync_sitemap_report, crawl_facts_path,
-        create_session, diff_saved_snapshots, diff_session_checkpoints, diff_snapshots, get_session_cookies_report,
-        persist_snapshot_to_sitemap, render_session_health_report, session_click, session_health_report,
+        create_session, describe_url_resolution, diff_saved_snapshots, diff_session_checkpoints, diff_snapshots,
+        get_session_cookies_report, persist_snapshot_to_sitemap, render_session_health_report, session_click, session_health_report,
         get_session_storage_entries_report, is_semantically_stable, list_auth_profiles, load_auth_profile, load_session_state,
         load_snapshot_json, load_workflow, load_workflow_suite, navigate_session, navigate_session_report,
         parse_html_to_snapshot, read_auth_profile_report, render_access_diagnostics_report, render_auth_profile_apply_report,
@@ -9817,6 +9829,8 @@ mod tests {
         let rendered_navigation = render_session_navigation_report(&navigation);
         assert!(rendered_navigation.contains("Session navigate complete."));
         assert!(rendered_navigation.contains("Session: auth-session"));
+        assert!(rendered_navigation.contains(&format!("Requested URL: {}", base_url)));
+        assert!(rendered_navigation.contains(&format!("Resolved URL: {}/", base_url)));
         assert!(rendered_navigation.contains("Title: Login"));
 
         let crawl = crawl_and_sync_sitemap_report(&base_url, &sitemap_path).unwrap();
@@ -10071,7 +10085,21 @@ mod tests {
         assert_eq!(compact.title, "Dashboard");
         assert_eq!(compact.request_count, 1);
         assert!(compact.snapshot_json_path.ends_with(".json"));
-        assert_eq!(render_session_wait_report(&compact).lines().next(), Some("Session wait complete."));
+        let rendered = render_session_wait_report(&compact);
+        assert_eq!(rendered.lines().next(), Some("Session wait complete."));
+        assert!(rendered.contains("URL: "));
+    }
+
+    #[test]
+    fn formats_url_resolution_truthfully() {
+        assert_eq!(
+            describe_url_resolution("https://example.com/private", "https://example.com/login"),
+            "Requested URL: https://example.com/private\nResolved URL: https://example.com/login"
+        );
+        assert_eq!(
+            describe_url_resolution("https://example.com/login", "https://example.com/login"),
+            "URL: https://example.com/login"
+        );
     }
 
     #[test]
@@ -10947,6 +10975,46 @@ mod tests {
         assert_eq!(snapshot.runtime_state.len(), 2);
         assert!(snapshot.runtime_state.iter().any(|entry| entry.scope == "router" && entry.key == "name" && entry.value == "dashboard"));
         assert!(snapshot.runtime_state.iter().any(|entry| entry.scope == "store" && entry.key == "cart" && entry.value == "ready"));
+    }
+
+    #[test]
+    fn carries_forward_resolved_url_after_redirect() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}/private", port);
+        let resolved_url = format!("http://127.0.0.1:{}/login", port);
+        std::thread::spawn(move || {
+            for idx in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let response = if idx == 0 && first_line.starts_with("GET /private") {
+                        "HTTP/1.1 302 Found\r\nLocation: /login\r\nSet-Cookie: gate=1; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+                    } else {
+                        let body = "<html><head><title>Login</title></head><body><p>Please sign in</p></body></html>";
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    };
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let sitemap_path = root.join("site_map");
+        create_session(root, "redirect-session").unwrap();
+        let result = navigate_session(root, "redirect-session", &url, &sitemap_path).unwrap();
+        assert!(result.contains(&format!("Requested URL: {}", url)));
+        assert!(result.contains(&format!("Resolved URL: {}", resolved_url)));
+        let session = load_session_state(root, "redirect-session").unwrap();
+        assert_eq!(session.current_url.as_deref(), Some(resolved_url.as_str()));
+        let snapshot = load_snapshot_json(&resolved_url, &sitemap_path).unwrap();
+        assert_eq!(snapshot.title, "Login");
     }
 
     #[test]

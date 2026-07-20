@@ -118,3 +118,4 @@ Common development commands can be executed via `just`:
 - `just fmt` - Format the codebase.
 - `just test` - Run unit tests (includes testing for the OpenRouter history compressor and relative path sandboxing).
 - `just validate` - Run checks, tests, and clippy in one command.
+- `just diag` - Emit structured diagnostics JSON using the platform-appropriate Python command.

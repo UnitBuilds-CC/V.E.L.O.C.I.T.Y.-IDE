@@ -179,6 +179,12 @@ type runtimeBrowserFactory func() (runtimeBrowser, error)
 
 var runtimeSessionSeq uint64
 
+var (
+	openRuntimeSessionFn    = openRuntimeSession
+	captureRuntimeSessionFn = captureRuntimeSession
+	performRuntimeActionFn  = performRuntimeAction
+)
+
 func main() {
 	fmt.Println("Go Agentic API starting (SiteMap/NDA Mode)...")
 
@@ -260,7 +266,7 @@ func buildRouter(newRuntimeBrowser runtimeBrowserFactory) *gin.Engine {
 			return
 		}
 
-		entry, warnings, err := openRuntimeSession(req)
+		entry, warnings, err := openRuntimeSessionFn(req)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -299,7 +305,7 @@ func buildRouter(newRuntimeBrowser runtimeBrowserFactory) *gin.Engine {
 			return
 		}
 
-		resp, err := captureRuntimeSession(entry)
+		resp, err := captureRuntimeSessionFn(entry)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -321,13 +327,13 @@ func buildRouter(newRuntimeBrowser runtimeBrowserFactory) *gin.Engine {
 			return
 		}
 
-		actionResult, err := performRuntimeAction(entry, req)
+		actionResult, err := performRuntimeActionFn(entry, req)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		resp, err := captureRuntimeSession(entry)
+		resp, err := captureRuntimeSessionFn(entry)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

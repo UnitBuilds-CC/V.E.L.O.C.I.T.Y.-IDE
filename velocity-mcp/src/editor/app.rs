@@ -2018,14 +2018,17 @@ impl<'a> TabViewerImpl<'a> {
                         self.app.chat.input = self.app.mission_control.brief.clone();
                         self.app.plan_routed_subagents();
                     }
-                    if ui.button("Launch routed tasks").clicked() {
+                    if ui
+                        .add_enabled(snapshot.can_launch_routed_tasks, egui::Button::new("Launch routed tasks"))
+                        .clicked()
+                    {
                         self.app
                             .orchestrator
                             .execute_routed_tasks(&self.app.workspace_root, &self.app.mediator);
                     }
                     if ui
                         .add_enabled(
-                            snapshot.retryable_blocked_tasks > 0,
+                            !snapshot.execution_running && snapshot.retryable_blocked_tasks > 0,
                             egui::Button::new(format!("Retry blocked ({})", snapshot.retryable_blocked_tasks)),
                         )
                         .clicked()
@@ -2034,10 +2037,29 @@ impl<'a> TabViewerImpl<'a> {
                             .orchestrator
                             .retry_blocked_tasks_action(&self.app.workspace_root, &self.app.mediator);
                     }
-                    if ui.button("Reset runtime").clicked() {
+                    if ui
+                        .add_enabled(snapshot.can_reset_runtime, egui::Button::new("Reset runtime"))
+                        .clicked()
+                    {
                         self.app.orchestrator.reset_runtime_action();
                     }
                 });
+                let runtime_hint = if !snapshot.has_routed_plan {
+                    Some("Plan mission first to create runnable routed tasks.")
+                } else if snapshot.has_dependency_cycle {
+                    Some("Resolve the dependency cycle before launching routed tasks.")
+                } else if snapshot.execution_running {
+                    Some("Routed tasks are already running; use task controls below for live intervention.")
+                } else {
+                    None
+                };
+                if let Some(runtime_hint) = runtime_hint {
+                    ui.label(
+                        egui::RichText::new(runtime_hint)
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                }
             });
 
             ui.add_space(8.0);
@@ -2394,6 +2416,20 @@ impl<'a> TabViewerImpl<'a> {
                                                 .color(IdePalette::dark().warning),
                                         );
                                     }
+                                    if let Some(path) = &task.run_summary_path {
+                                        ui.label(
+                                            egui::RichText::new(format!("Run summary: {}", path))
+                                                .small()
+                                                .color(IdePalette::dark().text_muted),
+                                        );
+                                    }
+                                    if let Some(path) = &task.run_facts_path {
+                                        ui.label(
+                                            egui::RichText::new(format!("Run facts: {}", path))
+                                                .small()
+                                                .color(IdePalette::dark().text_muted),
+                                        );
+                                    }
                                     ui.horizontal_wrapped(|ui| {
                                         if ui.small_button(if is_selected { "Selected" } else { "Select" }).clicked() {
                                             self.app.mission_control.set_selected_task(Some(task.id));
@@ -2655,6 +2691,8 @@ mod tests {
             rationale: String::new(),
             outputs: Vec::new(),
             message: String::new(),
+            run_summary_path: None,
+            run_facts_path: None,
             live_thread: Some(WorkerThreadSnapshot {
                 events,
                 status_updates: Vec::new(),

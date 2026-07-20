@@ -1,7 +1,10 @@
 # Justfile for V.E.L.O.C.I.T.Y.
 # Install `just` from https://github.com/casey/just
 
-set shell := ["sh", "-c"]
+set shell := ["sh", "-cu"]
+set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
+
+python_cmd := if os_family() == "windows" { "python" } else { "python3" }
 
 # Default: run everything
 _default:
@@ -33,8 +36,10 @@ release:
 
 # Validate current state (used by orchestrator)
 validate:
-    cargo check --all-targets && cargo test && cargo clippy -- -D warnings
+    cargo check --all-targets
+    cargo test
+    cargo clippy -- -D warnings
 
 # Generate structured diagnostics JSON
 diag:
-    python3 scripts/check.py
+    {{python_cmd}} scripts/check.py
