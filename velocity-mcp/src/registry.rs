@@ -271,6 +271,20 @@ pub fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "runtime_session_evaluate".to_string(),
+            description: "Evaluate JavaScript in an explicit Go runtime browser session, then persist the captured result and returned evaluation payload.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "script": { "type": "string", "description": "JavaScript expression or snippet to evaluate in the runtime session." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId", "script"]
+            }),
+        },
+        Tool {
             name: "runtime_session_fill".to_string(),
             description: "Fill a runtime target in an explicit Go browser session using nodeId or selector, then persist the captured result.".to_string(),
             input_schema: json!({
@@ -1200,6 +1214,18 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 &root,
                 arguments["sessionId"].as_str().ok_or("sessionId is required")?,
                 arguments["nodeId"].as_str().ok_or("nodeId is required")?,
+                arguments["waitTimeoutMs"].as_u64(),
+                &sitemap_path,
+                arguments["compact"].as_bool().unwrap_or(false),
+            )
+            .map_err(|e| e.into())
+        }
+        "runtime_session_evaluate" => {
+            let sitemap_path = root.join(".velocity").join("site_map");
+            crate::editor::browser::runtime_evaluate_session(
+                &root,
+                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["script"].as_str().ok_or("script is required")?,
                 arguments["waitTimeoutMs"].as_u64(),
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
@@ -4198,7 +4224,7 @@ mod tests {
 
         std::thread::spawn(move || {
             let png = [0x89u8, b'P', b'N', b'G'];
-            for _ in 0..8 {
+            for _ in 0..9 {
                 if let Ok((mut stream, _)) = listener.accept() {
                     let request = read_http_request(&mut stream);
                     let first_line = request.lines().next().unwrap_or_default().to_string();
@@ -4216,7 +4242,7 @@ mod tests {
                                 "backend": "go-chromedp",
                                 "transport": "http-json",
                                 "sessionMode": "managed",
-                                "supportsActions": ["navigate", "click", "js_click", "fill", "submit", "press_key"],
+                                "supportsActions": ["navigate", "click", "js_click", "fill", "submit", "press_key", "evaluate"],
                                 "supportsCapture": true,
                                 "supportsSessions": true
                             },
@@ -4255,22 +4281,42 @@ mod tests {
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
                     } else if first_line.starts_with("POST /api/runtime/session/rt-123/action HTTP/1.1") {
-                        let body = json!({
-                            "sessionId": "rt-123",
-                            "finalUrl": "https://runtime.test/after-action",
-                            "title": "Runtime After Action",
-                            "html": "<html><head><title>Runtime After Action</title></head><body><p>done</p></body></html>",
-                            "cookies": ["flow=ok"],
-                            "storage": {"local": {"theme": "light"}, "session": {"csrf": "token2"}},
-                            "fields": {},
-                            "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "fill"},
-                            "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["fill"], "supportsCapture": true, "supportsSessions": true},
-                            "warnings": ["action-warning"],
-                            "action": {"action": "fill", "target": "#email", "value": "agent@example.com", "waitAppliedMs": 1500, "warnings": ["post-action wait did not settle cleanly"]},
-                            "aom": "updated",
-                            "pageText": "Runtime After Action",
-                            "scripts": []
-                        })
+                        let is_evaluate = request.contains("\"action\":\"evaluate\"") || request.contains("\"action\": \"evaluate\"");
+                        let body = if is_evaluate {
+                            json!({
+                                "sessionId": "rt-123",
+                                "finalUrl": "https://runtime.test/after-evaluate",
+                                "title": "Runtime After Evaluate",
+                                "html": "<html><head><title>Runtime After Evaluate</title></head><body><p>eval</p></body></html>",
+                                "cookies": ["flow=ok"],
+                                "storage": {"local": {"theme": "light"}, "session": {"csrf": "token2"}},
+                                "fields": {},
+                                "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "evaluate"},
+                                "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["fill", "evaluate"], "supportsCapture": true, "supportsSessions": true},
+                                "warnings": ["action-warning"],
+                                "action": {"action": "evaluate", "script": "({ answer: 42 })", "result": "{\"answer\":42}", "waitAppliedMs": 600, "warnings": ["post-action wait did not settle cleanly"]},
+                                "aom": "updated",
+                                "pageText": "Runtime After Evaluate",
+                                "scripts": []
+                            })
+                        } else {
+                            json!({
+                                "sessionId": "rt-123",
+                                "finalUrl": "https://runtime.test/after-action",
+                                "title": "Runtime After Action",
+                                "html": "<html><head><title>Runtime After Action</title></head><body><p>done</p></body></html>",
+                                "cookies": ["flow=ok"],
+                                "storage": {"local": {"theme": "light"}, "session": {"csrf": "token2"}},
+                                "fields": {},
+                                "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "fill"},
+                                "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["fill", "evaluate"], "supportsCapture": true, "supportsSessions": true},
+                                "warnings": ["action-warning"],
+                                "action": {"action": "fill", "target": "#email", "value": "agent@example.com", "waitAppliedMs": 1500, "warnings": ["post-action wait did not settle cleanly"]},
+                                "aom": "updated",
+                                "pageText": "Runtime After Action",
+                                "scripts": []
+                            })
+                        }
                         .to_string();
                         let response = format!(
                             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
@@ -4344,6 +4390,20 @@ mod tests {
         assert!(filled.contains("\"warning_count\": 2"));
         assert!(filled.contains("action-warning"));
         assert!(filled.contains("post-action wait did not settle cleanly"));
+        assert!(filled.contains("\"action\": {"));
+        assert!(filled.contains("\"target\": \"#email\""));
+
+        let evaluated = call_tool_in_workspace(
+            &root,
+            "runtime_session_evaluate",
+            &json!({"sessionId": "runtime-explicit", "script": "({ answer: 42 })", "compact": true}),
+        )
+        .unwrap();
+        assert!(evaluated.contains("\"title\": \"Runtime After Evaluate\""));
+        assert!(evaluated.contains("\"action\": {"));
+        assert!(evaluated.contains("\"action\": \"evaluate\""));
+        assert!(evaluated.contains("\"script\": \"({ answer: 42 })\""));
+        assert!(evaluated.contains("\\\"answer\\\":42"));
 
         let visual = call_tool_in_workspace(
             &root,
@@ -4354,6 +4414,16 @@ mod tests {
         assert!(visual.contains("\"artifact_kind\": \"runtime_screenshot\""));
         assert!(visual.contains("\"captured_url\": \"https://runtime.test/final-shot\""));
         assert!(visual.contains("\"mime_type\": \"image/png\""));
+
+        let evaluated_text = call_tool_in_workspace(
+            &root,
+            "runtime_session_evaluate",
+            &json!({"sessionId": "runtime-explicit", "script": "({ answer: 42 })"}),
+        )
+        .unwrap();
+        assert!(evaluated_text.contains("Action: evaluate (wait 600ms)"));
+        assert!(evaluated_text.contains("script=({ answer: 42 })"));
+        assert!(evaluated_text.contains("result={\"answer\":42}"));
 
         let closed = call_tool_in_workspace(
             &root,

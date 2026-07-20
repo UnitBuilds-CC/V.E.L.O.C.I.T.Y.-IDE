@@ -298,3 +298,55 @@ func TestRuntimeSessionActionEndpointReturnsCaptureWithAction(t *testing.T) {
 		t.Fatalf("expected 400 for malformed action JSON, got %d", badJSONRecorder.Code)
 	}
 }
+
+func TestRuntimeSessionActionEndpointReturnsEvaluateResult(t *testing.T) {
+	originalOpen := openRuntimeSessionFn
+	originalAction := performRuntimeActionFn
+	originalCapture := captureRuntimeSessionFn
+	defer func() {
+		openRuntimeSessionFn = originalOpen
+		performRuntimeActionFn = originalAction
+		captureRuntimeSessionFn = originalCapture
+	}()
+
+	stubSession := &browserpkg.Session{Ctx: context.Background()}
+	entry := &runtimeSessionEntry{ID: "rt-eval", Mode: "managed", CreatedAt: time.Unix(1700000003, 0).UTC(), Session: stubSession}
+	openRuntimeSessionFn = func(req runtimeOpenSessionRequest) (*runtimeSessionEntry, []string, error) {
+		return entry, nil, nil
+	}
+	performRuntimeActionFn = func(got *runtimeSessionEntry, req runtimeSessionActionRequest) (*runtimeActionResult, error) {
+		if got != entry {
+			t.Fatalf("action received wrong session entry: %+v", got)
+		}
+		if req.Action != "evaluate" || req.Script != "({ answer: 42 })" {
+			t.Fatalf("unexpected evaluate request captured: %+v", req)
+		}
+		return &runtimeActionResult{Action: "evaluate", Script: req.Script, Result: `{"answer":42}`, WaitAppliedMs: 600}, nil
+	}
+	captureRuntimeSessionFn = func(got *runtimeSessionEntry) (*runtimeSessionCaptureResponse, error) {
+		return &runtimeSessionCaptureResponse{SessionID: got.ID, FinalURL: "https://example.com/eval", RuntimeState: runtimeStateFromEntry(got)}, nil
+	}
+
+	router := buildRouter(func() (runtimeBrowser, error) { return &stubRuntimeBrowser{}, nil })
+	openReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session", bytes.NewReader([]byte(`{}`)))
+	openReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), openReq)
+
+	evalBody := []byte(`{"action":"evaluate","script":"({ answer: 42 })","waitTimeoutMs":600}`)
+	evalReqHTTP := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-eval/action", bytes.NewReader(evalBody))
+	evalReqHTTP.Header.Set("Content-Type", "application/json")
+	evalRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(evalRecorder, evalReqHTTP)
+
+	if evalRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 evaluate action, got %d with body %s", evalRecorder.Code, evalRecorder.Body.String())
+	}
+	var evalResp runtimeSessionCaptureResponse
+	if err := json.Unmarshal(evalRecorder.Body.Bytes(), &evalResp); err != nil {
+		t.Fatalf("unmarshal evaluate response: %v", err)
+	}
+	if evalResp.Action == nil || evalResp.Action.Action != "evaluate" || evalResp.Action.Script != "({ answer: 42 })" || evalResp.Action.Result != `{"answer":42}` {
+		t.Fatalf("unexpected evaluate action response payload: %+v", evalResp.Action)
+	}
+}

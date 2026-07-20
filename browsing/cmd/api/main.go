@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -51,6 +52,7 @@ type runtimeSessionActionRequest struct {
 	Value         string `json:"value"`
 	Key           string `json:"key"`
 	URL           string `json:"url"`
+	Script        string `json:"script"`
 	Natural       bool   `json:"natural"`
 	Clear         bool   `json:"clear"`
 	WaitTimeoutMs int    `json:"waitTimeoutMs"`
@@ -87,6 +89,8 @@ type runtimeActionResult struct {
 	Target        string   `json:"target,omitempty"`
 	Value         string   `json:"value,omitempty"`
 	Key           string   `json:"key,omitempty"`
+	Script        string   `json:"script,omitempty"`
+	Result        string   `json:"result,omitempty"`
 	WaitAppliedMs int      `json:"waitAppliedMs"`
 	Warnings      []string `json:"warnings,omitempty"`
 }
@@ -722,6 +726,20 @@ func performRuntimeAction(entry *runtimeSessionEntry, req runtimeSessionActionRe
 			return nil, err
 		}
 		err = entry.Session.Navigate(result.Value)
+	case "evaluate":
+		result.Script = strings.TrimSpace(req.Script)
+		if result.Script == "" {
+			return nil, fmt.Errorf("script is required for evaluate")
+		}
+		var evalResult interface{}
+		err = chromedp.Run(entry.Session.Ctx, chromedp.Evaluate(result.Script, &evalResult))
+		if err == nil {
+			encoded, marshalErr := json.Marshal(evalResult)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("marshal evaluate result: %w", marshalErr)
+			}
+			result.Result = string(encoded)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported runtime action %q", action)
 	}
@@ -777,7 +795,7 @@ func protocolEvidenceFromEntry(entry *runtimeSessionEntry) runtimeProtocolEviden
 		Backend:          "go-chromedp",
 		Transport:        "http-json",
 		SessionMode:      mode,
-		SupportsActions:  []string{"navigate", "click", "js_click", "fill", "submit", "press_key"},
+		SupportsActions:  []string{"navigate", "click", "js_click", "fill", "submit", "press_key", "evaluate"},
 		SupportsCapture:  true,
 		SupportsSessions: true,
 	}

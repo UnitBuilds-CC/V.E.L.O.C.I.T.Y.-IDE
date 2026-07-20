@@ -642,6 +642,8 @@ pub struct BrowserRuntimeCaptureReport {
     pub warning_count: usize,
     #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<RuntimeActionApiResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1230,6 +1232,24 @@ struct RuntimeCaptureApiProtocolEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeActionApiResult {
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    pub wait_applied_ms: usize,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct RuntimeCaptureApiResponse {
     final_url: String,
     title: String,
@@ -1256,6 +1276,8 @@ struct RuntimeCaptureApiResponse {
     requests: Vec<RuntimeCaptureApiRequestRecord>,
     #[serde(default)]
     warnings: Vec<String>,
+    #[serde(default)]
+    action: Option<RuntimeActionApiResult>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1494,11 +1516,47 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         .map(parse_runtime_string_map)
         .unwrap_or_else(|| parse_runtime_string_map(value.get("storage").and_then(|storage| storage.get("session"))));
 
+    let action = value
+        .get("action")
+        .and_then(serde_json::Value::as_object)
+        .map(|action| RuntimeActionApiResult {
+            action: action
+                .get("action")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            target: action
+                .get("target")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.to_string()),
+            value: action
+                .get("value")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.to_string()),
+            key: action
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.to_string()),
+            script: action
+                .get("script")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.to_string()),
+            result: action
+                .get("result")
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.to_string()),
+            wait_applied_ms: action
+                .get("waitAppliedMs")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default() as usize,
+            warnings: parse_runtime_string_list(action.get("warnings")),
+        });
+
     let warnings = {
         let mut warnings = parse_runtime_string_list(value.get("warnings"));
-        warnings.extend(parse_runtime_string_list(
-            value.get("action").and_then(|action| action.get("warnings")),
-        ));
+        if let Some(action) = &action {
+            warnings.extend(action.warnings.iter().cloned());
+        }
         warnings
     };
 
@@ -1605,35 +1663,52 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
             }
         }
     }
-    if let Some(action) = value.get("action").and_then(serde_json::Value::as_object) {
-        if let Some(action_name) = action.get("action").and_then(serde_json::Value::as_str) {
-            runtime_state.push(RuntimeCaptureApiState {
-                scope: "runtime_action".to_string(),
-                key: "action".to_string(),
-                value: action_name.to_string(),
-            });
-        }
-        if let Some(target) = action.get("target").and_then(serde_json::Value::as_str) {
+    if let Some(action_result) = &action {
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_action".to_string(),
+            key: "action".to_string(),
+            value: action_result.action.clone(),
+        });
+        if let Some(target) = &action_result.target {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_action".to_string(),
                 key: "target".to_string(),
-                value: target.to_string(),
+                value: target.clone(),
             });
         }
-        if let Some(key) = action.get("key").and_then(serde_json::Value::as_str) {
+        if let Some(value) = &action_result.value {
+            runtime_state.push(RuntimeCaptureApiState {
+                scope: "runtime_action".to_string(),
+                key: "value".to_string(),
+                value: value.clone(),
+            });
+        }
+        if let Some(key) = &action_result.key {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_action".to_string(),
                 key: "key".to_string(),
-                value: key.to_string(),
+                value: key.clone(),
             });
         }
-        if let Some(wait_applied_ms) = action.get("waitAppliedMs").and_then(serde_json::Value::as_i64) {
+        if let Some(script) = &action_result.script {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_action".to_string(),
-                key: "wait_applied_ms".to_string(),
-                value: wait_applied_ms.to_string(),
+                key: "script".to_string(),
+                value: script.clone(),
             });
         }
+        if let Some(result) = &action_result.result {
+            runtime_state.push(RuntimeCaptureApiState {
+                scope: "runtime_action".to_string(),
+                key: "result".to_string(),
+                value: result.clone(),
+            });
+        }
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_action".to_string(),
+            key: "wait_applied_ms".to_string(),
+            value: action_result.wait_applied_ms.to_string(),
+        });
     }
 
     Ok(RuntimeCaptureApiResponse {
@@ -1652,6 +1727,7 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         protocol_events: Vec::new(),
         requests: Vec::new(),
         warnings,
+        action,
     })
 }
 
@@ -5421,13 +5497,36 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
         .map(|value| format!("\nNetwork summary: {}", value))
         .unwrap_or_default();
     let html_fallback = render_html_fallback_line(report.html_fallback_path.as_deref());
+    let action_summary = report
+        .action
+        .as_ref()
+        .map(|action| {
+            let mut parts = vec![format!("{} (wait {}ms)", action.action, action.wait_applied_ms)];
+            if let Some(target) = &action.target {
+                parts.push(format!("target={target}"));
+            }
+            if let Some(key) = &action.key {
+                parts.push(format!("key={key}"));
+            }
+            if let Some(value) = &action.value {
+                parts.push(format!("value={value}"));
+            }
+            if let Some(script) = &action.script {
+                parts.push(format!("script={script}"));
+            }
+            if let Some(result) = &action.result {
+                parts.push(format!("result={result}"));
+            }
+            format!("\nAction: {}", parts.join(" | "))
+        })
+        .unwrap_or_default();
     let warnings = if report.warnings.is_empty() {
         String::new()
     } else {
         format!("\nWarnings ({}): {}", report.warning_count, report.warnings.join(" | "))
     };
     format!(
-        "Runtime capture complete.\nSession: {}\nURL: {}\nTitle: {}\nBackend: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nAOM summary chars: {}{}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
+        "Runtime capture complete.\nSession: {}\nURL: {}\nTitle: {}\nBackend: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nAOM summary chars: {}{}{}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
         report.session_id,
         report.url,
         report.title,
@@ -5442,6 +5541,7 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
         report.local_storage_count,
         report.session_storage_count,
         report.aom_summary_chars,
+        action_summary,
         warnings,
         report.snapshot_json_path,
         report.session_json_path,
@@ -5655,6 +5755,7 @@ fn persist_runtime_capture_artifacts(
         aom_summary_chars: captured.aom_summary.chars().count(),
         warning_count: captured.warnings.len(),
         warnings: captured.warnings.clone(),
+        action: captured.action.clone(),
     })
 }
 
@@ -5956,6 +6057,7 @@ fn runtime_session_action(
     value: Option<&str>,
     key: Option<&str>,
     url: Option<&str>,
+    script: Option<&str>,
     natural: bool,
     clear: bool,
     wait_timeout_ms: Option<u64>,
@@ -5970,6 +6072,7 @@ fn runtime_session_action(
         "value": value,
         "key": key,
         "url": url,
+        "script": script,
         "natural": natural,
         "clear": clear,
         "waitTimeoutMs": wait_timeout_ms.unwrap_or(1_500),
@@ -5983,6 +6086,7 @@ fn runtime_session_action(
     let target = match action {
         "navigate" => url.map(|value| value.to_string()),
         "press_key" => key.map(|value| value.to_string()),
+        "evaluate" => script.map(|value| value.to_string()),
         _ => Some(runtime_action_target(node_id, selector)?),
     };
     let report = sync_runtime_capture_session(
@@ -6018,6 +6122,7 @@ pub fn runtime_navigate_session(
         None,
         None,
         Some(url),
+        None,
         false,
         false,
         wait_timeout_ms,
@@ -6044,6 +6149,33 @@ pub fn runtime_click_session(
         None,
         None,
         None,
+        None,
+        false,
+        false,
+        wait_timeout_ms,
+        sitemap_path,
+        compact,
+    )
+}
+
+pub fn runtime_evaluate_session(
+    workspace_root: &Path,
+    session_id: &str,
+    script: &str,
+    wait_timeout_ms: Option<u64>,
+    sitemap_path: &Path,
+    compact: bool,
+) -> Result<String, String> {
+    runtime_session_action(
+        workspace_root,
+        session_id,
+        "evaluate",
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(script),
         false,
         false,
         wait_timeout_ms,
@@ -6065,6 +6197,7 @@ pub fn runtime_js_click_session(
         session_id,
         "js_click",
         Some(node_id),
+        None,
         None,
         None,
         None,
@@ -6098,6 +6231,7 @@ pub fn runtime_fill_session(
         Some(value),
         None,
         None,
+        None,
         natural,
         clear,
         wait_timeout_ms,
@@ -6121,6 +6255,7 @@ pub fn runtime_submit_session(
         "submit",
         node_id,
         selector,
+        None,
         None,
         None,
         None,
@@ -6148,6 +6283,7 @@ pub fn runtime_press_key_session(
         None,
         None,
         Some(key),
+        None,
         None,
         false,
         false,
