@@ -696,14 +696,34 @@ func (s *Session) WaitUntilElementExists(role string, namePart string, timeout t
 	}
 }
 
-// TakeScreenshot captures a PNG of the current viewport.
-func (s *Session) TakeScreenshot(path string) error {
+// CaptureScreenshot captures a PNG of the current viewport.
+func (s *Session) CaptureScreenshot() ([]byte, error) {
 	var buf []byte
-	// Add 30s timeout for screenshot to avoid hanging on complex pages
 	ctx, cancel := context.WithTimeout(s.Ctx, 30*time.Second)
 	defer cancel()
 
 	if err := chromedp.Run(ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// CurrentURL returns the currently loaded page URL.
+func (s *Session) CurrentURL() (string, error) {
+	var currentURL string
+	ctx, cancel := context.WithTimeout(s.Ctx, 10*time.Second)
+	defer cancel()
+
+	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
+		return "", err
+	}
+	return currentURL, nil
+}
+
+// TakeScreenshot captures a PNG of the current viewport.
+func (s *Session) TakeScreenshot(path string) error {
+	buf, err := s.CaptureScreenshot()
+	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, buf, 0644)
