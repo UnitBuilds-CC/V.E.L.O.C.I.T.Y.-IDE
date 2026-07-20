@@ -62,6 +62,8 @@ pub struct BrowserPageSnapshot {
     pub cookies: Vec<BrowserCookie>,
     #[serde(default)]
     pub storage: Vec<BrowserStorageBucket>,
+    #[serde(default)]
+    pub mutations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,6 +109,11 @@ pub enum BrowserWorkflowStep {
     },
     WaitForUrlContains {
         fragment: String,
+        timeout_ms: Option<u64>,
+        interval_ms: Option<u64>,
+    },
+    WaitForMutation {
+        label: String,
         timeout_ms: Option<u64>,
         interval_ms: Option<u64>,
     },
@@ -156,6 +163,8 @@ pub struct BrowserSnapshotDiff {
     pub removed_cookies: Vec<String>,
     pub added_storage: Vec<String>,
     pub removed_storage: Vec<String>,
+    pub added_mutations: Vec<String>,
+    pub removed_mutations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -177,6 +186,7 @@ pub struct BrowserWorkflowRunReport {
     pub cookie_count: usize,
     pub local_storage_count: usize,
     pub session_storage_count: usize,
+    pub mutation_count: usize,
     pub outputs: HashMap<String, String>,
     pub log: Vec<String>,
 }
@@ -209,6 +219,7 @@ struct BrowserHttpResponse {
     cookies: Vec<BrowserCookie>,
     local_storage_updates: HashMap<String, String>,
     session_storage_updates: HashMap<String, String>,
+    mutations: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -477,6 +488,14 @@ fn parse_storage_header(raw: &str) -> HashMap<String, String> {
     updates
 }
 
+fn parse_list_header(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .collect()
+}
+
 fn storage_buckets(session: &BrowserSessionState) -> Vec<BrowserStorageBucket> {
     let mut buckets = Vec::new();
     if !session.local_storage.is_empty() {
@@ -552,6 +571,10 @@ fn fetch_with_session(
         .header("X-Velocity-Session-Storage")
         .map(parse_storage_header)
         .unwrap_or_default();
+    let mutations = response
+        .header("X-Velocity-Mutations")
+        .map(parse_list_header)
+        .unwrap_or_default();
 
     let html = response
         .into_string()
@@ -561,6 +584,7 @@ fn fetch_with_session(
         cookies: response_cookies,
         local_storage_updates,
         session_storage_updates,
+        mutations,
     })
 }
 
@@ -675,6 +699,7 @@ fn parse_html_to_snapshot(
     html: &str,
     cookies: &[BrowserCookie],
     storage: &[BrowserStorageBucket],
+    mutations: &[String],
 ) -> BrowserPageSnapshot {
     let mut elements = Vec::new();
     let mut title = "Untitled Page".to_string();
@@ -791,6 +816,7 @@ fn parse_html_to_snapshot(
         forms: parse_forms(url, html),
         cookies: cookies.to_vec(),
         storage: storage.to_vec(),
+        mutations: mutations.to_vec(),
     }
 }
 
@@ -818,6 +844,7 @@ fn write_crawl_facts(
     forms: &[BrowserForm],
     cookies: &[BrowserCookie],
     storage: &[BrowserStorageBucket],
+    mutations: &[String],
     sitemap_path: &Path,
 ) -> Result<PathBuf, String> {
     let facts_path = crawl_facts_path(url, sitemap_path);
@@ -827,13 +854,14 @@ fn write_crawl_facts(
 
     let storage_entry_count = storage.iter().map(|bucket| bucket.entries.len()).sum::<usize>();
     let mut facts = vec![
-        "browser-capture version 5".to_string(),
-        "field_count 5".to_string(),
+        "browser-capture version 6".to_string(),
+        "field_count 6".to_string(),
         "field\tkind\tpage-crawl".to_string(),
         format!("field\telement_count\t{}", elements.len()),
         format!("field\tform_count\t{}", forms.len()),
         format!("field\tcookie_count\t{}", cookies.len()),
         format!("field\tstorage_entry_count\t{}", storage_entry_count),
+        format!("field\tmutation_count\t{}", mutations.len()),
         "page_field_count 3".to_string(),
         format!("page_field\turl\t{}", encode_nda_text(url)),
         format!("page_field\ttitle\t{}", encode_nda_text(title)),
@@ -907,6 +935,11 @@ fn write_crawl_facts(
                 encode_nda_text(value)
             ));
         }
+    }
+
+    for (idx, mutation) in mutations.iter().enumerate() {
+        facts.push(format!("mutation\t{}", idx));
+        facts.push(format!("mutation_field\t{}\tlabel\t{}", idx, encode_nda_text(mutation)));
     }
 
     fs::write(&facts_path, facts.join("\n") + "\n")
@@ -1136,6 +1169,7 @@ pub fn restore_session_checkpoint(
             &snapshot.forms,
             &snapshot.cookies,
             &snapshot.storage,
+            &snapshot.mutations,
             sitemap_path,
         )?;
         let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
@@ -1171,6 +1205,7 @@ pub fn navigate_session(
         &snapshot.forms,
         &snapshot.cookies,
         &snapshot.storage,
+        &snapshot.mutations,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
@@ -1214,7 +1249,13 @@ pub fn crawl_page_snapshot_with_session(
     apply_storage_updates(&mut session.session_storage, &response.session_storage_updates);
     session.current_url = Some(url.to_string());
     let storage = storage_buckets(session);
-    Ok(parse_html_to_snapshot(url, &response.html, &session.cookies, &storage))
+    Ok(parse_html_to_snapshot(
+        url,
+        &response.html,
+        &session.cookies,
+        &storage,
+        &response.mutations,
+    ))
 }
 
 fn url_encode(input: &str) -> String {
@@ -1416,6 +1457,10 @@ fn snapshot_storage_signatures(snapshot: &BrowserPageSnapshot) -> HashSet<String
         .collect::<HashSet<_>>()
 }
 
+fn snapshot_mutation_signatures(snapshot: &BrowserPageSnapshot) -> HashSet<String> {
+    snapshot.mutations.iter().cloned().collect::<HashSet<_>>()
+}
+
 pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot) -> BrowserSnapshotDiff {
     let before_elements = before
         .elements
@@ -1441,6 +1486,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
         .collect::<HashSet<_>>();
     let before_storage = snapshot_storage_signatures(before);
     let after_storage = snapshot_storage_signatures(after);
+    let before_mutations = snapshot_mutation_signatures(before);
+    let after_mutations = snapshot_mutation_signatures(after);
 
     let mut added_elements = after_elements.difference(&before_elements).cloned().collect::<Vec<_>>();
     let mut removed_elements = before_elements.difference(&after_elements).cloned().collect::<Vec<_>>();
@@ -1450,6 +1497,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
     let mut removed_cookies = before_cookies.difference(&after_cookies).cloned().collect::<Vec<_>>();
     let mut added_storage = after_storage.difference(&before_storage).cloned().collect::<Vec<_>>();
     let mut removed_storage = before_storage.difference(&after_storage).cloned().collect::<Vec<_>>();
+    let mut added_mutations = after_mutations.difference(&before_mutations).cloned().collect::<Vec<_>>();
+    let mut removed_mutations = before_mutations.difference(&after_mutations).cloned().collect::<Vec<_>>();
 
     added_elements.sort();
     removed_elements.sort();
@@ -1459,6 +1508,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
     removed_cookies.sort();
     added_storage.sort();
     removed_storage.sort();
+    added_mutations.sort();
+    removed_mutations.sort();
 
     BrowserSnapshotDiff {
         title_changed: before.title != after.title,
@@ -1471,6 +1522,8 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
         removed_cookies,
         added_storage,
         removed_storage,
+        added_mutations,
+        removed_mutations,
     }
 }
 
@@ -1506,6 +1559,12 @@ fn render_snapshot_diff(diff: &BrowserSnapshotDiff) -> String {
     if !diff.removed_storage.is_empty() {
         parts.push(format!("storage-{}", diff.removed_storage.len()));
     }
+    if !diff.added_mutations.is_empty() {
+        parts.push(format!("mutations+{}", diff.added_mutations.len()));
+    }
+    if !diff.removed_mutations.is_empty() {
+        parts.push(format!("mutations-{}", diff.removed_mutations.len()));
+    }
 
     if parts.is_empty() {
         "no_semantic_change".to_string()
@@ -1525,6 +1584,8 @@ fn is_semantically_stable(diff: &BrowserSnapshotDiff) -> bool {
         && diff.removed_cookies.is_empty()
         && diff.added_storage.is_empty()
         && diff.removed_storage.is_empty()
+        && diff.added_mutations.is_empty()
+        && diff.removed_mutations.is_empty()
 }
 
 fn wait_for_condition<F>(
@@ -1610,6 +1671,7 @@ pub fn wait_for_session(
     text: Option<&str>,
     title: Option<&str>,
     url_contains: Option<&str>,
+    mutation: Option<&str>,
     role: Option<&str>,
     name: Option<&str>,
     stable_polls: Option<u32>,
@@ -1631,6 +1693,7 @@ pub fn wait_for_session(
             forms: Vec::new(),
             cookies: session.cookies.clone(),
             storage: storage_buckets(&session),
+            mutations: Vec::new(),
         }));
     let diff = if let Some(wait_text) = text {
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
@@ -1644,6 +1707,14 @@ pub fn wait_for_session(
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
             candidate.url.contains(wait_fragment)
         })?
+    } else if let Some(wait_mutation) = mutation {
+        let lowered = wait_mutation.to_ascii_lowercase();
+        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
+            candidate
+                .mutations
+                .iter()
+                .any(|entry| entry.to_ascii_lowercase().contains(&lowered))
+        })?
     } else if let (Some(wait_role), Some(wait_name)) = (role, name) {
         wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
             find_element(candidate, wait_role, wait_name).is_some()
@@ -1651,7 +1722,7 @@ pub fn wait_for_session(
     } else if stable_polls.is_some() {
         wait_for_stable_snapshot(&mut session, &mut snapshot, stable_polls, timeout_ms, interval_ms)?
     } else {
-        return Err("browser_session_wait requires text, title, urlContains, stablePolls, or both role and name".to_string());
+        return Err("browser_session_wait requires text, title, urlContains, mutation, stablePolls, or both role and name".to_string());
     };
 
     persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
@@ -1663,6 +1734,7 @@ pub fn wait_for_session(
         &snapshot.forms,
         &snapshot.cookies,
         &snapshot.storage,
+        &snapshot.mutations,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
@@ -1798,7 +1870,13 @@ fn submit_current_form(state: &mut BrowserReplayState, form_id: Option<&str>) ->
     apply_storage_updates(&mut state.session.session_storage, &response.session_storage_updates);
     state.session.current_url = Some(target_url.clone());
     let storage = storage_buckets(&state.session);
-    state.snapshot = parse_html_to_snapshot(&target_url, &response.html, &state.session.cookies, &storage);
+    state.snapshot = parse_html_to_snapshot(
+        &target_url,
+        &response.html,
+        &state.session.cookies,
+        &storage,
+        &response.mutations,
+    );
     state.filled_fields.clear();
     Ok(())
 }
@@ -1814,6 +1892,7 @@ pub fn crawl_and_sync_sitemap(url: &str, sitemap_path: &Path) -> Result<String, 
         &snapshot.forms,
         &snapshot.cookies,
         &snapshot.storage,
+        &snapshot.mutations,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
@@ -1909,6 +1988,19 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
                 "{}\twait_for_url_contains\tfragment={}\ttimeout_ms={}\tinterval_ms={}"
                 ,prefix,
                 encode_nda_text(fragment),
+                timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
+                interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
+            ));
+        }
+        BrowserWorkflowStep::WaitForMutation {
+            label,
+            timeout_ms,
+            interval_ms,
+        } => {
+            lines.push(format!(
+                "{}\twait_for_mutation\tlabel={}\ttimeout_ms={}\tinterval_ms={}"
+                ,prefix,
+                encode_nda_text(label),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
                 interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
             ));
@@ -2170,6 +2262,27 @@ fn execute_workflow_steps(
                     render_snapshot_diff(&diff)
                 ));
             }
+            BrowserWorkflowStep::WaitForMutation {
+                label,
+                timeout_ms,
+                interval_ms,
+            } => {
+                let resolved_label = resolve_template(label, state);
+                let lowered = resolved_label.to_ascii_lowercase();
+                let diff = wait_for_condition(
+                    &mut state.session,
+                    &mut state.snapshot,
+                    *timeout_ms,
+                    *interval_ms,
+                    |candidate| {
+                        candidate
+                            .mutations
+                            .iter()
+                            .any(|entry| entry.to_ascii_lowercase().contains(&lowered))
+                    },
+                )?;
+                log.push(format!("wait_for_mutation '{}' -> {}", resolved_label, render_snapshot_diff(&diff)));
+            }
             BrowserWorkflowStep::WaitForStable {
                 stable_polls,
                 timeout_ms,
@@ -2314,11 +2427,12 @@ fn replay_workflow_with_state(
         cookie_count: state.session.cookies.len(),
         local_storage_count: state.session.local_storage.len(),
         session_storage_count: state.session.session_storage.len(),
+        mutation_count: state.snapshot.mutations.len(),
         outputs: state.outputs.clone(),
         log: log.clone(),
     };
     let result = format!(
-        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\nLocal storage: {}\nSession storage: {}\nOutputs: {}\n{}",
+        "Workflow '{}' completed.\nFinal URL: {}\nFinal title: {}\nSession: {}\nSteps executed: {}\nCookies: {}\nLocal storage: {}\nSession storage: {}\nMutations: {}\nOutputs: {}\n{}",
         workflow.name,
         state.snapshot.url,
         state.snapshot.title,
@@ -2327,6 +2441,7 @@ fn replay_workflow_with_state(
         state.session.cookies.len(),
         state.session.local_storage.len(),
         state.session.session_storage.len(),
+        state.snapshot.mutations.len(),
         state.outputs.len(),
         log.join("\n")
     );
@@ -2347,6 +2462,7 @@ fn persist_replay_state(
         &state.snapshot.forms,
         &state.snapshot.cookies,
         &state.snapshot.storage,
+        &state.snapshot.mutations,
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&state.snapshot, sitemap_path)?;
@@ -2532,12 +2648,12 @@ pub fn replay_workflow_in_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        crawl_facts_path, create_session, diff_snapshots, load_session_state, load_workflow,
-        load_snapshot_json, load_workflow_suite, navigate_session, parse_html_to_snapshot,
-        render_workflow_dsl, replay_workflow, replay_workflow_in_session, restore_session_checkpoint,
-        run_workflow_suite, save_session_checkpoint, save_workflow, save_workflow_suite,
-        wait_for_session, write_crawl_facts, AomElement, BrowserCookie, BrowserWorkflow,
-        BrowserWorkflowStep, BrowserWorkflowSuite,
+        crawl_facts_path, create_session, diff_snapshots, is_semantically_stable, load_session_state,
+        load_snapshot_json, load_workflow, load_workflow_suite, navigate_session,
+        parse_html_to_snapshot, render_workflow_dsl, replay_workflow, replay_workflow_in_session,
+        restore_session_checkpoint, run_workflow_suite, save_session_checkpoint, save_workflow,
+        save_workflow_suite, wait_for_session, write_crawl_facts, AomElement, BrowserCookie,
+        BrowserWorkflow, BrowserWorkflowStep, BrowserWorkflowSuite,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2619,19 +2735,22 @@ mod tests {
                 scope: "local".to_string(),
                 entries: HashMap::from([("theme".to_string(), "dark".to_string())]),
             }],
+            &["hydration:complete".to_string()],
             &sitemap_path,
         )
         .unwrap();
 
         assert_eq!(facts_path, crawl_facts_path("https://example.com/docs", &sitemap_path));
         let facts = fs::read_to_string(facts_path).unwrap();
-        assert!(facts.starts_with("browser-capture version 5\n"));
-        assert!(facts.contains("field_count 5\n"));
+        assert!(facts.starts_with("browser-capture version 6\n"));
+        assert!(facts.contains("field_count 6\n"));
         assert!(facts.contains("field\tcookie_count\t1\n"));
         assert!(facts.contains("field\tstorage_entry_count\t1\n"));
+        assert!(facts.contains("field\tmutation_count\t1\n"));
         assert!(facts.contains("element_field\t0\trole\tlink"));
         assert!(facts.contains("cookie_field\t0\tname\tsid"));
         assert!(facts.contains("storage_field\t0\tscope\tlocal"));
+        assert!(facts.contains("mutation_field\t0\tlabel\thydration:complete"));
     }
 
     #[test]
@@ -2639,6 +2758,7 @@ mod tests {
         let snapshot = parse_html_to_snapshot(
             "https://example.com",
             "<html><head><title>Docs</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'><input name='password' type='password'><input type='submit' value='Sign in'></form><a href='/api'>API</a></body></html>",
+            &[],
             &[],
             &[],
         );
@@ -2714,6 +2834,7 @@ mod tests {
         let snapshot = parse_html_to_snapshot(
             "https://example.com",
             "<html><head><title>Checkout</title></head><body><form id='login'><input name='email' placeholder='Email'></form><p>Checkout ready</p></body></html>",
+            &[],
             &[],
             &[],
         );
@@ -2807,6 +2928,7 @@ mod tests {
             "<html><head><title>Portal</title></head><body><a href='/settings/billing'>Billing Settings</a><a href='/settings'>Settings</a><form id='profile'><input name='user_email' placeholder='Work Email'></form></body></html>",
             &[],
             &[],
+            &[],
         );
 
         let matched_link = super::find_element(&snapshot, "link", "billing").unwrap();
@@ -2825,6 +2947,7 @@ mod tests {
         let snapshot = parse_html_to_snapshot(
             "https://example.com",
             "<html><head><title>Docs</title></head><body><form id='login' action='/login' method='post'><input name='email' value='saved@example.com' placeholder='Email'></form><a href='/api'>API</a></body></html>",
+            &[],
             &[],
             &[],
         );
@@ -2903,6 +3026,7 @@ mod tests {
             "<html><head><title>Login</title></head><body><form id='login' action='/login' method='post'><input name='email' placeholder='Email'></form></body></html>",
             &[],
             &[],
+            &[],
         );
         let after = parse_html_to_snapshot(
             "https://example.com/dashboard",
@@ -2912,6 +3036,7 @@ mod tests {
                 scope: "local".to_string(),
                 entries: HashMap::from([("token".to_string(), "abc123".to_string())]),
             }],
+            &[],
         );
 
         let diff = diff_snapshots(&before, &after);
@@ -2920,6 +3045,29 @@ mod tests {
         assert!(diff.removed_forms.iter().any(|entry| entry.contains("login:POST")));
         assert!(diff.added_cookies.iter().any(|entry| entry == "session=abc123"));
         assert!(diff.added_storage.iter().any(|entry| entry == "local:token=abc123"));
+    }
+
+    #[test]
+    fn computes_mutation_diffs() {
+        let before = parse_html_to_snapshot(
+            "https://example.com",
+            "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
+            &[],
+            &[],
+            &[],
+        );
+        let after = parse_html_to_snapshot(
+            "https://example.com",
+            "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
+            &[],
+            &[],
+            &["hydration:complete".to_string(), "route:dashboard".to_string()],
+        );
+
+        let diff = diff_snapshots(&before, &after);
+        assert!(diff.added_mutations.iter().any(|entry| entry == "hydration:complete"));
+        assert!(diff.added_mutations.iter().any(|entry| entry == "route:dashboard"));
+        assert!(!is_semantically_stable(&diff));
     }
 
     #[test]
@@ -2959,6 +3107,7 @@ mod tests {
             root,
             "wait-session",
             Some("Ready"),
+            None,
             None,
             None,
             None,
@@ -3014,6 +3163,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some(1500),
             Some(10),
             &sitemap_path,
@@ -3024,6 +3174,7 @@ mod tests {
         let stable_result = wait_for_session(
             root,
             "title-session",
+            None,
             None,
             None,
             None,
@@ -3040,6 +3191,59 @@ mod tests {
     }
 
     #[test]
+    fn waits_for_session_mutation_labels() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{}", port);
+        std::thread::spawn(move || {
+            for idx in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let _ = read_http_request(&mut stream);
+                    let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
+                    let response = if idx == 0 {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nX-Velocity-Mutations: hydration:complete;route:dashboard\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    };
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let sitemap_path = root.join("site_map");
+        create_session(root, "mutation-session").unwrap();
+        navigate_session(root, "mutation-session", &url, &sitemap_path).unwrap();
+
+        let result = wait_for_session(
+            root,
+            "mutation-session",
+            None,
+            None,
+            None,
+            Some("hydration"),
+            None,
+            None,
+            None,
+            Some(1500),
+            Some(10),
+            &sitemap_path,
+        )
+        .unwrap();
+        assert!(result.contains("Diff: mutations+2"));
+    }
+
+    #[test]
     fn replays_new_wait_workflow_steps() {
         use std::io::Write;
         use std::net::TcpListener;
@@ -3049,15 +3253,23 @@ mod tests {
         let start_url = format!("http://127.0.0.1:{}/start", port);
 
         std::thread::spawn(move || {
-            for _ in 0..4 {
+            for idx in 0..4 {
                 if let Ok((mut stream, _)) = listener.accept() {
                     let _request = read_http_request(&mut stream);
                     let body = "<html><head><title>Dashboard</title></head><body><p>Stable</p></body></html>";
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
+                    let response = if idx < 3 {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nX-Velocity-Mutations: hydration:complete\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    };
                     let _ = stream.write_all(response.as_bytes());
                     let _ = stream.flush();
                 }
@@ -3079,6 +3291,11 @@ mod tests {
                     timeout_ms: Some(50),
                     interval_ms: Some(5),
                 },
+                BrowserWorkflowStep::WaitForMutation {
+                    label: "hydration".to_string(),
+                    timeout_ms: Some(50),
+                    interval_ms: Some(5),
+                },
                 BrowserWorkflowStep::WaitForStable {
                     stable_polls: Some(1),
                     timeout_ms: Some(50),
@@ -3089,6 +3306,7 @@ mod tests {
         let snapshot = parse_html_to_snapshot(
             &start_url,
             "<html><head><title>Dashboard</title></head><body><p>Stable</p></body></html>",
+            &[],
             &[],
             &[],
         );
@@ -3110,6 +3328,7 @@ mod tests {
         assert!(summary.contains("Workflow 'Static Wait Flow' completed."));
         assert!(report.log.iter().any(|entry| entry.contains("wait_for_title 'Dashboard'")));
         assert!(report.log.iter().any(|entry| entry.contains("wait_for_url_contains '/start'")));
+        assert!(report.log.iter().any(|entry| entry.contains("wait_for_mutation 'hydration' -> mutations+1")));
         assert!(report.log.iter().any(|entry| entry.contains("wait_for_stable polls=1 -> no_semantic_change")));
     }
 

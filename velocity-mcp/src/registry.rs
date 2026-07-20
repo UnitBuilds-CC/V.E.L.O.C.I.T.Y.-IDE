@@ -208,6 +208,7 @@ pub fn get_tools() -> Vec<Tool> {
                     "text": { "type": "string", "description": "Wait until this text appears in the current snapshot." },
                     "title": { "type": "string", "description": "Wait until the current page title contains this text." },
                     "urlContains": { "type": "string", "description": "Wait until the current page URL contains this fragment." },
+                    "mutation": { "type": "string", "description": "Wait until the current snapshot exposes a runtime mutation label containing this text." },
                     "role": { "type": "string", "description": "Optional role when waiting for an element." },
                     "name": { "type": "string", "description": "Optional accessible name when waiting for an element." },
                     "stablePolls": { "type": "integer", "description": "For stability waits, require this many consecutive unchanged polls before succeeding." },
@@ -370,6 +371,11 @@ fn parse_browser_steps(
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
+            "wait_for_mutation" => crate::editor::browser::BrowserWorkflowStep::WaitForMutation {
+                label: step["label"].as_str().ok_or("wait_for_mutation step label is required")?.to_string(),
+                timeout_ms: step["timeoutMs"].as_u64(),
+                interval_ms: step["intervalMs"].as_u64(),
+            },
             "wait_for_stable" => crate::editor::browser::BrowserWorkflowStep::WaitForStable {
                 stable_polls: step["stablePolls"].as_u64().map(|value| value as u32),
                 timeout_ms: step["timeoutMs"].as_u64(),
@@ -472,6 +478,7 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let text = arguments["text"].as_str();
             let title = arguments["title"].as_str();
             let url_contains = arguments["urlContains"].as_str();
+            let mutation = arguments["mutation"].as_str();
             let role = arguments["role"].as_str();
             let name = arguments["name"].as_str();
             let stable_polls = arguments["stablePolls"].as_u64().map(|value| value as u32);
@@ -484,6 +491,7 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 text,
                 title,
                 url_contains,
+                mutation,
                 role,
                 name,
                 stable_polls,
@@ -1285,11 +1293,19 @@ mod tests {
                         1 => "<html><head><title>Dashboard Ready</title></head><body><p>Preparing</p></body></html>",
                         _ => "<html><head><title>Dashboard Ready</title></head><body><p>Stable</p></body></html>",
                     };
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
+                    let response = if idx == 1 {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nX-Velocity-Mutations: route:dashboard;hydration:complete\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                    };
                     let _ = stream.write_all(response.as_bytes());
                     let _ = stream.flush();
                 }
@@ -1321,6 +1337,14 @@ mod tests {
         .unwrap();
         assert!(title_wait.contains("Title: Dashboard Ready"));
 
+        let mutation_wait = call_tool_in_workspace(
+            &root,
+            "browser_session_wait",
+            &json!({"sessionId": "steady", "mutation": "hydration", "timeoutMs": 1500, "intervalMs": 10}),
+        )
+        .unwrap();
+        assert!(mutation_wait.contains("Diff: no_semantic_change"));
+
         let stable_wait = call_tool_in_workspace(
             &root,
             "browser_session_wait",
@@ -1328,7 +1352,7 @@ mod tests {
         )
         .unwrap();
         assert!(stable_wait.contains("Title: Dashboard Ready"));
-        assert!(stable_wait.contains("Diff: summary"));
+        assert!(stable_wait.contains("Diff: summary,mutations-2"));
     }
 
     #[test]
