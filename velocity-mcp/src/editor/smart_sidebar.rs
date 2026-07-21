@@ -30,7 +30,7 @@ pub enum SidebarEntryType {
 #[derive(Clone, Copy, Debug)]
 pub struct SidebarEntry {
     pub entry_type: SidebarEntryType,
-    pub priority: u8,          // 0-255, higher = more important
+    pub priority: u8, // 0-255, higher = more important
     pub source_task_id: u32,
     pub file_offset: u16,
     pub file_len: u16,
@@ -39,7 +39,7 @@ pub struct SidebarEntry {
     pub text_offset: u16,
     pub text_len: u16,
     pub timestamp_ms: u32,
-    pub metadata_u32_0: u32,   // context-dependent
+    pub metadata_u32_0: u32, // context-dependent
     pub metadata_u32_1: u32,
     pub metadata_u32_2: u32,
 }
@@ -124,10 +124,17 @@ impl SmartSidebarState {
     }
 
     /// Add a file reference
-    pub fn add_file_reference(&mut self, task_id: u32, file: &str, line: u32, column: u16, description: &str) {
+    pub fn add_file_reference(
+        &mut self,
+        task_id: u32,
+        file: &str,
+        line: u32,
+        column: u16,
+        description: &str,
+    ) {
         let (file_offset, file_len) = self.store_text(file);
         let (text_offset, text_len) = self.store_text(description);
-        
+
         let idx = if self.count >= SIDEBAR_BUFFER_SIZE {
             self.head
         } else {
@@ -161,7 +168,7 @@ impl SmartSidebarState {
     pub fn add_symbol(&mut self, task_id: u32, symbol: &str, file: &str, line: u32, column: u16) {
         let (file_offset, file_len) = self.store_text(file);
         let (text_offset, text_len) = self.store_text(symbol);
-        
+
         let idx = if self.count >= SIDEBAR_BUFFER_SIZE {
             self.head
         } else {
@@ -195,7 +202,7 @@ impl SmartSidebarState {
     pub fn add_suggestion(&mut self, task_id: u32, suggestion: &str, file: &str, line: u32) {
         let (file_offset, file_len) = self.store_text(file);
         let (text_offset, text_len) = self.store_text(suggestion);
-        
+
         let idx = if self.count >= SIDEBAR_BUFFER_SIZE {
             self.head
         } else {
@@ -226,10 +233,16 @@ impl SmartSidebarState {
     }
 
     /// Add a quick action
-    pub fn add_quick_action(&mut self, task_id: u32, action: &str, _description: &str, action_id: u32) {
+    pub fn add_quick_action(
+        &mut self,
+        task_id: u32,
+        action: &str,
+        _description: &str,
+        action_id: u32,
+    ) {
         let (file_offset, file_len) = self.store_text("");
         let (text_offset, text_len) = self.store_text(action);
-        
+
         let idx = if self.count >= SIDEBAR_BUFFER_SIZE {
             self.head
         } else {
@@ -260,10 +273,18 @@ impl SmartSidebarState {
     }
 
     /// Add diagnostic (error/warning)
-    pub fn add_diagnostic(&mut self, task_id: u32, is_error: bool, file: &str, line: u32, column: u16, message: &str) {
+    pub fn add_diagnostic(
+        &mut self,
+        task_id: u32,
+        is_error: bool,
+        file: &str,
+        line: u32,
+        column: u16,
+        message: &str,
+    ) {
         let (file_offset, file_len) = self.store_text(file);
         let (text_offset, text_len) = self.store_text(message);
-        
+
         let idx = if self.count >= SIDEBAR_BUFFER_SIZE {
             self.head
         } else {
@@ -271,7 +292,11 @@ impl SmartSidebarState {
         };
 
         self.entries[idx] = SidebarEntry {
-            entry_type: if is_error { SidebarEntryType::ErrorDiagnostic } else { SidebarEntryType::WarningDiagnostic },
+            entry_type: if is_error {
+                SidebarEntryType::ErrorDiagnostic
+            } else {
+                SidebarEntryType::WarningDiagnostic
+            },
             priority: if is_error { 255 } else { 180 },
             source_task_id: task_id,
             file_offset,
@@ -387,9 +412,13 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
                 for entry in snapshot.state.visible_entries() {
                     let (icon, color, type_name) = match entry.entry_type {
                         SidebarEntryType::FileReference => ("📄", palette.accent, "File"),
-                        SidebarEntryType::SymbolDefinition => ("🔧", palette.accent.gamma_multiply(0.85), "Symbol"),
+                        SidebarEntryType::SymbolDefinition => {
+                            ("🔧", palette.accent.gamma_multiply(0.85), "Symbol")
+                        }
                         SidebarEntryType::CodeSuggestion => ("💡", palette.warning, "Suggest"),
-                        SidebarEntryType::QuickAction => ("⚡", palette.accent.gamma_multiply(1.1), "Action"),
+                        SidebarEntryType::QuickAction => {
+                            ("⚡", palette.accent.gamma_multiply(1.1), "Action")
+                        }
                         SidebarEntryType::ErrorDiagnostic => ("✕", palette.error, "Error"),
                         SidebarEntryType::WarningDiagnostic => ("⚠", palette.warning, "Warn"),
                         SidebarEntryType::TodoComment => ("☐", palette.success, "TODO"),
@@ -401,11 +430,7 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
 
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(icon)
-                                    .size(12.0)
-                                    .color(color),
-                            );
+                            ui.label(egui::RichText::new(icon).size(12.0).color(color));
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(
@@ -424,9 +449,12 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) 
                                     ui.horizontal(|ui| {
                                         ui.add_space(20.0);
                                         ui.label(
-                                            egui::RichText::new(format!("{} :{}", file, entry.line_number))
-                                                .size(8.0)
-                                                .color(palette.text_muted),
+                                            egui::RichText::new(format!(
+                                                "{} :{}",
+                                                file, entry.line_number
+                                            ))
+                                            .size(8.0)
+                                            .color(palette.text_muted),
                                         );
                                     });
                                 }
@@ -446,12 +474,12 @@ mod tests {
     #[test]
     fn test_sidebar_ring_buffer() {
         let mut sidebar = SmartSidebarState::default();
-        
+
         // Fill beyond capacity
         for i in 0..SIDEBAR_BUFFER_SIZE + 10 {
             sidebar.add_file_reference(1, &format!("file{}.rs", i), i as u32, 0, "test");
         }
-        
+
         assert_eq!(sidebar.entry_count(), SIDEBAR_BUFFER_SIZE);
     }
 
@@ -459,12 +487,18 @@ mod tests {
     fn test_sidebar_text_pool() {
         let mut sidebar = SmartSidebarState::default();
         sidebar.add_file_reference(1, "main.rs", 10, 5, "main function");
-        
+
         let entries: Vec<_> = sidebar.visible_entries().collect();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].entry_type, SidebarEntryType::FileReference);
-        assert_eq!(sidebar.get_file(entries[0].file_offset, entries[0].file_len), "main.rs");
-        assert_eq!(sidebar.get_text(entries[0].text_offset, entries[0].text_len), "main function");
+        assert_eq!(
+            sidebar.get_file(entries[0].file_offset, entries[0].file_len),
+            "main.rs"
+        );
+        assert_eq!(
+            sidebar.get_text(entries[0].text_offset, entries[0].text_len),
+            "main function"
+        );
     }
 
     #[test]
@@ -473,11 +507,11 @@ mod tests {
         sidebar.add_file_reference(1, "a.rs", 1, 0, "ref");
         sidebar.add_diagnostic(1, true, "b.rs", 2, 0, "error");
         sidebar.add_suggestion(1, "fix it", "c.rs", 3);
-        
+
         sidebar.set_filter(SidebarEntryType::FileReference, false);
         let filtered: Vec<_> = sidebar.visible_entries().collect();
         assert_eq!(filtered.len(), 2); // error + suggestion
-        
+
         sidebar.set_filter(SidebarEntryType::ErrorDiagnostic, false);
         let filtered: Vec<_> = sidebar.visible_entries().collect();
         assert_eq!(filtered.len(), 1); // only suggestion

@@ -1,7 +1,7 @@
-use std::path::Path;
-use std::error::Error;
-use tree_sitter::Language;
 use libloading::Library;
+use std::error::Error;
+use std::path::Path;
+use tree_sitter::Language;
 
 pub struct DynamicParser {
     _lib: Library,

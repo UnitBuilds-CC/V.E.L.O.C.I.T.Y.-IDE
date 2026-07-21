@@ -139,7 +139,10 @@ pub fn serialize_mission_activity_nda(state: &TaskTimelineState) -> String {
 pub fn persist_mission_activity_nda(workspace_root: &Path, state: &TaskTimelineState) {
     let agentic_dir = workspace_root.join(".velocity").join("agentic");
     let _ = std::fs::create_dir_all(&agentic_dir);
-    let _ = std::fs::write(agentic_dir.join("mission_activity.nda"), serialize_mission_activity_nda(state));
+    let _ = std::fs::write(
+        agentic_dir.join("mission_activity.nda"),
+        serialize_mission_activity_nda(state),
+    );
 }
 
 impl TaskTimelineState {
@@ -227,7 +230,9 @@ impl TaskTimelineState {
             description,
             parent_id,
             0,
-            0, 0, 0,
+            0,
+            0,
+            0,
         )
     }
 
@@ -262,7 +267,9 @@ impl TaskTimelineState {
             args_summary,
             task_id,
             0,
-            0, 0, 0,
+            0,
+            0,
+            0,
         );
     }
 
@@ -271,14 +278,20 @@ impl TaskTimelineState {
         if task_id == 0 {
             return;
         }
-        let event_type = if success { TaskEventType::ToolResult } else { TaskEventType::Failed };
+        let event_type = if success {
+            TaskEventType::ToolResult
+        } else {
+            TaskEventType::Failed
+        };
         self.add_event(
             event_type,
             tool_name,
             if success { "completed" } else { "failed" },
             task_id,
             duration_ms,
-            0, 0, 0,
+            0,
+            0,
+            0,
         );
     }
 
@@ -289,7 +302,9 @@ impl TaskTimelineState {
             description,
             0,
             0,
-            0, 0, 0,
+            0,
+            0,
+            0,
         );
     }
 
@@ -300,7 +315,9 @@ impl TaskTimelineState {
             description,
             task_id,
             0,
-            0, 0, 0,
+            0,
+            0,
+            0,
         );
     }
 
@@ -366,61 +383,74 @@ pub fn render_mission_activity_feed(
         return;
     }
 
-    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-        for (_, event) in snapshot
-            .state
-            .visible_events()
-            .filter(|(_, event)| {
-                selected_task_id
-                    .map(|selected| event.task_id == 0 || event.task_id as u64 == selected || event.parent_task_id as u64 == selected)
-                    .unwrap_or(true)
-            })
-            .take(max_items)
-        {
-            let (icon, color) = match event.event_type {
-                TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
-                TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
-                TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
-                TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
-                TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
-                TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(74, 222, 128)),
-                TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
-                TaskEventType::TokenBudgetUpdate => ("$", egui::Color32::from_rgb(236, 72, 153)),
-                TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
-                TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
-            };
-            let name = snapshot.state.get_text(event.name_offset, event.name_len);
-            let desc = snapshot.state.get_text(event.description_offset, event.description_len);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new(icon).color(color));
-                let task_scope = if event.task_id == 0 {
-                    "Mission".to_string()
-                } else {
-                    format!("Task #{}", event.task_id)
+    egui::ScrollArea::vertical()
+        .max_height(220.0)
+        .show(ui, |ui| {
+            for (_, event) in snapshot
+                .state
+                .visible_events()
+                .filter(|(_, event)| {
+                    selected_task_id
+                        .map(|selected| {
+                            event.task_id == 0
+                                || event.task_id as u64 == selected
+                                || event.parent_task_id as u64 == selected
+                        })
+                        .unwrap_or(true)
+                })
+                .take(max_items)
+            {
+                let (icon, color) = match event.event_type {
+                    TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
+                    TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
+                    TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
+                    TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
+                    TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
+                    TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(74, 222, 128)),
+                    TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
+                    TaskEventType::TokenBudgetUpdate => {
+                        ("$", egui::Color32::from_rgb(236, 72, 153))
+                    }
+                    TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
+                    TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
                 };
-                ui.label(
-                    egui::RichText::new(format!("{} · {}", task_scope, name))
-                        .small()
-                        .strong(),
-                );
-                if !desc.is_empty() {
+                let name = snapshot.state.get_text(event.name_offset, event.name_len);
+                let desc = snapshot
+                    .state
+                    .get_text(event.description_offset, event.description_len);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(icon).color(color));
+                    let task_scope = if event.task_id == 0 {
+                        "Mission".to_string()
+                    } else {
+                        format!("Task #{}", event.task_id)
+                    };
                     ui.label(
-                        egui::RichText::new(format!("— {}", desc))
+                        egui::RichText::new(format!("{} · {}", task_scope, name))
                             .small()
-                            .color(egui::Color32::from_rgb(125, 131, 166)),
+                            .strong(),
                     );
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{:.1}s", event.timestamp_ms as f32 / 1000.0))
+                    if !desc.is_empty() {
+                        ui.label(
+                            egui::RichText::new(format!("— {}", desc))
+                                .small()
+                                .color(egui::Color32::from_rgb(125, 131, 166)),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{:.1}s",
+                                event.timestamp_ms as f32 / 1000.0
+                            ))
                             .size(9.0)
                             .color(egui::Color32::from_rgb(125, 131, 166)),
-                    );
+                        );
+                    });
                 });
-            });
-            ui.separator();
-        }
-    });
+                ui.separator();
+            }
+        });
 }
 
 /// Render task timeline panel
@@ -463,16 +493,16 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
             .max_height(300.0)
             .show(ui, |ui| {
                 // Use fixed array for task depths (max 256 tasks concurrently)
-                                let mut task_depths = [0u8; 256];
-                                let mut active_task_count = 0;
+                let mut task_depths = [0u8; 256];
+                let mut active_task_count = 0;
 
-                                for (_, event) in snapshot.state.chronological_events() {
-                                    let task_id = event.task_id as usize;
-                                    let depth = if task_id < 256 {
-                                        task_depths[task_id]
-                                    } else {
-                                        0
-                                    };
+                for (_, event) in snapshot.state.chronological_events() {
+                    let task_id = event.task_id as usize;
+                    let depth = if task_id < 256 {
+                        task_depths[task_id]
+                    } else {
+                        0
+                    };
 
                     let (icon, color) = match event.event_type {
                         TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
@@ -482,15 +512,24 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                         TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
                         TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(34, 197, 94)),
                         TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
-                        TaskEventType::TokenBudgetUpdate => ("$", egui::Color32::from_rgb(236, 72, 153)),
-                        TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
+                        TaskEventType::TokenBudgetUpdate => {
+                            ("$", egui::Color32::from_rgb(236, 72, 153))
+                        }
+                        TaskEventType::SessionMarker => {
+                            ("║", egui::Color32::from_rgb(59, 130, 246))
+                        }
                         TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
                     };
 
                     let name = snapshot.state.get_text(event.name_offset, event.name_len);
-                    let desc = snapshot.state.get_text(event.description_offset, event.description_len);
+                    let desc = snapshot
+                        .state
+                        .get_text(event.description_offset, event.description_len);
 
-                    let is_marker = matches!(event.event_type, TaskEventType::SessionMarker | TaskEventType::AgentMarker);
+                    let is_marker = matches!(
+                        event.event_type,
+                        TaskEventType::SessionMarker | TaskEventType::AgentMarker
+                    );
                     let indent = if is_marker { 0.0 } else { depth as f32 * 16.0 };
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
@@ -503,7 +542,11 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                             egui::RichText::new(name)
                                 .size(if is_marker { 11.0 } else { 10.0 })
                                 .strong()
-                                .color(if is_marker { color } else { egui::Color32::from_rgb(226, 227, 243) }),
+                                .color(if is_marker {
+                                    color
+                                } else {
+                                    egui::Color32::from_rgb(226, 227, 243)
+                                }),
                         );
                         if !desc.is_empty() {
                             ui.label(
@@ -540,15 +583,15 @@ mod tests {
     #[test]
     fn test_ring_buffer_wrap() {
         let mut timeline = TaskTimelineState::default();
-        
+
         // Fill beyond capacity
         for i in 0..TASK_BUFFER_SIZE + 10 {
             timeline.task_started(&format!("Task {}", i), "desc", 0);
         }
-        
+
         // Should have exactly TASK_BUFFER_SIZE events
         assert_eq!(timeline.event_count(), TASK_BUFFER_SIZE);
-        
+
         // First event should be evicted
         let first = timeline.chronological_events().next().unwrap().1;
         assert!(first.name_offset > 0); // Valid text stored
@@ -559,12 +602,18 @@ mod tests {
         let mut timeline = TaskTimelineState::default();
         let id = timeline.task_started("Test Task", "Description", 0);
         assert_ne!(id, 0);
-        
+
         let events: Vec<_> = timeline.chronological_events().collect();
         assert_eq!(events.len(), 1);
         let event = events[0].1;
-        assert_eq!(timeline.get_text(event.name_offset, event.name_len), "Test Task");
-        assert_eq!(timeline.get_text(event.description_offset, event.description_len), "Description");
+        assert_eq!(
+            timeline.get_text(event.name_offset, event.name_len),
+            "Test Task"
+        );
+        assert_eq!(
+            timeline.get_text(event.description_offset, event.description_len),
+            "Description"
+        );
     }
 
     #[test]
@@ -572,7 +621,7 @@ mod tests {
         let mut timeline = TaskTimelineState::default();
         let id = timeline.task_started("Build", "compile project", 0);
         timeline.task_completed(id, 1500, 500, 100);
-        
+
         let event = timeline.chronological_events().next().unwrap().1;
         assert_eq!(event.event_type, TaskEventType::Completed);
         assert_eq!(event.duration_ms, 1500);
@@ -610,6 +659,8 @@ mod tests {
         .unwrap();
         assert!(artifact.starts_with("mission-activity version 2\n"));
         assert!(artifact.contains("entry_count 1\n"));
-        assert!(artifact.contains("entry\t0\tsession_marker\t1\t0\tIDE session ready\tagentic workspace initialized\t"));
+        assert!(artifact.contains(
+            "entry\t0\tsession_marker\t1\t0\tIDE session ready\tagentic workspace initialized\t"
+        ));
     }
 }

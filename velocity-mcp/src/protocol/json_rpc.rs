@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
-use std::io::{self, BufRead};
-use std::error::Error;
 use crate::registry;
+use serde_json::{json, Value};
+use std::error::Error;
+use std::io::{self, BufRead};
 
 pub fn run_stdio_loop() -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();

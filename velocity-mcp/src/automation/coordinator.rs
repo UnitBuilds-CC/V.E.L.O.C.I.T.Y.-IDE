@@ -1,16 +1,19 @@
+use crate::agent::{AiProvider, ModelInfo};
+use crate::automation::instruction_registry::AgentTaskKind;
+use crate::automation::mediator::MediatorArena;
+use crate::automation::site_map_support::resolve_weight_root;
+use crate::automation::task_router::{
+    partition_files_by_coupling, ProviderModelCatalog, RoutedModelRoute, RoutedSubAgentTask,
+    SiteMapTaskRouter,
+};
+use crate::orchestrator::blueprint::Task;
+use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment};
+use crate::orchestrator::TaskId;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use velocity_ide::site_map::SiteMap;
-use crate::agent::{AiProvider, ModelInfo};
-use crate::automation::instruction_registry::AgentTaskKind;
-use crate::automation::mediator::MediatorArena;
-use crate::automation::site_map_support::resolve_weight_root;
-use crate::automation::task_router::{partition_files_by_coupling, ProviderModelCatalog, RoutedModelRoute, RoutedSubAgentTask, SiteMapTaskRouter};
-use crate::orchestrator::blueprint::Task;
-use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment};
-use crate::orchestrator::TaskId;
 
 pub struct CoordinatorTask {
     pub task_id: String,
@@ -34,11 +37,7 @@ impl WorkspaceCoordinator {
     }
 
     /// partition a complex list of files into decoupled sub-groups based on SiteMap CALLS/DECLARES graph.
-    pub fn partition_tasks(
-        &self,
-        files: &[PathBuf],
-        site_map: &SiteMap,
-    ) -> Vec<Vec<PathBuf>> {
+    pub fn partition_tasks(&self, files: &[PathBuf], site_map: &SiteMap) -> Vec<Vec<PathBuf>> {
         partition_files_by_coupling(files, site_map)
     }
 
@@ -126,7 +125,10 @@ impl WorkspaceCoordinator {
         }
 
         if failures.is_empty() {
-            Ok(format!("Executed {} parallel task(s) through the live worker runtime.", completed.len()))
+            Ok(format!(
+                "Executed {} parallel task(s) through the live worker runtime.",
+                completed.len()
+            ))
         } else {
             Err(failures.join("\n"))
         }
@@ -147,10 +149,7 @@ mod tests {
         let mediator = Arc::new(MediatorArena::new());
         let coord = WorkspaceCoordinator::new(mediator);
 
-        let files = vec![
-            PathBuf::from("src/main.rs"),
-            PathBuf::from("src/lib.rs"),
-        ];
+        let files = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
 
         let partitions = coord.partition_tasks(&files, &sm);
         assert_eq!(partitions.len(), 2);

@@ -37,8 +37,8 @@ pub struct ThinkingStepEntry {
     pub phase: ThinkingPhase,
     pub completed: bool,
     pub timestamp_ms: u32,
-    pub text_offset: u16,    // Offset into text pool
-    pub text_len: u16,       // Length in text pool
+    pub text_offset: u16, // Offset into text pool
+    pub text_len: u16,    // Length in text pool
 }
 
 impl Default for ThinkingStepEntry {
@@ -58,12 +58,12 @@ pub struct ThinkingPanelState {
     // Ring buffer for thinking steps
     steps: [ThinkingStepEntry; THINKING_BUFFER_SIZE],
     step_count: usize,
-    step_head: usize,  // For circular insertion
+    step_head: usize, // For circular insertion
 
     // Fixed text pool for thinking content (no Vec)
-    text_pool: [u8; 16384],  // 16KB fixed pool
+    text_pool: [u8; 16384], // 16KB fixed pool
     text_used: usize,
-    
+
     pub expanded: bool,
     pub auto_collapse: bool,
     pub current_phase: Option<ThinkingPhase>,
@@ -89,9 +89,9 @@ impl ThinkingPanelState {
     pub fn append_token(&mut self, token: &str) -> bool {
         let bytes = token.as_bytes();
         if self.text_used + bytes.len() >= self.text_pool.len() {
-            return false;  // Pool full, drop token (no allocation)
+            return false; // Pool full, drop token (no allocation)
         }
-        
+
         self.text_pool[self.text_used..self.text_used + bytes.len()].copy_from_slice(bytes);
         self.text_used += bytes.len();
         true
@@ -120,7 +120,8 @@ impl ThinkingPanelState {
     pub fn complete_phase(&mut self) {
         if let Some(idx) = self.get_current_step_idx() {
             self.steps[idx].completed = true;
-            self.steps[idx].text_len = (self.text_used - (self.steps[idx].text_offset as usize)) as u16;
+            self.steps[idx].text_len =
+                (self.text_used - (self.steps[idx].text_offset as usize)) as u16;
         }
     }
 
@@ -169,8 +170,8 @@ impl ThinkingPanelState {
 /// Tool approval entry (64 bytes, fixed size)
 #[derive(Clone, Copy, Debug)]
 pub struct ApprovalEntry {
-    pub tool_id: u32,           // Unique approval ID
-    pub tool_name_offset: u16,  // Offset in text pool
+    pub tool_id: u32,          // Unique approval ID
+    pub tool_name_offset: u16, // Offset in text pool
     pub tool_name_len: u16,
     pub auto_approve: bool,
     pub timestamp_ms: u32,
@@ -181,11 +182,11 @@ pub struct ApprovalManagerState {
     pending: [ApprovalEntry; APPROVAL_BUFFER_SIZE],
     count: usize,
     head: usize,
-    
+
     // Shared text pool
     text_pool: [u8; 8192],
     text_used: usize,
-    
+
     pub auto_approve_all: bool,
 }
 
@@ -229,7 +230,8 @@ impl ApprovalManagerState {
             timestamp_ms: (std::time::Instant::now().elapsed().as_millis() as u32),
         };
 
-        self.text_pool[self.text_used..self.text_used + name_bytes.len()].copy_from_slice(name_bytes);
+        self.text_pool[self.text_used..self.text_used + name_bytes.len()]
+            .copy_from_slice(name_bytes);
         self.text_used += name_bytes.len();
         self.count += 1;
         true
@@ -284,7 +286,7 @@ pub struct AgentMetricsState {
     pub state: AgentState,
     pub tokens_used: u32,
     pub tokens_max: u32,
-    pub estimated_cost: u32,  // In 0.0001 USD units
+    pub estimated_cost: u32, // In 0.0001 USD units
     pub estimated_cost_max: u32,
     pub tool_call_count: u32,
     pub last_tool_duration_ms: u32,
@@ -298,7 +300,7 @@ impl Default for AgentMetricsState {
             tokens_used: 0,
             tokens_max: 10000,
             estimated_cost: 0,
-            estimated_cost_max: 5000,  // $0.50
+            estimated_cost_max: 5000, // $0.50
             tool_call_count: 0,
             last_tool_duration_ms: 0,
             thinking_enabled: false,
@@ -380,13 +382,13 @@ mod tests {
     fn test_metrics_warning_levels() {
         let mut state = AgentMetricsState::default();
         assert_eq!(state.warning_level(), WarningLevel::Ok);
-        
+
         state.tokens_used = 5000;
         assert_eq!(state.warning_level(), WarningLevel::Caution);
-        
+
         state.tokens_used = 8000;
         assert_eq!(state.warning_level(), WarningLevel::Warning);
-        
+
         state.tokens_used = 9500;
         assert_eq!(state.warning_level(), WarningLevel::Critical);
     }

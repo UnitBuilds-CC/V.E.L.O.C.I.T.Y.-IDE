@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use velocity_ide::site_map::SiteMap;
 
 use crate::agent::{AiProvider, ModelInfo};
-use crate::automation::instruction_registry::{AgentTaskKind, DecompositionPolicy, DecompositionStyle, InstructionRegistry, InstructionTemplate};
+use crate::automation::instruction_registry::{
+    AgentTaskKind, DecompositionPolicy, DecompositionStyle, InstructionRegistry,
+    InstructionTemplate,
+};
 use crate::automation::model_quality::{ModelCandidate, ModelQualityIndex};
 
 #[derive(Debug, Clone)]
@@ -78,8 +81,13 @@ impl SiteMapTaskRouter {
             .enumerate()
             .map(|(idx, partition)| {
                 let fallback_chain = build_fallback_chain(&ranked_models);
-                let selected = fallback_chain.first().cloned().unwrap_or_else(fallback_route);
-                let instruction_template_id = template.map(|item| item.id.clone()).unwrap_or_else(|| "default".to_string());
+                let selected = fallback_chain
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(fallback_route);
+                let instruction_template_id = template
+                    .map(|item| item.id.clone())
+                    .unwrap_or_else(|| "default".to_string());
                 let task_id = format!("subagent-{:02}", idx + 1);
                 let execution_contract = build_execution_contract(
                     &task_id,
@@ -93,7 +101,14 @@ impl SiteMapTaskRouter {
                     &policy,
                 );
                 let summary = build_summary(goal, kind, &partition, &selected, &policy);
-                let rationale = build_rationale(kind, &partition, site_map, &selected, fallback_chain.len(), &policy);
+                let rationale = build_rationale(
+                    kind,
+                    &partition,
+                    site_map,
+                    &selected,
+                    fallback_chain.len(),
+                    &policy,
+                );
                 RoutedSubAgentTask {
                     task_id,
                     files: partition,
@@ -116,7 +131,11 @@ impl SiteMapTaskRouter {
     }
 }
 
-pub fn partition_files_by_policy(files: &[PathBuf], site_map: &SiteMap, style: DecompositionStyle) -> Vec<Vec<PathBuf>> {
+pub fn partition_files_by_policy(
+    files: &[PathBuf],
+    site_map: &SiteMap,
+    style: DecompositionStyle,
+) -> Vec<Vec<PathBuf>> {
     match style {
         DecompositionStyle::IsolatedFiles => files.iter().map(|file| vec![file.clone()]).collect(),
         DecompositionStyle::CoupledComponents => partition_files_by_coupling(files, site_map),
@@ -164,7 +183,11 @@ pub fn partition_files_by_coupling(files: &[PathBuf], site_map: &SiteMap) -> Vec
 fn rank_candidates(kind: AgentTaskKind, catalogs: &[ProviderModelCatalog]) -> Vec<ModelCandidate> {
     let mut ranked = Vec::new();
     for catalog in catalogs {
-        ranked.extend(ModelQualityIndex::rank_models(kind, catalog.provider, &catalog.models));
+        ranked.extend(ModelQualityIndex::rank_models(
+            kind,
+            catalog.provider,
+            &catalog.models,
+        ));
     }
     ranked.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.label.cmp(&b.label)));
     ranked
@@ -195,46 +218,108 @@ fn build_execution_contract(
         format!("field\tgoal\t{}", escape_contract_value(goal)),
         format!("field\tsite_map_root\t{:016x}", site_map.root()),
         format!("field\tpolicy_id\t{}", escape_contract_value(&policy.id)),
-        format!("field\tpolicy_label\t{}", escape_contract_value(&policy.label)),
-        format!("field\tdecomposition_style\t{}", policy.decomposition_style.as_str()),
-        format!("field\troute_provider\t{}", escape_contract_value(model.provider.label())),
-        format!("field\troute_model\t{}", escape_contract_value(&model.model_label)),
-        format!("field\troute_model_id\t{}", escape_contract_value(&model.model_id)),
-        format!("field\troute_thinking\t{}", if model.thinking { "true" } else { "false" }),
+        format!(
+            "field\tpolicy_label\t{}",
+            escape_contract_value(&policy.label)
+        ),
+        format!(
+            "field\tdecomposition_style\t{}",
+            policy.decomposition_style.as_str()
+        ),
+        format!(
+            "field\troute_provider\t{}",
+            escape_contract_value(model.provider.label())
+        ),
+        format!(
+            "field\troute_model\t{}",
+            escape_contract_value(&model.model_label)
+        ),
+        format!(
+            "field\troute_model_id\t{}",
+            escape_contract_value(&model.model_id)
+        ),
+        format!(
+            "field\troute_thinking\t{}",
+            if model.thinking { "true" } else { "false" }
+        ),
         format!("scope_count {}", files.len()),
         format!("fallback_count {}", fallback_chain.len()),
-        format!("structural_expectation_count {}", structural_expectations.len()),
-        format!("policy_expectation_count {}", policy.shared_expectations.len()),
+        format!(
+            "structural_expectation_count {}",
+            structural_expectations.len()
+        ),
+        format!(
+            "policy_expectation_count {}",
+            policy.shared_expectations.len()
+        ),
         format!("checklist_count {}", checklist_count),
     ];
 
     if let Some(template) = template {
-        lines.push(format!("field\ttemplate_id\t{}", escape_contract_value(&template.id)));
-        lines.push(format!("field\tsystem_prompt\t{}", escape_contract_value(&template.system_prompt)));
+        lines.push(format!(
+            "field\ttemplate_id\t{}",
+            escape_contract_value(&template.id)
+        ));
+        lines.push(format!(
+            "field\tsystem_prompt\t{}",
+            escape_contract_value(&template.system_prompt)
+        ));
         for (index, item) in template.checklist.iter().enumerate() {
-            lines.push(format!("checklist\t{}\t{}", index, escape_contract_value(item)));
+            lines.push(format!(
+                "checklist\t{}\t{}",
+                index,
+                escape_contract_value(item)
+            ));
         }
     }
 
     for (index, route) in fallback_chain.iter().enumerate() {
         lines.push(format!("fallback\t{}", index));
-        lines.push(format!("fallback_field\t{}\tprovider\t{}", index, escape_contract_value(route.provider.label())));
-        lines.push(format!("fallback_field\t{}\tmodel\t{}", index, escape_contract_value(&route.model_label)));
-        lines.push(format!("fallback_field\t{}\tmodel_id\t{}", index, escape_contract_value(&route.model_id)));
+        lines.push(format!(
+            "fallback_field\t{}\tprovider\t{}",
+            index,
+            escape_contract_value(route.provider.label())
+        ));
+        lines.push(format!(
+            "fallback_field\t{}\tmodel\t{}",
+            index,
+            escape_contract_value(&route.model_label)
+        ));
+        lines.push(format!(
+            "fallback_field\t{}\tmodel_id\t{}",
+            index,
+            escape_contract_value(&route.model_id)
+        ));
         lines.push(format!("fallback_field\t{}\tscore\t{}", index, route.score));
-        lines.push(format!("fallback_field\t{}\tthinking\t{}", index, if route.thinking { "true" } else { "false" }));
+        lines.push(format!(
+            "fallback_field\t{}\tthinking\t{}",
+            index,
+            if route.thinking { "true" } else { "false" }
+        ));
     }
 
     for (index, file) in files.iter().enumerate() {
-        lines.push(format!("scope\t{}\t{}", index, escape_contract_value(&file.display().to_string())));
+        lines.push(format!(
+            "scope\t{}\t{}",
+            index,
+            escape_contract_value(&file.display().to_string())
+        ));
     }
 
     for (index, expectation) in structural_expectations.iter().enumerate() {
-        lines.push(format!("structural_expectation\t{}\t{}", index, escape_contract_value(expectation)));
+        lines.push(format!(
+            "structural_expectation\t{}\t{}",
+            index,
+            escape_contract_value(expectation)
+        ));
     }
 
     for (index, expectation) in policy.shared_expectations.iter().enumerate() {
-        lines.push(format!("policy_expectation\t{}\t{}", index, escape_contract_value(expectation)));
+        lines.push(format!(
+            "policy_expectation\t{}\t{}",
+            index,
+            escape_contract_value(expectation)
+        ));
     }
 
     lines.join("\n") + "\n"
@@ -304,14 +389,18 @@ fn default_policy(kind: AgentTaskKind) -> DecompositionPolicy {
         task_kind: kind,
         instruction_template_id: "default".to_string(),
         decomposition_style: DecompositionStyle::CoupledComponents,
-        shared_expectations: vec!["Stay within declared scope and preserve structural integrity.".to_string()],
+        shared_expectations: vec![
+            "Stay within declared scope and preserve structural integrity.".to_string(),
+        ],
     }
 }
 
 fn build_fallback_chain(ranked_models: &[ModelCandidate]) -> Vec<RoutedModelRoute> {
     let mut chain = Vec::new();
     for candidate in ranked_models {
-        if chain.iter().any(|route: &RoutedModelRoute| route.provider == candidate.provider && route.model_id == candidate.model_id) {
+        if chain.iter().any(|route: &RoutedModelRoute| {
+            route.provider == candidate.provider && route.model_id == candidate.model_id
+        }) {
             continue;
         }
         chain.push(RoutedModelRoute {
@@ -427,13 +516,23 @@ mod tests {
         assert!(!routes[0].fallback_chain.is_empty());
         assert_eq!(routes[0].fallback_chain[0].model_label, "kimi-k2");
         assert_eq!(routes[0].decomposition_policy_id, "refactor-coupled");
-        assert_eq!(routes[0].decomposition_style, DecompositionStyle::CoupledComponents);
+        assert_eq!(
+            routes[0].decomposition_style,
+            DecompositionStyle::CoupledComponents
+        );
         assert!(routes[0].execution_contract.contains("contract version 2"));
-        assert!(routes[0].execution_contract.contains("field\tpolicy_label\tRefactor coupled"));
-        assert!(routes[0].execution_contract.contains("field\ttask_id\tsubagent-01"));
+        assert!(routes[0]
+            .execution_contract
+            .contains("field\tpolicy_label\tRefactor coupled"));
+        assert!(routes[0]
+            .execution_contract
+            .contains("field\ttask_id\tsubagent-01"));
         assert!(routes[0].execution_contract.contains("scope_count 2"));
         assert!(routes[0].execution_contract.contains("fallback_count 1"));
-        assert!(routes[0].execution_contract.contains("scope\t0\tsrc/a.rs") || routes[0].execution_contract.contains("scope\t1\tsrc/a.rs"));
+        assert!(
+            routes[0].execution_contract.contains("scope\t0\tsrc/a.rs")
+                || routes[0].execution_contract.contains("scope\t1\tsrc/a.rs")
+        );
         assert!(routes[0].summary.contains("Refactor coupled"));
     }
 
@@ -493,8 +592,12 @@ mod tests {
         );
 
         assert_eq!(routes.len(), 2);
-        assert!(routes.iter().all(|route| route.decomposition_policy_id == "test-isolated"));
-        assert!(routes.iter().all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
+        assert!(routes
+            .iter()
+            .all(|route| route.decomposition_policy_id == "test-isolated"));
+        assert!(routes
+            .iter()
+            .all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
         assert!(routes.iter().all(|route| route.files.len() == 1));
     }
 
@@ -509,7 +612,9 @@ mod tests {
             task_kind: AgentTaskKind::Refactor,
             instruction_template_id: "refactor-guardian".to_string(),
             decomposition_style: DecompositionStyle::IsolatedFiles,
-            shared_expectations: vec!["Split refactor work per file when coupling is low.".to_string()],
+            shared_expectations: vec![
+                "Split refactor work per file when coupling is low.".to_string()
+            ],
         });
         registry.set_preferred_policy(AgentTaskKind::Refactor, "refactor-isolated");
         registry.persist().unwrap();
@@ -533,7 +638,11 @@ mod tests {
         );
 
         assert_eq!(routes.len(), 2);
-        assert!(routes.iter().all(|route| route.decomposition_policy_id == "refactor-isolated"));
-        assert!(routes.iter().all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
+        assert!(routes
+            .iter()
+            .all(|route| route.decomposition_policy_id == "refactor-isolated"));
+        assert!(routes
+            .iter()
+            .all(|route| route.decomposition_style == DecompositionStyle::IsolatedFiles));
     }
 }

@@ -450,38 +450,72 @@ impl InstructionRegistry {
                 let parts = line.split('\t').collect::<Vec<_>>();
                 match parts.first().copied().unwrap_or_default() {
                     "template" => {
-                        let id = parts.get(1).ok_or_else(|| format!("Missing template id on line: {line}"))?;
+                        let id = parts
+                            .get(1)
+                            .ok_or_else(|| format!("Missing template id on line: {line}"))?;
                         Self::ensure_template(&mut templates, &Self::unescape_value(id)?);
                     }
                     "template_field" => {
-                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing template id on line: {line}"))?)?;
-                        let field = *parts.get(2).ok_or_else(|| format!("Missing template field on line: {line}"))?;
-                        let value = *parts.get(3).ok_or_else(|| format!("Missing template value on line: {line}"))?;
+                        let id = Self::unescape_value(
+                            parts
+                                .get(1)
+                                .ok_or_else(|| format!("Missing template id on line: {line}"))?,
+                        )?;
+                        let field = *parts
+                            .get(2)
+                            .ok_or_else(|| format!("Missing template field on line: {line}"))?;
+                        let value = *parts
+                            .get(3)
+                            .ok_or_else(|| format!("Missing template value on line: {line}"))?;
                         let template = Self::ensure_template(&mut templates, &id);
                         match field {
                             "label" => template.label = Self::unescape_value(value)?,
                             "task_kind" => {
-                                template.task_kind = AgentTaskKind::parse(value)
-                                    .ok_or_else(|| format!("Unknown template task kind '{value}'"))?;
+                                template.task_kind =
+                                    AgentTaskKind::parse(value).ok_or_else(|| {
+                                        format!("Unknown template task kind '{value}'")
+                                    })?;
                             }
-                            "system_prompt" => template.system_prompt = Self::unescape_value(value)?,
-                            _ => return Err(format!("Unknown template field '{field}' on line: {line}")),
+                            "system_prompt" => {
+                                template.system_prompt = Self::unescape_value(value)?
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "Unknown template field '{field}' on line: {line}"
+                                ))
+                            }
                         }
                     }
                     "template_checklist" => {
-                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing template id on line: {line}"))?)?;
-                        let value = *parts.get(3).ok_or_else(|| format!("Missing checklist value on line: {line}"))?;
+                        let id = Self::unescape_value(
+                            parts
+                                .get(1)
+                                .ok_or_else(|| format!("Missing template id on line: {line}"))?,
+                        )?;
+                        let value = *parts
+                            .get(3)
+                            .ok_or_else(|| format!("Missing checklist value on line: {line}"))?;
                         let template = Self::ensure_template(&mut templates, &id);
                         template.checklist.push(Self::unescape_value(value)?);
                     }
                     "policy" => {
-                        let id = parts.get(1).ok_or_else(|| format!("Missing policy id on line: {line}"))?;
+                        let id = parts
+                            .get(1)
+                            .ok_or_else(|| format!("Missing policy id on line: {line}"))?;
                         Self::ensure_policy(&mut policies, &Self::unescape_value(id)?);
                     }
                     "policy_field" => {
-                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing policy id on line: {line}"))?)?;
-                        let field = *parts.get(2).ok_or_else(|| format!("Missing policy field on line: {line}"))?;
-                        let value = *parts.get(3).ok_or_else(|| format!("Missing policy value on line: {line}"))?;
+                        let id = Self::unescape_value(
+                            parts
+                                .get(1)
+                                .ok_or_else(|| format!("Missing policy id on line: {line}"))?,
+                        )?;
+                        let field = *parts
+                            .get(2)
+                            .ok_or_else(|| format!("Missing policy field on line: {line}"))?;
+                        let value = *parts
+                            .get(3)
+                            .ok_or_else(|| format!("Missing policy value on line: {line}"))?;
                         let policy = Self::ensure_policy(&mut policies, &id);
                         match field {
                             "label" => policy.label = Self::unescape_value(value)?,
@@ -489,26 +523,47 @@ impl InstructionRegistry {
                                 policy.task_kind = AgentTaskKind::parse(value)
                                     .ok_or_else(|| format!("Unknown policy task kind '{value}'"))?;
                             }
-                            "template" => policy.instruction_template_id = Self::unescape_value(value)?,
+                            "template" => {
+                                policy.instruction_template_id = Self::unescape_value(value)?
+                            }
                             "decomposition_style" => {
                                 policy.decomposition_style = DecompositionStyle::parse(value)
-                                    .ok_or_else(|| format!("Unknown decomposition style '{value}'"))?;
+                                    .ok_or_else(|| {
+                                        format!("Unknown decomposition style '{value}'")
+                                    })?;
                             }
-                            _ => return Err(format!("Unknown policy field '{field}' on line: {line}")),
+                            _ => {
+                                return Err(format!(
+                                    "Unknown policy field '{field}' on line: {line}"
+                                ))
+                            }
                         }
                     }
                     "policy_expectation" => {
-                        let id = Self::unescape_value(parts.get(1).ok_or_else(|| format!("Missing policy id on line: {line}"))?)?;
-                        let value = *parts.get(3).ok_or_else(|| format!("Missing expectation value on line: {line}"))?;
+                        let id = Self::unescape_value(
+                            parts
+                                .get(1)
+                                .ok_or_else(|| format!("Missing policy id on line: {line}"))?,
+                        )?;
+                        let value = *parts
+                            .get(3)
+                            .ok_or_else(|| format!("Missing expectation value on line: {line}"))?;
                         let policy = Self::ensure_policy(&mut policies, &id);
-                        policy.shared_expectations.push(Self::unescape_value(value)?);
+                        policy
+                            .shared_expectations
+                            .push(Self::unescape_value(value)?);
                     }
                     "preferred_policy" => {
-                        let task_kind = *parts.get(1).ok_or_else(|| format!("Missing preferred policy task kind on line: {line}"))?;
-                        let policy_id = *parts.get(2).ok_or_else(|| format!("Missing preferred policy id on line: {line}"))?;
+                        let task_kind = *parts.get(1).ok_or_else(|| {
+                            format!("Missing preferred policy task kind on line: {line}")
+                        })?;
+                        let policy_id = *parts.get(2).ok_or_else(|| {
+                            format!("Missing preferred policy id on line: {line}")
+                        })?;
                         preferred_policies.push(PreferredPolicy {
-                            task_kind: AgentTaskKind::parse(task_kind)
-                                .ok_or_else(|| format!("Unknown preferred policy task kind '{task_kind}'"))?,
+                            task_kind: AgentTaskKind::parse(task_kind).ok_or_else(|| {
+                                format!("Unknown preferred policy task kind '{task_kind}'")
+                            })?,
                             policy_id: Self::unescape_value(policy_id)?,
                         });
                     }
@@ -520,7 +575,9 @@ impl InstructionRegistry {
         }
 
         if header != "registry version 1" {
-            return Err(format!("Unsupported NDA instruction registry header: {header}"));
+            return Err(format!(
+                "Unsupported NDA instruction registry header: {header}"
+            ));
         }
 
         for line in lines {
@@ -577,7 +634,9 @@ impl InstructionRegistry {
                         policy.decomposition_style = DecompositionStyle::parse(value)
                             .ok_or_else(|| format!("Unknown decomposition style '{value}'"))?;
                     }
-                    "expectation" => policy.shared_expectations.push(Self::unescape_value(value)?),
+                    "expectation" => policy
+                        .shared_expectations
+                        .push(Self::unescape_value(value)?),
                     _ => return Err(format!("Unknown policy field '{field}' on line: {line}")),
                 }
                 continue;

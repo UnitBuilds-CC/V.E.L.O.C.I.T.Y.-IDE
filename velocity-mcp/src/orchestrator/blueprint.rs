@@ -28,12 +28,22 @@ impl TaskGraph {
     pub fn ready(&self, completed: &HashSet<TaskId>) -> Vec<&Task> {
         self.tasks
             .values()
-            .filter(|t| !completed.contains(&t.id) && t.dependencies.iter().all(|d| completed.contains(d)))
+            .filter(|t| {
+                !completed.contains(&t.id) && t.dependencies.iter().all(|d| completed.contains(d))
+            })
             .collect()
     }
 
     /// Insert a new task and wire it under `parent` if one is provided.
-    pub fn add(&mut self, id: TaskId, title: impl Into<String>, description: impl Into<String>, scope: Vec<String>, deps: Vec<TaskId>, parent: Option<TaskId>) {
+    pub fn add(
+        &mut self,
+        id: TaskId,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        scope: Vec<String>,
+        deps: Vec<TaskId>,
+        parent: Option<TaskId>,
+    ) {
         self.tasks.insert(
             id,
             Task {
@@ -59,15 +69,85 @@ impl TaskGraph {
         let mut g = TaskGraph::default();
         g.root = TaskId(1);
 
-        g.add(TaskId(1), "Architecture & design doc", "Write ARCHITECTURE.md, data-flow diagrams, module boundaries.", vec!["docs/".into()], vec![], None);
-        g.add(TaskId(2), "Rendering engine", "wgpu abstraction, scene graph, camera, PBR materials.", vec!["crates/renderer/".into()], vec![TaskId(1)], Some(TaskId(1)));
-        g.add(TaskId(3), "Physics system", "Spatial hash, rigid bodies, collisions, integrator.", vec!["crates/physics/".into()], vec![TaskId(1)], Some(TaskId(1)));
-        g.add(TaskId(4), "Entity Component System", "hecs integration, schedule, systems.", vec!["crates/ecs/".into()], vec![TaskId(1)], Some(TaskId(1)));
-        g.add(TaskId(5), "Asset pipeline", "glTF/obj loader, texture cache, hot reload.", vec!["crates/assets/".into()], vec![TaskId(1)], Some(TaskId(1)));
-        g.add(TaskId(6), "Audio engine", "cpal/wrapper, spatial audio, event triggers.", vec!["crates/audio/".into()], vec![TaskId(1)], Some(TaskId(1)));
-        g.add(TaskId(7), "Gameplay core", "Player input, game states, UI overlay, progression.", vec!["crates/gameplay/".into()], vec![TaskId(2), TaskId(3), TaskId(4), TaskId(6)], Some(TaskId(1)));
-        g.add(TaskId(8), "Integration test harness", "Headless renderer, deterministic tests, bot scenarios.", vec!["tests/".into(), "crates/".into()], vec![TaskId(2), TaskId(3), TaskId(4), TaskId(5), TaskId(6), TaskId(7)], Some(TaskId(1)));
-        g.add(TaskId(9), "Launcher & build scripts", "Main entry, CI, release packaging.", vec!["src/main.rs".into(), "Justfile".into(), ".github/".into()], vec![TaskId(8)], Some(TaskId(1)));
+        g.add(
+            TaskId(1),
+            "Architecture & design doc",
+            "Write ARCHITECTURE.md, data-flow diagrams, module boundaries.",
+            vec!["docs/".into()],
+            vec![],
+            None,
+        );
+        g.add(
+            TaskId(2),
+            "Rendering engine",
+            "wgpu abstraction, scene graph, camera, PBR materials.",
+            vec!["crates/renderer/".into()],
+            vec![TaskId(1)],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(3),
+            "Physics system",
+            "Spatial hash, rigid bodies, collisions, integrator.",
+            vec!["crates/physics/".into()],
+            vec![TaskId(1)],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(4),
+            "Entity Component System",
+            "hecs integration, schedule, systems.",
+            vec!["crates/ecs/".into()],
+            vec![TaskId(1)],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(5),
+            "Asset pipeline",
+            "glTF/obj loader, texture cache, hot reload.",
+            vec!["crates/assets/".into()],
+            vec![TaskId(1)],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(6),
+            "Audio engine",
+            "cpal/wrapper, spatial audio, event triggers.",
+            vec!["crates/audio/".into()],
+            vec![TaskId(1)],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(7),
+            "Gameplay core",
+            "Player input, game states, UI overlay, progression.",
+            vec!["crates/gameplay/".into()],
+            vec![TaskId(2), TaskId(3), TaskId(4), TaskId(6)],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(8),
+            "Integration test harness",
+            "Headless renderer, deterministic tests, bot scenarios.",
+            vec!["tests/".into(), "crates/".into()],
+            vec![
+                TaskId(2),
+                TaskId(3),
+                TaskId(4),
+                TaskId(5),
+                TaskId(6),
+                TaskId(7),
+            ],
+            Some(TaskId(1)),
+        );
+        g.add(
+            TaskId(9),
+            "Launcher & build scripts",
+            "Main entry, CI, release packaging.",
+            vec!["src/main.rs".into(), "Justfile".into(), ".github/".into()],
+            vec![TaskId(8)],
+            Some(TaskId(1)),
+        );
 
         g
     }

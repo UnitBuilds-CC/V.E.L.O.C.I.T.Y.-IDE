@@ -1,32 +1,50 @@
+use crate::compiler::parser_loader::DynamicParser;
+use crate::ipc::telemetry_share::{TelemetryClient, TelemetryRequest};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime};
-use crate::compiler::parser_loader::DynamicParser;
-use crate::ipc::telemetry_share::{TelemetryClient, TelemetryRequest};
-use sha2::{Sha256, Digest};
 
 pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
     thread::spawn(move || {
         let mut client = match TelemetryClient::open(&shmem_path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[watcher] Failed to open Shared Memory telemetry client: {}", e);
+                eprintln!(
+                    "[watcher] Failed to open Shared Memory telemetry client: {}",
+                    e
+                );
                 return;
             }
         };
 
-        println!("[watcher] AST Watcher active. Monitoring {}", workspace_root.display());
+        println!(
+            "[watcher] AST Watcher active. Monitoring {}",
+            workspace_root.display()
+        );
 
         let mut file_timestamps = HashMap::new();
         let mut known_files = HashSet::new();
         let mut initial_files = Vec::new();
-        scan_directory(&workspace_root, &mut file_timestamps, &mut known_files, &mut initial_files, true);
+        scan_directory(
+            &workspace_root,
+            &mut file_timestamps,
+            &mut known_files,
+            &mut initial_files,
+            true,
+        );
         publish_ast_updates(&workspace_root, &mut client, initial_files);
 
         loop {
             let mut changed_files = Vec::new();
-            let deleted_files = scan_directory(&workspace_root, &mut file_timestamps, &mut known_files, &mut changed_files, false);
+            let deleted_files = scan_directory(
+                &workspace_root,
+                &mut file_timestamps,
+                &mut known_files,
+                &mut changed_files,
+                false,
+            );
             publish_ast_deletes(&workspace_root, &mut client, deleted_files);
             publish_ast_updates(&workspace_root, &mut client, changed_files);
             thread::sleep(Duration::from_millis(500));
@@ -34,7 +52,11 @@ pub fn spawn_ast_watcher(workspace_root: PathBuf, shmem_path: PathBuf) {
     });
 }
 
-fn publish_ast_deletes(workspace_root: &Path, client: &mut TelemetryClient, deleted_files: Vec<PathBuf>) {
+fn publish_ast_deletes(
+    workspace_root: &Path,
+    client: &mut TelemetryClient,
+    deleted_files: Vec<PathBuf>,
+) {
     for file in deleted_files {
         let req = TelemetryRequest::AstDelete {
             file_path: relative_path_string(&file, workspace_root),
@@ -45,7 +67,11 @@ fn publish_ast_deletes(workspace_root: &Path, client: &mut TelemetryClient, dele
     }
 }
 
-fn publish_ast_updates(workspace_root: &Path, client: &mut TelemetryClient, changed_files: Vec<PathBuf>) {
+fn publish_ast_updates(
+    workspace_root: &Path,
+    client: &mut TelemetryClient,
+    changed_files: Vec<PathBuf>,
+) {
     for file in changed_files {
         match std::fs::read_to_string(&file) {
             Ok(content) => {
@@ -108,7 +134,12 @@ fn scan_directory_inner(
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name != "bin" && name != "obj" && name != "target" && name != ".git" && name != ".velocity" {
+                if name != "bin"
+                    && name != "obj"
+                    && name != "target"
+                    && name != ".git"
+                    && name != ".velocity"
+                {
                     scan_directory_inner(&path, stamps, changed, initial_scan, current_files);
                 }
             } else if is_supported_source_file(&path) {
@@ -136,7 +167,10 @@ fn scan_directory_inner(
 }
 
 fn is_supported_source_file(path: &Path) -> bool {
-    matches!(path.extension().and_then(|e| e.to_str()), Some("cs" | "rs" | "py" | "js"))
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("cs" | "rs" | "py" | "js")
+    )
 }
 
 /// Dynamic Tree-sitter parser with regex fallback
@@ -170,7 +204,11 @@ fn parse_file_ast(file: &Path, content: &str, workspace_root: &Path) -> Vec<(u64
     let mut triples = Vec::new();
     for line in content.lines() {
         let line = line.trim();
-        if line.contains("fn ") || line.contains("void ") || line.contains("def ") || line.contains("class ") {
+        if line.contains("fn ")
+            || line.contains("void ")
+            || line.contains("def ")
+            || line.contains("class ")
+        {
             let parts: Vec<&str> = line.split_whitespace().collect();
             for (i, &word) in parts.iter().enumerate() {
                 if word == "fn" || word == "def" || word == "class" || word == "void" {
@@ -187,7 +225,11 @@ fn parse_file_ast(file: &Path, content: &str, workspace_root: &Path) -> Vec<(u64
     triples
 }
 
-fn extract_triples_from_tree(tree: &tree_sitter::Tree, content: &str, file_hash: u64) -> Vec<(u64, u16, u64)> {
+fn extract_triples_from_tree(
+    tree: &tree_sitter::Tree,
+    content: &str,
+    file_hash: u64,
+) -> Vec<(u64, u16, u64)> {
     let mut triples = Vec::new();
     let mut cursor = tree.walk();
     let mut reached_root = false;
@@ -197,7 +239,10 @@ fn extract_triples_from_tree(tree: &tree_sitter::Tree, content: &str, file_hash:
     while !reached_root {
         let node = cursor.node();
         let kind = node.kind();
-        if kind == "method_declaration" || kind == "function_definition" || kind == "class_declaration" {
+        if kind == "method_declaration"
+            || kind == "function_definition"
+            || kind == "class_declaration"
+        {
             if let Ok(text) = node.utf8_text(content.as_bytes()) {
                 let name = text.split_whitespace().nth(1).unwrap_or(kind);
                 let name_cleaned = name.split('(').next().unwrap_or(name);

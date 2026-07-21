@@ -1,17 +1,17 @@
+use eframe::egui;
 use std::env;
 use std::process;
-use eframe::egui;
 use velocity_ide::site_map::{NdaNode, SiteMap, VcTriple};
 
-mod protocol;
-mod ipc;
-mod registry;
-mod benchmark;
-mod editor;
 mod agent;
-mod compiler;
-mod orchestrator;
 mod automation;
+mod benchmark;
+mod compiler;
+mod editor;
+mod ipc;
+mod orchestrator;
+mod protocol;
+mod registry;
 mod usage;
 
 fn persist_ast_update(
@@ -23,7 +23,11 @@ fn persist_ast_update(
     let mut live_triples = Vec::with_capacity(triples.len());
 
     for (subject_hash, predicate_id, object_hash) in triples {
-        let normalized_subject = if *subject_hash == file_hash { file_hash } else { *subject_hash };
+        let normalized_subject = if *subject_hash == file_hash {
+            file_hash
+        } else {
+            *subject_hash
+        };
         let triple = NdaNode::Triple {
             subject_hash: normalized_subject,
             predicate_id: *predicate_id,
@@ -37,12 +41,16 @@ fn persist_ast_update(
         });
     }
 
-    site_map.put_file_snapshot(file_path, &live_triples).map_err(|e| e.to_string())?;
+    site_map
+        .put_file_snapshot(file_path, &live_triples)
+        .map_err(|e| e.to_string())?;
     site_map.flush().map_err(|e| e.to_string())
 }
 
 fn remove_ast_update(site_map: &mut SiteMap, file_path: &str) -> Result<(), String> {
-    site_map.remove_file_snapshot(file_path).map_err(|e| e.to_string())?;
+    site_map
+        .remove_file_snapshot(file_path)
+        .map_err(|e| e.to_string())?;
     site_map.flush().map_err(|e| e.to_string())
 }
 
@@ -140,8 +148,13 @@ fn main() {
                 let _ = driver.run_diagnostics();
                 gpu_name = driver.device_name();
                 let diagnostic_weights = vec![1, -1, 0, 1, 1];
-                if let Ok(shader) = compiler::jit::JitCompiler::compile_inlined_weights(&diagnostic_weights) {
-                    println!("  - [OK] JIT weight-inlining compile test passed (Size: {} words).", shader.len());
+                if let Ok(shader) =
+                    compiler::jit::JitCompiler::compile_inlined_weights(&diagnostic_weights)
+                {
+                    println!(
+                        "  - [OK] JIT weight-inlining compile test passed (Size: {} words).",
+                        shader.len()
+                    );
                 }
             }
             Err(e) => {
@@ -151,13 +164,18 @@ fn main() {
 
         let (ui_tx, agent_rx) = crossbeam_channel::unbounded();
         let (agent_tx, ui_rx) = crossbeam_channel::unbounded();
-        let workspace_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace_root =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let workspace_root_agent = workspace_root.clone();
 
         // Ensure the .velocity folder exists
         let dot_velocity = workspace_root.join(".velocity");
         if let Err(err) = std::fs::create_dir_all(&dot_velocity) {
-            eprintln!("Failed to initialize workspace state directory {}: {}", dot_velocity.display(), err);
+            eprintln!(
+                "Failed to initialize workspace state directory {}: {}",
+                dot_velocity.display(),
+                err
+            );
             process::exit(1);
         }
 
@@ -179,31 +197,50 @@ fn main() {
         const PRESENCE_LOCK_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
         std::thread::spawn(move || {
-            if let Ok(mut server) = ipc::telemetry_share::TelemetryServer::open(&shmem_path_server) {
+            if let Ok(mut server) = ipc::telemetry_share::TelemetryServer::open(&shmem_path_server)
+            {
                 println!("[server] Telemetry Server listening on shared memory segment.");
                 let _ = server.listen(|req| {
                     match req {
-                         ipc::telemetry_share::TelemetryRequest::AstUpdate { file_path, triples } => {
+                        ipc::telemetry_share::TelemetryRequest::AstUpdate {
+                            file_path,
+                            triples,
+                        } => {
                             let start_time = std::time::Instant::now();
-                            println!("[server] Received AST update for {}: {} triples", file_path, triples.len());
+                            println!(
+                                "[server] Received AST update for {}: {} triples",
+                                file_path,
+                                triples.len()
+                            );
 
                             let warning = if let Some(sm) = &site_map {
                                 match sm.lock() {
-                                    Ok(mut guard) => match persist_ast_update(&mut guard, &file_path, &triples) {
-                                        Ok(()) => None,
-                                        Err(err) => Some(format!("Failed to persist AST update for {}: {}", file_path, err)),
-                                    },
-                                    Err(err) => Some(format!("Failed to lock SiteMap for AST update {}: {}", file_path, err)),
+                                    Ok(mut guard) => {
+                                        match persist_ast_update(&mut guard, &file_path, &triples) {
+                                            Ok(()) => None,
+                                            Err(err) => Some(format!(
+                                                "Failed to persist AST update for {}: {}",
+                                                file_path, err
+                                            )),
+                                        }
+                                    }
+                                    Err(err) => Some(format!(
+                                        "Failed to lock SiteMap for AST update {}: {}",
+                                        file_path, err
+                                    )),
                                 }
                             } else {
-                                Some("SiteMap unavailable; AST update was not persisted".to_string())
+                                Some(
+                                    "SiteMap unavailable; AST update was not persisted".to_string(),
+                                )
                             };
                             if let Some(message) = &warning {
                                 eprintln!("[server] {}", message);
                             }
-                            
+
                             let elapsed = start_time.elapsed().as_micros() as u64;
-                            ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
+                            ipc::telemetry_share::TELEMETRY_LATENCY_US
+                                .store(elapsed, std::sync::atomic::Ordering::Relaxed);
 
                             ipc::telemetry_share::TelemetryResponse {
                                 success: warning.is_none(),
@@ -216,33 +253,48 @@ fn main() {
 
                             let warning = if let Some(sm) = &site_map {
                                 match sm.lock() {
-                                    Ok(mut guard) => match remove_ast_update(&mut guard, &file_path) {
-                                        Ok(()) => None,
-                                        Err(err) => Some(format!("Failed to remove AST update for {}: {}", file_path, err)),
-                                    },
-                                    Err(err) => Some(format!("Failed to lock SiteMap for AST delete {}: {}", file_path, err)),
+                                    Ok(mut guard) => {
+                                        match remove_ast_update(&mut guard, &file_path) {
+                                            Ok(()) => None,
+                                            Err(err) => Some(format!(
+                                                "Failed to remove AST update for {}: {}",
+                                                file_path, err
+                                            )),
+                                        }
+                                    }
+                                    Err(err) => Some(format!(
+                                        "Failed to lock SiteMap for AST delete {}: {}",
+                                        file_path, err
+                                    )),
                                 }
                             } else {
-                                Some("SiteMap unavailable; AST delete was not persisted".to_string())
+                                Some(
+                                    "SiteMap unavailable; AST delete was not persisted".to_string(),
+                                )
                             };
                             if let Some(message) = &warning {
                                 eprintln!("[server] {}", message);
                             }
 
                             let elapsed = start_time.elapsed().as_micros() as u64;
-                            ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
+                            ipc::telemetry_share::TELEMETRY_LATENCY_US
+                                .store(elapsed, std::sync::atomic::Ordering::Relaxed);
 
                             ipc::telemetry_share::TelemetryResponse {
                                 success: warning.is_none(),
                                 warning,
                             }
                         }
-                        ipc::telemetry_share::TelemetryRequest::PresenceUpdate { cursor_line, cursor_col } => {
+                        ipc::telemetry_share::TelemetryRequest::PresenceUpdate {
+                            cursor_line,
+                            cursor_col,
+                        } => {
                             let start_time = std::time::Instant::now();
-                            
+
                             // Check for concurrency conflicts using MediatorArena
                             let file_path = presence_file_path_server.clone();
-                            let line_range = (cursor_line.saturating_sub(5), cursor_line.saturating_add(5));
+                            let line_range =
+                                (cursor_line.saturating_sub(5), cursor_line.saturating_add(5));
                             let agent_id = "Agent_Thread".to_string();
 
                             let mut warning = None;
@@ -250,8 +302,14 @@ fn main() {
                             mediator_clone.release_locks_for_agent(&agent_id);
                             if let Some(sm) = &site_map {
                                 if let Ok(guard) = sm.lock() {
-                                    if let Err(conflict) = mediator_clone.acquire_lock(file_path, line_range, agent_id.clone(), &guard) {
-                                        let warning_msg = mediator_clone.resolve_conflict(&conflict);
+                                    if let Err(conflict) = mediator_clone.acquire_lock(
+                                        file_path,
+                                        line_range,
+                                        agent_id.clone(),
+                                        &guard,
+                                    ) {
+                                        let warning_msg =
+                                            mediator_clone.resolve_conflict(&conflict);
                                         println!("[mediator] Conflict detected! {}", warning_msg);
                                         warning = Some(warning_msg);
                                     }
@@ -259,7 +317,8 @@ fn main() {
                             }
 
                             let elapsed = start_time.elapsed().as_micros() as u64;
-                            ipc::telemetry_share::TELEMETRY_LATENCY_US.store(elapsed, std::sync::atomic::Ordering::Relaxed);
+                            ipc::telemetry_share::TELEMETRY_LATENCY_US
+                                .store(elapsed, std::sync::atomic::Ordering::Relaxed);
 
                             ipc::telemetry_share::TelemetryResponse {
                                 success: true,
@@ -298,7 +357,14 @@ fn main() {
             "velocity_ide",
             options,
             Box::new(move |_cc| {
-                Ok(Box::new(editor::app::VelocityApp::new(_cc, workspace_root, agent_tx, agent_rx, gpu_name, mediator_gui)) as Box<dyn eframe::App>)
+                Ok(Box::new(editor::app::VelocityApp::new(
+                    _cc,
+                    workspace_root,
+                    agent_tx,
+                    agent_rx,
+                    gpu_name,
+                    mediator_gui,
+                )) as Box<dyn eframe::App>)
             }),
         ) {
             eprintln!("Failed to launch GUI editor: {:?}", e);
@@ -325,7 +391,10 @@ fn main() {
             }
         }
         _ => {
-            eprintln!("Error: Invalid mode '{}'. Supported modes: stdio, shmem", mode);
+            eprintln!(
+                "Error: Invalid mode '{}'. Supported modes: stdio, shmem",
+                mode
+            );
             process::exit(1);
         }
     }
@@ -333,8 +402,14 @@ fn main() {
 
 fn resolve_presence_file(workspace_root: &std::path::Path) -> std::path::PathBuf {
     let candidates = [
-        workspace_root.join("velocity-mcp").join("src").join("main.rs"),
-        workspace_root.join("velocity-mcp").join("src").join("lib.rs"),
+        workspace_root
+            .join("velocity-mcp")
+            .join("src")
+            .join("main.rs"),
+        workspace_root
+            .join("velocity-mcp")
+            .join("src")
+            .join("lib.rs"),
         workspace_root.join("src").join("main.rs"),
         workspace_root.join("src").join("lib.rs"),
     ];
@@ -372,7 +447,10 @@ fn run_tokenizer_demo(prompt: &str) {
     println!("Decoded:   {:?}", nda_tokenizer.decode(&token_ids));
     println!("\nNDA Embedding Table (First 3200-dim active/pos bitmaps):");
     println!("--------------------------------------------------------------------------------");
-    println!(" {: <15} | {: <8} | {: <10} | {: <18} | {: <18}", "Token String", "ID", "Active %", "Active Word[0]", "Pos Word[0]");
+    println!(
+        " {: <15} | {: <8} | {: <10} | {: <18} | {: <18}",
+        "Token String", "ID", "Active %", "Active Word[0]", "Pos Word[0]"
+    );
     println!("--------------------------------------------------------------------------------");
     for (idx, &id) in token_ids.iter().enumerate() {
         let (active, pos) = embeds[idx];
@@ -386,8 +464,13 @@ fn run_tokenizer_demo(prompt: &str) {
 
         let token_display = token_str.replace("\n", "\\n").replace("\r", "\\r");
 
-        println!(" {: <15} | {: <8} | {: <9.1}% | 0x{:08x}         | 0x{:08x}",
-            if token_display.len() > 15 { format!("{}...", &token_display[..12]) } else { token_display },
+        println!(
+            " {: <15} | {: <8} | {: <9.1}% | 0x{:08x}         | 0x{:08x}",
+            if token_display.len() > 15 {
+                format!("{}...", &token_display[..12])
+            } else {
+                token_display
+            },
             id,
             active_pct,
             active[0],

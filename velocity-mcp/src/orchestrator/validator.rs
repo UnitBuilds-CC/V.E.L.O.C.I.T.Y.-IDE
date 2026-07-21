@@ -17,7 +17,10 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn ok() -> Self {
-        Self { ok: true, messages: Vec::new() }
+        Self {
+            ok: true,
+            messages: Vec::new(),
+        }
     }
 
     pub fn fail(reason: impl Into<String>) -> Self {
@@ -40,8 +43,13 @@ pub fn validate(result: &WorkerResult) -> ValidationReport {
         return ValidationReport::fail(format!("Worker failed: {}", result.message));
     }
     let mut r = ValidationReport::ok();
-    if result.outputs.is_empty() && result.created_files.is_empty() && result.deleted_files.is_empty() {
-        r = r.and(ValidationReport::fail("Task produced no scoped file changes."));
+    if result.outputs.is_empty()
+        && result.created_files.is_empty()
+        && result.deleted_files.is_empty()
+    {
+        r = r.and(ValidationReport::fail(
+            "Task produced no scoped file changes.",
+        ));
     }
     r
 }
@@ -63,7 +71,10 @@ fn runtime_report(diag: BuildDiagnostics) -> ValidationReport {
     let mut messages = Vec::with_capacity(1 + diag.errors.len());
     messages.push(diag.summary);
     messages.extend(diag.errors);
-    ValidationReport { ok: false, messages }
+    ValidationReport {
+        ok: false,
+        messages,
+    }
 }
 
 #[cfg(test)]
@@ -100,7 +111,10 @@ mod tests {
 
         let report = validate(&result);
         assert!(!report.ok);
-        assert_eq!(report.messages, vec!["Task produced no scoped file changes.".to_string()]);
+        assert_eq!(
+            report.messages,
+            vec!["Task produced no scoped file changes.".to_string()]
+        );
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use crate::editor::theme::IdePalette;
-use eframe::egui::{self, Align2, Color32, CornerRadius, Frame, Id, Margin, Order, ProgressBar, RichText, Vec2};
+use eframe::egui::{
+    self, Align2, Color32, CornerRadius, Frame, Id, Margin, Order, ProgressBar, RichText, Vec2,
+};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -39,10 +41,18 @@ impl Toast {
         }
     }
 
-    pub fn info(message: impl Into<String>) -> Self { Self::new(message, ToastLevel::Info) }
-    pub fn success(message: impl Into<String>) -> Self { Self::new(message, ToastLevel::Success) }
-    pub fn warn(message: impl Into<String>) -> Self { Self::new(message, ToastLevel::Warning) }
-    pub fn error(message: impl Into<String>) -> Self { Self::new(message, ToastLevel::Error) }
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::new(message, ToastLevel::Info)
+    }
+    pub fn success(message: impl Into<String>) -> Self {
+        Self::new(message, ToastLevel::Success)
+    }
+    pub fn warn(message: impl Into<String>) -> Self {
+        Self::new(message, ToastLevel::Warning)
+    }
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(message, ToastLevel::Error)
+    }
 
     fn remaining(&self) -> f32 {
         let elapsed = self.created.elapsed().as_secs_f32();
@@ -64,7 +74,8 @@ impl ToastQueue {
     pub fn ui(&mut self, ctx: &egui::Context) {
         let palette = IdePalette::dark();
         let now = Instant::now();
-        self.toasts.retain(|t| now.duration_since(t.created) < t.ttl);
+        self.toasts
+            .retain(|t| now.duration_since(t.created) < t.ttl);
         if self.toasts.is_empty() {
             return;
         }
@@ -90,12 +101,20 @@ impl ToastQueue {
                         .inner_margin(Margin::same(12))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(toast.message.clone()).color(stroke_color).size(13.0));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button(egui::RichText::new("✕").size(12.0)).clicked() {
-                                        toast.created = Instant::now() - toast.ttl;
-                                    }
-                                });
+                                ui.label(
+                                    RichText::new(toast.message.clone())
+                                        .color(stroke_color)
+                                        .size(13.0),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.button(egui::RichText::new("✕").size(12.0)).clicked()
+                                        {
+                                            toast.created = Instant::now() - toast.ttl;
+                                        }
+                                    },
+                                );
                             });
                             if idx == 0 {
                                 ui.add(

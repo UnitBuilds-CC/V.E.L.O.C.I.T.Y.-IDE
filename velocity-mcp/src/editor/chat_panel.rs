@@ -81,7 +81,10 @@ impl ChatPanelState {
             if content.trim().is_empty() {
                 continue;
             }
-            self.messages.push(UiChatMessage { role: chat_role, content });
+            self.messages.push(UiChatMessage {
+                role: chat_role,
+                content,
+            });
         }
     }
 }
@@ -158,7 +161,11 @@ fn render_model_bar(
     palette: IdePalette,
 ) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("Model").small().color(palette.text_muted));
+        ui.label(
+            egui::RichText::new("Model")
+                .small()
+                .color(palette.text_muted),
+        );
         let mut model_changed = false;
         egui::ComboBox::from_id_salt("agent_model")
             .selected_text(truncate_model_label(&state.selected_model, 28))
@@ -225,9 +232,11 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
                             .italics(),
                     );
                     ui.label(
-                        egui::RichText::new("Enter to send · Shift+Enter for newline · Ctrl+L to focus")
-                            .small()
-                            .color(palette.text_muted),
+                        egui::RichText::new(
+                            "Enter to send · Shift+Enter for newline · Ctrl+L to focus",
+                        )
+                        .small()
+                        .color(palette.text_muted),
                     );
                 });
                 return;
@@ -257,9 +266,12 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
 fn sanitize_display_text(s: &str) -> String {
     let mut out = s.to_string();
     let tags = [
-        "</tool_call>", "<tool_call>",
-        "</function>", "<function>",
-        "</parameter>", "<parameter>",
+        "</tool_call>",
+        "<tool_call>",
+        "</function>",
+        "<function>",
+        "</parameter>",
+        "<parameter>",
     ];
     for tag in &tags {
         out = out.replace(&format!("{}\r\n", tag), "");
@@ -275,7 +287,16 @@ fn sanitize_display_text(s: &str) -> String {
             let mut is_tag_structure = false;
             while j < chars.len() && chars[j] != '>' {
                 let c = chars[j];
-                if c.is_alphabetic() || c == '/' || c == '=' || c == '_' || c == '-' || c.is_ascii_digit() || c == '\"' || c == '\'' || c == '.' {
+                if c.is_alphabetic()
+                    || c == '/'
+                    || c == '='
+                    || c == '_'
+                    || c == '-'
+                    || c.is_ascii_digit()
+                    || c == '\"'
+                    || c == '\''
+                    || c == '.'
+                {
                     is_tag_structure = true;
                 } else {
                     is_tag_structure = false;
@@ -319,7 +340,7 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                                     .code_editor()
                                     .desired_width(f32::INFINITY)
                                     .text_color(palette.text)
-                                    .interactive(false)
+                                    .interactive(false),
                             );
                         });
                     });
@@ -340,15 +361,30 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
 
         if line.starts_with("# ") {
             current_list_number = 0;
-            ui.label(egui::RichText::new(&line[2..]).size(17.0).strong().color(palette.accent));
+            ui.label(
+                egui::RichText::new(&line[2..])
+                    .size(17.0)
+                    .strong()
+                    .color(palette.accent),
+            );
             ui.add_space(2.0);
         } else if line.starts_with("## ") {
             current_list_number = 0;
-            ui.label(egui::RichText::new(&line[3..]).size(15.5).strong().color(palette.text));
+            ui.label(
+                egui::RichText::new(&line[3..])
+                    .size(15.5)
+                    .strong()
+                    .color(palette.text),
+            );
             ui.add_space(2.0);
         } else if line.starts_with("### ") {
             current_list_number = 0;
-            ui.label(egui::RichText::new(&line[4..]).size(14.0).strong().color(palette.text));
+            ui.label(
+                egui::RichText::new(&line[4..])
+                    .size(14.0)
+                    .strong()
+                    .color(palette.text),
+            );
             ui.add_space(1.0);
         } else if line.starts_with("- ") || line.starts_with("* ") {
             current_list_number = 0;
@@ -369,7 +405,11 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
             if is_num {
                 current_list_number += 1;
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!(" {}. ", current_list_number)).color(palette.accent).strong());
+                    ui.label(
+                        egui::RichText::new(format!(" {}. ", current_list_number))
+                            .color(palette.accent)
+                            .strong(),
+                    );
                     render_inline_markdown(ui, stripped, palette);
                 });
             } else {
@@ -387,21 +427,23 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
 fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        
+
         let mut parts = Vec::new();
         let mut current = String::new();
         let chars: Vec<char> = text.chars().collect();
         let mut i = 0;
-        
+
         while i < chars.len() {
-            if i + 1 < chars.len() && chars[i] == '*' && chars[i+1] == '*' {
+            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
                 if !current.is_empty() {
                     parts.push((current.clone(), false, false, false));
                     current.clear();
                 }
                 i += 2;
                 let mut bold_text = String::new();
-                while i < chars.len() && !(i + 1 < chars.len() && chars[i] == '*' && chars[i+1] == '*') {
+                while i < chars.len()
+                    && !(i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*')
+                {
                     bold_text.push(chars[i]);
                     i += 1;
                 }
@@ -446,11 +488,11 @@ fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                 i += 1;
             }
         }
-        
+
         if !current.is_empty() {
             parts.push((current, false, false, false));
         }
-        
+
         for (content, is_bold, is_italic, is_code) in parts {
             let mut rt = egui::RichText::new(content).size(13.5);
             if is_bold {
@@ -458,7 +500,8 @@ fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
             } else if is_italic {
                 rt = rt.italics();
             } else if is_code {
-                rt = rt.monospace()
+                rt = rt
+                    .monospace()
                     .color(palette.accent)
                     .background_color(palette.bg_secondary);
             } else {
@@ -502,7 +545,11 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
                     .strong()
                     .color(accent),
             );
-            if ui.small_button("📋 Copy").on_hover_text("Copy message text to clipboard").clicked() {
+            if ui
+                .small_button("📋 Copy")
+                .on_hover_text("Copy message text to clipboard")
+                .clicked()
+            {
                 let raw_text = msg.content.trim();
                 let text = sanitize_display_text(raw_text);
                 ui.ctx().copy_text(text);
@@ -586,9 +633,7 @@ fn render_pending_approvals(
                                     id: id.clone(),
                                     tool_name: tool_name.clone(),
                                 });
-                                state
-                                    .pending_approvals
-                                    .retain(|(p_id, _, _)| p_id != &id);
+                                state.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
                             }
                             if ui.button("Approve").clicked() {
                                 let _ = agent_tx.send(UiToAgentMessage::ApproveTool {
@@ -596,9 +641,7 @@ fn render_pending_approvals(
                                     tool_name: tool_name.clone(),
                                     arguments: arguments.clone(),
                                 });
-                                state
-                                    .pending_approvals
-                                    .retain(|(p_id, _, _)| p_id != &id);
+                                state.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
                             }
                         });
                     });
@@ -624,7 +667,9 @@ fn render_input(
             egui::TextEdit::multiline(&mut state.input)
                 .desired_width(input_width)
                 .desired_rows(3)
-                .hint_text("Type instructions for the agent… (Enter to send, Shift+Enter for newline)"),
+                .hint_text(
+                    "Type instructions for the agent… (Enter to send, Shift+Enter for newline)",
+                ),
         );
 
         let enter_send = ui.input(|i| {
@@ -633,13 +678,9 @@ fn render_input(
 
         let send_clicked = ui
             .add(
-                egui::Button::new(
-                    egui::RichText::new("Send")
-                        .color(palette.text)
-                        .strong(),
-                )
-                .fill(palette.accent.gamma_multiply(0.35))
-                .stroke(egui::Stroke::new(1.0, palette.accent)),
+                egui::Button::new(egui::RichText::new("Send").color(palette.text).strong())
+                    .fill(palette.accent.gamma_multiply(0.35))
+                    .stroke(egui::Stroke::new(1.0, palette.accent)),
             )
             .clicked();
 
@@ -649,7 +690,11 @@ fn render_input(
                 state.push_user(text);
                 state.input.clear();
                 let _ = agent_tx.send(UiToAgentMessage::UserPrompt(
-                    state.messages.last().map(|m| m.content.clone()).unwrap_or_default(),
+                    state
+                        .messages
+                        .last()
+                        .map(|m| m.content.clone())
+                        .unwrap_or_default(),
                 ));
             }
         }

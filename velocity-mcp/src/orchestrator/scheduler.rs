@@ -38,12 +38,19 @@ pub fn detect_cycle(graph: &TaskGraph) -> bool {
     let mut visited = HashSet::new();
     let mut stack = HashSet::new();
 
-    fn dfs(graph: &TaskGraph, id: TaskId, visited: &mut HashSet<TaskId>, stack: &mut HashSet<TaskId>) -> bool {
+    fn dfs(
+        graph: &TaskGraph,
+        id: TaskId,
+        visited: &mut HashSet<TaskId>,
+        stack: &mut HashSet<TaskId>,
+    ) -> bool {
         visited.insert(id);
         stack.insert(id);
         if let Some(task) = graph.tasks.get(&id) {
             for dep in &task.dependencies {
-                if (!visited.contains(dep) && dfs(graph, *dep, visited, stack)) || stack.contains(dep) {
+                if (!visited.contains(dep) && dfs(graph, *dep, visited, stack))
+                    || stack.contains(dep)
+                {
                     return true;
                 }
             }

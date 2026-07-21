@@ -1,22 +1,21 @@
-use crate::agent::{AgentToUiMessage, ModelInfo, UiToAgentMessage, AiProvider};
+use crate::agent::{AgentToUiMessage, AiProvider, ModelInfo, UiToAgentMessage};
 use crate::automation::{read_latest_diagnostics, AgentTaskKind, WorkspaceCoordinator};
+use crate::editor::agent_ui_render::{
+    render_agent_metrics, render_pending_approvals, render_thinking_panel, RenderSnapshot,
+};
+use crate::editor::agent_ui_state::AgentUiState;
 use crate::editor::buffer::EditorBuffer;
-use crate::editor::chat_panel::{ChatPanelState, render_chat_panel};
+use crate::editor::chat_panel::{render_chat_panel, ChatPanelState};
 use crate::editor::code_editor::CodeEditor;
 use crate::editor::mission_control::{InterventionDisposition, MissionControlState};
 use crate::editor::orchestrator_panel::OrchestratorPanel;
+use crate::editor::smart_sidebar::{render_smart_sidebar, SmartSidebarSnapshot, SmartSidebarState};
+use crate::editor::task_timeline::{
+    persist_mission_activity_nda, render_mission_activity_feed, render_task_timeline,
+    TaskTimelineSnapshot, TaskTimelineState as TTState,
+};
 use crate::editor::theme::IdePalette;
 use crate::editor::usage_panel::{render_usage_compact, render_usage_panel};
-use crate::editor::agent_ui_state::AgentUiState;
-use crate::editor::agent_ui_render::{RenderSnapshot, render_thinking_panel, render_pending_approvals, render_agent_metrics};
-use crate::editor::task_timeline::{
-    TaskTimelineSnapshot,
-    TaskTimelineState as TTState,
-    persist_mission_activity_nda,
-    render_mission_activity_feed,
-    render_task_timeline,
-};
-use crate::editor::smart_sidebar::{SmartSidebarSnapshot, SmartSidebarState, render_smart_sidebar};
 use crate::usage::AccountUsageView;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
@@ -266,7 +265,13 @@ impl VelocityApp {
             id: TabId::next(&mut tab_counter),
             kind: TabKind::Graph,
         };
-        let tabs = vec![mission_control.clone(), output.clone(), chat.clone(), orchestrator.clone(), graph.clone()];
+        let tabs = vec![
+            mission_control.clone(),
+            output.clone(),
+            chat.clone(),
+            orchestrator.clone(),
+            graph.clone(),
+        ];
 
         // Register default projects from nearby directories
         let mut projects = vec![workspace_root.clone()];
@@ -280,27 +285,33 @@ impl VelocityApp {
         }
 
         let mut app = Self {
-                    agent_tx,
-                    agent_rx,
-                    workspace_root,
-                    tabs,
-                    active_tab: Some(mission_control.id.clone()),
-                    buffers: HashMap::new(),
-                    dock_state: Some(DockState::new(vec![mission_control, output, chat, orchestrator, graph])),
-                    chat_input: String::new(),
-                    command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
-                    chat_history: String::new(),
-                    command_palette: CommandPalette {
-                        open: false,
-                        query: String::new(),
-                        selected: 0,
-                    },
-                    status_message: String::from("Ready"),
-                    tab_counter,
+            agent_tx,
+            agent_rx,
+            workspace_root,
+            tabs,
+            active_tab: Some(mission_control.id.clone()),
+            buffers: HashMap::new(),
+            dock_state: Some(DockState::new(vec![
+                mission_control,
+                output,
+                chat,
+                orchestrator,
+                graph,
+            ])),
+            chat_input: String::new(),
+            command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
+            chat_history: String::new(),
+            command_palette: CommandPalette {
+                open: false,
+                query: String::new(),
+                selected: 0,
+            },
+            status_message: String::from("Ready"),
+            tab_counter,
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),
-                    smart_sidebar: SmartSidebarState::default(),
-                    projects,
+            smart_sidebar: SmartSidebarState::default(),
+            projects,
             show_add_project_ui: false,
             new_project_path_input: String::new(),
             agent_active: false,
@@ -356,7 +367,8 @@ impl VelocityApp {
             current_agent_task_id: 0,
         };
         app.open_editor(None);
-        app.task_timeline.session_marker("IDE session ready", "agentic workspace initialized");
+        app.task_timeline
+            .session_marker("IDE session ready", "agentic workspace initialized");
         app.persist_mission_activity();
         let _ = app.agent_tx.send(UiToAgentMessage::RefreshModels);
         app
@@ -379,28 +391,94 @@ impl VelocityApp {
 
     fn commands(&self) -> Vec<Command> {
         vec![
-            Command { label: "Command Palette…", action: |a| a.open_command_palette() },
-            Command { label: "Refresh Models", action: |a| a.refresh_models() },
-            Command { label: "Approve All Pending Tools", action: |a| a.approve_all_pending_tools() },
-            Command { label: "Decline All Pending Tools", action: |a| a.reject_all_pending_tools() },
-            Command { label: "Focus Agent Chat", action: |a| a.toggle_panel(TabKind::Chat) },
-            Command { label: "Focus Mission Control", action: |a| a.toggle_panel(TabKind::MissionControl) },
-            Command { label: "Focus Orchestrator", action: |a| a.toggle_panel(TabKind::Orchestrator) },
-            Command { label: "Plan Routed Sub-Agents", action: |a| a.plan_routed_subagents() },
-            Command { label: "New File", action: |a| a.open_editor(None) },
-            Command { label: "Open File…", action: |a| a.open_file_dialog() },
-            Command { label: "Save", action: |a| a.save_active() },
-            Command { label: "Save As…", action: |a| a.save_active_as() },
-            Command { label: "Save All", action: |a| a.save_all() },
-            Command { label: "Close Tab", action: |a| a.close_active_tab() },
-            Command { label: "Build", action: |a| a.build_active() },
-            Command { label: "Run", action: |a| a.run_active() },
-            Command { label: "Toggle Output", action: |a| a.toggle_panel(TabKind::Output) },
-            Command { label: "Toggle Chat", action: |a| a.toggle_panel(TabKind::Chat) },
-            Command { label: "Toggle Orchestrator", action: |a| a.toggle_panel(TabKind::Orchestrator) },
-            Command { label: "Toggle Mission Control", action: |a| a.toggle_panel(TabKind::MissionControl) },
-            Command { label: "Toggle Usage", action: |a| a.toggle_panel(TabKind::Usage) },
-            Command { label: "Toggle Search", action: |a| a.toggle_panel(TabKind::Search) },
+            Command {
+                label: "Command Palette…",
+                action: |a| a.open_command_palette(),
+            },
+            Command {
+                label: "Refresh Models",
+                action: |a| a.refresh_models(),
+            },
+            Command {
+                label: "Approve All Pending Tools",
+                action: |a| a.approve_all_pending_tools(),
+            },
+            Command {
+                label: "Decline All Pending Tools",
+                action: |a| a.reject_all_pending_tools(),
+            },
+            Command {
+                label: "Focus Agent Chat",
+                action: |a| a.toggle_panel(TabKind::Chat),
+            },
+            Command {
+                label: "Focus Mission Control",
+                action: |a| a.toggle_panel(TabKind::MissionControl),
+            },
+            Command {
+                label: "Focus Orchestrator",
+                action: |a| a.toggle_panel(TabKind::Orchestrator),
+            },
+            Command {
+                label: "Plan Routed Sub-Agents",
+                action: |a| a.plan_routed_subagents(),
+            },
+            Command {
+                label: "New File",
+                action: |a| a.open_editor(None),
+            },
+            Command {
+                label: "Open File…",
+                action: |a| a.open_file_dialog(),
+            },
+            Command {
+                label: "Save",
+                action: |a| a.save_active(),
+            },
+            Command {
+                label: "Save As…",
+                action: |a| a.save_active_as(),
+            },
+            Command {
+                label: "Save All",
+                action: |a| a.save_all(),
+            },
+            Command {
+                label: "Close Tab",
+                action: |a| a.close_active_tab(),
+            },
+            Command {
+                label: "Build",
+                action: |a| a.build_active(),
+            },
+            Command {
+                label: "Run",
+                action: |a| a.run_active(),
+            },
+            Command {
+                label: "Toggle Output",
+                action: |a| a.toggle_panel(TabKind::Output),
+            },
+            Command {
+                label: "Toggle Chat",
+                action: |a| a.toggle_panel(TabKind::Chat),
+            },
+            Command {
+                label: "Toggle Orchestrator",
+                action: |a| a.toggle_panel(TabKind::Orchestrator),
+            },
+            Command {
+                label: "Toggle Mission Control",
+                action: |a| a.toggle_panel(TabKind::MissionControl),
+            },
+            Command {
+                label: "Toggle Usage",
+                action: |a| a.toggle_panel(TabKind::Usage),
+            },
+            Command {
+                label: "Toggle Search",
+                action: |a| a.toggle_panel(TabKind::Search),
+            },
         ]
     }
 
@@ -438,7 +516,11 @@ impl VelocityApp {
         if let Some(ref p) = path {
             // Check if we already have an open tab for this file
             for tab in &self.tabs {
-                if let TabKind::Editor { path: Some(ref tab_path), .. } = tab.kind {
+                if let TabKind::Editor {
+                    path: Some(ref tab_path),
+                    ..
+                } = tab.kind
+                {
                     if tab_path == p {
                         self.active_tab = Some(tab.id.clone());
                         return;
@@ -502,26 +584,42 @@ impl VelocityApp {
         self.save_buffer_to_with_feedback(id, path, true)
     }
 
-    fn save_buffer_to_with_feedback(&mut self, id: &TabId, path: &PathBuf, success_feedback: bool) -> bool {
+    fn save_buffer_to_with_feedback(
+        &mut self,
+        id: &TabId,
+        path: &PathBuf,
+        success_feedback: bool,
+    ) -> bool {
         if let Some(buf) = self.buffers.get(id) {
             match std::fs::write(path, buf.content()) {
                 Ok(_) => {
                     if success_feedback {
                         self.status_message = format!("Saved {}", path.display());
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                        self.toasts.push(crate::editor::toast::Toast::success(format!("Saved {filename}")));
+                        let filename = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned();
+                        self.toasts
+                            .push(crate::editor::toast::Toast::success(format!(
+                                "Saved {filename}"
+                            )));
                     }
                     true
                 }
                 Err(e) => {
                     self.status_message = format!("Error saving {}: {}", path.display(), e);
-                    self.toasts.push(crate::editor::toast::Toast::error(format!("Failed to save: {e}")));
+                    self.toasts.push(crate::editor::toast::Toast::error(format!(
+                        "Failed to save: {e}"
+                    )));
                     false
                 }
             }
         } else {
             self.status_message = format!("No buffer found for {}", path.display());
-            self.toasts.push(crate::editor::toast::Toast::error("Failed to save: missing buffer"));
+            self.toasts.push(crate::editor::toast::Toast::error(
+                "Failed to save: missing buffer",
+            ));
             false
         }
     }
@@ -544,7 +642,9 @@ impl VelocityApp {
             if o < old_lines.len() && n < new_lines.len() && old_lines[o] == new_lines[n] {
                 o += 1;
                 n += 1;
-            } else if n < new_lines.len() && (o >= old_lines.len() || !old_lines[o..].contains(&new_lines[n])) {
+            } else if n < new_lines.len()
+                && (o >= old_lines.len() || !old_lines[o..].contains(&new_lines[n]))
+            {
                 added += 1;
                 out.push_str("+ ");
                 out.push_str(new_lines[n]);
@@ -579,10 +679,15 @@ impl VelocityApp {
             return None;
         }
 
-        let (added_lines, removed_lines, preview) = Self::diff_preview(&disk_content, buf.content(), 10);
+        let (added_lines, removed_lines, preview) =
+            Self::diff_preview(&disk_content, buf.content(), 10);
         let (_, _, full_diff) = Self::diff_preview(&disk_content, buf.content(), usize::MAX);
         Some(ActiveChangePreview {
-            file_label: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            file_label: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
             added_lines,
             removed_lines,
             preview,
@@ -604,13 +709,21 @@ impl VelocityApp {
                 if let Some(buf) = self.buffers.get_mut(&active_id) {
                     buf.load_text(&content);
                 }
-                let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let filename = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
                 self.status_message = format!("Reverted {} from disk", path.display());
-                self.toasts.push(crate::editor::toast::Toast::warn(format!("Reverted {filename}")));
+                self.toasts.push(crate::editor::toast::Toast::warn(format!(
+                    "Reverted {filename}"
+                )));
             }
             Err(e) => {
                 self.status_message = format!("Failed to revert {}: {}", path.display(), e);
-                self.toasts.push(crate::editor::toast::Toast::error(format!("Revert failed: {e}")));
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "Revert failed: {e}"
+                )));
             }
         }
     }
@@ -647,14 +760,23 @@ impl VelocityApp {
             return;
         };
 
-        let filename = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         if !self.save_buffer_to_with_feedback(&active_id, &path, false) {
             self.status_message = format!("Failed to save {} before staging", path.display());
-            self.toasts.push(crate::editor::toast::Toast::error(format!("Save failed before staging {filename}")));
+            self.toasts.push(crate::editor::toast::Toast::error(format!(
+                "Save failed before staging {filename}"
+            )));
             return;
         }
 
-        let relative = path.strip_prefix(&self.workspace_root).unwrap_or(&path).to_path_buf();
+        let relative = path
+            .strip_prefix(&self.workspace_root)
+            .unwrap_or(&path)
+            .to_path_buf();
         match std::process::Command::new("git")
             .current_dir(&self.workspace_root)
             .arg("add")
@@ -663,16 +785,24 @@ impl VelocityApp {
         {
             Ok(output) if output.status.success() => {
                 self.status_message = format!("Saved and staged {}", relative.display());
-                self.toasts.push(crate::editor::toast::Toast::success(format!("Saved and staged {filename}")));
+                self.toasts
+                    .push(crate::editor::toast::Toast::success(format!(
+                        "Saved and staged {filename}"
+                    )));
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 self.status_message = format!("Saved but failed to stage {}", relative.display());
-                self.toasts.push(crate::editor::toast::Toast::error(format!("git add failed after save: {}", stderr.trim())));
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "git add failed after save: {}",
+                    stderr.trim()
+                )));
             }
             Err(e) => {
                 self.status_message = format!("Saved but failed to run git add: {e}");
-                self.toasts.push(crate::editor::toast::Toast::error(format!("git add error after save: {e}")));
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "git add error after save: {e}"
+                )));
             }
         }
     }
@@ -703,21 +833,36 @@ impl VelocityApp {
     }
 
     fn toggle_panel(&mut self, kind: TabKind) {
-        let is_active = self.active_tab.as_ref().map(|active_id| {
-            self.tabs.iter().any(|t| t.id == *active_id && std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind))
-        }).unwrap_or(false);
+        let is_active = self
+            .active_tab
+            .as_ref()
+            .map(|active_id| {
+                self.tabs.iter().any(|t| {
+                    t.id == *active_id
+                        && std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind)
+                })
+            })
+            .unwrap_or(false);
 
         if is_active {
-            self.tabs.retain(|t| std::mem::discriminant(&t.kind) != std::mem::discriminant(&kind));
+            self.tabs
+                .retain(|t| std::mem::discriminant(&t.kind) != std::mem::discriminant(&kind));
             self.rebuild_dock();
             self.active_tab = self.tabs.first().map(|t| t.id.clone());
         } else {
-            let maybe_existing = self.tabs.iter().find(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind)).cloned();
+            let maybe_existing = self
+                .tabs
+                .iter()
+                .find(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind))
+                .cloned();
             if let Some(existing) = maybe_existing {
                 self.active_tab = Some(existing.id);
             } else {
                 let id = TabId::next(&mut self.tab_counter);
-                let tab = Tab { id: id.clone(), kind };
+                let tab = Tab {
+                    id: id.clone(),
+                    kind,
+                };
                 self.tabs.push(tab.clone());
                 if let Some(dock) = self.dock_state.as_mut() {
                     dock.push_to_focused_leaf(tab);
@@ -742,7 +887,10 @@ impl VelocityApp {
         self.agent_ui_state.approvals = AgentUiState::default().approvals;
         for (id, tool_name, _) in &self.pending_approvals {
             let tool_id = id.parse::<u32>().unwrap_or(0);
-            let _ = self.agent_ui_state.approvals.add_approval(tool_id, tool_name, false);
+            let _ = self
+                .agent_ui_state
+                .approvals
+                .add_approval(tool_id, tool_name, false);
         }
     }
 
@@ -759,10 +907,16 @@ impl VelocityApp {
             arguments,
         });
         self.pending_approvals.remove(idx);
-        self.chat.pending_approvals.retain(|(pending_id, _, _)| pending_id != &id);
+        self.chat
+            .pending_approvals
+            .retain(|(pending_id, _, _)| pending_id != &id);
         self.sync_approval_state_from_pending();
         self.status_message = format!("Approved tool: {}", tool_name);
-        self.toasts.push(crate::editor::toast::Toast::success(format!("Approved {}", tool_name)));
+        self.toasts
+            .push(crate::editor::toast::Toast::success(format!(
+                "Approved {}",
+                tool_name
+            )));
     }
 
     fn reject_pending_tool_at(&mut self, idx: usize) {
@@ -777,10 +931,15 @@ impl VelocityApp {
             tool_name: tool_name.clone(),
         });
         self.pending_approvals.remove(idx);
-        self.chat.pending_approvals.retain(|(pending_id, _, _)| pending_id != &id);
+        self.chat
+            .pending_approvals
+            .retain(|(pending_id, _, _)| pending_id != &id);
         self.sync_approval_state_from_pending();
         self.status_message = format!("Declined tool: {}", tool_name);
-        self.toasts.push(crate::editor::toast::Toast::warn(format!("Declined {}", tool_name)));
+        self.toasts.push(crate::editor::toast::Toast::warn(format!(
+            "Declined {}",
+            tool_name
+        )));
     }
 
     fn approve_all_pending_tools(&mut self) {
@@ -794,7 +953,11 @@ impl VelocityApp {
             self.approve_pending_tool_at(0);
         }
         self.status_message = format!("Approved {} pending tool(s)", pending_len);
-        self.toasts.push(crate::editor::toast::Toast::success(format!("Approved {} tool request(s)", pending_len)));
+        self.toasts
+            .push(crate::editor::toast::Toast::success(format!(
+                "Approved {} tool request(s)",
+                pending_len
+            )));
     }
 
     fn reject_all_pending_tools(&mut self) {
@@ -808,7 +971,10 @@ impl VelocityApp {
             self.reject_pending_tool_at(0);
         }
         self.status_message = format!("Declined {} pending tool(s)", pending_len);
-        self.toasts.push(crate::editor::toast::Toast::warn(format!("Declined {} tool request(s)", pending_len)));
+        self.toasts.push(crate::editor::toast::Toast::warn(format!(
+            "Declined {} tool request(s)",
+            pending_len
+        )));
     }
 
     fn build_active(&mut self) {
@@ -823,16 +989,21 @@ impl VelocityApp {
         self.mission_control.clear_worker_event_tracking();
         let Some(goal) = self.current_routing_goal() else {
             self.status_message = "Enter a chat prompt or keep a recent user goal to route".into();
-            self.toasts.push(crate::editor::toast::Toast::warn("No goal available for routed planning"));
+            self.toasts.push(crate::editor::toast::Toast::warn(
+                "No goal available for routed planning",
+            ));
             return;
         };
         let inferred_task_kind = infer_task_kind_from_goal(&goal);
-        self.orchestrator.set_selected_policy_kind(inferred_task_kind);
+        self.orchestrator
+            .set_selected_policy_kind(inferred_task_kind);
         let task_kind = self.orchestrator.selected_policy_kind();
         let scope_files = self.collect_routing_scope_files(&goal);
         if scope_files.is_empty() {
             self.status_message = "No scoped files available for routed planning".into();
-            self.toasts.push(crate::editor::toast::Toast::warn("No files found for routed planning"));
+            self.toasts.push(crate::editor::toast::Toast::warn(
+                "No files found for routed planning",
+            ));
             return;
         }
 
@@ -840,7 +1011,9 @@ impl VelocityApp {
             Ok(site_map) => site_map,
             Err(err) => {
                 self.status_message = format!("SiteMap unavailable: {err}");
-                self.toasts.push(crate::editor::toast::Toast::error(format!("SiteMap unavailable: {err}")));
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "SiteMap unavailable: {err}"
+                )));
                 return;
             }
         };
@@ -858,7 +1031,9 @@ impl VelocityApp {
 
         if routed_tasks.is_empty() {
             self.status_message = "Routing produced no sub-agent tasks".into();
-            self.toasts.push(crate::editor::toast::Toast::warn("Routing produced no sub-agent tasks"));
+            self.toasts.push(crate::editor::toast::Toast::warn(
+                "Routing produced no sub-agent tasks",
+            ));
             return;
         }
 
@@ -866,10 +1041,16 @@ impl VelocityApp {
         let scope_count = scope_files.len();
         self.mission_control.brief = goal.clone();
         self.mission_control.set_selected_task(None);
-        self.orchestrator
-            .set_routed_tasks(goal.clone(), task_kind, scope_count, routed_tasks.clone());
-        self.task_timeline
-            .session_marker("Sub-agent route planned", &format!("{} tasks for {}", routed_count, task_kind.as_str()));
+        self.orchestrator.set_routed_tasks(
+            goal.clone(),
+            task_kind,
+            scope_count,
+            routed_tasks.clone(),
+        );
+        self.task_timeline.session_marker(
+            "Sub-agent route planned",
+            &format!("{} tasks for {}", routed_count, task_kind.as_str()),
+        );
         self.command_output.push_str(&format!(
             "[routed-plan] goal={goal}\n[routed-plan] kind={} scope_files={} tasks={}\n",
             task_kind.as_str(),
@@ -886,15 +1067,21 @@ impl VelocityApp {
             ));
         }
         self.status_message = format!("Planned {} routed sub-agent task(s)", routed_count);
-        self.toasts.push(crate::editor::toast::Toast::success(format!(
-            "Planned {} routed sub-agent task(s)",
-            routed_count,
-        )));
+        self.toasts
+            .push(crate::editor::toast::Toast::success(format!(
+                "Planned {} routed sub-agent task(s)",
+                routed_count,
+            )));
         if self.mission_control.auto_execute {
             self.orchestrator
                 .execute_routed_tasks(&self.workspace_root, &self.mediator);
-            self.status_message = format!("Planned and launched {} routed sub-agent task(s)", routed_count);
-            self.toasts.push(crate::editor::toast::Toast::info("Mission Control auto-launched routed tasks"));
+            self.status_message = format!(
+                "Planned and launched {} routed sub-agent task(s)",
+                routed_count
+            );
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "Mission Control auto-launched routed tasks",
+            ));
         }
         self.toggle_mission_control();
     }
@@ -964,9 +1151,13 @@ impl VelocityApp {
         let count = if diag.success { 0 } else { diag.errors.len() };
         if count != self.build_errors_count {
             if count == 0 {
-                self.toasts.push(crate::editor::toast::Toast::success("Build succeeded!"));
+                self.toasts
+                    .push(crate::editor::toast::Toast::success("Build succeeded!"));
             } else {
-                self.toasts.push(crate::editor::toast::Toast::error(format!("Build failed with {} errors", count)));
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "Build failed with {} errors",
+                    count
+                )));
             }
             self.build_errors_count = count;
         }
@@ -981,7 +1172,9 @@ impl eframe::App for VelocityApp {
         self.update_diagnostics();
 
         let now = std::time::Instant::now();
-        if self.file_tree.is_none() || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(3) {
+        if self.file_tree.is_none()
+            || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(3)
+        {
             self.file_tree = Some(build_file_tree(&self.workspace_root));
             self.last_tree_update = now;
         }
@@ -990,9 +1183,13 @@ impl eframe::App for VelocityApp {
         if let Some(active_id) = &self.active_tab {
             if let Some(buf) = self.buffers.get(active_id) {
                 let editor_id = egui::Id::new("code_editor");
-                if let Some(state) = egui::widgets::text_edit::TextEditState::load(&ctx, editor_id) {
+                if let Some(state) = egui::widgets::text_edit::TextEditState::load(&ctx, editor_id)
+                {
                     if let Some(cursor_range) = state.cursor.char_range() {
-                        cursor_pos = Some(get_cursor_pos(buf.content(), cursor_range.primary.index.into()));
+                        cursor_pos = Some(get_cursor_pos(
+                            buf.content(),
+                            cursor_range.primary.index.into(),
+                        ));
                     }
                 }
             }
@@ -1004,8 +1201,6 @@ impl eframe::App for VelocityApp {
         egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {
             ui.horizontal(|ui: &mut egui::Ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-
-
 
                 let buttons: [(&str, fn(&mut VelocityApp)); 8] = [
                     ("➕ New", VelocityApp::open_editor_stub),
@@ -1022,7 +1217,7 @@ impl eframe::App for VelocityApp {
                         action(self);
                     }
                 }
-                
+
                 if ui.button("⚙️ Build").clicked() {
                     self.build_active();
                 }
@@ -1070,9 +1265,18 @@ impl eframe::App for VelocityApp {
                 ui.vertical(|ui: &mut egui::Ui| {
                     // --- Projects section ---
                     ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.label(egui::RichText::new("📁 PROJECTS").size(12.0).strong().color(IdePalette::dark().accent));
+                        ui.label(
+                            egui::RichText::new("📁 PROJECTS")
+                                .size(12.0)
+                                .strong()
+                                .color(IdePalette::dark().accent),
+                        );
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        if ui.button("➕ Register").on_hover_text("Register Project Directory").clicked() {
+                        if ui
+                            .button("➕ Register")
+                            .on_hover_text("Register Project Directory")
+                            .clicked()
+                        {
                             self.show_add_project_ui = !self.show_add_project_ui;
                         }
                     });
@@ -1089,27 +1293,47 @@ impl eframe::App for VelocityApp {
                                     self.new_project_path_input.clear();
                                     self.show_add_project_ui = false;
                                 } else {
-                                    self.status_message = "Path does not exist or is not a directory".into();
+                                    self.status_message =
+                                        "Path does not exist or is not a directory".into();
                                 }
                             }
                         });
                     }
 
-                    let active_name = self.workspace_root.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let active_name = self
+                        .workspace_root
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     egui::ComboBox::from_id_salt("project_combo")
                         .selected_text(active_name)
                         .show_ui(ui, |ui: &mut egui::Ui| {
-                            let mut selected_idx = self.projects.iter().position(|p| p == &self.workspace_root);
+                            let mut selected_idx =
+                                self.projects.iter().position(|p| p == &self.workspace_root);
                             for (idx, proj) in self.projects.iter().enumerate() {
-                                let name = proj.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                if ui.selectable_value(&mut selected_idx, Some(idx), name).clicked() {
+                                let name = proj
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                if ui
+                                    .selectable_value(&mut selected_idx, Some(idx), name)
+                                    .clicked()
+                                {
                                     let new_path = proj.clone();
                                     if new_path.is_dir() {
                                         self.workspace_root = new_path.clone();
-                                        let _ = self.agent_tx.send(UiToAgentMessage::SetWorkspace(new_path.clone()));
-                                        self.status_message = format!("Switched to {:?}", proj.file_name().unwrap_or_default());
+                                        let _ = self
+                                            .agent_tx
+                                            .send(UiToAgentMessage::SetWorkspace(new_path.clone()));
+                                        self.status_message = format!(
+                                            "Switched to {:?}",
+                                            proj.file_name().unwrap_or_default()
+                                        );
                                     } else {
-                                        self.status_message = format!("Failed to switch to {:?}", new_path);
+                                        self.status_message =
+                                            format!("Failed to switch to {:?}", new_path);
                                     }
                                 }
                             }
@@ -1121,7 +1345,12 @@ impl eframe::App for VelocityApp {
                     render_task_timeline(ui, &timeline_snapshot);
 
                     ui.separator();
-                    ui.label(egui::RichText::new("🌲 FILE EXPLORER").size(12.0).strong().color(IdePalette::dark().accent));
+                    ui.label(
+                        egui::RichText::new("🌲 FILE EXPLORER")
+                            .size(12.0)
+                            .strong()
+                            .color(IdePalette::dark().accent),
+                    );
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(tree) = self.file_tree.take() {
                             render_file_tree(ui, &tree, self);
@@ -1266,11 +1495,18 @@ impl eframe::App for VelocityApp {
         // 2b. Bottom Panel: Status Bar
         let branch = get_git_branch(&self.workspace_root);
         let build_ok = self.build_errors_count == 0;
-        let latency_us = crate::ipc::telemetry_share::TELEMETRY_LATENCY_US.load(std::sync::atomic::Ordering::Relaxed);
+        let latency_us = crate::ipc::telemetry_share::TELEMETRY_LATENCY_US
+            .load(std::sync::atomic::Ordering::Relaxed);
         let status_info = if latency_us > 0 {
-            format!("{} | 🟢 GPU: {} | ⚡ ShMem: {}µs", self.status_message, self.gpu_name, latency_us)
+            format!(
+                "{} | 🟢 GPU: {} | ⚡ ShMem: {}µs",
+                self.status_message, self.gpu_name, latency_us
+            )
         } else {
-            format!("{} | 🟢 GPU: {} | ⚡ ShMem: active", self.status_message, self.gpu_name)
+            format!(
+                "{} | 🟢 GPU: {} | ⚡ ShMem: active",
+                self.status_message, self.gpu_name
+            )
         };
         crate::editor::status_bar::StatusBar::show(
             ui,
@@ -1292,58 +1528,67 @@ impl eframe::App for VelocityApp {
 
         // Bottom panel: Agentic UI (thinking, approvals, metrics)
         egui::Panel::bottom("agentic_ui_panel")
-                .default_size(120.0)
-                .resizable(true)
-                .show(ui, |ui: &mut egui::Ui| {
-                    ui.add_space(4.0);
+            .default_size(120.0)
+            .resizable(true)
+            .show(ui, |ui: &mut egui::Ui| {
+                ui.add_space(4.0);
 
-                    {
-                        let snapshot = RenderSnapshot::new(&self.agent_ui_state);
-                        ui.vertical(|ui| {
-                            render_agent_metrics(ui, &snapshot);
-                            ui.separator();
-                            render_thinking_panel(ui, &snapshot, (226, 227, 243));
-                            render_pending_approvals(ui, &snapshot);
-                        });
-                    }
-
-                    if !self.pending_approvals.is_empty() {
+                {
+                    let snapshot = RenderSnapshot::new(&self.agent_ui_state);
+                    ui.vertical(|ui| {
+                        render_agent_metrics(ui, &snapshot);
                         ui.separator();
+                        render_thinking_panel(ui, &snapshot, (226, 227, 243));
+                        render_pending_approvals(ui, &snapshot);
+                    });
+                }
+
+                if !self.pending_approvals.is_empty() {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Direct approval actions")
+                                .size(10.0)
+                                .color(IdePalette::dark().text_muted),
+                        );
+                        if ui.button("Approve all").clicked() {
+                            self.approve_all_pending_tools();
+                        }
+                        if ui.button("Decline all").clicked() {
+                            self.reject_all_pending_tools();
+                        }
+                    });
+
+                    let approval_count = self.pending_approvals.len().min(3);
+                    for idx in 0..approval_count {
+                        let tool_name = self.pending_approvals[idx].1.clone();
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Direct approval actions").size(10.0).color(IdePalette::dark().text_muted));
-                            if ui.button("Approve all").clicked() {
-                                self.approve_all_pending_tools();
+                            ui.label(
+                                egui::RichText::new(tool_name.as_str())
+                                    .size(10.0)
+                                    .color(IdePalette::dark().text),
+                            );
+                            if ui.small_button("Approve").clicked() {
+                                self.approve_pending_tool_at(idx);
                             }
-                            if ui.button("Decline all").clicked() {
-                                self.reject_all_pending_tools();
+                            if ui.small_button("Decline").clicked() {
+                                self.reject_pending_tool_at(idx);
+                            }
+                            if ui.small_button("Chat").clicked() {
+                                self.toggle_chat();
                             }
                         });
-
-                        let approval_count = self.pending_approvals.len().min(3);
-                        for idx in 0..approval_count {
-                            let tool_name = self.pending_approvals[idx].1.clone();
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(tool_name.as_str()).size(10.0).color(IdePalette::dark().text));
-                                if ui.small_button("Approve").clicked() {
-                                    self.approve_pending_tool_at(idx);
-                                }
-                                if ui.small_button("Decline").clicked() {
-                                    self.reject_pending_tool_at(idx);
-                                }
-                                if ui.small_button("Chat").clicked() {
-                                    self.toggle_chat();
-                                }
-                            });
-                        }
                     }
-                });
+                }
+            });
 
         self.command_palette_ui(&ctx);
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
         self.full_diff_ui(&ctx);
         self.toasts.ui(&ctx);
-    }}
+    }
+}
 
 fn infer_task_kind_from_goal(goal: &str) -> AgentTaskKind {
     let lower = goal.to_lowercase();
@@ -1394,7 +1639,10 @@ fn collect_workspace_routing_files_recursive(root: &Path, files: &mut Vec<PathBu
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if matches!(name.as_ref(), ".git" | ".velocity" | "target" | "archive" | "node_modules") {
+            if matches!(
+                name.as_ref(),
+                ".git" | ".velocity" | "target" | "archive" | "node_modules"
+            ) {
                 continue;
             }
             collect_workspace_routing_files_recursive(&path, files, limit);
@@ -1405,7 +1653,10 @@ fn collect_workspace_routing_files_recursive(root: &Path, files: &mut Vec<PathBu
             .and_then(|ext| ext.to_str())
             .map(|ext| matches!(ext, "rs" | "go" | "toml" | "md" | "json" | "yml" | "yaml"))
             .unwrap_or(false)
-            || matches!(name.as_ref(), "Cargo.lock" | "Cargo.toml" | "go.mod" | "go.sum");
+            || matches!(
+                name.as_ref(),
+                "Cargo.lock" | "Cargo.toml" | "go.mod" | "go.sum"
+            );
         if include {
             files.push(path);
         }
@@ -1453,62 +1704,63 @@ impl VelocityApp {
     }
 
     pub fn search_panel(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.heading("🔍 Search Workspace");
-                ui.horizontal(|ui| {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.search_query)
-                            .hint_text("Search query...")
-                            .desired_width(ui.available_width() - 80.0)
-                    );
-                    if response.changed() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.search_hits = crate::editor::search::project_search(
-                            &self.workspace_root,
-                            &self.search_query,
-                            100,
+        egui::Frame::new()
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.heading("🔍 Search Workspace");
+                    ui.horizontal(|ui| {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.search_query)
+                                .hint_text("Search query...")
+                                .desired_width(ui.available_width() - 80.0),
                         );
-                    }
-                    if ui.button("Search").clicked() {
-                        self.search_hits = crate::editor::search::project_search(
-                            &self.workspace_root,
-                            &self.search_query,
-                            100,
-                        );
-                    }
-                });
-                ui.separator();
-                
-                let hits = self.search_hits.clone();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if hits.is_empty() {
-                        if self.search_query.is_empty() {
-                            ui.label("Type a query to search files.");
+                        if response.changed() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            self.search_hits = crate::editor::search::project_search(
+                                &self.workspace_root,
+                                &self.search_query,
+                                100,
+                            );
+                        }
+                        if ui.button("Search").clicked() {
+                            self.search_hits = crate::editor::search::project_search(
+                                &self.workspace_root,
+                                &self.search_query,
+                                100,
+                            );
+                        }
+                    });
+                    ui.separator();
+
+                    let hits = self.search_hits.clone();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if hits.is_empty() {
+                            if self.search_query.is_empty() {
+                                ui.label("Type a query to search files.");
+                            } else {
+                                ui.label("No results found.");
+                            }
                         } else {
-                            ui.label("No results found.");
-                        }
-                    } else {
-                        for hit in &hits {
-                            let icon = crate::editor::search::icon_for_path(&hit.path);
-                            let title = format!("{} {} : line {}", icon, hit.path.display(), hit.line);
-                            ui.group(|ui| {
-                                ui.horizontal(|ui| {
-                                    if ui.link(title).clicked() {
-                                        let abs_path = self.workspace_root.join(&hit.path);
-                                        self.open_editor(Some(abs_path));
-                                        self.pending_cursor_line = Some(hit.line);
-                                    }
+                            for hit in &hits {
+                                let icon = crate::editor::search::icon_for_path(&hit.path);
+                                let title =
+                                    format!("{} {} : line {}", icon, hit.path.display(), hit.line);
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        if ui.link(title).clicked() {
+                                            let abs_path = self.workspace_root.join(&hit.path);
+                                            self.open_editor(Some(abs_path));
+                                            self.pending_cursor_line = Some(hit.line);
+                                        }
+                                    });
+                                    ui.label(egui::RichText::new(&hit.text).monospace().size(12.0));
                                 });
-                                ui.label(egui::RichText::new(&hit.text).monospace().size(12.0));
-                            });
+                            }
                         }
-                    }
+                    });
                 });
             });
-        });
     }
-
-
 
     fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
         if self.command_palette.open {
@@ -1556,7 +1808,10 @@ impl VelocityApp {
                     for (idx, line) in self.chat_history.lines().enumerate() {
                         if line.starts_with("You: ") {
                             last_you_idx = Some(idx);
-                        } else if line.starts_with("Agent: ") || line.starts_with("Antigravity: ") || line.starts_with("Kimi: ") {
+                        } else if line.starts_with("Agent: ")
+                            || line.starts_with("Antigravity: ")
+                            || line.starts_with("Kimi: ")
+                        {
                             last_agent_idx = Some(idx);
                         }
                     }
@@ -1577,24 +1832,52 @@ impl VelocityApp {
                 }
                 AgentToUiMessage::ThoughtToken(token) => {
                     if self.current_agent_task_id == 0 {
-                        self.current_agent_task_id = self.task_timeline.task_started("Agent response", "reasoning", 0);
-                        self.task_timeline.agent_marker("Agent session start", "reasoning stream opened", self.current_agent_task_id);
+                        self.current_agent_task_id =
+                            self.task_timeline
+                                .task_started("Agent response", "reasoning", 0);
+                        self.task_timeline.agent_marker(
+                            "Agent session start",
+                            "reasoning stream opened",
+                            self.current_agent_task_id,
+                        );
                         timeline_dirty = true;
                     }
                     let _ = self.agent_ui_state.thinking.append_token(&token);
                     self.chat.append_thought_token(&token);
                 }
-                AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
+                AgentToUiMessage::RequestToolApproval {
+                    id,
+                    tool_name,
+                    arguments,
+                } => {
                     let tool_id = id.parse::<u32>().unwrap_or(0);
-                    let _ = self.agent_ui_state.approvals.add_approval(tool_id, &tool_name, false);
+                    let _ = self
+                        .agent_ui_state
+                        .approvals
+                        .add_approval(tool_id, &tool_name, false);
                     if self.current_agent_task_id == 0 {
-                        self.current_agent_task_id = self.task_timeline.task_started("Tool approval", "awaiting approval", 0);
+                        self.current_agent_task_id = self.task_timeline.task_started(
+                            "Tool approval",
+                            "awaiting approval",
+                            0,
+                        );
                     }
-                    self.task_timeline.agent_marker("Approval requested", &tool_name, self.current_agent_task_id);
-                    self.task_timeline.tool_call(self.current_agent_task_id, &tool_name, "approval required");
+                    self.task_timeline.agent_marker(
+                        "Approval requested",
+                        &tool_name,
+                        self.current_agent_task_id,
+                    );
+                    self.task_timeline.tool_call(
+                        self.current_agent_task_id,
+                        &tool_name,
+                        "approval required",
+                    );
                     timeline_dirty = true;
 
-                    self.command_output.push_str(&format!("[tool-approval-request] {}: {:?}\n", tool_name, arguments));
+                    self.command_output.push_str(&format!(
+                        "[tool-approval-request] {}: {:?}\n",
+                        tool_name, arguments
+                    ));
                     let should_auto = self.chat.auto_approve || self.auto_approve;
                     if should_auto {
                         let _ = self.agent_tx.send(UiToAgentMessage::ApproveTool {
@@ -1603,58 +1886,102 @@ impl VelocityApp {
                             arguments,
                         });
                     } else {
-                        self.pending_approvals.push((id.clone(), tool_name.clone(), arguments.clone()));
-                        self.chat.pending_approvals.push((id, tool_name.clone(), arguments));
+                        self.pending_approvals.push((
+                            id.clone(),
+                            tool_name.clone(),
+                            arguments.clone(),
+                        ));
+                        self.chat
+                            .pending_approvals
+                            .push((id, tool_name.clone(), arguments));
                         self.sync_approval_state_from_pending();
-                        self.toasts.push(crate::editor::toast::Toast::warn(format!("Approval needed: {}", tool_name)));
+                        self.toasts.push(crate::editor::toast::Toast::warn(format!(
+                            "Approval needed: {}",
+                            tool_name
+                        )));
                     }
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
-                    self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Running;
+                    self.agent_ui_state.metrics.state =
+                        crate::editor::agent_ui_state::AgentState::Running;
                     self.agent_ui_state.metrics.tool_call_count += 1;
                     if self.current_agent_task_id == 0 {
-                        self.current_agent_task_id = self.task_timeline.task_started("Tool execution", "agent tool run", 0);
+                        self.current_agent_task_id =
+                            self.task_timeline
+                                .task_started("Tool execution", "agent tool run", 0);
                     }
-                    self.task_timeline.agent_marker("Tool phase", &tool_name, self.current_agent_task_id);
-                    self.task_timeline.tool_call(self.current_agent_task_id, &tool_name, "started");
+                    self.task_timeline.agent_marker(
+                        "Tool phase",
+                        &tool_name,
+                        self.current_agent_task_id,
+                    );
+                    self.task_timeline
+                        .tool_call(self.current_agent_task_id, &tool_name, "started");
                     timeline_dirty = true;
 
-                    self.command_output.push_str(&format!("[tool-start] {}\n", tool_name));
+                    self.command_output
+                        .push_str(&format!("[tool-start] {}\n", tool_name));
                     self.status_message = format!("Running tool: {}", tool_name);
-                    self.toasts.push(crate::editor::toast::Toast::info(format!("Running tool: {}", tool_name)));
+                    self.toasts.push(crate::editor::toast::Toast::info(format!(
+                        "Running tool: {}",
+                        tool_name
+                    )));
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
-                    self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Running;
+                    self.agent_ui_state.metrics.state =
+                        crate::editor::agent_ui_state::AgentState::Running;
                     if self.current_agent_task_id != 0 {
-                        self.task_timeline.tool_result(self.current_agent_task_id, &tool_name, true, 0);
+                        self.task_timeline.tool_result(
+                            self.current_agent_task_id,
+                            &tool_name,
+                            true,
+                            0,
+                        );
                         timeline_dirty = true;
                     }
 
                     self.command_output
                         .push_str(&format!("[tool-finish] {}: {}\n", tool_name, result));
                     self.status_message = format!("Tool done: {}", tool_name);
-                    self.toasts.push(crate::editor::toast::Toast::success(format!("Finished tool: {}", tool_name)));
+                    self.toasts
+                        .push(crate::editor::toast::Toast::success(format!(
+                            "Finished tool: {}",
+                            tool_name
+                        )));
                     self.chat.agent_active = true;
                 }
                 AgentToUiMessage::StatusUpdate(message) => {
                     if message.to_lowercase().contains("model catalog") {
                         self.models_loading = false;
                         self.chat.models_loading = false;
-                        self.task_timeline.session_marker("Model catalog refreshed", &message);
+                        self.task_timeline
+                            .session_marker("Model catalog refreshed", &message);
                     } else {
-                        self.task_timeline.agent_marker("Status", &message, self.current_agent_task_id);
+                        self.task_timeline.agent_marker(
+                            "Status",
+                            &message,
+                            self.current_agent_task_id,
+                        );
                     }
                     timeline_dirty = true;
                     if self.current_agent_task_id == 0 {
-                        self.current_agent_task_id = self.task_timeline.task_started("Status update", &message, 0);
+                        self.current_agent_task_id =
+                            self.task_timeline
+                                .task_started("Status update", &message, 0);
                     }
                     self.status_message = message;
                 }
                 AgentToUiMessage::AgentFinished => {
-                    self.agent_ui_state.metrics.state = crate::editor::agent_ui_state::AgentState::Idle;
+                    self.agent_ui_state.metrics.state =
+                        crate::editor::agent_ui_state::AgentState::Idle;
                     if self.current_agent_task_id != 0 {
-                        self.task_timeline.agent_marker("Agent session end", "response completed", self.current_agent_task_id);
-                        self.task_timeline.task_completed(self.current_agent_task_id, 0, 0, 0);
+                        self.task_timeline.agent_marker(
+                            "Agent session end",
+                            "response completed",
+                            self.current_agent_task_id,
+                        );
+                        self.task_timeline
+                            .task_completed(self.current_agent_task_id, 0, 0, 0);
                         self.current_agent_task_id = 0;
                         timeline_dirty = true;
                     }
@@ -1671,12 +1998,17 @@ impl VelocityApp {
                         }
                     }
                 }
-                AgentToUiMessage::ModelCatalog { models, selected, thinking } => {
+                AgentToUiMessage::ModelCatalog {
+                    models,
+                    selected,
+                    thinking,
+                } => {
                     if let Some(model) = models.iter().find(|model| model.id == selected) {
                         self.thinking_supported = model.supports_thinking;
                         self.tools_supported = model.supports_tools;
                     }
-                    self.task_timeline.session_marker("Model selected", &selected);
+                    self.task_timeline
+                        .session_marker("Model selected", &selected);
                     timeline_dirty = true;
                     // Update metrics (thinking feature state)
                     self.agent_ui_state.metrics.thinking_enabled = thinking;
@@ -1695,7 +2027,8 @@ impl VelocityApp {
                 }
                 AgentToUiMessage::ProviderChanged(new_provider) => {
                     let provider_name = new_provider.label();
-                    self.task_timeline.session_marker("Provider changed", provider_name);
+                    self.task_timeline
+                        .session_marker("Provider changed", provider_name);
                     timeline_dirty = true;
                     self.provider = new_provider;
                 }
@@ -1705,9 +2038,12 @@ impl VelocityApp {
                 }
                 AgentToUiMessage::ChatHistoryRestored(history) => {
                     for (role, content) in &history {
-                        if content.trim().is_empty() { continue; }
+                        if content.trim().is_empty() {
+                            continue;
+                        }
                         let prefix = if role == "user" { "You: " } else { "Agent: " };
-                        self.chat_history.push_str(&format!("\n{}{}\n", prefix, content));
+                        self.chat_history
+                            .push_str(&format!("\n{}{}\n", prefix, content));
                     }
                     self.chat.restore_history(history);
                 }
@@ -1750,8 +2086,10 @@ impl VelocityApp {
         let mut open = self.command_palette.open;
 
         // Clamp selected to the filtered list whenever the UI is shown.
-        self.command_palette.selected =
-            self.command_palette.selected.min(commands.len().saturating_sub(1));
+        self.command_palette.selected = self
+            .command_palette
+            .selected
+            .min(commands.len().saturating_sub(1));
 
         area.show(ctx, |ui| {
             egui::Frame::popup(ui.style())
@@ -1770,21 +2108,22 @@ impl VelocityApp {
                     }
                     ui.separator();
 
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        for (idx, cmd) in commands.iter().enumerate() {
-                            let selected = idx == self.command_palette.selected;
-                            let text = egui::RichText::new(cmd.label)
-                                .color(if selected {
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            for (idx, cmd) in commands.iter().enumerate() {
+                                let selected = idx == self.command_palette.selected;
+                                let text = egui::RichText::new(cmd.label).color(if selected {
                                     ui.visuals().selection.stroke.color
                                 } else {
                                     ui.visuals().text_color()
                                 });
-                            if ui.selectable_label(selected, text).clicked() {
-                                (cmd.action)(self);
-                                self.command_palette.open = false;
+                                if ui.selectable_label(selected, text).clicked() {
+                                    (cmd.action)(self);
+                                    self.command_palette.open = false;
+                                }
                             }
-                        }
-                    });
+                        });
 
                     if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         if let Some(cmd) = commands.get(self.command_palette.selected) {
@@ -1799,8 +2138,11 @@ impl VelocityApp {
                         }
                     } else if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
                         if !commands.is_empty() {
-                            self.command_palette.selected =
-                                self.command_palette.selected.checked_sub(1).unwrap_or(commands.len() - 1);
+                            self.command_palette.selected = self
+                                .command_palette
+                                .selected
+                                .checked_sub(1)
+                                .unwrap_or(commands.len() - 1);
                         }
                     } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                         open = false;
@@ -1908,9 +2250,14 @@ impl VelocityApp {
             .show(ctx, |ui| {
                 if let Some(change_preview) = &active_change_preview {
                     ui.label(
-                        egui::RichText::new(format!("{}  (+{} / -{})", change_preview.file_label, change_preview.added_lines, change_preview.removed_lines))
-                            .strong()
-                            .color(IdePalette::dark().warning),
+                        egui::RichText::new(format!(
+                            "{}  (+{} / -{})",
+                            change_preview.file_label,
+                            change_preview.added_lines,
+                            change_preview.removed_lines
+                        ))
+                        .strong()
+                        .color(IdePalette::dark().warning),
                     );
                     ui.add_space(6.0);
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1918,7 +2265,7 @@ impl VelocityApp {
                             egui::RichText::new(change_preview.full_diff.as_str())
                                 .monospace()
                                 .size(10.0)
-                            .color(IdePalette::dark().text),
+                                .color(IdePalette::dark().text),
                         );
                     });
                 } else {
@@ -1949,16 +2296,26 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
         match &mut tab.kind {
             TabKind::Editor { path, buffer_id } => {
                 if let Some(buf) = self.app.buffers.get_mut(buffer_id) {
-                    egui::Frame::new().inner_margin(egui::Margin::same(4)).show(ui, |ui: &mut egui::Ui| {
-                        let mut editor = CodeEditor::new("code_editor");
-                        let locks = path.as_deref()
-                            .map(|p| self.app.mediator.get_locks_for_file(p))
-                            .unwrap_or_default();
-                        editor.show(ui, buf.content_mut(), path.as_deref(), self.app.pending_cursor_line, &locks);
-                        if self.app.pending_cursor_line.is_some() {
-                            self.app.pending_cursor_line = None;
-                        }
-                    });
+                    egui::Frame::new().inner_margin(egui::Margin::same(4)).show(
+                        ui,
+                        |ui: &mut egui::Ui| {
+                            let mut editor = CodeEditor::new("code_editor");
+                            let locks = path
+                                .as_deref()
+                                .map(|p| self.app.mediator.get_locks_for_file(p))
+                                .unwrap_or_default();
+                            editor.show(
+                                ui,
+                                buf.content_mut(),
+                                path.as_deref(),
+                                self.app.pending_cursor_line,
+                                &locks,
+                            );
+                            if self.app.pending_cursor_line.is_some() {
+                                self.app.pending_cursor_line = None;
+                            }
+                        },
+                    );
                 }
             }
             TabKind::Chat => {
@@ -1966,7 +2323,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             }
             TabKind::Output => self.output_panel(ui),
             TabKind::Orchestrator => {
-                self.app.orchestrator.ui(ui, &self.app.workspace_root, &self.app.mediator);
+                self.app
+                    .orchestrator
+                    .ui(ui, &self.app.workspace_root, &self.app.mediator);
             }
             TabKind::MissionControl => {
                 self.mission_control_panel(ui);
@@ -1980,7 +2339,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 self.app.search_panel(ui);
             }
             TabKind::Graph => {
-                self.app.graph_view.ui(ui, &self.app.workspace_root, &self.app.mediator);
+                self.app
+                    .graph_view
+                    .ui(ui, &self.app.workspace_root, &self.app.mediator);
             }
         }
     }
@@ -2515,12 +2876,16 @@ impl<'a> TabViewerImpl<'a> {
 
                     let mut run_command = false;
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("> ").monospace().color(IdePalette::dark().accent));
+                        ui.label(
+                            egui::RichText::new("> ")
+                                .monospace()
+                                .color(IdePalette::dark().accent),
+                        );
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.app.terminal_input)
                                 .font(egui::FontId::monospace(13.0))
                                 .desired_width(ui.available_width() - 120.0)
-                                .text_color(IdePalette::dark().text)
+                                .text_color(IdePalette::dark().text),
                         );
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             run_command = true;
@@ -2533,15 +2898,27 @@ impl<'a> TabViewerImpl<'a> {
                         if ui.button("🗑 Clear Console").clicked() {
                             self.app.command_output.clear();
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                            ui.label(egui::RichText::new(format!("Buffer: {} bytes", self.app.command_output.len())).small().weak());
-                        });
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui: &mut egui::Ui| {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Buffer: {} bytes",
+                                        self.app.command_output.len()
+                                    ))
+                                    .small()
+                                    .weak(),
+                                );
+                            },
+                        );
                     });
 
                     if run_command {
                         let cmd_str = self.app.terminal_input.trim().to_string();
                         if !cmd_str.is_empty() {
-                            self.app.command_output.push_str(&format!("> {}\n", cmd_str));
+                            self.app
+                                .command_output
+                                .push_str(&format!("> {}\n", cmd_str));
                             self.app.terminal_input.clear();
 
                             let (tx, rx) = std::sync::mpsc::channel();
@@ -2564,7 +2941,8 @@ impl<'a> TabViewerImpl<'a> {
                                     let stderr = String::from_utf8_lossy(&output.stderr);
                                     let _ = tx.send(format!("{}{}", stdout, stderr));
                                 } else {
-                                    let _ = tx.send("Error: Command execution failed\n".to_string());
+                                    let _ =
+                                        tx.send("Error: Command execution failed\n".to_string());
                                 }
                             });
                         }
@@ -2616,7 +2994,12 @@ fn build_file_tree(dir: &std::path::Path) -> FileNode {
     let mut children = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-        entries.sort_by_key(|e| (e.file_type().map(|t| !t.is_dir()).unwrap_or(true), e.file_name()));
+        entries.sort_by_key(|e| {
+            (
+                e.file_type().map(|t| !t.is_dir()).unwrap_or(true),
+                e.file_name(),
+            )
+        });
         for entry in entries {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -2636,7 +3019,11 @@ fn build_file_tree(dir: &std::path::Path) -> FileNode {
         }
     }
     FileNode {
-        name: dir.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        name: dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
         path: dir.to_path_buf(),
         is_dir: true,
         children: Some(children),
@@ -2644,7 +3031,7 @@ fn build_file_tree(dir: &std::path::Path) -> FileNode {
 }
 
 fn hash_str(s: &str) -> u64 {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     let d = h.finalize();
@@ -2658,7 +3045,11 @@ fn get_active_symbol(content: &str, cursor_line: usize) -> Option<String> {
     }
     for idx in (0..=cursor_line).rev() {
         let line = lines[idx].trim();
-        if line.contains("fn ") || line.contains("void ") || line.contains("def ") || line.contains("class ") {
+        if line.contains("fn ")
+            || line.contains("void ")
+            || line.contains("def ")
+            || line.contains("class ")
+        {
             let parts: Vec<&str> = line.split_whitespace().collect();
             for (i, &word) in parts.iter().enumerate() {
                 if word == "fn" || word == "def" || word == "class" || word == "void" {
@@ -2676,8 +3067,12 @@ fn get_active_symbol(content: &str, cursor_line: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::orchestrator_panel::{OrchestratorDashboardSnapshot, OrchestratorTaskSnapshot};
-    use crate::orchestrator::worker::{WorkerThreadEvent, WorkerThreadEventKind, WorkerThreadSnapshot};
+    use crate::editor::orchestrator_panel::{
+        OrchestratorDashboardSnapshot, OrchestratorTaskSnapshot,
+    };
+    use crate::orchestrator::worker::{
+        WorkerThreadEvent, WorkerThreadEventKind, WorkerThreadSnapshot,
+    };
 
     fn task_snapshot(task_id: u64, events: Vec<WorkerThreadEvent>) -> OrchestratorTaskSnapshot {
         OrchestratorTaskSnapshot {
@@ -2703,7 +3098,10 @@ mod tests {
         }
     }
 
-    fn dashboard_snapshot(task_id: u64, events: Vec<WorkerThreadEvent>) -> OrchestratorDashboardSnapshot {
+    fn dashboard_snapshot(
+        task_id: u64,
+        events: Vec<WorkerThreadEvent>,
+    ) -> OrchestratorDashboardSnapshot {
         OrchestratorDashboardSnapshot {
             tasks: vec![task_snapshot(task_id, events)],
             ..OrchestratorDashboardSnapshot::default()
@@ -2728,11 +3126,19 @@ mod tests {
             ],
         );
 
-        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &first_snapshot);
+        mirror_worker_events_into_timeline_state(
+            &mut timeline,
+            &mut mission_control,
+            &first_snapshot,
+        );
         assert_eq!(timeline.event_count(), 2);
         assert_eq!(mission_control.mirrored_worker_event_count(7), 2);
 
-        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &first_snapshot);
+        mirror_worker_events_into_timeline_state(
+            &mut timeline,
+            &mut mission_control,
+            &first_snapshot,
+        );
         assert_eq!(timeline.event_count(), 2);
 
         let second_snapshot = dashboard_snapshot(
@@ -2753,13 +3159,23 @@ mod tests {
             ],
         );
 
-        mirror_worker_events_into_timeline_state(&mut timeline, &mut mission_control, &second_snapshot);
+        mirror_worker_events_into_timeline_state(
+            &mut timeline,
+            &mut mission_control,
+            &second_snapshot,
+        );
         assert_eq!(timeline.event_count(), 3);
         assert_eq!(mission_control.mirrored_worker_event_count(7), 3);
 
         let newest = timeline.visible_events().next().unwrap().1;
-        assert_eq!(timeline.get_text(newest.name_offset, newest.name_len), "Worker output");
-        assert_eq!(timeline.get_text(newest.description_offset, newest.description_len), "Generated component outline");
+        assert_eq!(
+            timeline.get_text(newest.name_offset, newest.name_len),
+            "Worker output"
+        );
+        assert_eq!(
+            timeline.get_text(newest.description_offset, newest.description_len),
+            "Generated component outline"
+        );
     }
 
     #[test]

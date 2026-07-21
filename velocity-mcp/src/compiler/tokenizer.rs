@@ -23,11 +23,10 @@ impl Tokenizer {
 
         // 2. Common English words
         let common_words = vec![
-            "the", "be", "to", "of", "and", "a", "in", "that", "have", "it",
-            "for", "not", "on", "with", "he", "as", "you", "do", "at", "this",
-            "but", "his", "by", "from", "they", "we", "say", "her", "she", "or",
-            "an", "will", "my", "one", "all", "would", "there", "their", "what",
-            "so", "up", "out", "if", "about", "who", "get", "which", "go", "me"
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "it", "for", "not", "on",
+            "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they",
+            "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there",
+            "their", "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me",
         ];
 
         let mut next_id = 256;
@@ -41,9 +40,9 @@ impl Tokenizer {
 
         // 3. Common code keywords
         let code_words = vec![
-            "fn", "let", "mut", "pub", "struct", "impl", "use", "match", "else",
-            "while", "loop", "return", "mod", "crate", "std", "u32", "i32", "f32",
-            "String", "Vec", "Result", "Option", "    ", "  ", "\n", "true", "false"
+            "fn", "let", "mut", "pub", "struct", "impl", "use", "match", "else", "while", "loop",
+            "return", "mod", "crate", "std", "u32", "i32", "f32", "String", "Vec", "Result",
+            "Option", "    ", "  ", "\n", "true", "false",
         ];
 
         for kw in code_words {
@@ -61,7 +60,7 @@ impl Tokenizer {
         let mut tokens = Vec::new();
         let mut index = 0;
         let char_indices: Vec<(usize, char)> = text.char_indices().collect();
-        
+
         while index < char_indices.len() {
             let mut best_match_len = 0;
             let mut best_token_id = None;
@@ -115,7 +114,7 @@ impl Tokenizer {
     }
 }
 
-/// An Embedding Table storing embeddings pre-quantized and pre-packed into 
+/// An Embedding Table storing embeddings pre-quantized and pre-packed into
 /// the V.E.L.O.C.I.T.Y. NDA format (Decomposed Active & Positive Bitmaps).
 /// Eliminates the VRAM storage footprint of float/half embeddings (10x smaller)
 /// and bypasses any runtime ternary quantization compute overhead on inputs.
@@ -138,13 +137,13 @@ impl NdaEmbeddingTable {
             for word_idx in 0..packed_len {
                 let mut active_word = 0u32;
                 let mut pos_word = 0u32;
-                
+
                 // Simulate 32 ternary dimensions per word
                 for bit in 0..32 {
                     // Seeded pseudo-random generation based on token ID and dimension index
                     let seed = t as u32 * 7919 + (word_idx * 32 + bit) as u32 * 104729;
                     let rand_val = (seed ^ (seed >> 13)).wrapping_mul(0x27856713) % 100;
-                    
+
                     // 30% active values: 15% positive (+1), 15% negative (-1), 70% zero (0)
                     if rand_val < 30 {
                         active_word |= 1 << bit;
@@ -153,7 +152,7 @@ impl NdaEmbeddingTable {
                         }
                     }
                 }
-                
+
                 active_embeddings[t][word_idx] = active_word;
                 pos_embeddings[t][word_idx] = pos_word;
             }

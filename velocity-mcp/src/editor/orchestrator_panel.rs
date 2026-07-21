@@ -8,7 +8,9 @@ use crate::orchestrator::blueprint::{Task, TaskGraph};
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
 use crate::orchestrator::validator;
-use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult, WorkerThreadSnapshot};
+use crate::orchestrator::worker::{
+    spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult, WorkerThreadSnapshot,
+};
 use crate::orchestrator::TaskId;
 use eframe::egui;
 use egui::{ScrollArea, Ui};
@@ -178,26 +180,32 @@ impl OrchestratorPanel {
             || self.execution_running
             || !self.running_workers.is_empty()
             || self.runtime_status != "Idle"
-            || self
-                .registry
-                .as_ref()
-                .is_some_and(|reg| {
-                    !reg.outputs.is_empty()
-                        || reg
-                            .statuses
-                            .values()
-                            .any(|status| !matches!(status, TaskStatus::Pending))
-                });
+            || self.registry.as_ref().is_some_and(|reg| {
+                !reg.outputs.is_empty()
+                    || reg
+                        .statuses
+                        .values()
+                        .any(|status| !matches!(status, TaskStatus::Pending))
+            });
         let mut snapshot = OrchestratorDashboardSnapshot {
             goal: self.routed_plan.as_ref().map(|plan| plan.goal.clone()),
-            task_kind: self.routed_plan.as_ref().map(|plan| plan.kind.as_str().to_string()),
-            scope_count: self.routed_plan.as_ref().map(|plan| plan.scope_count).unwrap_or(0),
+            task_kind: self
+                .routed_plan
+                .as_ref()
+                .map(|plan| plan.kind.as_str().to_string()),
+            scope_count: self
+                .routed_plan
+                .as_ref()
+                .map(|plan| plan.scope_count)
+                .unwrap_or(0),
             planning_status: self.planning_status.clone(),
             runtime_status: self.runtime_status.clone(),
             execution_running: self.execution_running,
             has_routed_plan,
             has_dependency_cycle,
-            can_launch_routed_tasks: has_routed_plan && !has_dependency_cycle && !self.execution_running,
+            can_launch_routed_tasks: has_routed_plan
+                && !has_dependency_cycle
+                && !self.execution_running,
             can_reset_runtime: has_runtime_activity,
             active_workers: self.running_workers.len(),
             retryable_blocked_tasks,
@@ -212,15 +220,27 @@ impl OrchestratorPanel {
                 .cloned()
                 .unwrap_or(TaskStatus::Pending);
             let routed = routed_task_for_id(&self.routed_plan, task.id);
-            let (status_label, outputs, message, provider_label, model_label, run_summary_path, run_facts_path) = match status {
+            let (
+                status_label,
+                outputs,
+                message,
+                provider_label,
+                model_label,
+                run_summary_path,
+                run_facts_path,
+            ) = match status {
                 TaskStatus::Pending => {
                     snapshot.pending_tasks += 1;
                     (
                         "Pending".to_string(),
                         Vec::new(),
                         String::new(),
-                        routed.map(|task| task.provider.label().to_string()).unwrap_or_default(),
-                        routed.map(|task| task.model_label.clone()).unwrap_or_default(),
+                        routed
+                            .map(|task| task.provider.label().to_string())
+                            .unwrap_or_default(),
+                        routed
+                            .map(|task| task.model_label.clone())
+                            .unwrap_or_default(),
                         None,
                         None,
                     )
@@ -231,8 +251,12 @@ impl OrchestratorPanel {
                         "Running".to_string(),
                         Vec::new(),
                         String::new(),
-                        routed.map(|task| task.provider.label().to_string()).unwrap_or_default(),
-                        routed.map(|task| task.model_label.clone()).unwrap_or_default(),
+                        routed
+                            .map(|task| task.provider.label().to_string())
+                            .unwrap_or_default(),
+                        routed
+                            .map(|task| task.model_label.clone())
+                            .unwrap_or_default(),
                         None,
                         None,
                     )
@@ -245,8 +269,14 @@ impl OrchestratorPanel {
                         result.message.clone(),
                         result.provider_label,
                         result.model_label,
-                        result.run_summary_path.as_ref().map(|path| path.display().to_string()),
-                        result.run_facts_path.as_ref().map(|path| path.display().to_string()),
+                        result
+                            .run_summary_path
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
+                        result
+                            .run_facts_path
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
                     )
                 }
                 TaskStatus::Failed(result) => {
@@ -257,8 +287,14 @@ impl OrchestratorPanel {
                         result.message.clone(),
                         result.provider_label,
                         result.model_label,
-                        result.run_summary_path.as_ref().map(|path| path.display().to_string()),
-                        result.run_facts_path.as_ref().map(|path| path.display().to_string()),
+                        result
+                            .run_summary_path
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
+                        result
+                            .run_facts_path
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
                     )
                 }
                 TaskStatus::Blocked(result) => {
@@ -269,8 +305,14 @@ impl OrchestratorPanel {
                         result.message.clone(),
                         result.provider_label,
                         result.model_label,
-                        result.run_summary_path.as_ref().map(|path| path.display().to_string()),
-                        result.run_facts_path.as_ref().map(|path| path.display().to_string()),
+                        result
+                            .run_summary_path
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
+                        result
+                            .run_facts_path
+                            .as_ref()
+                            .map(|path| path.display().to_string()),
                     )
                 }
             };
@@ -283,12 +325,17 @@ impl OrchestratorPanel {
                 provider_label,
                 model_label,
                 scope: task.scope.clone(),
-                rationale: routed.map(|task| task.rationale.clone()).unwrap_or_default(),
+                rationale: routed
+                    .map(|task| task.rationale.clone())
+                    .unwrap_or_default(),
                 outputs,
                 message,
                 run_summary_path,
                 run_facts_path,
-                live_thread: self.running_workers.get(&task.id).map(|handle| handle.snapshot()),
+                live_thread: self
+                    .running_workers
+                    .get(&task.id)
+                    .map(|handle| handle.snapshot()),
             });
         }
 
@@ -296,11 +343,19 @@ impl OrchestratorPanel {
         snapshot
     }
 
-    pub fn execute_routed_tasks(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+    pub fn execute_routed_tasks(
+        &mut self,
+        workspace_root: &Path,
+        mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) {
         self.start_execution(workspace_root, mediator);
     }
 
-    pub fn retry_blocked_tasks_action(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+    pub fn retry_blocked_tasks_action(
+        &mut self,
+        workspace_root: &Path,
+        mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) {
         self.retry_blocked_tasks(workspace_root, mediator);
     }
 
@@ -369,7 +424,11 @@ impl OrchestratorPanel {
             self.policy_editor.draft_template_id = policy.instruction_template_id.clone();
             self.policy_editor.draft_style = policy.decomposition_style;
             self.policy_editor.draft_expectations = policy.shared_expectations.join("\n");
-            self.policy_editor.status = format!("Editing policy '{}' for {}.", policy.label, self.policy_editor.kind.as_str());
+            self.policy_editor.status = format!(
+                "Editing policy '{}' for {}.",
+                policy.label,
+                self.policy_editor.kind.as_str()
+            );
         }
     }
 
@@ -524,17 +583,27 @@ impl OrchestratorPanel {
         });
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        workspace_root: &Path,
+        mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) {
         let palette = IdePalette::dark();
         self.ensure_policy_editor_loaded(workspace_root);
         if self.execution_running {
             self.poll_live_workers(workspace_root, mediator);
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
         }
 
         ui.horizontal(|ui| {
             ui.heading("🧠 Live Orchestrator");
-            let label = if self.expanded { "− Less Details" } else { "+ More Details" };
+            let label = if self.expanded {
+                "− Less Details"
+            } else {
+                "+ More Details"
+            };
             ui.toggle_value(&mut self.expanded, label);
         });
         ui.separator();
@@ -552,7 +621,11 @@ impl OrchestratorPanel {
                 );
                 ui.label(format!("Goal: {}", plan.goal));
                 ui.label(format!("Task kind: {}", plan.kind.as_str()));
-                ui.label(format!("Scoped files: {} | Planned agents: {}", plan.scope_count, plan.tasks.len()));
+                ui.label(format!(
+                    "Scoped files: {} | Planned agents: {}",
+                    plan.scope_count,
+                    plan.tasks.len()
+                ));
             });
             ui.add_space(6.0);
         }
@@ -639,7 +712,11 @@ impl OrchestratorPanel {
         } else {
             scheduler::plan(&self.graph)
         };
-        ui.label(format!("Tasks: {} | Phases: {}", self.graph.tasks.len(), plan.phases.len()));
+        ui.label(format!(
+            "Tasks: {} | Phases: {}",
+            self.graph.tasks.len(),
+            plan.phases.len()
+        ));
 
         ui.columns(2, |columns: &mut [Ui]| {
             // Left column: Scroll area with lists and form
@@ -696,7 +773,14 @@ impl OrchestratorPanel {
                                         let fallback = task
                                             .fallback_chain
                                             .iter()
-                                            .map(|route| format!("{} / {} [{}]", route.provider.label(), route.model_label, route.score))
+                                            .map(|route| {
+                                                format!(
+                                                    "{} / {} [{}]",
+                                                    route.provider.label(),
+                                                    route.model_label,
+                                                    route.score
+                                                )
+                                            })
                                             .collect::<Vec<_>>()
                                             .join(" -> ");
                                         ui.label(
@@ -713,7 +797,10 @@ impl OrchestratorPanel {
                     if !has_cycle {
                         for (phase_idx, phase) in plan.phases.iter().enumerate() {
                             ui.group(|ui: &mut egui::Ui| {
-                                ui.label(egui::RichText::new(format!("Phase {}", phase_idx + 1)).strong());
+                                ui.label(
+                                    egui::RichText::new(format!("Phase {}", phase_idx + 1))
+                                        .strong(),
+                                );
                                 for id in phase {
                                     if let Some(task) = self.graph.tasks.get(id) {
                                         self.task_row(ui, task);
@@ -747,17 +834,27 @@ impl OrchestratorPanel {
                     if !collisions.is_empty() || !violations.is_empty() {
                         ui.add_space(8.0);
                         ui.group(|ui: &mut egui::Ui| {
-                            ui.label(egui::RichText::new("⚠️ Reconciler Warnings").strong().color(palette.warning));
+                            ui.label(
+                                egui::RichText::new("⚠️ Reconciler Warnings")
+                                    .strong()
+                                    .color(palette.warning),
+                            );
                             for c in &collisions {
                                 ui.colored_label(
                                     palette.warning,
-                                    format!("Conflict: tasks {} and {} both touch file '{}'", c.task_a, c.task_b, c.path),
+                                    format!(
+                                        "Conflict: tasks {} and {} both touch file '{}'",
+                                        c.task_a, c.task_b, c.path
+                                    ),
                                 );
                             }
                             for v in &violations {
                                 ui.colored_label(
                                     palette.error,
-                                    format!("Scope Violation: task {} wrote unauthorized path '{}'", v.0, v.1),
+                                    format!(
+                                        "Scope Violation: task {} wrote unauthorized path '{}'",
+                                        v.0, v.1
+                                    ),
                                 );
                             }
                         });
@@ -794,7 +891,8 @@ impl OrchestratorPanel {
                                     }
                                 }
 
-                                let scope: Vec<String> = self.builder_scope
+                                let scope: Vec<String> = self
+                                    .builder_scope
                                     .split(',')
                                     .map(|s| s.trim().to_string())
                                     .filter(|s| !s.is_empty())
@@ -822,7 +920,11 @@ impl OrchestratorPanel {
 
             // Right column: Canvas drawing the task graph pipeline
             columns[1].vertical(|ui: &mut egui::Ui| {
-                ui.label(egui::RichText::new("📊 TASK FLOW PIPELINE").strong().color(palette.accent));
+                ui.label(
+                    egui::RichText::new("📊 TASK FLOW PIPELINE")
+                        .strong()
+                        .color(palette.accent),
+                );
                 self.draw_task_graph(ui, &plan, has_cycle);
             });
         });
@@ -833,8 +935,12 @@ impl OrchestratorPanel {
         use std::collections::HashMap;
 
         let mut canvas_size = ui.available_size();
-        if !canvas_size.x.is_finite() { canvas_size.x = 400.0; }
-        if !canvas_size.y.is_finite() { canvas_size.y = 300.0; }
+        if !canvas_size.x.is_finite() {
+            canvas_size.x = 400.0;
+        }
+        if !canvas_size.y.is_finite() {
+            canvas_size.y = 300.0;
+        }
         canvas_size.y = canvas_size.y.min(350.0);
 
         let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
@@ -877,7 +983,8 @@ impl OrchestratorPanel {
             if let Some(&p_to) = node_positions.get(&id) {
                 for dep_id in &task.dependencies {
                     if let Some(&p_from) = node_positions.get(dep_id) {
-                        painter.line_segment([p_from, p_to], egui::Stroke::new(1.5, palette.border));
+                        painter
+                            .line_segment([p_from, p_to], egui::Stroke::new(1.5, palette.border));
                     }
                 }
             }
@@ -886,7 +993,9 @@ impl OrchestratorPanel {
         // 2. Draw Task Node boxes
         for (&id, task) in &self.graph.tasks {
             if let Some(&pos) = node_positions.get(&id) {
-                let status = self.registry.as_ref()
+                let status = self
+                    .registry
+                    .as_ref()
                     .and_then(|r| r.statuses.get(&id))
                     .cloned()
                     .unwrap_or(TaskStatus::Pending);
@@ -921,9 +1030,11 @@ impl OrchestratorPanel {
         }
     }
 
-
-
-    fn start_execution(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+    fn start_execution(
+        &mut self,
+        workspace_root: &Path,
+        mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) {
         if self.registry.is_none() {
             self.registry = Some(OrchestratorRegistry::new(&self.graph));
         }
@@ -1001,14 +1112,19 @@ impl OrchestratorPanel {
         };
     }
 
-    fn retry_blocked_tasks(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+    fn retry_blocked_tasks(
+        &mut self,
+        workspace_root: &Path,
+        mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) {
         if self.registry.is_none() {
             self.registry = Some(OrchestratorRegistry::new(&self.graph));
         }
         let reg = self.registry.as_mut().unwrap();
         let mut retried = 0usize;
         for status in reg.statuses.values_mut() {
-            if matches!(status, TaskStatus::Blocked(result) if is_retryable_blocked_result(result)) {
+            if matches!(status, TaskStatus::Blocked(result) if is_retryable_blocked_result(result))
+            {
                 *status = TaskStatus::Pending;
                 retried += 1;
             }
@@ -1089,7 +1205,11 @@ impl OrchestratorPanel {
         sent
     }
 
-    fn poll_live_workers(&mut self, workspace_root: &Path, mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>) {
+    fn poll_live_workers(
+        &mut self,
+        workspace_root: &Path,
+        mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+    ) {
         if self.registry.is_none() {
             self.registry = Some(OrchestratorRegistry::new(&self.graph));
         }
@@ -1105,7 +1225,8 @@ impl OrchestratorPanel {
             self.running_workers.remove(&id);
             let outputs = task_result_outputs(&result);
             let report = validator::validate_with_workspace(&result, workspace_root);
-            let reconciliation_error = reconciliation_error(&self.graph, &reg.outputs, id, &outputs);
+            let reconciliation_error =
+                reconciliation_error(&self.graph, &reg.outputs, id, &outputs);
             let needs_follow_up = reconciliation_error.is_some() || requires_follow_up(&result);
             if result.success && report.ok && reconciliation_error.is_none() && !needs_follow_up {
                 reg.outputs.insert(id, outputs);
@@ -1152,8 +1273,9 @@ impl OrchestratorPanel {
                 continue;
             };
             let site_map_path = workspace_root.join(".velocity").join("site_map");
-            let current_site_map_root = velocity_ide::site_map::SiteMap::open(&site_map_path, weight_root)
-                .map(|site_map| site_map.root());
+            let current_site_map_root =
+                velocity_ide::site_map::SiteMap::open(&site_map_path, weight_root)
+                    .map(|site_map| site_map.root());
             match current_site_map_root {
                 Ok(current_root) if current_root == routed_task.planned_site_map_root => {
                     let handle = spawn_live_worker(
@@ -1201,7 +1323,9 @@ impl OrchestratorPanel {
     }
 
     fn task_row(&self, ui: &mut Ui, task: &Task) {
-        let status = self.registry.as_ref()
+        let status = self
+            .registry
+            .as_ref()
             .and_then(|r| r.statuses.get(&task.id))
             .cloned()
             .unwrap_or(TaskStatus::Pending);
@@ -1217,7 +1341,11 @@ impl OrchestratorPanel {
 
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(status_label).color(bg_color).strong());
-            ui.label(egui::RichText::new(format!("(ID: {})", task.id.0)).small().weak());
+            ui.label(
+                egui::RichText::new(format!("(ID: {})", task.id.0))
+                    .small()
+                    .weak(),
+            );
             ui.label(&task.title);
         });
 
@@ -1230,19 +1358,23 @@ impl OrchestratorPanel {
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(16.0);
                     let scope_str = task.scope.join(", ");
-                    ui.label(egui::RichText::new(format!("Scope: {scope_str}")).small().color(palette.accent));
+                    ui.label(
+                        egui::RichText::new(format!("Scope: {scope_str}"))
+                            .small()
+                            .color(palette.accent),
+                    );
                 });
             }
             match &status {
-                TaskStatus::Done(result) | TaskStatus::Failed(result) | TaskStatus::Blocked(result) => {
+                TaskStatus::Done(result)
+                | TaskStatus::Failed(result)
+                | TaskStatus::Blocked(result) => {
                     ui.horizontal_wrapped(|ui| {
                         ui.add_space(16.0);
                         ui.label(
                             egui::RichText::new(format!(
                                 "Route: {} / {} | Duration: {:.2?}",
-                                result.provider_label,
-                                result.model_label,
-                                result.duration,
+                                result.provider_label, result.model_label, result.duration,
                             ))
                             .small()
                             .color(palette.accent),
@@ -1255,19 +1387,40 @@ impl OrchestratorPanel {
                     if !result.outputs.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Changed: {}", result.outputs.join(", "))).small().color(palette.success));
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Changed: {}",
+                                    result.outputs.join(", ")
+                                ))
+                                .small()
+                                .color(palette.success),
+                            );
                         });
                     }
                     if !result.created_files.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Created: {}", result.created_files.join(", "))).small().color(palette.warning));
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Created: {}",
+                                    result.created_files.join(", ")
+                                ))
+                                .small()
+                                .color(palette.warning),
+                            );
                         });
                     }
                     if !result.deleted_files.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Deleted: {}", result.deleted_files.join(", "))).small().color(palette.error));
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Deleted: {}",
+                                    result.deleted_files.join(", ")
+                                ))
+                                .small()
+                                .color(palette.error),
+                            );
                         });
                     }
                     if !result.out_of_scope_created_files.is_empty() {
@@ -1289,23 +1442,53 @@ impl OrchestratorPanel {
                             let attempts = result
                                 .attempts
                                 .iter()
-                                .map(|attempt| format!("{} / {} ({})", attempt.provider_label, attempt.model_label, if attempt.success { "ok" } else { "miss" }))
+                                .map(|attempt| {
+                                    format!(
+                                        "{} / {} ({})",
+                                        attempt.provider_label,
+                                        attempt.model_label,
+                                        if attempt.success { "ok" } else { "miss" }
+                                    )
+                                })
                                 .collect::<Vec<_>>()
                                 .join(" -> ");
-                            ui.label(egui::RichText::new(format!("Attempts: {attempts}")).small().color(palette.warning));
+                            ui.label(
+                                egui::RichText::new(format!("Attempts: {attempts}"))
+                                    .small()
+                                    .color(palette.warning),
+                            );
                         });
                     }
                     if !result.status_updates.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Status: {}", result.status_updates.join(" | "))).small().weak());
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Status: {}",
+                                    result.status_updates.join(" | ")
+                                ))
+                                .small()
+                                .weak(),
+                            );
                         });
                     }
                     if !result.transcript.trim().is_empty() {
                         let preview: String = result.transcript.chars().take(240).collect();
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space(16.0);
-                            ui.label(egui::RichText::new(format!("Transcript: {}{}", preview, if result.transcript.len() > preview.len() { "…" } else { "" })).small().color(palette.text));
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Transcript: {}{}",
+                                    preview,
+                                    if result.transcript.len() > preview.len() {
+                                        "…"
+                                    } else {
+                                        ""
+                                    }
+                                ))
+                                .small()
+                                .color(palette.text),
+                            );
                         });
                     }
                 }
@@ -1315,7 +1498,10 @@ impl OrchestratorPanel {
     }
 }
 
-fn routed_task_for_id(plan: &Option<RoutedPlanState>, task_id: TaskId) -> Option<&RoutedSubAgentTask> {
+fn routed_task_for_id(
+    plan: &Option<RoutedPlanState>,
+    task_id: TaskId,
+) -> Option<&RoutedSubAgentTask> {
     let routed_idx = task_id.0.checked_sub(2)? as usize;
     plan.as_ref()?.tasks.get(routed_idx)
 }
@@ -1338,11 +1524,12 @@ fn reconciliation_error(
     let mut candidate_outputs = existing_outputs.clone();
     candidate_outputs.insert(task_id, outputs.to_vec());
 
-    let scope_violations = crate::orchestrator::reconcile::scope_violations(graph, &candidate_outputs)
-        .into_iter()
-        .filter(|(violating_task_id, _)| *violating_task_id == task_id)
-        .map(|(_, path)| path)
-        .collect::<Vec<_>>();
+    let scope_violations =
+        crate::orchestrator::reconcile::scope_violations(graph, &candidate_outputs)
+            .into_iter()
+            .filter(|(violating_task_id, _)| *violating_task_id == task_id)
+            .map(|(_, path)| path)
+            .collect::<Vec<_>>();
     if !scope_violations.is_empty() {
         return Some(format!(
             "Reconciliation blocked: task touched files outside its declared scope: {}",
@@ -1397,14 +1584,18 @@ mod tests {
         fn send_note(&mut self, note: String) -> bool {
             self.notes.push(note.clone());
             self.snapshot.operator_notes.push(note.clone());
-            self.snapshot.events.push(crate::orchestrator::worker::WorkerThreadEvent {
-                kind: crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote,
-                message: note,
-            });
-            self.snapshot.events.push(crate::orchestrator::worker::WorkerThreadEvent {
-                kind: crate::orchestrator::worker::WorkerThreadEventKind::Status,
-                message: "Operator note routed to this worker thread.".to_string(),
-            });
+            self.snapshot
+                .events
+                .push(crate::orchestrator::worker::WorkerThreadEvent {
+                    kind: crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote,
+                    message: note,
+                });
+            self.snapshot
+                .events
+                .push(crate::orchestrator::worker::WorkerThreadEvent {
+                    kind: crate::orchestrator::worker::WorkerThreadEventKind::Status,
+                    message: "Operator note routed to this worker thread.".to_string(),
+                });
             self.snapshot
                 .status_updates
                 .push("Operator note routed to this worker thread.".to_string());
@@ -1438,12 +1629,23 @@ mod tests {
 
     #[test]
     fn follow_up_detection_matches_mediation_and_reconciliation() {
-        assert!(requires_follow_up(&sample_result(TaskId(2), "MEDIATION CONTRACT:\nConflict Type: DIRECT LINE COLLISION")));
-        assert!(requires_follow_up(&sample_result(TaskId(2), "Reconciliation blocked: overlapping outputs detected")));
+        assert!(requires_follow_up(&sample_result(
+            TaskId(2),
+            "MEDIATION CONTRACT:\nConflict Type: DIRECT LINE COLLISION"
+        )));
+        assert!(requires_follow_up(&sample_result(
+            TaskId(2),
+            "Reconciliation blocked: overlapping outputs detected"
+        )));
         let mut out_of_scope = sample_result(TaskId(2), "provider call succeeded");
-        out_of_scope.out_of_scope_created_files.push("docs/rogue.md".to_string());
+        out_of_scope
+            .out_of_scope_created_files
+            .push("docs/rogue.md".to_string());
         assert!(requires_follow_up(&out_of_scope));
-        assert!(!requires_follow_up(&sample_result(TaskId(2), "provider call failed")));
+        assert!(!requires_follow_up(&sample_result(
+            TaskId(2),
+            "provider call failed"
+        )));
     }
 
     #[test]
@@ -1453,11 +1655,17 @@ mod tests {
         graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
         graph.add(TaskId(2), "child", "child", vec![], vec![], None);
         let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(TaskId(2), TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")));
+        registry.statuses.insert(
+            TaskId(2),
+            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")),
+        );
 
         propagate_blocked_dependents(&graph, &mut registry);
 
-        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Blocked(_))));
+        assert!(matches!(
+            registry.statuses.get(&TaskId(1)),
+            Some(TaskStatus::Blocked(_))
+        ));
     }
 
     #[test]
@@ -1467,15 +1675,27 @@ mod tests {
         graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
         graph.add(TaskId(2), "child", "child", vec![], vec![], None);
         let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(TaskId(2), TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")));
+        registry.statuses.insert(
+            TaskId(2),
+            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")),
+        );
 
         propagate_blocked_dependents(&graph, &mut registry);
-        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Blocked(_))));
+        assert!(matches!(
+            registry.statuses.get(&TaskId(1)),
+            Some(TaskStatus::Blocked(_))
+        ));
 
-        registry.statuses.insert(TaskId(2), TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())));
+        registry.statuses.insert(
+            TaskId(2),
+            TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())),
+        );
         propagate_blocked_dependents(&graph, &mut registry);
 
-        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Pending)));
+        assert!(matches!(
+            registry.statuses.get(&TaskId(1)),
+            Some(TaskStatus::Pending)
+        ));
     }
 
     #[test]
@@ -1522,7 +1742,10 @@ mod tests {
         panel.poll_live_workers(workspace_root, &mediator);
 
         let registry = panel.registry.as_ref().unwrap();
-        assert!(matches!(registry.statuses.get(&TaskId(2)), Some(TaskStatus::Blocked(_))));
+        assert!(matches!(
+            registry.statuses.get(&TaskId(2)),
+            Some(TaskStatus::Blocked(_))
+        ));
         assert!(panel.running_workers.is_empty());
     }
 
@@ -1534,20 +1757,40 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(1);
-        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2), TaskId(3)], None);
-        panel.graph.add(TaskId(2), "follow-up", "follow-up", vec![], vec![], None);
-        panel.graph.add(TaskId(3), "stale", "stale", vec![], vec![], None);
+        panel.graph.add(
+            TaskId(1),
+            "root",
+            "root",
+            vec![],
+            vec![TaskId(2), TaskId(3)],
+            None,
+        );
+        panel
+            .graph
+            .add(TaskId(2), "follow-up", "follow-up", vec![], vec![], None);
+        panel
+            .graph
+            .add(TaskId(3), "stale", "stale", vec![], vec![], None);
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
 
         let reg = panel.registry.as_mut().unwrap();
-        reg.statuses.insert(TaskId(2), TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")));
+        reg.statuses.insert(
+            TaskId(2),
+            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")),
+        );
         reg.statuses.insert(TaskId(3), TaskStatus::Blocked(sample_result(TaskId(3), "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002")));
 
         panel.retry_blocked_tasks(workspace_root, &mediator);
 
         let reg = panel.registry.as_ref().unwrap();
-        assert!(matches!(reg.statuses.get(&TaskId(2)), Some(TaskStatus::Pending)));
-        assert!(matches!(reg.statuses.get(&TaskId(3)), Some(TaskStatus::Blocked(_))));
+        assert!(matches!(
+            reg.statuses.get(&TaskId(2)),
+            Some(TaskStatus::Pending)
+        ));
+        assert!(matches!(
+            reg.statuses.get(&TaskId(3)),
+            Some(TaskStatus::Blocked(_))
+        ));
     }
 
     #[test]
@@ -1556,7 +1799,10 @@ mod tests {
         let mut registry = OrchestratorRegistry::new(&graph);
         registry.statuses.insert(TaskId(1), TaskStatus::Pending);
         complete_reconcile_root(&graph, &mut registry);
-        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Pending)));
+        assert!(matches!(
+            registry.statuses.get(&TaskId(1)),
+            Some(TaskStatus::Pending)
+        ));
 
         let graph = build_routed_graph(
             "goal",
@@ -1579,11 +1825,17 @@ mod tests {
             }],
         );
         let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(TaskId(2), TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())));
+        registry.statuses.insert(
+            TaskId(2),
+            TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())),
+        );
 
         complete_reconcile_root(&graph, &mut registry);
 
-        assert!(matches!(registry.statuses.get(&TaskId(1)), Some(TaskStatus::Done(_))));
+        assert!(matches!(
+            registry.statuses.get(&TaskId(1)),
+            Some(TaskStatus::Done(_))
+        ));
     }
 
     #[test]
@@ -1607,10 +1859,24 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(1);
-        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(TaskId(2), "worker", "worker", vec!["src/main.rs".to_string()], vec![], None);
+        panel
+            .graph
+            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        panel.graph.add(
+            TaskId(2),
+            "worker",
+            "worker",
+            vec!["src/main.rs".to_string()],
+            vec![],
+            None,
+        );
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        panel.registry.as_mut().unwrap().statuses.insert(TaskId(2), TaskStatus::Running);
+        panel
+            .registry
+            .as_mut()
+            .unwrap()
+            .statuses
+            .insert(TaskId(2), TaskStatus::Running);
         panel.running_workers.insert(
             TaskId(2),
             Box::new(StubWorkerHandle {
@@ -1652,8 +1918,17 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(1);
-        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(TaskId(2), "worker", "worker", vec!["src/main.rs".to_string()], vec![], None);
+        panel
+            .graph
+            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        panel.graph.add(
+            TaskId(2),
+            "worker",
+            "worker",
+            vec!["src/main.rs".to_string()],
+            vec![],
+            None,
+        );
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
 
         let mut result = WorkerResult::new(panel.graph.tasks.get(&TaskId(2)).unwrap());
@@ -1661,11 +1936,19 @@ mod tests {
         result.model_label = "Model".to_string();
         result.run_summary_path = Some(std::path::PathBuf::from("C:\\temp\\summary.txt"));
         result.run_facts_path = Some(std::path::PathBuf::from("C:\\temp\\facts.nda"));
-        panel.registry.as_mut().unwrap().statuses.insert(TaskId(2), TaskStatus::Done(result));
+        panel
+            .registry
+            .as_mut()
+            .unwrap()
+            .statuses
+            .insert(TaskId(2), TaskStatus::Done(result));
 
         let snapshot = panel.dashboard_snapshot();
         let task = snapshot.tasks.iter().find(|task| task.id == 2).unwrap();
-        assert_eq!(task.run_summary_path.as_deref(), Some("C:\\temp\\summary.txt"));
+        assert_eq!(
+            task.run_summary_path.as_deref(),
+            Some("C:\\temp\\summary.txt")
+        );
         assert_eq!(task.run_facts_path.as_deref(), Some("C:\\temp\\facts.nda"));
     }
 
@@ -1690,12 +1973,27 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(1);
-        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(TaskId(2), "worker", "worker", vec!["src/main.rs".to_string()], vec![], None);
+        panel
+            .graph
+            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        panel.graph.add(
+            TaskId(2),
+            "worker",
+            "worker",
+            vec!["src/main.rs".to_string()],
+            vec![],
+            None,
+        );
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
         let reg = panel.registry.as_mut().unwrap();
-        reg.outputs.insert(TaskId(2), vec!["src/main.rs".to_string()]);
-        reg.statuses.insert(TaskId(2), TaskStatus::Done(WorkerResult::new(panel.graph.tasks.get(&TaskId(2)).unwrap())));
+        reg.outputs
+            .insert(TaskId(2), vec!["src/main.rs".to_string()]);
+        reg.statuses.insert(
+            TaskId(2),
+            TaskStatus::Done(WorkerResult::new(
+                panel.graph.tasks.get(&TaskId(2)).unwrap(),
+            )),
+        );
         panel.running_workers.insert(
             TaskId(2),
             Box::new(StubWorkerHandle {
@@ -1707,7 +2005,10 @@ mod tests {
 
         assert!(panel.reset_task(TaskId(2)));
         let reg = panel.registry.as_ref().unwrap();
-        assert!(matches!(reg.statuses.get(&TaskId(2)), Some(TaskStatus::Pending)));
+        assert!(matches!(
+            reg.statuses.get(&TaskId(2)),
+            Some(TaskStatus::Pending)
+        ));
         assert!(!reg.outputs.contains_key(&TaskId(2)));
         assert!(!panel.running_workers.contains_key(&TaskId(2)));
         assert_eq!(panel.runtime_status, "Reset task 2 to pending");
@@ -1721,8 +2022,12 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(1);
-        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(TaskId(2), "worker", "worker", vec![], vec![], None);
+        panel
+            .graph
+            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
+        panel
+            .graph
+            .add(TaskId(2), "worker", "worker", vec![], vec![], None);
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
         panel.registry.as_mut().unwrap().statuses.insert(
             TaskId(2),
@@ -1731,7 +2036,10 @@ mod tests {
 
         assert!(panel.retry_task(TaskId(2), workspace_root, &mediator));
         assert_eq!(panel.runtime_status, "Waiting for executable routed tasks");
-        assert!(matches!(panel.registry.as_ref().unwrap().statuses.get(&TaskId(2)), Some(TaskStatus::Pending)));
+        assert!(matches!(
+            panel.registry.as_ref().unwrap().statuses.get(&TaskId(2)),
+            Some(TaskStatus::Pending)
+        ));
     }
 
     #[test]
@@ -1742,7 +2050,9 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(2);
-        panel.graph.add(TaskId(2), "worker", "worker", vec![], vec![], None);
+        panel
+            .graph
+            .add(TaskId(2), "worker", "worker", vec![], vec![], None);
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
         panel.registry.as_mut().unwrap().statuses.insert(
             TaskId(2),
@@ -1750,7 +2060,10 @@ mod tests {
         );
 
         panel.poll_live_workers(workspace_root, &mediator);
-        assert_eq!(panel.runtime_status, "Waiting for retry on 1 blocked task(s)");
+        assert_eq!(
+            panel.runtime_status,
+            "Waiting for retry on 1 blocked task(s)"
+        );
     }
 
     #[test]
@@ -1761,7 +2074,9 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(2);
-        panel.graph.add(TaskId(2), "worker", "worker", vec![], vec![], None);
+        panel
+            .graph
+            .add(TaskId(2), "worker", "worker", vec![], vec![], None);
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
         panel.registry.as_mut().unwrap().statuses.insert(
             TaskId(2),
@@ -1786,9 +2101,20 @@ mod tests {
         let mut panel = OrchestratorPanel::new();
         panel.graph = TaskGraph::default();
         panel.graph.root = TaskId(1);
-        panel.graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2), TaskId(3)], None);
-        panel.graph.add(TaskId(2), "retryable", "retryable", vec![], vec![], None);
-        panel.graph.add(TaskId(3), "stale", "stale", vec![], vec![], None);
+        panel.graph.add(
+            TaskId(1),
+            "root",
+            "root",
+            vec![],
+            vec![TaskId(2), TaskId(3)],
+            None,
+        );
+        panel
+            .graph
+            .add(TaskId(2), "retryable", "retryable", vec![], vec![], None);
+        panel
+            .graph
+            .add(TaskId(3), "stale", "stale", vec![], vec![], None);
         panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
         let reg = panel.registry.as_mut().unwrap();
         reg.statuses.insert(
@@ -1804,7 +2130,10 @@ mod tests {
         );
 
         panel.poll_live_workers(workspace_root, &mediator);
-        assert_eq!(panel.runtime_status, "Waiting on 3 blocked task(s) (2 retryable)");
+        assert_eq!(
+            panel.runtime_status,
+            "Waiting on 3 blocked task(s) (2 retryable)"
+        );
     }
 }
 
@@ -1850,7 +2179,9 @@ fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRe
                 &current_status,
                 TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message)
             );
-            if !matches!(current_status, TaskStatus::Pending | TaskStatus::Blocked(_)) || (!dependency_blocked && matches!(current_status, TaskStatus::Blocked(_))) {
+            if !matches!(current_status, TaskStatus::Pending | TaskStatus::Blocked(_))
+                || (!dependency_blocked && matches!(current_status, TaskStatus::Blocked(_)))
+            {
                 continue;
             }
 
@@ -1885,7 +2216,9 @@ fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRe
 
             let needs_update = match &current_status {
                 TaskStatus::Pending => true,
-                TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message) => result.message != message,
+                TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message) => {
+                    result.message != message
+                }
                 _ => false,
             };
 
@@ -1897,7 +2230,9 @@ fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRe
             result.success = false;
             result.message = message;
             result.status_updates.push(result.message.clone());
-            registry.statuses.insert(task.id, TaskStatus::Blocked(result));
+            registry
+                .statuses
+                .insert(task.id, TaskStatus::Blocked(result));
             changed = true;
         }
         if !changed {
@@ -1910,7 +2245,10 @@ fn complete_reconcile_root(graph: &TaskGraph, registry: &mut OrchestratorRegistr
     let Some(root_task) = graph.tasks.get(&graph.root) else {
         return;
     };
-    if !matches!(registry.statuses.get(&graph.root), Some(TaskStatus::Pending) | None) {
+    if !matches!(
+        registry.statuses.get(&graph.root),
+        Some(TaskStatus::Pending) | None
+    ) {
         return;
     }
     if root_task.dependencies.is_empty() {
@@ -1930,7 +2268,9 @@ fn complete_reconcile_root(graph: &TaskGraph, registry: &mut OrchestratorRegistr
         root_task.dependencies.len()
     );
     result.status_updates.push(result.message.clone());
-    registry.statuses.insert(graph.root, TaskStatus::Done(result));
+    registry
+        .statuses
+        .insert(graph.root, TaskStatus::Done(result));
 }
 
 fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {

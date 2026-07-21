@@ -15,11 +15,15 @@ pub struct BuildDiagnostics {
 }
 
 pub fn diagnostics_path(workspace_root: &std::path::Path) -> PathBuf {
-    workspace_root.join(".velocity").join("build_diagnostics.json")
+    workspace_root
+        .join(".velocity")
+        .join("build_diagnostics.json")
 }
 
 pub fn diagnostics_nda_path(workspace_root: &std::path::Path) -> PathBuf {
-    workspace_root.join(".velocity").join("build_diagnostics.nda")
+    workspace_root
+        .join(".velocity")
+        .join("build_diagnostics.nda")
 }
 
 pub fn read_latest_diagnostics(workspace_root: &std::path::Path) -> BuildDiagnostics {
@@ -44,7 +48,10 @@ pub fn read_latest_diagnostics(workspace_root: &std::path::Path) -> BuildDiagnos
 static WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
 
 pub fn spawn_build_watcher(workspace_root: PathBuf, interval_secs: u64) {
-    if WATCHER_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+    if WATCHER_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
         return;
     }
 
@@ -67,7 +74,11 @@ pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
 
     let cargo_dir = if workspace_root.join("Cargo.toml").exists() {
         workspace_root.to_path_buf()
-    } else if workspace_root.join("velocity-mcp").join("Cargo.toml").exists() {
+    } else if workspace_root
+        .join("velocity-mcp")
+        .join("Cargo.toml")
+        .exists()
+    {
         workspace_root.join("velocity-mcp")
     } else {
         let mut found = workspace_root.to_path_buf();
@@ -117,17 +128,30 @@ pub fn run_cargo_check(workspace_root: &std::path::Path) -> BuildDiagnostics {
     diag.summary = if diag.success {
         format!("cargo check OK ({} warnings)", diag.warnings.len())
     } else {
-        format!("cargo check FAILED ({} errors, {} warnings)", diag.errors.len(), diag.warnings.len())
+        format!(
+            "cargo check FAILED ({} errors, {} warnings)",
+            diag.errors.len(),
+            diag.warnings.len()
+        )
     };
     diag
 }
 
-pub fn write_diagnostics(workspace_root: &std::path::Path, diag: &BuildDiagnostics) -> std::io::Result<()> {
+pub fn write_diagnostics(
+    workspace_root: &std::path::Path,
+    diag: &BuildDiagnostics,
+) -> std::io::Result<()> {
     if let Some(parent) = diagnostics_nda_path(workspace_root).parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(diagnostics_nda_path(workspace_root), serialize_diagnostics_nda(diag))?;
-    std::fs::write(diagnostics_path(workspace_root), serde_json::to_string_pretty(diag)?)
+    std::fs::write(
+        diagnostics_nda_path(workspace_root),
+        serialize_diagnostics_nda(diag),
+    )?;
+    std::fs::write(
+        diagnostics_path(workspace_root),
+        serde_json::to_string_pretty(diag)?,
+    )
 }
 
 fn serialize_diagnostics_nda(diag: &BuildDiagnostics) -> String {
@@ -143,7 +167,11 @@ fn serialize_diagnostics_nda(diag: &BuildDiagnostics) -> String {
         lines.push(format!("issue\terror\t{}\t{}", idx, encode_nda_text(error)));
     }
     for (idx, warning) in diag.warnings.iter().enumerate() {
-        lines.push(format!("issue\twarning\t{}\t{}", idx, encode_nda_text(warning)));
+        lines.push(format!(
+            "issue\twarning\t{}\t{}",
+            idx,
+            encode_nda_text(warning)
+        ));
     }
     lines.join("\n") + "\n"
 }

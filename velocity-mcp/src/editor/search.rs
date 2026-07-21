@@ -18,17 +18,13 @@ pub fn project_search(root: &Path, query: &str, max_results: usize) -> Vec<Searc
     results
 }
 
-fn walk(
-    root: &Path,
-    dir: &Path,
-    query: &str,
-    max_results: usize,
-    results: &mut Vec<SearchHit>,
-) {
+fn walk(root: &Path, dir: &Path, query: &str, max_results: usize, results: &mut Vec<SearchHit>) {
     if results.len() >= max_results {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         if results.len() >= max_results {
             return;
@@ -52,7 +48,9 @@ fn search_file(root: &Path, path: &Path, query: &str, results: &mut Vec<SearchHi
     if meta.len() > MAX_FILE_BYTES {
         return;
     }
-    let Ok(text) = fs::read_to_string(path) else { return };
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
     for (idx, line) in text.lines().enumerate() {
         if line.to_lowercase().contains(query) {
             results.push(SearchHit {

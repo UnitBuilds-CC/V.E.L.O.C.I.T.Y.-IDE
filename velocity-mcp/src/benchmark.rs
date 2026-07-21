@@ -1,8 +1,10 @@
-use std::time::Instant;
-use std::hint::black_box;
-use crate::protocol::nmcp_binary::NmcpBinaryFrame;
+use crate::compiler::driver::{
+    VulkanBitNetLayer, VulkanDriver, VulkanNdaBitNetLayer, VulkanQwenLayer,
+};
 use crate::ipc::shmem::SharedMemoryBuffer;
-use crate::compiler::driver::{VulkanDriver, VulkanQwenLayer, VulkanBitNetLayer, VulkanNdaBitNetLayer};
+use crate::protocol::nmcp_binary::NmcpBinaryFrame;
+use std::hint::black_box;
+use std::time::Instant;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -15,7 +17,7 @@ pub fn run_benchmarks() {
     // 1. Benchmark JSON-RPC String Parsing (serde_json)
     let json_req = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"read_nda","arguments":{"ndaPath":"C:/invoices/inv-001.nda"}},"id":101}"#;
     let json_iterations = 200_000;
-    
+
     print!("Running JSON-RPC Parse Benchmark...");
     let start = Instant::now();
     for _ in 0..json_iterations {
@@ -46,9 +48,10 @@ pub fn run_benchmarks() {
     // 3. Benchmark Shared Memory Mapped Operations (Read/Write)
     let temp_shmem_path = "temp_bench_shmem.bin";
     let shmem_iterations = 100_000;
-    
-    let mut buffer = SharedMemoryBuffer::create_or_open(temp_shmem_path).expect("Failed to create temp shmem");
-    
+
+    let mut buffer =
+        SharedMemoryBuffer::create_or_open(temp_shmem_path).expect("Failed to create temp shmem");
+
     print!("Running Shared Memory Read/Write Operation Benchmark...");
     let start_shmem = Instant::now();
     for _ in 0..shmem_iterations {
@@ -103,7 +106,8 @@ pub fn run_benchmarks() {
         black_box(bench_bitnet_3b_layer_ternary(&mut bitnet_data));
     }
     let duration_bitnet_layer = start_bitnet_layer.elapsed();
-    let bitnet_layer_avg_us = (duration_bitnet_layer.as_micros() as f64) / (model_iterations as f64);
+    let bitnet_layer_avg_us =
+        (duration_bitnet_layer.as_micros() as f64) / (model_iterations as f64);
     println!(" [OK] Mean Latency: {:.2} us", bitnet_layer_avg_us);
 
     print!("Running BitNet-3B Layer (V.E.L.O.C.I.T.Y. NDA) CPU Benchmark...");
@@ -112,8 +116,13 @@ pub fn run_benchmarks() {
         black_box(bench_bitnet_3b_layer_nda(&mut bitnet_data));
     }
     let duration_bitnet_nda = start_bitnet_nda.elapsed();
-    let bitnet_nda_layer_avg_us = (duration_bitnet_nda.as_micros() as f64) / (model_iterations as f64);
-    println!(" [OK] Mean Latency: {:.2} us (Speedup: {:.2}x)", bitnet_nda_layer_avg_us, bitnet_layer_avg_us / bitnet_nda_layer_avg_us);
+    let bitnet_nda_layer_avg_us =
+        (duration_bitnet_nda.as_micros() as f64) / (model_iterations as f64);
+    println!(
+        " [OK] Mean Latency: {:.2} us (Speedup: {:.2}x)",
+        bitnet_nda_layer_avg_us,
+        bitnet_layer_avg_us / bitnet_nda_layer_avg_us
+    );
 
     // 6. Model-Level Benchmark on GPU (GeForce MX250)
     println!("\nInitializing Vulkan GPU Compute Driver (V-NCE)...");
@@ -128,8 +137,10 @@ pub fn run_benchmarks() {
             gpu_available = true;
 
             println!("\nPreparing GPU-Resident Data Structures...");
-            let mut gpu_qwen_data = Qwen3BGpuLayerData::new(&driver).expect("Failed to initialize Qwen GPU data");
-            let mut gpu_bitnet_data = BitNet3BGpuLayerData::new(&driver).expect("Failed to initialize BitNet GPU data");
+            let mut gpu_qwen_data =
+                Qwen3BGpuLayerData::new(&driver).expect("Failed to initialize Qwen GPU data");
+            let mut gpu_bitnet_data =
+                BitNet3BGpuLayerData::new(&driver).expect("Failed to initialize BitNet GPU data");
 
             print!("Running Qwen-3B Layer (INT4) GPU Compute Execution...");
             let mut sum_qwen = 0.0;
@@ -147,21 +158,35 @@ pub fn run_benchmarks() {
             gpu_bitnet_latency = sum_bitnet / (model_iterations as f64);
             println!(" [OK] Mean Latency: {:.2} us", gpu_bitnet_latency);
 
-            let mut gpu_bitnet_nda_data = BitNet3BGpuNdaLayerData::new(&driver).expect("Failed to initialize BitNet NDA GPU data");
+            let mut gpu_bitnet_nda_data = BitNet3BGpuNdaLayerData::new(&driver)
+                .expect("Failed to initialize BitNet NDA GPU data");
             print!("Running BitNet-3B Layer (V.E.L.O.C.I.T.Y. NDA) GPU Compute Execution...");
             let mut sum_bitnet_nda = 0.0;
             for _ in 0..model_iterations {
                 sum_bitnet_nda += bench_bitnet_3b_layer_gpu_nda(&mut gpu_bitnet_nda_data).unwrap();
             }
             gpu_bitnet_nda_latency = sum_bitnet_nda / (model_iterations as f64);
-            println!(" [OK] Mean Latency: {:.2} us (Speedup: {:.2}x)", gpu_bitnet_nda_latency, gpu_bitnet_latency / gpu_bitnet_nda_latency);
+            println!(
+                " [OK] Mean Latency: {:.2} us (Speedup: {:.2}x)",
+                gpu_bitnet_nda_latency,
+                gpu_bitnet_latency / gpu_bitnet_nda_latency
+            );
 
             println!("\nRunning Attention Memory Access Benchmark (Contiguous vs NDA-KV)...");
             match driver.run_attn_benchmarks() {
                 Ok((contig_us, ndakv_us)) => {
-                    println!("  [OK] Contiguous KV-Cache (Old-Fashioned): {:.2} us", contig_us);
-                    println!("  [OK] Cryptographic NDA-KV Traversal:       {:.2} us", ndakv_us);
-                    println!("  Attention Traversal Overhead:            {:.2}x slower", ndakv_us / contig_us);
+                    println!(
+                        "  [OK] Contiguous KV-Cache (Old-Fashioned): {:.2} us",
+                        contig_us
+                    );
+                    println!(
+                        "  [OK] Cryptographic NDA-KV Traversal:       {:.2} us",
+                        ndakv_us
+                    );
+                    println!(
+                        "  Attention Traversal Overhead:            {:.2}x slower",
+                        ndakv_us / contig_us
+                    );
                 }
                 Err(e) => {
                     println!("  [WARNING] Attention benchmarks failed: {:?}", e);
@@ -169,7 +194,10 @@ pub fn run_benchmarks() {
             }
         }
         Err(e) => {
-            println!(" [WARNING] GPU Benchmarks skipped: Low-level driver initialization failed: {:?}", e);
+            println!(
+                " [WARNING] GPU Benchmarks skipped: Low-level driver initialization failed: {:?}",
+                e
+            );
         }
     }
 
@@ -179,7 +207,9 @@ pub fn run_benchmarks() {
     let qwen_cpu_tps = 1000.0 / qwen_full_cpu_ms;
     let bitnet_cpu_tps = 1000.0 / bitnet_full_ms_calc(bitnet_layer_avg_us);
 
-    fn bitnet_full_ms_calc(layer_avg: f64) -> f64 { (layer_avg * 30.0) / 1000.0 }
+    fn bitnet_full_ms_calc(layer_avg: f64) -> f64 {
+        (layer_avg * 30.0) / 1000.0
+    }
 
     let qwen_layer_ops = 175_767_552f64;
     let bitnet_layer_ops = 247_808_000f64;
@@ -190,19 +220,43 @@ pub fn run_benchmarks() {
     println!("  JSON-RPC Parse (Serde):      {:.2} ns", json_avg_ns);
     println!("  Mmapped Buffer R/W:          {:.2} ns", shmem_avg_ns);
     println!("  Zero-Alloc Binary Parse:     {:.2} ns", bin_avg_ns);
-    println!("  Binary Ingestion Speedup:    {:.1}x over JSON-RPC", json_avg_ns / bin_avg_ns);
+    println!(
+        "  Binary Ingestion Speedup:    {:.1}x over JSON-RPC",
+        json_avg_ns / bin_avg_ns
+    );
     println!("------------------------------------------------------------");
     println!("  INT4 Quantized GEMM (1024):  {:.2} us", int4_avg_ms);
     println!("  Ternary Popcount GEMM (1024):{:.2} us", ternary_avg_ms);
-    println!("  Ternary Arithmetic Speedup:  {:.2}x over INT4 Quantized", int4_avg_ms / ternary_avg_ms);
+    println!(
+        "  Ternary Arithmetic Speedup:  {:.2}x over INT4 Quantized",
+        int4_avg_ms / ternary_avg_ms
+    );
     println!("------------------------------------------------------------");
-    println!("  Qwen-3B (INT4) CPU Latency:  {:.2} us ({:.1} Gops)", qwen_layer_avg_us, (qwen_layer_ops / (qwen_layer_avg_us * 1e-6)) * 1e-9);
-    println!("  BitNet-3B (Ternary) CPU Lat: {:.2} us ({:.1} Gops)", bitnet_layer_avg_us, (bitnet_layer_ops / (bitnet_layer_avg_us * 1e-6)) * 1e-9);
-    println!("  CPU Layer Speedup Ratio:     {:.2}x faster", qwen_layer_avg_us / bitnet_layer_avg_us);
+    println!(
+        "  Qwen-3B (INT4) CPU Latency:  {:.2} us ({:.1} Gops)",
+        qwen_layer_avg_us,
+        (qwen_layer_ops / (qwen_layer_avg_us * 1e-6)) * 1e-9
+    );
+    println!(
+        "  BitNet-3B (Ternary) CPU Lat: {:.2} us ({:.1} Gops)",
+        bitnet_layer_avg_us,
+        (bitnet_layer_ops / (bitnet_layer_avg_us * 1e-6)) * 1e-9
+    );
+    println!(
+        "  CPU Layer Speedup Ratio:     {:.2}x faster",
+        qwen_layer_avg_us / bitnet_layer_avg_us
+    );
     println!("  CPU Extrapolated Token Gen:");
-    println!("    - Qwen-3B (36 Layers):      {:.2} ms ({:.1} tokens/sec)", qwen_full_cpu_ms, qwen_cpu_tps);
-    println!("    - BitNet-3B (30 Layers):    {:.2} ms ({:.1} tokens/sec)", bitnet_full_ms_calc(bitnet_layer_avg_us), bitnet_cpu_tps);
-    
+    println!(
+        "    - Qwen-3B (36 Layers):      {:.2} ms ({:.1} tokens/sec)",
+        qwen_full_cpu_ms, qwen_cpu_tps
+    );
+    println!(
+        "    - BitNet-3B (30 Layers):    {:.2} ms ({:.1} tokens/sec)",
+        bitnet_full_ms_calc(bitnet_layer_avg_us),
+        bitnet_cpu_tps
+    );
+
     if gpu_available {
         let qwen_full_gpu_ms = (gpu_qwen_latency * 36.0) / 1000.0;
         let bitnet_full_gpu_ms = (gpu_bitnet_latency * 30.0) / 1000.0;
@@ -216,18 +270,45 @@ pub fn run_benchmarks() {
         let bitnet_nda_gpu_gops = (bitnet_layer_ops / (gpu_bitnet_nda_latency * 1e-6)) * 1e-9;
 
         println!("------------------------------------------------------------");
-        println!("  Qwen-3B (INT4) GPU Latency:  {:.2} us ({:.1} Gops)", gpu_qwen_latency, qwen_gpu_gops);
-        println!("  BitNet-3B (Ternary) GPU Lat: {:.2} us ({:.1} Gops)", gpu_bitnet_latency, bitnet_gpu_gops);
-        println!("  BitNet-3B (NDA) GPU Latency: {:.2} us ({:.1} Gops)", gpu_bitnet_nda_latency, bitnet_nda_gpu_gops);
-        println!("  GPU Layer Speedup Ratio:     {:.2}x (NDA vs Ternary)", gpu_bitnet_latency / gpu_bitnet_nda_latency);
+        println!(
+            "  Qwen-3B (INT4) GPU Latency:  {:.2} us ({:.1} Gops)",
+            gpu_qwen_latency, qwen_gpu_gops
+        );
+        println!(
+            "  BitNet-3B (Ternary) GPU Lat: {:.2} us ({:.1} Gops)",
+            gpu_bitnet_latency, bitnet_gpu_gops
+        );
+        println!(
+            "  BitNet-3B (NDA) GPU Latency: {:.2} us ({:.1} Gops)",
+            gpu_bitnet_nda_latency, bitnet_nda_gpu_gops
+        );
+        println!(
+            "  GPU Layer Speedup Ratio:     {:.2}x (NDA vs Ternary)",
+            gpu_bitnet_latency / gpu_bitnet_nda_latency
+        );
         println!("  GPU Extrapolated Token Gen:");
-        println!("    - Qwen-3B (36 Layers):      {:.2} ms ({:.1} tokens/sec)", qwen_full_gpu_ms, qwen_gpu_tps);
-        println!("    - BitNet-3B (Ternary):      {:.2} ms ({:.1} tokens/sec)", bitnet_full_gpu_ms, bitnet_gpu_tps);
-        println!("    - BitNet-3B (NDA):          {:.2} ms ({:.1} tokens/sec)", bitnet_nda_full_gpu_ms, bitnet_nda_gpu_tps);
+        println!(
+            "    - Qwen-3B (36 Layers):      {:.2} ms ({:.1} tokens/sec)",
+            qwen_full_gpu_ms, qwen_gpu_tps
+        );
+        println!(
+            "    - BitNet-3B (Ternary):      {:.2} ms ({:.1} tokens/sec)",
+            bitnet_full_gpu_ms, bitnet_gpu_tps
+        );
+        println!(
+            "    - BitNet-3B (NDA):          {:.2} ms ({:.1} tokens/sec)",
+            bitnet_nda_full_gpu_ms, bitnet_nda_gpu_tps
+        );
         println!("------------------------------------------------------------");
         println!("  GPU vs. CPU Acceleration Factor:");
-        println!("    - Qwen-3B Speedup (GPU/CPU):{:.2}x faster", qwen_layer_avg_us / gpu_qwen_latency);
-        println!("    - BitNet-3B Speedup(GPU/CPU):{:.2}x faster", bitnet_layer_avg_us / gpu_bitnet_latency);
+        println!(
+            "    - Qwen-3B Speedup (GPU/CPU):{:.2}x faster",
+            qwen_layer_avg_us / gpu_qwen_latency
+        );
+        println!(
+            "    - BitNet-3B Speedup(GPU/CPU):{:.2}x faster",
+            bitnet_layer_avg_us / gpu_bitnet_latency
+        );
     }
     println!("============================================================");
 }
@@ -237,19 +318,19 @@ fn benchmark_int4_gemm(size: usize) -> u32 {
     let mut sum = 0u32;
     let inputs = vec![0x55u8; size / 2];
     let weights = vec![0x33u8; (size * size) / 2];
-    
+
     for row in 0..size {
         let mut row_sum = 0i32;
         let weight_row_offset = (row * size) / 2;
         for col_pair in 0..(size / 2) {
             let i_byte = inputs[col_pair];
             let w_byte = weights[weight_row_offset + col_pair];
-            
+
             let i0 = (i_byte & 0x0F) as i32 - 8;
             let i1 = (i_byte >> 4) as i32 - 8;
             let w0 = (w_byte & 0x0F) as i32 - 8;
             let w1 = (w_byte >> 4) as i32 - 8;
-            
+
             row_sum += w0 * i0 + w1 * i1;
         }
         sum = sum.wrapping_add(row_sum as u32);
@@ -262,14 +343,14 @@ fn benchmark_ternary_gemm(size: usize) -> u32 {
     let mut sum = 0u32;
     let inputs = vec![0x55555555u32; size / 16];
     let weights = vec![0x33333333u32; (size * size) / 16];
-    
+
     for row in 0..size {
         let mut row_sum = 0i32;
         let weight_row_offset = (row * size) / 16;
         for col_group in 0..(size / 16) {
             let i_val = inputs[col_group];
             let w_val = weights[weight_row_offset + col_group];
-            
+
             let matches = !(i_val ^ w_val);
             let count = matches.count_ones() as i32;
             row_sum += count - 8;
@@ -287,12 +368,12 @@ fn gemv_int4(k: usize, n: usize, inputs: &[u8], weights: &[u8], outputs: &mut [i
         for col_pair in 0..(k / 2) {
             let i_byte = inputs[col_pair];
             let w_byte = weights[weight_row_offset + col_pair];
-            
+
             let i0 = (i_byte & 0x0F) as i32 - 8;
             let i1 = (i_byte >> 4) as i32 - 8;
             let w0 = (w_byte & 0x0F) as i32 - 8;
             let w1 = (w_byte >> 4) as i32 - 8;
-            
+
             sum += w0 * i0 + w1 * i1;
         }
         outputs[row] = sum;
@@ -307,7 +388,7 @@ fn gemv_ternary(k: usize, n: usize, inputs: &[u32], weights: &[u32], outputs: &m
         for col_group in 0..(k / 16) {
             let i_val = inputs[col_group];
             let w_val = weights[weight_row_offset + col_group];
-            
+
             let matches = !(i_val ^ w_val);
             row_sum += matches.count_ones() as i32 - 8;
         }
@@ -357,18 +438,60 @@ impl Qwen3BLayerData {
 
 #[inline(never)]
 fn bench_qwen_3b_layer_int4(data: &mut Qwen3BLayerData) {
-    gemv_int4(2304, 2304, &data.inputs_2304, &data.weight_q, &mut data.out_2304_a);
-    gemv_int4(2304, 256, &data.inputs_2304, &data.weight_k, &mut data.out_256_k);
-    gemv_int4(2304, 256, &data.inputs_2304, &data.weight_v, &mut data.out_256_v);
-    gemv_int4(2304, 2304, &data.inputs_2304, &data.weight_o, &mut data.out_2304_b);
-    gemv_int4(2304, 11008, &data.inputs_2304, &data.weight_gate, &mut data.out_11008_gate);
-    gemv_int4(2304, 11008, &data.inputs_2304, &data.weight_up, &mut data.out_11008_up);
-    
+    gemv_int4(
+        2304,
+        2304,
+        &data.inputs_2304,
+        &data.weight_q,
+        &mut data.out_2304_a,
+    );
+    gemv_int4(
+        2304,
+        256,
+        &data.inputs_2304,
+        &data.weight_k,
+        &mut data.out_256_k,
+    );
+    gemv_int4(
+        2304,
+        256,
+        &data.inputs_2304,
+        &data.weight_v,
+        &mut data.out_256_v,
+    );
+    gemv_int4(
+        2304,
+        2304,
+        &data.inputs_2304,
+        &data.weight_o,
+        &mut data.out_2304_b,
+    );
+    gemv_int4(
+        2304,
+        11008,
+        &data.inputs_2304,
+        &data.weight_gate,
+        &mut data.out_11008_gate,
+    );
+    gemv_int4(
+        2304,
+        11008,
+        &data.inputs_2304,
+        &data.weight_up,
+        &mut data.out_11008_up,
+    );
+
     for i in 0..11008 {
         data.inputs_11008[i / 2] = (data.out_11008_gate[i] ^ data.out_11008_up[i]) as u8;
     }
-    
-    gemv_int4(11008, 2304, &data.inputs_11008, &data.weight_down, &mut data.out_2304_a);
+
+    gemv_int4(
+        11008,
+        2304,
+        &data.inputs_11008,
+        &data.weight_down,
+        &mut data.out_2304_a,
+    );
 }
 
 struct Qwen3BGpuLayerData {
@@ -411,7 +534,15 @@ impl Qwen3BGpuLayerData {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
-unsafe fn gemv_nda_sse2(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32], weights_active: &[u32], weights_pos: &[u32], outputs: &mut [i32]) {
+unsafe fn gemv_nda_sse2(
+    k: usize,
+    n: usize,
+    inputs_active: &[u32],
+    inputs_pos: &[u32],
+    weights_active: &[u32],
+    weights_pos: &[u32],
+    outputs: &mut [i32],
+) {
     let num_col_groups_128 = k / 128;
     for row in 0..n {
         let mut row_sum = 0i32;
@@ -420,27 +551,30 @@ unsafe fn gemv_nda_sse2(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &
             // Load 4 words (128 bits) of input active & pos
             let in_act = _mm_loadu_si128(inputs_active.as_ptr().add(cg * 4) as *const __m128i);
             let in_pos = _mm_loadu_si128(inputs_pos.as_ptr().add(cg * 4) as *const __m128i);
-            
+
             // Load 4 words (128 bits) of weight active & pos
-            let w_act = _mm_loadu_si128(weights_active.as_ptr().add(cg * n * 4 + row * 4) as *const __m128i);
-            let w_pos = _mm_loadu_si128(weights_pos.as_ptr().add(cg * n * 4 + row * 4) as *const __m128i);
-            
+            let w_act = _mm_loadu_si128(
+                weights_active.as_ptr().add(cg * n * 4 + row * 4) as *const __m128i
+            );
+            let w_pos =
+                _mm_loadu_si128(weights_pos.as_ptr().add(cg * n * 4 + row * 4) as *const __m128i);
+
             // Perform logical operations in SSE registers
             let act_both = _mm_and_si128(in_act, w_act);
             let same_sign = _mm_xor_si128(in_pos, w_pos);
             let same_sign = _mm_xor_si128(same_sign, all_ones); // same_sign = !same_sign
-            
+
             let pos_contrib = _mm_and_si128(act_both, same_sign);
             let neg_contrib = _mm_andnot_si128(same_sign, act_both); // act_both & ~same_sign
-            
+
             // Extract elements to call fast scalar popcnt
             let pos_arr: [u32; 4] = std::mem::transmute(pos_contrib);
             let neg_arr: [u32; 4] = std::mem::transmute(neg_contrib);
-            
-            row_sum += (pos_arr[0].count_ones() as i32 - neg_arr[0].count_ones() as i32) +
-                       (pos_arr[1].count_ones() as i32 - neg_arr[1].count_ones() as i32) +
-                       (pos_arr[2].count_ones() as i32 - neg_arr[2].count_ones() as i32) +
-                       (pos_arr[3].count_ones() as i32 - neg_arr[3].count_ones() as i32);
+
+            row_sum += (pos_arr[0].count_ones() as i32 - neg_arr[0].count_ones() as i32)
+                + (pos_arr[1].count_ones() as i32 - neg_arr[1].count_ones() as i32)
+                + (pos_arr[2].count_ones() as i32 - neg_arr[2].count_ones() as i32)
+                + (pos_arr[3].count_ones() as i32 - neg_arr[3].count_ones() as i32);
         }
         outputs[row] = row_sum;
     }
@@ -448,12 +582,28 @@ unsafe fn gemv_nda_sse2(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-unsafe fn gemv_nda_sse2(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32], weights_active: &[u32], weights_pos: &[u32], outputs: &mut [i32]) {
+unsafe fn gemv_nda_sse2(
+    k: usize,
+    n: usize,
+    inputs_active: &[u32],
+    inputs_pos: &[u32],
+    weights_active: &[u32],
+    weights_pos: &[u32],
+    outputs: &mut [i32],
+) {
     // stub for completeness; on x86_64 only the version above is used
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn gemv_nda_scalar(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32], weights_active: &[u32], weights_pos: &[u32], outputs: &mut [i32]) {
+fn gemv_nda_scalar(
+    k: usize,
+    n: usize,
+    inputs_active: &[u32],
+    inputs_pos: &[u32],
+    weights_active: &[u32],
+    weights_pos: &[u32],
+    outputs: &mut [i32],
+) {
     let num_col_groups_128 = k / 128;
     for row in 0..n {
         let mut row_sum = 0i32;
@@ -461,15 +611,15 @@ fn gemv_nda_scalar(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32]
             for i in 0..4 {
                 let in_a = inputs_active[cg * 4 + i];
                 let in_p = inputs_pos[cg * 4 + i];
-                
+
                 let w_a = weights_active[cg * n * 4 + row * 4 + i];
                 let w_p = weights_pos[cg * n * 4 + row * 4 + i];
-                
+
                 let act_both = in_a & w_a;
                 let same_sign = !(in_p ^ w_p);
                 let pos_contrib = act_both & same_sign;
                 let neg_contrib = act_both & !same_sign;
-                
+
                 row_sum += pos_contrib.count_ones() as i32 - neg_contrib.count_ones() as i32;
             }
         }
@@ -478,16 +628,40 @@ fn gemv_nda_scalar(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32]
 }
 
 #[inline(always)]
-fn gemv_nda(k: usize, n: usize, inputs_active: &[u32], inputs_pos: &[u32], weights_active: &[u32], weights_pos: &[u32], outputs: &mut [i32]) {
+fn gemv_nda(
+    k: usize,
+    n: usize,
+    inputs_active: &[u32],
+    inputs_pos: &[u32],
+    weights_active: &[u32],
+    weights_pos: &[u32],
+    outputs: &mut [i32],
+) {
     #[cfg(target_arch = "x86_64")]
     {
         unsafe {
-            gemv_nda_sse2(k, n, inputs_active, inputs_pos, weights_active, weights_pos, outputs);
+            gemv_nda_sse2(
+                k,
+                n,
+                inputs_active,
+                inputs_pos,
+                weights_active,
+                weights_pos,
+                outputs,
+            );
         }
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        gemv_nda_scalar(k, n, inputs_active, inputs_pos, weights_active, weights_pos, outputs);
+        gemv_nda_scalar(
+            k,
+            n,
+            inputs_active,
+            inputs_pos,
+            weights_active,
+            weights_pos,
+            outputs,
+        );
     }
 }
 
@@ -501,13 +675,13 @@ struct BitNet3BLayerData {
     weight_gate: Vec<u32>,
     weight_up: Vec<u32>,
     weight_down: Vec<u32>,
-    
+
     // NDA Decomposed versions for CPU benchmark
     nda_inputs_3200_active: Vec<u32>,
     nda_inputs_3200_pos: Vec<u32>,
     nda_inputs_8640_active: Vec<u32>,
     nda_inputs_8640_pos: Vec<u32>,
-    
+
     nda_weight_q_active: Vec<u32>,
     nda_weight_q_pos: Vec<u32>,
     nda_weight_k_active: Vec<u32>,
@@ -522,7 +696,7 @@ struct BitNet3BLayerData {
     nda_weight_up_pos: Vec<u32>,
     nda_weight_down_active: Vec<u32>,
     nda_weight_down_pos: Vec<u32>,
-    
+
     out_3200_q: Vec<i32>,
     out_3200_k: Vec<i32>,
     out_3200_v: Vec<i32>,
@@ -530,7 +704,7 @@ struct BitNet3BLayerData {
     out_8640_gate: Vec<i32>,
     out_8640_up: Vec<i32>,
     out_3200_down: Vec<i32>,
-    
+
     nda_out_3200_q: Vec<i32>,
     nda_out_3200_k: Vec<i32>,
     nda_out_3200_v: Vec<i32>,
@@ -562,16 +736,25 @@ impl BitNet3BLayerData {
             }
         };
 
-        let (nda_inputs_3200_active, nda_inputs_3200_pos) = crate::compiler::driver::pack_inputs_nda(&inputs_3200);
-        let (nda_inputs_8640_active, nda_inputs_8640_pos) = crate::compiler::driver::pack_inputs_nda(&inputs_8640);
+        let (nda_inputs_3200_active, nda_inputs_3200_pos) =
+            crate::compiler::driver::pack_inputs_nda(&inputs_3200);
+        let (nda_inputs_8640_active, nda_inputs_8640_pos) =
+            crate::compiler::driver::pack_inputs_nda(&inputs_8640);
 
-        let (wq_a, wq_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_q), 3200, 3200);
-        let (wk_a, wk_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_k), 3200, 3200);
-        let (wv_a, wv_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_v), 3200, 3200);
-        let (wo_a, wo_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_o), 3200, 3200);
-        let (wgate_a, wgate_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_gate), 3200, 8640);
-        let (wup_a, wup_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_up), 3200, 8640);
-        let (wdown_a, wdown_p) = crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_down), 8640, 3200);
+        let (wq_a, wq_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_q), 3200, 3200);
+        let (wk_a, wk_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_k), 3200, 3200);
+        let (wv_a, wv_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_v), 3200, 3200);
+        let (wo_a, wo_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_o), 3200, 3200);
+        let (wgate_a, wgate_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_gate), 3200, 8640);
+        let (wup_a, wup_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_up), 3200, 8640);
+        let (wdown_a, wdown_p) =
+            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_down), 8640, 3200);
 
         Self {
             inputs_3200,
@@ -621,36 +804,132 @@ impl BitNet3BLayerData {
 
 #[inline(never)]
 fn bench_bitnet_3b_layer_ternary(data: &mut BitNet3BLayerData) {
-    gemv_ternary(3200, 3200, &data.inputs_3200, &data.weight_q, &mut data.out_3200_q);
-    gemv_ternary(3200, 3200, &data.inputs_3200, &data.weight_k, &mut data.out_3200_k);
-    gemv_ternary(3200, 3200, &data.inputs_3200, &data.weight_v, &mut data.out_3200_v);
-    gemv_ternary(3200, 3200, &data.inputs_3200, &data.weight_o, &mut data.out_3200_o);
-    gemv_ternary(3200, 8640, &data.inputs_3200, &data.weight_gate, &mut data.out_8640_gate);
-    gemv_ternary(3200, 8640, &data.inputs_3200, &data.weight_up, &mut data.out_8640_up);
-    
+    gemv_ternary(
+        3200,
+        3200,
+        &data.inputs_3200,
+        &data.weight_q,
+        &mut data.out_3200_q,
+    );
+    gemv_ternary(
+        3200,
+        3200,
+        &data.inputs_3200,
+        &data.weight_k,
+        &mut data.out_3200_k,
+    );
+    gemv_ternary(
+        3200,
+        3200,
+        &data.inputs_3200,
+        &data.weight_v,
+        &mut data.out_3200_v,
+    );
+    gemv_ternary(
+        3200,
+        3200,
+        &data.inputs_3200,
+        &data.weight_o,
+        &mut data.out_3200_o,
+    );
+    gemv_ternary(
+        3200,
+        8640,
+        &data.inputs_3200,
+        &data.weight_gate,
+        &mut data.out_8640_gate,
+    );
+    gemv_ternary(
+        3200,
+        8640,
+        &data.inputs_3200,
+        &data.weight_up,
+        &mut data.out_8640_up,
+    );
+
     for i in 0..(8640 / 16) {
         data.inputs_8640[i] = (data.out_8640_gate[i * 16] ^ data.out_8640_up[i * 16]) as u32;
     }
-    
-    gemv_ternary(8640, 3200, &data.inputs_8640, &data.weight_down, &mut data.out_3200_down);
+
+    gemv_ternary(
+        8640,
+        3200,
+        &data.inputs_8640,
+        &data.weight_down,
+        &mut data.out_3200_down,
+    );
 }
 
 #[inline(never)]
 fn bench_bitnet_3b_layer_nda(data: &mut BitNet3BLayerData) {
-    gemv_nda(3200, 3200, &data.nda_inputs_3200_active, &data.nda_inputs_3200_pos, &data.nda_weight_q_active, &data.nda_weight_q_pos, &mut data.nda_out_3200_q);
-    gemv_nda(3200, 3200, &data.nda_inputs_3200_active, &data.nda_inputs_3200_pos, &data.nda_weight_k_active, &data.nda_weight_k_pos, &mut data.nda_out_3200_k);
-    gemv_nda(3200, 3200, &data.nda_inputs_3200_active, &data.nda_inputs_3200_pos, &data.nda_weight_v_active, &data.nda_weight_v_pos, &mut data.nda_out_3200_v);
-    gemv_nda(3200, 3200, &data.nda_inputs_3200_active, &data.nda_inputs_3200_pos, &data.nda_weight_o_active, &data.nda_weight_o_pos, &mut data.nda_out_3200_o);
-    gemv_nda(3200, 8640, &data.nda_inputs_3200_active, &data.nda_inputs_3200_pos, &data.nda_weight_gate_active, &data.nda_weight_gate_pos, &mut data.nda_out_8640_gate);
-    gemv_nda(3200, 8640, &data.nda_inputs_3200_active, &data.nda_inputs_3200_pos, &data.nda_weight_up_active, &data.nda_weight_up_pos, &mut data.nda_out_8640_up);
-    
+    gemv_nda(
+        3200,
+        3200,
+        &data.nda_inputs_3200_active,
+        &data.nda_inputs_3200_pos,
+        &data.nda_weight_q_active,
+        &data.nda_weight_q_pos,
+        &mut data.nda_out_3200_q,
+    );
+    gemv_nda(
+        3200,
+        3200,
+        &data.nda_inputs_3200_active,
+        &data.nda_inputs_3200_pos,
+        &data.nda_weight_k_active,
+        &data.nda_weight_k_pos,
+        &mut data.nda_out_3200_k,
+    );
+    gemv_nda(
+        3200,
+        3200,
+        &data.nda_inputs_3200_active,
+        &data.nda_inputs_3200_pos,
+        &data.nda_weight_v_active,
+        &data.nda_weight_v_pos,
+        &mut data.nda_out_3200_v,
+    );
+    gemv_nda(
+        3200,
+        3200,
+        &data.nda_inputs_3200_active,
+        &data.nda_inputs_3200_pos,
+        &data.nda_weight_o_active,
+        &data.nda_weight_o_pos,
+        &mut data.nda_out_3200_o,
+    );
+    gemv_nda(
+        3200,
+        8640,
+        &data.nda_inputs_3200_active,
+        &data.nda_inputs_3200_pos,
+        &data.nda_weight_gate_active,
+        &data.nda_weight_gate_pos,
+        &mut data.nda_out_8640_gate,
+    );
+    gemv_nda(
+        3200,
+        8640,
+        &data.nda_inputs_3200_active,
+        &data.nda_inputs_3200_pos,
+        &data.nda_weight_up_active,
+        &data.nda_weight_up_pos,
+        &mut data.nda_out_8640_up,
+    );
+
     for i in 0..(8640 / 32) {
         let mut active_word = 0u32;
         let mut pos_word = 0u32;
         for bit in 0..32 {
             let idx = i * 32 + bit;
             let val = (data.nda_out_8640_gate[idx] * data.nda_out_8640_up[idx]) as f32 * 0.0001;
-            let q_val = if val > 0.0 { 1 } else if val < 0.0 { -1 } else { 0 };
+            let q_val = if val > 0.0 {
+                1
+            } else if val < 0.0 {
+                -1
+            } else {
+                0
+            };
             if q_val != 0 {
                 active_word |= 1 << bit;
                 if q_val == 1 {
@@ -661,11 +940,17 @@ fn bench_bitnet_3b_layer_nda(data: &mut BitNet3BLayerData) {
         data.nda_inputs_8640_active[i] = active_word;
         data.nda_inputs_8640_pos[i] = pos_word;
     }
-    
-    gemv_nda(8640, 3200, &data.nda_inputs_8640_active, &data.nda_inputs_8640_pos, &data.nda_weight_down_active, &data.nda_weight_down_pos, &mut data.nda_out_3200_down);
+
+    gemv_nda(
+        8640,
+        3200,
+        &data.nda_inputs_8640_active,
+        &data.nda_inputs_8640_pos,
+        &data.nda_weight_down_active,
+        &data.nda_weight_down_pos,
+        &mut data.nda_out_3200_down,
+    );
 }
-
-
 
 struct BitNet3BGpuLayerData {
     inputs_3200: Vec<u32>,
@@ -761,20 +1046,32 @@ impl BitNet3BGpuNdaLayerData {
     }
 }
 
-fn bench_qwen_3b_layer_gpu(data: &mut Qwen3BGpuLayerData) -> Result<f64, Box<dyn std::error::Error>> {
+fn bench_qwen_3b_layer_gpu(
+    data: &mut Qwen3BGpuLayerData,
+) -> Result<f64, Box<dyn std::error::Error>> {
     let to_bytes_f32 = |slice: &[f32]| -> &[u8] {
         unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
     };
-    data.layer.run(to_bytes_f32(&data.inputs_2304), &mut data.out_2304_a)
+    data.layer
+        .run(to_bytes_f32(&data.inputs_2304), &mut data.out_2304_a)
 }
 
-fn bench_bitnet_3b_layer_gpu(data: &mut BitNet3BGpuLayerData) -> Result<f64, Box<dyn std::error::Error>> {
+fn bench_bitnet_3b_layer_gpu(
+    data: &mut BitNet3BGpuLayerData,
+) -> Result<f64, Box<dyn std::error::Error>> {
     let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
         unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
     };
-    data.layer.run(to_bytes_u32(&data.inputs_3200), &mut data.out_3200_down)
+    data.layer
+        .run(to_bytes_u32(&data.inputs_3200), &mut data.out_3200_down)
 }
 
-fn bench_bitnet_3b_layer_gpu_nda(data: &mut BitNet3BGpuNdaLayerData) -> Result<f64, Box<dyn std::error::Error>> {
-    data.layer.run(&data.inputs_active, &data.inputs_pos, &mut data.out_3200_down)
+fn bench_bitnet_3b_layer_gpu_nda(
+    data: &mut BitNet3BGpuNdaLayerData,
+) -> Result<f64, Box<dyn std::error::Error>> {
+    data.layer.run(
+        &data.inputs_active,
+        &data.inputs_pos,
+        &mut data.out_3200_down,
+    )
 }

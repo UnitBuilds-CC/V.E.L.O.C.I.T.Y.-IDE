@@ -28,17 +28,25 @@ impl OrchestratorRegistry {
         for id in graph.tasks.keys() {
             statuses.insert(*id, TaskStatus::Pending);
         }
-        Self { statuses, outputs: HashMap::new() }
+        Self {
+            statuses,
+            outputs: HashMap::new(),
+        }
     }
 
     pub fn is_complete(&self) -> bool {
-        self.statuses
-            .values()
-            .all(|s| matches!(s, TaskStatus::Done(_) | TaskStatus::Failed(_) | TaskStatus::Blocked(_)))
+        self.statuses.values().all(|s| {
+            matches!(
+                s,
+                TaskStatus::Done(_) | TaskStatus::Failed(_) | TaskStatus::Blocked(_)
+            )
+        })
     }
 
     pub fn has_blocked(&self) -> bool {
-        self.statuses.values().any(|s| matches!(s, TaskStatus::Blocked(_)))
+        self.statuses
+            .values()
+            .any(|s| matches!(s, TaskStatus::Blocked(_)))
     }
 
     pub fn ready_ids(&self, graph: &TaskGraph) -> Vec<TaskId> {
@@ -51,7 +59,12 @@ impl OrchestratorRegistry {
         graph
             .ready(&completed)
             .into_iter()
-            .filter(|task| matches!(self.statuses.get(&task.id), Some(TaskStatus::Pending) | None))
+            .filter(|task| {
+                matches!(
+                    self.statuses.get(&task.id),
+                    Some(TaskStatus::Pending) | None
+                )
+            })
             .map(|t| t.id)
             .collect()
     }
@@ -86,10 +99,14 @@ mod tests {
     fn ready_ids_require_successful_dependencies() {
         let graph = TaskGraph::example_game();
         let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(TaskId(1), TaskStatus::Failed(sample_result(TaskId(1))));
+        registry
+            .statuses
+            .insert(TaskId(1), TaskStatus::Failed(sample_result(TaskId(1))));
         assert!(registry.ready_ids(&graph).is_empty());
 
-        registry.statuses.insert(TaskId(1), TaskStatus::Done(sample_result(TaskId(1))));
+        registry
+            .statuses
+            .insert(TaskId(1), TaskStatus::Done(sample_result(TaskId(1))));
         let ready = registry.ready_ids(&graph);
         assert!(ready.contains(&TaskId(2)));
         assert!(ready.contains(&TaskId(3)));

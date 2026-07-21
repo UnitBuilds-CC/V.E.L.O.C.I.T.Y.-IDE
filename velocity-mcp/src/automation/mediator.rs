@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use velocity_ide::site_map::SiteMap;
 
 #[derive(Clone, Debug)]
@@ -158,7 +158,10 @@ impl MediatorArena {
 
     pub fn active_locks(&self) -> Vec<EditLock> {
         let locks_guard = self.locks.lock().unwrap();
-        locks_guard.values().flat_map(|locks| locks.iter().cloned()).collect()
+        locks_guard
+            .values()
+            .flat_map(|locks| locks.iter().cloned())
+            .collect()
     }
 
     /// Generate an adapter or contract resolution for a conflict.
@@ -274,7 +277,9 @@ mod tests {
         let mut sm = SiteMap::open(temp_dir.path(), 0).unwrap();
 
         // 1. Check direct line overlap lock block
-        arena.acquire_lock(file_a.clone(), (10, 20), "AgentAlice".to_string(), &sm).unwrap();
+        arena
+            .acquire_lock(file_a.clone(), (10, 20), "AgentAlice".to_string(), &sm)
+            .unwrap();
 
         // Second lock request on same range by AgentBob should fail
         let res = arena.acquire_lock(file_a.clone(), (15, 25), "AgentBob".to_string(), &sm);
@@ -284,17 +289,25 @@ mod tests {
         assert_eq!(conflict.existing_lock.agent_id, "AgentAlice");
 
         // Requesting non-overlapping range on same file succeeds
-        arena.acquire_lock(file_a.clone(), (30, 40), "AgentBob".to_string(), &sm).unwrap();
+        arena
+            .acquire_lock(file_a.clone(), (30, 40), "AgentBob".to_string(), &sm)
+            .unwrap();
 
         // 2. Check semantic coupling lock block
         // Setup SiteMap: "src/lib.rs" calls "src/main.rs"
         let lib_hash = path_identity_hash(&file_b);
         let main_hash = path_identity_hash(&file_a);
-        let triple = NdaNode::Triple { subject_hash: lib_hash, predicate_id: 2, object_hash: main_hash };
+        let triple = NdaNode::Triple {
+            subject_hash: lib_hash,
+            predicate_id: 2,
+            object_hash: main_hash,
+        };
         sm.put_node(&triple).unwrap();
 
         // Lock file_b (lib.rs) by AgentAlice
-        arena.acquire_lock(file_b.clone(), (1, 10), "AgentAlice".to_string(), &sm).unwrap();
+        arena
+            .acquire_lock(file_b.clone(), (1, 10), "AgentAlice".to_string(), &sm)
+            .unwrap();
 
         // Lock file_a (main.rs) by AgentBob should trigger semantic coupling conflict
         // because main.rs is called by lib.rs (which is held by AgentAlice)
@@ -325,15 +338,21 @@ mod tests {
         })
         .unwrap();
 
-        arena.acquire_lock(caller.clone(), (1, 5), "AgentAlice".to_string(), &sm).unwrap();
+        arena
+            .acquire_lock(caller.clone(), (1, 5), "AgentAlice".to_string(), &sm)
+            .unwrap();
 
         let conflict = arena.acquire_lock(callee.clone(), (1, 5), "AgentBob".to_string(), &sm);
         assert!(conflict.is_err());
-        assert_eq!(conflict.as_ref().err().unwrap().kind, ConflictKind::Semantic);
+        assert_eq!(
+            conflict.as_ref().err().unwrap().kind,
+            ConflictKind::Semantic
+        );
 
         arena.release_lock(&caller, "AgentAlice");
 
-        let unrelated_result = arena.acquire_lock(unrelated.clone(), (1, 5), "AgentBob".to_string(), &sm);
+        let unrelated_result =
+            arena.acquire_lock(unrelated.clone(), (1, 5), "AgentBob".to_string(), &sm);
         assert!(unrelated_result.is_ok());
     }
 
@@ -349,13 +368,27 @@ mod tests {
         std::fs::create_dir_all(dir_scope.clone()).unwrap();
         std::fs::write(&nested_file, "pub fn demo() {}\n").unwrap();
 
-        arena.acquire_lock(dir_scope.clone(), (1, usize::MAX / 4), "AgentAlice".to_string(), &sm).unwrap();
+        arena
+            .acquire_lock(
+                dir_scope.clone(),
+                (1, usize::MAX / 4),
+                "AgentAlice".to_string(),
+                &sm,
+            )
+            .unwrap();
 
-        let conflict = arena.acquire_lock(nested_file.clone(), (1, usize::MAX / 4), "AgentBob".to_string(), &sm);
+        let conflict = arena.acquire_lock(
+            nested_file.clone(),
+            (1, usize::MAX / 4),
+            "AgentBob".to_string(),
+            &sm,
+        );
         assert!(conflict.is_err());
         let conflict = conflict.err().unwrap();
         assert_eq!(conflict.kind, ConflictKind::ScopeOverlap);
-        assert!(arena.resolve_conflict(&conflict).contains("Conflict Type: SCOPE OVERLAP"));
+        assert!(arena
+            .resolve_conflict(&conflict)
+            .contains("Conflict Type: SCOPE OVERLAP"));
     }
 
     #[test]
@@ -366,8 +399,12 @@ mod tests {
         let first = PathBuf::from("src/main.rs");
         let second = PathBuf::from("src/lib.rs");
 
-        arena.acquire_lock(first.clone(), (1, 5), "AgentAlice".to_string(), &sm).unwrap();
-        arena.acquire_lock(second.clone(), (1, 5), "AgentAlice".to_string(), &sm).unwrap();
+        arena
+            .acquire_lock(first.clone(), (1, 5), "AgentAlice".to_string(), &sm)
+            .unwrap();
+        arena
+            .acquire_lock(second.clone(), (1, 5), "AgentAlice".to_string(), &sm)
+            .unwrap();
         assert_eq!(arena.active_locks().len(), 2);
 
         arena.release_locks_for_agent("AgentAlice");

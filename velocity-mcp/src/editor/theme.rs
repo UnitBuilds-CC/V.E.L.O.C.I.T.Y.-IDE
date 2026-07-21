@@ -1,4 +1,7 @@
-use eframe::egui::{self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, Vec2, Visuals};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, Vec2,
+    Visuals,
+};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]

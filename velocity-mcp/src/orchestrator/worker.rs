@@ -1,15 +1,18 @@
 //! A worker represents one sub-agent assigned to a single task.
 
+use crossbeam_channel::{unbounded, Sender as CrossbeamSender};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
-use crossbeam_channel::{unbounded, Sender as CrossbeamSender};
 use std::time::{Duration, Instant};
 
 use velocity_ide::site_map::SiteMap;
 
-use crate::agent::{AiProvider, HeadlessSubAgentEvent, HeadlessSubAgentEventKind, HeadlessSubAgentProgress, HeadlessSubAgentRequest, run_headless_subagent};
+use crate::agent::{
+    run_headless_subagent, AiProvider, HeadlessSubAgentEvent, HeadlessSubAgentEventKind,
+    HeadlessSubAgentProgress, HeadlessSubAgentRequest,
+};
 use crate::automation::mediator::MediatorArena;
 use crate::automation::task_router::RoutedModelRoute;
 
@@ -117,7 +120,11 @@ impl WorkerHandle for LiveWorkerHandle {
         if self.cancel_sent {
             return false;
         }
-        if self.control_tx.send(crate::agent::UiToAgentMessage::CancelTask).is_ok() {
+        if self
+            .control_tx
+            .send(crate::agent::UiToAgentMessage::CancelTask)
+            .is_ok()
+        {
             self.cancel_sent = true;
             true
         } else {
@@ -126,7 +133,9 @@ impl WorkerHandle for LiveWorkerHandle {
     }
 
     fn send_note(&mut self, note: String) -> bool {
-        self.control_tx.send(crate::agent::UiToAgentMessage::UserPrompt(note)).is_ok()
+        self.control_tx
+            .send(crate::agent::UiToAgentMessage::UserPrompt(note))
+            .is_ok()
     }
 
     fn snapshot(&self) -> WorkerThreadSnapshot {
@@ -140,10 +149,18 @@ impl WorkerHandle for LiveWorkerHandle {
                         HeadlessSubAgentEventKind::Status => WorkerThreadEventKind::Status,
                         HeadlessSubAgentEventKind::Transcript => WorkerThreadEventKind::Transcript,
                         HeadlessSubAgentEventKind::FileChange => WorkerThreadEventKind::FileChange,
-                        HeadlessSubAgentEventKind::OperatorNote => WorkerThreadEventKind::OperatorNote,
-                        HeadlessSubAgentEventKind::ToolApproval => WorkerThreadEventKind::ToolApproval,
-                        HeadlessSubAgentEventKind::ToolStarted => WorkerThreadEventKind::ToolStarted,
-                        HeadlessSubAgentEventKind::ToolFinished => WorkerThreadEventKind::ToolFinished,
+                        HeadlessSubAgentEventKind::OperatorNote => {
+                            WorkerThreadEventKind::OperatorNote
+                        }
+                        HeadlessSubAgentEventKind::ToolApproval => {
+                            WorkerThreadEventKind::ToolApproval
+                        }
+                        HeadlessSubAgentEventKind::ToolStarted => {
+                            WorkerThreadEventKind::ToolStarted
+                        }
+                        HeadlessSubAgentEventKind::ToolFinished => {
+                            WorkerThreadEventKind::ToolFinished
+                        }
                     },
                     message: event.message.clone(),
                 })
@@ -180,10 +197,21 @@ pub fn spawn_live_worker(
     let progress = Arc::new(std::sync::Mutex::new(HeadlessSubAgentProgress::default()));
     let progress_for_thread = progress.clone();
     std::thread::spawn(move || {
-        let result = run_assignment(assignment, mediator, weight_root, control_rx, progress_for_thread);
+        let result = run_assignment(
+            assignment,
+            mediator,
+            weight_root,
+            control_rx,
+            progress_for_thread,
+        );
         let _ = tx.send(result);
     });
-    Box::new(LiveWorkerHandle { rx, control_tx, cancel_sent: false, progress })
+    Box::new(LiveWorkerHandle {
+        rx,
+        control_tx,
+        cancel_sent: false,
+        progress,
+    })
 }
 
 fn run_assignment(
@@ -225,7 +253,13 @@ fn run_assignment(
         return result;
     }
 
-    let locked_scopes = match acquire_scope_locks(&assignment.workspace_root, &task.scope, &mediator, &site_map, task.id) {
+    let locked_scopes = match acquire_scope_locks(
+        &assignment.workspace_root,
+        &task.scope,
+        &mediator,
+        &site_map,
+        task.id,
+    ) {
         Ok(locked_scopes) => locked_scopes,
         Err(message) => {
             result.success = false;
@@ -309,7 +343,9 @@ fn acquire_scope_locks(
         } else {
             workspace_root.join(&rel)
         };
-        if let Err(conflict) = mediator.acquire_lock(abs.clone(), (1, usize::MAX / 4), agent_id.clone(), site_map) {
+        if let Err(conflict) =
+            mediator.acquire_lock(abs.clone(), (1, usize::MAX / 4), agent_id.clone(), site_map)
+        {
             for locked in &locked_scopes {
                 mediator.release_lock(locked, &agent_id);
             }
@@ -327,12 +363,14 @@ fn execute_live_task(
     cancel_rx: &crossbeam_channel::Receiver<crate::agent::UiToAgentMessage>,
     progress: &Arc<std::sync::Mutex<HeadlessSubAgentProgress>>,
 ) -> Result<ExecutionOutcome, ExecutionOutcome> {
-    fs::create_dir_all(run_dir).map_err(|err| failed_execution(assignment, format!("create run dir: {err}")))?;
+    fs::create_dir_all(run_dir)
+        .map_err(|err| failed_execution(assignment, format!("create run dir: {err}")))?;
     write_execution_contract_artifacts(run_dir, assignment)
         .map_err(|err| failed_execution(assignment, format!("write instructions: {err}")))?;
 
     let snapshot_root = run_dir.join("scope_snapshot");
-    fs::create_dir_all(&snapshot_root).map_err(|err| failed_execution(assignment, format!("create snapshot dir: {err}")))?;
+    fs::create_dir_all(&snapshot_root)
+        .map_err(|err| failed_execution(assignment, format!("create snapshot dir: {err}")))?;
 
     let scoped_paths = collect_scoped_paths(&assignment.workspace_root, scope);
     let before_contents = snapshot_scope(&scoped_paths, &assignment.workspace_root, &snapshot_root)
@@ -373,15 +411,17 @@ fn execute_live_task(
         final_provider_label = route.provider.label().to_string();
         final_model_label = route.model_label.clone();
 
-        let (changed_files, created_files, deleted_files) = detect_scoped_changes(&scoped_paths, &before_contents, &assignment.workspace_root)
-            .map_err(|err| failed_execution(assignment, err))?;
+        let (changed_files, created_files, deleted_files) =
+            detect_scoped_changes(&scoped_paths, &before_contents, &assignment.workspace_root)
+                .map_err(|err| failed_execution(assignment, err))?;
         let out_of_scope_created_files = detect_out_of_scope_created_files(
             &scoped_paths,
             &before_workspace_files,
             &assignment.workspace_root,
         )
         .map_err(|err| failed_execution(assignment, err))?;
-        let success = !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty();
+        let success =
+            !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty();
         let message = if success {
             format!(
                 "Changed {}, created {}, deleted {} via {} / {}",
@@ -392,7 +432,10 @@ fn execute_live_task(
                 final_model_label,
             )
         } else {
-            format!("No scoped changes via {} / {}", final_provider_label, final_model_label)
+            format!(
+                "No scoped changes via {} / {}",
+                final_provider_label, final_model_label
+            )
         };
         attempts.push(WorkerAttempt {
             provider_label: final_provider_label.clone(),
@@ -423,7 +466,8 @@ fn execute_live_task(
                 attempts,
                 message,
             };
-            write_execution_artifacts(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
+            write_execution_artifacts(run_dir, &outcome)
+                .map_err(|err| failed_execution(assignment, err))?;
             return Ok(outcome);
         }
     }
@@ -449,7 +493,8 @@ fn execute_live_task(
         attempts,
         message,
     };
-    write_execution_artifacts(run_dir, &outcome).map_err(|err| failed_execution(assignment, err))?;
+    write_execution_artifacts(run_dir, &outcome)
+        .map_err(|err| failed_execution(assignment, err))?;
     Err(outcome)
 }
 
@@ -477,20 +522,35 @@ fn write_execution_artifacts(run_dir: &Path, outcome: &ExecutionOutcome) -> Resu
 fn serialize_execution_contract_nda(assignment: &WorkerAssignment) -> String {
     let mut lines = vec![
         "worker-execution-contract version 2".to_string(),
-        format!("field\tprovider\t{}", encode_nda_text(&assignment.provider_label)),
+        format!(
+            "field\tprovider\t{}",
+            encode_nda_text(&assignment.provider_label)
+        ),
         format!("field\tmodel\t{}", encode_nda_text(&assignment.model_label)),
         format!("field\tmodel_id\t{}", encode_nda_text(&assignment.model_id)),
         format!("field\tthinking\t{}", assignment.thinking),
         format!("field\ttask_id\t{}", assignment.task.id.0),
-        format!("field\ttask_title\t{}", encode_nda_text(&assignment.task.title)),
-        format!("field\ttask_description\t{}", encode_nda_text(&assignment.task.description)),
-        format!("field\tplanned_site_map_root\t{:016x}", assignment.planned_site_map_root),
+        format!(
+            "field\ttask_title\t{}",
+            encode_nda_text(&assignment.task.title)
+        ),
+        format!(
+            "field\ttask_description\t{}",
+            encode_nda_text(&assignment.task.description)
+        ),
+        format!(
+            "field\tplanned_site_map_root\t{:016x}",
+            assignment.planned_site_map_root
+        ),
         format!("scope_count {}", assignment.task.scope.len()),
         format!("fallback_route_count {}", assignment.fallback_chain.len()),
     ];
 
     let instruction_lines: Vec<&str> = assignment.instructions.split('\n').collect();
-    lines.push(format!("instruction_line_count {}", instruction_lines.len()));
+    lines.push(format!(
+        "instruction_line_count {}",
+        instruction_lines.len()
+    ));
 
     for (index, scope) in assignment.task.scope.iter().enumerate() {
         lines.push(format!("scope\t{}\t{}", index, encode_nda_text(scope)));
@@ -498,23 +558,51 @@ fn serialize_execution_contract_nda(assignment: &WorkerAssignment) -> String {
 
     for (index, route) in assignment.fallback_chain.iter().enumerate() {
         lines.push(format!("fallback_route\t{}", index));
-        lines.push(format!("fallback_route_field\t{}\tprovider\t{}", index, encode_nda_text(route.provider.label())));
-        lines.push(format!("fallback_route_field\t{}\tmodel\t{}", index, encode_nda_text(&route.model_label)));
-        lines.push(format!("fallback_route_field\t{}\tmodel_id\t{}", index, encode_nda_text(&route.model_id)));
-        lines.push(format!("fallback_route_field\t{}\tthinking\t{}", index, route.thinking));
-        lines.push(format!("fallback_route_field\t{}\tscore\t{}", index, route.score));
+        lines.push(format!(
+            "fallback_route_field\t{}\tprovider\t{}",
+            index,
+            encode_nda_text(route.provider.label())
+        ));
+        lines.push(format!(
+            "fallback_route_field\t{}\tmodel\t{}",
+            index,
+            encode_nda_text(&route.model_label)
+        ));
+        lines.push(format!(
+            "fallback_route_field\t{}\tmodel_id\t{}",
+            index,
+            encode_nda_text(&route.model_id)
+        ));
+        lines.push(format!(
+            "fallback_route_field\t{}\tthinking\t{}",
+            index, route.thinking
+        ));
+        lines.push(format!(
+            "fallback_route_field\t{}\tscore\t{}",
+            index, route.score
+        ));
     }
 
     for (index, instruction_line) in instruction_lines.iter().enumerate() {
-        lines.push(format!("instruction_line\t{}\t{}", index, encode_nda_text(instruction_line)));
+        lines.push(format!(
+            "instruction_line\t{}\t{}",
+            index,
+            encode_nda_text(instruction_line)
+        ));
     }
 
     lines.join("\n") + "\n"
 }
 
-fn write_execution_contract_artifacts(run_dir: &Path, assignment: &WorkerAssignment) -> Result<(), String> {
-    fs::write(run_dir.join("instructions.nda"), serialize_execution_contract_nda(assignment))
-        .map_err(|err| format!("write nda instructions: {err}"))?;
+fn write_execution_contract_artifacts(
+    run_dir: &Path,
+    assignment: &WorkerAssignment,
+) -> Result<(), String> {
+    fs::write(
+        run_dir.join("instructions.nda"),
+        serialize_execution_contract_nda(assignment),
+    )
+    .map_err(|err| format!("write nda instructions: {err}"))?;
     fs::write(
         run_dir.join("instructions.txt"),
         format!(
@@ -539,7 +627,11 @@ fn encode_nda_text(value: &str) -> String {
 
 fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(), String> {
     let mut summary = String::new();
-    summary.push_str(if outcome.success { "Result: success\n" } else { "Result: failed\n" });
+    summary.push_str(if outcome.success {
+        "Result: success\n"
+    } else {
+        "Result: failed\n"
+    });
     summary.push_str("Active route: ");
     summary.push_str(&outcome.provider_label);
     summary.push_str(" / ");
@@ -611,8 +703,14 @@ fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(
 
     let mut facts = vec![
         "worker-run-facts version 2".to_string(),
-        format!("field\tresult\t{}", if outcome.success { "success" } else { "failed" }),
-        format!("field\tprovider\t{}", encode_nda_text(&outcome.provider_label)),
+        format!(
+            "field\tresult\t{}",
+            if outcome.success { "success" } else { "failed" }
+        ),
+        format!(
+            "field\tprovider\t{}",
+            encode_nda_text(&outcome.provider_label)
+        ),
         format!("field\tmodel\t{}", encode_nda_text(&outcome.model_label)),
         format!("field\tmessage\t{}", encode_nda_text(&outcome.message)),
         format!("attempt_count {}", outcome.attempts.len()),
@@ -629,30 +727,70 @@ fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(
 
     for (index, attempt) in outcome.attempts.iter().enumerate() {
         facts.push(format!("attempt\t{}", index));
-        facts.push(format!("attempt_field\t{}\tprovider\t{}", index, encode_nda_text(&attempt.provider_label)));
-        facts.push(format!("attempt_field\t{}\tmodel\t{}", index, encode_nda_text(&attempt.model_label)));
-        facts.push(format!("attempt_field\t{}\tmodel_id\t{}", index, encode_nda_text(&attempt.model_id)));
-        facts.push(format!("attempt_field\t{}\tresult\t{}", index, if attempt.success { "success" } else { "failed" }));
-        facts.push(format!("attempt_field\t{}\tmessage\t{}", index, encode_nda_text(&attempt.message)));
+        facts.push(format!(
+            "attempt_field\t{}\tprovider\t{}",
+            index,
+            encode_nda_text(&attempt.provider_label)
+        ));
+        facts.push(format!(
+            "attempt_field\t{}\tmodel\t{}",
+            index,
+            encode_nda_text(&attempt.model_label)
+        ));
+        facts.push(format!(
+            "attempt_field\t{}\tmodel_id\t{}",
+            index,
+            encode_nda_text(&attempt.model_id)
+        ));
+        facts.push(format!(
+            "attempt_field\t{}\tresult\t{}",
+            index,
+            if attempt.success { "success" } else { "failed" }
+        ));
+        facts.push(format!(
+            "attempt_field\t{}\tmessage\t{}",
+            index,
+            encode_nda_text(&attempt.message)
+        ));
     }
 
     for (index, path) in outcome.changed_files.iter().enumerate() {
-        facts.push(format!("changed_file\t{}\t{}", index, encode_nda_text(path)));
+        facts.push(format!(
+            "changed_file\t{}\t{}",
+            index,
+            encode_nda_text(path)
+        ));
     }
     for (index, path) in outcome.created_files.iter().enumerate() {
-        facts.push(format!("created_file\t{}\t{}", index, encode_nda_text(path)));
+        facts.push(format!(
+            "created_file\t{}\t{}",
+            index,
+            encode_nda_text(path)
+        ));
     }
     for (index, path) in outcome.deleted_files.iter().enumerate() {
-        facts.push(format!("deleted_file\t{}\t{}", index, encode_nda_text(path)));
+        facts.push(format!(
+            "deleted_file\t{}\t{}",
+            index,
+            encode_nda_text(path)
+        ));
     }
     for (index, path) in outcome.out_of_scope_created_files.iter().enumerate() {
-        facts.push(format!("out_of_scope_created_file\t{}\t{}", index, encode_nda_text(path)));
+        facts.push(format!(
+            "out_of_scope_created_file\t{}\t{}",
+            index,
+            encode_nda_text(path)
+        ));
     }
     for (index, status) in outcome.status_updates.iter().enumerate() {
         facts.push(format!("status\t{}\t{}", index, encode_nda_text(status)));
     }
     for (index, line) in transcript_lines.iter().enumerate() {
-        facts.push(format!("transcript_line\t{}\t{}", index, encode_nda_text(line)));
+        facts.push(format!(
+            "transcript_line\t{}\t{}",
+            index,
+            encode_nda_text(line)
+        ));
     }
 
     fs::write(run_dir.join("facts.nda"), facts.join("\n") + "\n")
@@ -669,7 +807,13 @@ fn collect_scoped_paths(workspace_root: &Path, scope: &[String]) -> ScopedPaths 
     let scope_roots = scope
         .iter()
         .map(PathBuf::from)
-        .map(|rel_path| if rel_path.is_absolute() { rel_path } else { workspace_root.join(rel_path) })
+        .map(|rel_path| {
+            if rel_path.is_absolute() {
+                rel_path
+            } else {
+                workspace_root.join(rel_path)
+            }
+        })
         .collect::<Vec<_>>();
     let explicit_files = scope_roots
         .iter()
@@ -697,7 +841,8 @@ fn snapshot_scope(
         let bytes = read_scoped_file(&abs_path)
             .map_err(|err| format!("snapshot file {}: {err}", abs_path.display()))?;
         if let Some(bytes) = &bytes {
-            fs::write(&dest, bytes).map_err(|err| format!("write snapshot {}: {err}", dest.display()))?;
+            fs::write(&dest, bytes)
+                .map_err(|err| format!("write snapshot {}: {err}", dest.display()))?;
         }
         before_contents.insert(abs_path, bytes);
     }
@@ -720,9 +865,15 @@ fn detect_scoped_changes(
         let before = before_contents.get(&abs_path).cloned().flatten();
         let after = read_scoped_file(&abs_path)
             .map_err(|err| format!("read post-run file {}: {err}", abs_path.display()))?;
-        let rel = abs_path.strip_prefix(workspace_root).unwrap_or(&abs_path).display().to_string();
+        let rel = abs_path
+            .strip_prefix(workspace_root)
+            .unwrap_or(&abs_path)
+            .display()
+            .to_string();
         match (before, after) {
-            (Some(before_bytes), Some(after_bytes)) if before_bytes != after_bytes => changed.push(rel),
+            (Some(before_bytes), Some(after_bytes)) if before_bytes != after_bytes => {
+                changed.push(rel)
+            }
             (None, Some(_)) => created.push(rel),
             (Some(_), None) => deleted.push(rel),
             _ => {}
@@ -750,8 +901,11 @@ fn collect_existing_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), S
     if !path.is_dir() {
         return Ok(());
     }
-    for entry in fs::read_dir(path).map_err(|err| format!("read scope dir {}: {err}", path.display()))? {
-        let entry = entry.map_err(|err| format!("read scope dir entry {}: {err}", path.display()))?;
+    for entry in
+        fs::read_dir(path).map_err(|err| format!("read scope dir {}: {err}", path.display()))?
+    {
+        let entry =
+            entry.map_err(|err| format!("read scope dir entry {}: {err}", path.display()))?;
         let entry_path = entry.path();
         if entry_path.is_dir() {
             collect_existing_files(&entry_path, files)?;
@@ -808,8 +962,11 @@ fn collect_workspace_files_recursive(
     if !current.exists() {
         return Ok(());
     }
-    for entry in fs::read_dir(current).map_err(|err| format!("read workspace dir {}: {err}", current.display()))? {
-        let entry = entry.map_err(|err| format!("read workspace dir entry {}: {err}", current.display()))?;
+    for entry in fs::read_dir(current)
+        .map_err(|err| format!("read workspace dir {}: {err}", current.display()))?
+    {
+        let entry = entry
+            .map_err(|err| format!("read workspace dir entry {}: {err}", current.display()))?;
         let entry_path = entry.path();
         let rel_path = entry_path
             .strip_prefix(workspace_root)
@@ -828,18 +985,28 @@ fn collect_workspace_files_recursive(
 }
 
 fn should_skip_workspace_dir(rel_path: &Path) -> bool {
-    rel_path
-        .components()
-        .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".velocity" | "target" | "node_modules" | "archive")))
+    rel_path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".git" | ".velocity" | "target" | "node_modules" | "archive")
+        )
+    })
 }
 
 fn should_skip_workspace_file(rel_path: &Path) -> bool {
-    rel_path
-        .components()
-        .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".velocity" | "target" | "node_modules" | "archive")))
+    rel_path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(".git" | ".velocity" | "target" | "node_modules" | "archive")
+        )
+    })
 }
 
-fn is_path_within_scope(rel_path: &Path, scoped_paths: &ScopedPaths, workspace_root: &Path) -> bool {
+fn is_path_within_scope(
+    rel_path: &Path,
+    scoped_paths: &ScopedPaths,
+    workspace_root: &Path,
+) -> bool {
     scoped_paths.scope_roots.iter().any(|root| {
         let root_rel = root.strip_prefix(workspace_root).unwrap_or(root);
         rel_path == root_rel || rel_path.starts_with(root_rel)
@@ -856,11 +1023,11 @@ mod tests {
     };
     use crate::agent::AiProvider;
     use crate::automation::{MediatorArena, RoutedModelRoute};
-    use velocity_ide::site_map::SiteMap;
     use crate::orchestrator::blueprint::Task;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
+    use velocity_ide::site_map::SiteMap;
 
     #[test]
     fn detects_new_files_inside_directory_scope() {
@@ -873,14 +1040,22 @@ mod tests {
         let scoped_paths = collect_scoped_paths(workspace_root, &["src".to_string()]);
         let before = snapshot_scope(&scoped_paths, workspace_root, &snapshot_root).unwrap();
 
-        fs::write(workspace_root.join("src").join("new_file.rs"), "fn main() {}\n").unwrap();
+        fs::write(
+            workspace_root.join("src").join("new_file.rs"),
+            "fn main() {}\n",
+        )
+        .unwrap();
 
-        let (changed, created, deleted) = detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
+        let (changed, created, deleted) =
+            detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
         assert!(changed.is_empty());
         assert!(deleted.is_empty());
         assert_eq!(
             created,
-            vec![PathBuf::from("src").join("new_file.rs").display().to_string()]
+            vec![PathBuf::from("src")
+                .join("new_file.rs")
+                .display()
+                .to_string()]
         );
     }
 
@@ -895,9 +1070,14 @@ mod tests {
         let scoped_paths = collect_scoped_paths(workspace_root, &["src/lib.rs".to_string()]);
         let before = snapshot_scope(&scoped_paths, workspace_root, &snapshot_root).unwrap();
 
-        fs::write(workspace_root.join("src").join("new_file.rs"), "pub fn helper() {}\n").unwrap();
+        fs::write(
+            workspace_root.join("src").join("new_file.rs"),
+            "pub fn helper() {}\n",
+        )
+        .unwrap();
 
-        let (changed, created, deleted) = detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
+        let (changed, created, deleted) =
+            detect_scoped_changes(&scoped_paths, &before, workspace_root).unwrap();
         assert!(changed.is_empty());
         assert!(created.is_empty());
         assert!(deleted.is_empty());
@@ -912,14 +1092,30 @@ mod tests {
         let scoped_paths = collect_scoped_paths(workspace_root, &["src".to_string()]);
         let before_workspace = collect_workspace_files(workspace_root).unwrap();
 
-        fs::write(workspace_root.join("src").join("in_scope.rs"), "fn scoped() {}\n").unwrap();
+        fs::write(
+            workspace_root.join("src").join("in_scope.rs"),
+            "fn scoped() {}\n",
+        )
+        .unwrap();
         fs::write(workspace_root.join("docs").join("rogue.md"), "rogue\n").unwrap();
         fs::create_dir_all(workspace_root.join(".velocity").join("agentic")).unwrap();
-        fs::write(workspace_root.join(".velocity").join("agentic").join("ignored.txt"), "ignore\n").unwrap();
+        fs::write(
+            workspace_root
+                .join(".velocity")
+                .join("agentic")
+                .join("ignored.txt"),
+            "ignore\n",
+        )
+        .unwrap();
 
-        let out_of_scope = detect_out_of_scope_created_files(&scoped_paths, &before_workspace, workspace_root).unwrap();
+        let out_of_scope =
+            detect_out_of_scope_created_files(&scoped_paths, &before_workspace, workspace_root)
+                .unwrap();
 
-        assert_eq!(out_of_scope, vec![PathBuf::from("docs").join("rogue.md").display().to_string()]);
+        assert_eq!(
+            out_of_scope,
+            vec![PathBuf::from("docs").join("rogue.md").display().to_string()]
+        );
     }
 
     #[test]
@@ -928,7 +1124,11 @@ mod tests {
         let workspace_root = workspace.path();
         let workspace_root_buf = workspace_root.to_path_buf();
         fs::create_dir_all(workspace_root.join("src")).unwrap();
-        fs::write(workspace_root.join("src").join("lib.rs"), "pub fn demo() {}\n").unwrap();
+        fs::write(
+            workspace_root.join("src").join("lib.rs"),
+            "pub fn demo() {}\n",
+        )
+        .unwrap();
 
         let mediator = std::sync::Arc::new(MediatorArena::new());
         let site_map = SiteMap::open(workspace_root, 0).unwrap();

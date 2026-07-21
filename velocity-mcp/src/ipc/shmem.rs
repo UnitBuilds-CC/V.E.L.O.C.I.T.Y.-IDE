@@ -1,7 +1,7 @@
 use memmap2::MmapMut;
+use std::error::Error;
 use std::fs::OpenOptions;
 use std::path::Path;
-use std::error::Error;
 
 // Shared Memory layout specs:
 // Offset 0: State byte (0 = Idle, 1 = Host Request, 2 = Server Processing, 3 = Host Response Ready, 4 = Error)
@@ -70,7 +70,8 @@ impl SharedMemoryBuffer {
 
         let mmap = unsafe { MmapMut::map_mut(&file)? };
 
-        let file_name = path.as_ref()
+        let file_name = path
+            .as_ref()
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("default");
@@ -81,12 +82,8 @@ impl SharedMemoryBuffer {
         let w_req = to_wstring(&req_event_name);
         let w_res = to_wstring(&res_event_name);
 
-        let h_req_event = unsafe {
-            CreateEventW(std::ptr::null_mut(), 0, 0, w_req.as_ptr())
-        };
-        let h_res_event = unsafe {
-            CreateEventW(std::ptr::null_mut(), 0, 0, w_res.as_ptr())
-        };
+        let h_req_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, w_req.as_ptr()) };
+        let h_res_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, w_res.as_ptr()) };
 
         if h_req_event.is_null() || h_res_event.is_null() {
             return Err("Failed to create Win32 Event objects".into());

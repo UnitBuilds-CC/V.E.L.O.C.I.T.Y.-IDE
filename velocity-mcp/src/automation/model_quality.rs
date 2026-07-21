@@ -117,7 +117,11 @@ impl ModelQualityIndex {
         ranked
     }
 
-    fn score_model(model: &ModelInfo, requirements: TaskRequirements, caps: ProviderCapability) -> i32 {
+    fn score_model(
+        model: &ModelInfo,
+        requirements: TaskRequirements,
+        caps: ProviderCapability,
+    ) -> i32 {
         let mut score = 0;
 
         if requirements.needs_tools {
@@ -159,7 +163,11 @@ impl ModelQualityIndex {
         };
 
         let lower = model.id.to_lowercase();
-        if lower.contains("kimi") || lower.contains("claude") || lower.contains("deepseek") || lower.contains("qwen") {
+        if lower.contains("kimi")
+            || lower.contains("claude")
+            || lower.contains("deepseek")
+            || lower.contains("qwen")
+        {
             score += 8;
         }
         if lower.contains("free") {
@@ -201,6 +209,9 @@ mod tests {
             AiProvider::CloudflareWorkersAi,
             &models,
         );
-        assert_eq!(ranked.first().map(|candidate| candidate.label.as_str()), Some("kimi-k2"));
+        assert_eq!(
+            ranked.first().map(|candidate| candidate.label.as_str()),
+            Some("kimi-k2")
+        );
     }
 }

@@ -1,10 +1,10 @@
+use crate::registry;
+use crossbeam_channel::{Receiver, Sender};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use crossbeam_channel::{Sender, Receiver};
-use serde::{Serialize, Deserialize};
-use serde_json::{json, Value};
-use crate::registry;
 
 #[derive(Debug, Clone)]
 pub enum UiToAgentMessage {
@@ -15,9 +15,16 @@ pub enum UiToAgentMessage {
     SetThinking(bool),
     SetProvider(AiProvider),
     UserPrompt(String),
-    ApproveTool { id: String, tool_name: String, arguments: Value },
+    ApproveTool {
+        id: String,
+        tool_name: String,
+        arguments: Value,
+    },
     #[allow(dead_code)]
-    RejectTool { id: String, tool_name: String },
+    RejectTool {
+        id: String,
+        tool_name: String,
+    },
     RunLocalBuild,
     RunLocalRun,
     CancelTask,
@@ -28,14 +35,33 @@ pub enum AgentToUiMessage {
     #[allow(dead_code)]
     ThoughtToken(String),
     OutputToken(String),
-    RequestToolApproval { id: String, tool_name: String, arguments: Value },
-    ToolExecutionStarted { tool_name: String },
-    ToolExecutionFinished { tool_name: String, result: String },
+    RequestToolApproval {
+        id: String,
+        tool_name: String,
+        arguments: Value,
+    },
+    ToolExecutionStarted {
+        tool_name: String,
+    },
+    ToolExecutionFinished {
+        tool_name: String,
+        result: String,
+    },
     StatusUpdate(String),
     AgentFinished,
-    UpdateFileBuffer { path: PathBuf, content: String },
-    ModelCatalog { models: Vec<ModelInfo>, selected: String, thinking: bool },
-    AccountUsage { accounts: Vec<crate::usage::AccountUsageView>, date: String },
+    UpdateFileBuffer {
+        path: PathBuf,
+        content: String,
+    },
+    ModelCatalog {
+        models: Vec<ModelInfo>,
+        selected: String,
+        thinking: bool,
+    },
+    AccountUsage {
+        accounts: Vec<crate::usage::AccountUsageView>,
+        date: String,
+    },
     ChatHistoryRestored(Vec<(String, String)>),
     ProviderChanged(AiProvider),
 }
@@ -132,7 +158,9 @@ fn infer_model_info(id: String, item: &Value) -> Option<ModelInfo> {
         return None;
     }
 
-    let metadata = serde_json::to_string(item).unwrap_or_default().to_lowercase();
+    let metadata = serde_json::to_string(item)
+        .unwrap_or_default()
+        .to_lowercase();
     let supports_tools = lower.contains("function-calling")
         || lower.contains("tool-use")
         || lower.contains("kimi")
@@ -201,7 +229,10 @@ struct ToolCallAccumulator {
     arguments: String,
 }
 
-use crate::usage::{load_accounts_from_env, load_openrouter_accounts_from_env, CloudflareAccount, OpenRouterAccount, UsageTracker};
+use crate::usage::{
+    load_accounts_from_env, load_openrouter_accounts_from_env, CloudflareAccount,
+    OpenRouterAccount, UsageTracker,
+};
 
 fn send_usage_update(
     tracker: &mut UsageTracker,
@@ -211,7 +242,12 @@ fn send_usage_update(
 ) {
     let views = tracker.build_views(accounts, or_accounts);
     let date = tracker.current_date();
-    ui_tx.send(AgentToUiMessage::AccountUsage { accounts: views, date }).ok();
+    ui_tx
+        .send(AgentToUiMessage::AccountUsage {
+            accounts: views,
+            date,
+        })
+        .ok();
 }
 
 fn is_quota_exhausted_error(body: &str) -> bool {
@@ -258,7 +294,8 @@ fn fetch_model_catalog(accounts: &[CloudflareAccount]) -> Result<Vec<ModelInfo>,
     Err("No Workers AI models were returned for the configured accounts.".into())
 }
 
-const OPENROUTER_API_KEY: &str = "[REDACTED_OPENROUTER_API_KEY]";
+const OPENROUTER_API_KEY: &str =
+    "[REDACTED_OPENROUTER_API_KEY]";
 
 fn openrouter_api_key() -> String {
     std::env::var("OPENROUTER_API_KEY").unwrap_or_else(|_| OPENROUTER_API_KEY.to_string())
@@ -268,7 +305,10 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
     let id = item["id"].as_str()?.to_string();
     let lower = id.to_lowercase();
     // Skip embedding / image / audio models
-    let arch = item["architecture"]["tokenizer"].as_str().unwrap_or("").to_lowercase();
+    let arch = item["architecture"]["tokenizer"]
+        .as_str()
+        .unwrap_or("")
+        .to_lowercase();
     if arch.contains("embed") || lower.contains("embed") || lower.contains("stable-diffusion") {
         return None;
     }
@@ -281,7 +321,7 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
         || lower.contains("qwq")
         || lower.contains("/o1")
         || lower.contains("/o3");
-    
+
     // Disable native tools for all OpenRouter models. This forces them to use our
     // highly reliable, pattern-matched inline tool calling system. This bypasses
     // all provider-specific unmarshalling, schema-mismatch, and empty-role errors
@@ -297,24 +337,30 @@ fn infer_openrouter_model_info(item: &Value) -> Option<ModelInfo> {
     })
 }
 
-fn fetch_openrouter_models(or_accounts: &[OpenRouterAccount], usage_tracker: &UsageTracker) -> Result<Vec<ModelInfo>, String> {
+fn fetch_openrouter_models(
+    or_accounts: &[OpenRouterAccount],
+    usage_tracker: &UsageTracker,
+) -> Result<Vec<ModelInfo>, String> {
     let mut response = None;
     let mut last_err = String::new();
-    
-    let start_idx = usage_tracker.pick_or_account(or_accounts)
+
+    let start_idx = usage_tracker
+        .pick_or_account(or_accounts)
         .and_then(|picked| or_accounts.iter().position(|a| a.n == picked.n))
         .unwrap_or(0);
-        
+
     let loop_limit = or_accounts.len().max(1);
     for idx in 0..loop_limit {
         let current_key = if or_accounts.is_empty() {
             openrouter_api_key()
         } else {
             let acct = &or_accounts[(start_idx + idx) % or_accounts.len()];
-            if usage_tracker.is_or_exhausted(acct.n) { continue; }
+            if usage_tracker.is_or_exhausted(acct.n) {
+                continue;
+            }
             acct.token.clone()
         };
-        
+
         match ureq::get("https://openrouter.ai/api/v1/models")
             .set("Authorization", &format!("Bearer {}", current_key))
             .set("HTTP-Referer", "https://velocity-ide.local")
@@ -331,10 +377,16 @@ fn fetch_openrouter_models(or_accounts: &[OpenRouterAccount], usage_tracker: &Us
             }
         }
     }
-    
+
     let res_unwrapped = match response {
         Some(r) => r,
-        None => return Err(if last_err.is_empty() { "No available OpenRouter accounts to fetch models.".to_string() } else { last_err }),
+        None => {
+            return Err(if last_err.is_empty() {
+                "No available OpenRouter accounts to fetch models.".to_string()
+            } else {
+                last_err
+            })
+        }
     };
 
     let body: Value = res_unwrapped
@@ -403,8 +455,14 @@ pub fn default_model_info(id: &str) -> ModelInfo {
 }
 
 pub fn enrich_model_profile(accounts: &[CloudflareAccount], profile: &ModelInfo) -> ModelInfo {
-    let Some(account) = accounts.first() else { return profile.clone() };
-    let encoded_model = profile.id.replace('%', "%25").replace('/', "%2F").replace('@', "%40");
+    let Some(account) = accounts.first() else {
+        return profile.clone();
+    };
+    let encoded_model = profile
+        .id
+        .replace('%', "%25")
+        .replace('/', "%2F")
+        .replace('@', "%40");
     let url = format!(
         "https://api.cloudflare.com/client/v4/accounts/{}/ai/models/schema?model={}",
         account.id, encoded_model
@@ -412,8 +470,13 @@ pub fn enrich_model_profile(accounts: &[CloudflareAccount], profile: &ModelInfo)
     let Ok(response) = ureq::get(&url)
         .set("Authorization", &format!("Bearer {}", account.token))
         .set("Accept", "application/json")
-        .call() else { return profile.clone() };
-    let Ok(body) = response.into_json::<Value>() else { return profile.clone() };
+        .call()
+    else {
+        return profile.clone();
+    };
+    let Ok(body) = response.into_json::<Value>() else {
+        return profile.clone();
+    };
     let input_description = body["result"]["input"]["description"]
         .as_str()
         .unwrap_or("")
@@ -422,8 +485,10 @@ pub fn enrich_model_profile(accounts: &[CloudflareAccount], profile: &ModelInfo)
         return profile.clone();
     }
     let mut enriched = profile.clone();
-    enriched.supports_tools = input_description.contains("tool") || input_description.contains("function");
-    enriched.supports_thinking = input_description.contains("thinking") || input_description.contains("reasoning");
+    enriched.supports_tools =
+        input_description.contains("tool") || input_description.contains("function");
+    enriched.supports_thinking =
+        input_description.contains("thinking") || input_description.contains("reasoning");
     if input_description.contains("prompt") && !input_description.contains("message") {
         enriched.api_style = ApiStyle::PromptCompletion;
     } else if enriched.supports_tools {
@@ -455,7 +520,7 @@ fn build_inline_tool_docs() -> String {
         <tool_call>\n\
         <function=TOOL_NAME>\n\
         <parameter=PARAM_NAME>VALUE</parameter>\n\
-        </function>\n\n"
+        </function>\n\n",
     );
     for t in &tools {
         doc.push_str(&format!("### {}\n{}\n", t.name, t.description));
@@ -466,7 +531,11 @@ fn build_inline_tool_docs() -> String {
                 .unwrap_or_default();
             for (param, schema) in props {
                 let desc = schema["description"].as_str().unwrap_or("");
-                let req = if required.contains(&param.as_str()) { " (required)" } else { " (optional)" };
+                let req = if required.contains(&param.as_str()) {
+                    " (required)"
+                } else {
+                    " (optional)"
+                };
                 doc.push_str(&format!("  - `{}`{}: {}\n", param, req, desc));
             }
         }
@@ -474,7 +543,7 @@ fn build_inline_tool_docs() -> String {
     }
     doc.push_str(
         "Always call exactly one tool per <tool_call> block. \
-        Wait for the tool result before continuing.\n"
+        Wait for the tool result before continuing.\n",
     );
     doc
 }
@@ -515,7 +584,6 @@ fn build_request(
     request
 }
 
-
 fn strip_think_tags(s: &str) -> String {
     // Remove <think>...</think> blocks left by chain-of-thought models (e.g. deepseek-r1)
     let mut out = String::with_capacity(s.len());
@@ -537,7 +605,14 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
     // ── Step 0: sanitize roles — drop/repair messages with invalid roles ──────
     // History loaded from chatlogs.nda may have messages written by buggy prior
     // sessions with empty or missing roles.  Every provider rejects these.
-    const VALID_ROLES: &[&str] = &["system", "user", "assistant", "tool", "function", "developer"];
+    const VALID_ROLES: &[&str] = &[
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "function",
+        "developer",
+    ];
     let mut messages: Vec<ChatMessage> = messages.iter().filter_map(|m| {
         let trimmed_content = m.content.trim();
         // Drop buggy empty/corrupted tool call residues or dummy loop errors
@@ -595,7 +670,9 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
 
     // ── Step 1: per-message compression + tool flattening ────────────────────
     let max_intact_tool_calls = 4;
-    let tool_indices: Vec<usize> = messages.iter().enumerate()
+    let tool_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
         .filter(|(_, m)| m.role == "tool")
         .map(|(idx, _)| idx)
         .collect();
@@ -610,20 +687,36 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
         }
 
         if m.role == "tool" {
-            let has_subsequent_assistant_msg = messages[idx + 1..].iter().any(|msg| msg.role == "assistant");
+            let has_subsequent_assistant_msg = messages[idx + 1..]
+                .iter()
+                .any(|msg| msg.role == "assistant");
             if has_subsequent_assistant_msg && m_copy.content.len() > 1000 {
-                let tool_name = m_copy.name.clone().unwrap_or_else(|| "unknown_tool".to_string());
+                let tool_name = m_copy
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "unknown_tool".to_string());
                 let content_len = m_copy.content.len();
                 let content_hash = hash_str(&m_copy.content);
 
                 let mut decls = Vec::new();
-                if tool_name == "read_file" || m_copy.content.contains("fn ") || m_copy.content.contains("class ") {
+                if tool_name == "read_file"
+                    || m_copy.content.contains("fn ")
+                    || m_copy.content.contains("class ")
+                {
                     for line in m_copy.content.lines() {
                         let line = line.trim();
-                        if line.contains("fn ") || line.contains("void ") || line.contains("def ") || line.contains("class ") {
+                        if line.contains("fn ")
+                            || line.contains("void ")
+                            || line.contains("def ")
+                            || line.contains("class ")
+                        {
                             let parts: Vec<&str> = line.split_whitespace().collect();
                             for (i, &word) in parts.iter().enumerate() {
-                                if word == "fn" || word == "def" || word == "class" || word == "void" {
+                                if word == "fn"
+                                    || word == "def"
+                                    || word == "class"
+                                    || word == "void"
+                                {
                                     if let Some(&name) = parts.get(i + 1) {
                                         let name_cleaned = name.split('(').next().unwrap_or(name);
                                         decls.push(format!("{} {}", word, name_cleaned));
@@ -653,7 +746,10 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
         if !supports_tools {
             if m_copy.role == "tool" {
                 m_copy.role = "user".to_string();
-                let tool_name = m_copy.name.clone().unwrap_or_else(|| "unknown_tool".to_string());
+                let tool_name = m_copy
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "unknown_tool".to_string());
                 m_copy.content = format!("[Tool result for '{}']: {}", tool_name, m_copy.content);
                 m_copy.name = None;
                 m_copy.tool_call_id = None;
@@ -667,7 +763,10 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
                             if !desc.is_empty() {
                                 desc.push_str("\n");
                             }
-                            desc.push_str(&format!("[Calling tool '{}' with arguments '{}']", name, args));
+                            desc.push_str(&format!(
+                                "[Calling tool '{}' with arguments '{}']",
+                                name, args
+                            ));
                         }
                     }
                     if m_copy.content.trim().is_empty() {
@@ -680,7 +779,10 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
         }
 
         // Drop empty assistant messages (they confuse some providers)
-        if m_copy.role == "assistant" && m_copy.content.trim().is_empty() && m_copy.tool_calls.is_none() {
+        if m_copy.role == "assistant"
+            && m_copy.content.trim().is_empty()
+            && m_copy.tool_calls.is_none()
+        {
             continue;
         }
 
@@ -690,8 +792,15 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
     // ── Step 2: hard context budget cap (~60 K chars ≈ 15 K tokens) ──────────
     // Always keep the system prompt (first message). Then fill from the tail.
     const BUDGET: usize = 60_000;
-    let system: Vec<ChatMessage> = compressed.iter().filter(|m| m.role == "system").cloned().collect();
-    let non_system: Vec<ChatMessage> = compressed.into_iter().filter(|m| m.role != "system").collect();
+    let system: Vec<ChatMessage> = compressed
+        .iter()
+        .filter(|m| m.role == "system")
+        .cloned()
+        .collect();
+    let non_system: Vec<ChatMessage> = compressed
+        .into_iter()
+        .filter(|m| m.role != "system")
+        .collect();
 
     let system_chars: usize = system.iter().map(|m| m.content.len()).sum();
     let remaining_budget = BUDGET.saturating_sub(system_chars);
@@ -713,7 +822,6 @@ fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<ChatM
     result.extend(tail);
     result
 }
-
 
 fn pack_ndav(filename: &str, payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -750,17 +858,29 @@ fn unpack_ndav(data: &[u8]) -> Option<(String, Vec<u8>)> {
 fn generate_sitemap_text(workspace_root: &std::path::Path) -> String {
     let mut entries: Vec<(String, String, Option<u64>)> = Vec::new();
 
-    fn scan_sitemap(dir: &std::path::Path, base: &std::path::Path, entries: &mut Vec<(String, String, Option<u64>)>) {
+    fn scan_sitemap(
+        dir: &std::path::Path,
+        base: &std::path::Path,
+        entries: &mut Vec<(String, String, Option<u64>)>,
+    ) {
         if let Ok(read_dir) = std::fs::read_dir(dir) {
             for entry in read_dir.flatten() {
                 let path = entry.path();
                 let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if file_name == ".git" || file_name == "target" || file_name == "node_modules" || file_name == ".velocity" {
+                if file_name == ".git"
+                    || file_name == "target"
+                    || file_name == "node_modules"
+                    || file_name == ".velocity"
+                {
                     continue;
                 }
 
                 if let Ok(meta) = entry.metadata() {
-                    let rel_path = path.strip_prefix(base).unwrap_or(&path).to_string_lossy().to_string();
+                    let rel_path = path
+                        .strip_prefix(base)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .to_string();
                     if meta.is_dir() {
                         entries.push(("dir".to_string(), rel_path.clone(), None));
                         scan_sitemap(&path, base, entries);
@@ -785,7 +905,8 @@ fn generate_sitemap_text(workspace_root: &std::path::Path) -> String {
             index,
             kind,
             encode_nda_text(&rel_path),
-            size.map(|value| value.to_string()).unwrap_or_else(|| "-".to_string())
+            size.map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
         ));
     }
     lines.join("\n") + "\n"
@@ -810,19 +931,28 @@ fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage
         String::from_utf8_lossy(&data).to_string()
     };
     let messages = parse_chatlogs_nda(&text);
-    if messages.is_empty() { None } else { Some(messages) }
+    if messages.is_empty() {
+        None
+    } else {
+        Some(messages)
+    }
 }
 
 fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
     if text.starts_with("chatlogs version 3\n") {
         let mut messages = std::collections::BTreeMap::new();
-        let mut tool_calls: std::collections::BTreeMap<(usize, usize), serde_json::Map<String, Value>> =
-            std::collections::BTreeMap::new();
+        let mut tool_calls: std::collections::BTreeMap<
+            (usize, usize),
+            serde_json::Map<String, Value>,
+        > = std::collections::BTreeMap::new();
         for line in text.lines() {
             if line.trim().is_empty() || line == "chatlogs version 3" {
                 continue;
             }
-            if line.starts_with("message_count ") || line.starts_with("message\t") || line.starts_with("tool_call\t") {
+            if line.starts_with("message_count ")
+                || line.starts_with("message\t")
+                || line.starts_with("tool_call\t")
+            {
                 continue;
             }
             if let Some(rest) = line.strip_prefix("field\t") {
@@ -886,20 +1016,25 @@ fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
                         .entry("function".to_string())
                         .or_insert_with(|| Value::Object(serde_json::Map::new()));
                     if let Some(object) = function.as_object_mut() {
-                        object.insert("arguments".to_string(), Value::String(decode_nda_text(value)));
+                        object.insert(
+                            "arguments".to_string(),
+                            Value::String(decode_nda_text(value)),
+                        );
                     }
                 }
                 _ => {}
             }
         }
         for ((message_index, _call_index), tool_call) in tool_calls {
-            let message = messages.entry(message_index).or_insert_with(|| ChatMessage {
-                role: String::new(),
-                content: String::new(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: None,
-            });
+            let message = messages
+                .entry(message_index)
+                .or_insert_with(|| ChatMessage {
+                    role: String::new(),
+                    content: String::new(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
             let array = message
                 .tool_calls
                 .get_or_insert_with(|| Value::Array(Vec::new()));
@@ -1023,25 +1158,61 @@ fn serialize_chatlogs_nda(messages: &[ChatMessage]) -> String {
     ];
     for (index, msg) in messages.iter().enumerate() {
         lines.push(format!("message\t{}", index));
-        lines.push(format!("field\t{}\trole\t{}", index, encode_nda_text(&msg.role)));
-        lines.push(format!("field\t{}\tname\t{}", index, encode_optional_nda_text(msg.name.as_deref())));
-        lines.push(format!("field\t{}\ttool_call_id\t{}", index, encode_optional_nda_text(msg.tool_call_id.as_deref())));
-        lines.push(format!("field\t{}\tcontent\t{}", index, encode_nda_text(&msg.content)));
+        lines.push(format!(
+            "field\t{}\trole\t{}",
+            index,
+            encode_nda_text(&msg.role)
+        ));
+        lines.push(format!(
+            "field\t{}\tname\t{}",
+            index,
+            encode_optional_nda_text(msg.name.as_deref())
+        ));
+        lines.push(format!(
+            "field\t{}\ttool_call_id\t{}",
+            index,
+            encode_optional_nda_text(msg.tool_call_id.as_deref())
+        ));
+        lines.push(format!(
+            "field\t{}\tcontent\t{}",
+            index,
+            encode_nda_text(&msg.content)
+        ));
         if let Some(tool_calls) = msg.tool_calls.as_ref().and_then(|value| value.as_array()) {
             for (call_index, tool_call) in tool_calls.iter().enumerate() {
                 lines.push(format!("tool_call\t{}\t{}", index, call_index));
                 if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
-                    lines.push(format!("tool_call_field\t{}\t{}\tid\t{}", index, call_index, encode_nda_text(id)));
+                    lines.push(format!(
+                        "tool_call_field\t{}\t{}\tid\t{}",
+                        index,
+                        call_index,
+                        encode_nda_text(id)
+                    ));
                 }
                 if let Some(kind) = tool_call.get("type").and_then(|v| v.as_str()) {
-                    lines.push(format!("tool_call_field\t{}\t{}\ttype\t{}", index, call_index, encode_nda_text(kind)));
+                    lines.push(format!(
+                        "tool_call_field\t{}\t{}\ttype\t{}",
+                        index,
+                        call_index,
+                        encode_nda_text(kind)
+                    ));
                 }
                 if let Some(function) = tool_call.get("function") {
                     if let Some(name) = function.get("name").and_then(|v| v.as_str()) {
-                        lines.push(format!("tool_call_field\t{}\t{}\tfunction_name\t{}", index, call_index, encode_nda_text(name)));
+                        lines.push(format!(
+                            "tool_call_field\t{}\t{}\tfunction_name\t{}",
+                            index,
+                            call_index,
+                            encode_nda_text(name)
+                        ));
                     }
                     if let Some(arguments) = function.get("arguments").and_then(|v| v.as_str()) {
-                        lines.push(format!("tool_call_field\t{}\t{}\targuments\t{}", index, call_index, encode_nda_text(arguments)));
+                        lines.push(format!(
+                            "tool_call_field\t{}\t{}\targuments\t{}",
+                            index,
+                            call_index,
+                            encode_nda_text(arguments)
+                        ));
                     }
                 }
             }
@@ -1053,7 +1224,10 @@ fn serialize_chatlogs_nda(messages: &[ChatMessage]) -> String {
 fn save_chatlogs_nda(workspace_root: &std::path::Path, messages: &[ChatMessage]) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
-    let _ = std::fs::write(sitemap_dir.join("chatlogs.nda"), serialize_chatlogs_nda(messages));
+    let _ = std::fs::write(
+        sitemap_dir.join("chatlogs.nda"),
+        serialize_chatlogs_nda(messages),
+    );
 }
 
 fn append_changelog_nda(workspace_root: &std::path::Path, file_path: &str, action: &str) {
@@ -1085,7 +1259,10 @@ fn load_changelog_entries(changelog_path: &std::path::Path) -> Vec<(u64, String,
 
 fn parse_changelog_entries(raw: &str) -> Vec<(u64, String, String)> {
     let mut lines = raw.lines();
-    let header = lines.find(|line| !line.trim().is_empty()).map(str::trim).unwrap_or("");
+    let header = lines
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        .unwrap_or("");
 
     if header == "changelog version 2" {
         let mut entries = Vec::new();
@@ -1127,7 +1304,11 @@ fn parse_changelog_entries(raw: &str) -> Vec<(u64, String, String)> {
             continue;
         }
         if let Ok(timestamp) = parts[0].parse() {
-            entries.push((timestamp, decode_nda_text(parts[1]), decode_nda_text(parts[2])));
+            entries.push((
+                timestamp,
+                decode_nda_text(parts[1]),
+                decode_nda_text(parts[2]),
+            ));
         }
     }
     entries
@@ -1149,7 +1330,13 @@ fn serialize_changelog_nda(entries: &[(u64, String, String)]) -> String {
     lines.join("\n") + "\n"
 }
 
-fn write_handover_nda(workspace_root: &std::path::Path, task_state: &str, last_active_turn: usize, build_status: &str, interrupted: bool) {
+fn write_handover_nda(
+    workspace_root: &std::path::Path,
+    task_state: &str,
+    last_active_turn: usize,
+    build_status: &str,
+    interrupted: bool,
+) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
     let handover_path = sitemap_dir.join("handover.nda");
@@ -1181,7 +1368,15 @@ fn write_last_request_artifacts(
     let _ = std::fs::create_dir_all(&velocity_dir);
     let _ = std::fs::write(
         velocity_dir.join("last_request.nda"),
-        serialize_last_request_nda(profile, model, provider, thinking, messages, tools, request_body),
+        serialize_last_request_nda(
+            profile,
+            model,
+            provider,
+            thinking,
+            messages,
+            tools,
+            request_body,
+        ),
     );
     let _ = std::fs::write(
         velocity_dir.join("last_request.json"),
@@ -1201,15 +1396,27 @@ fn serialize_last_request_nda(
     let mut lines = vec![
         "last-request version 3".to_string(),
         format!("field\tprovider\t{}", nda_atom(provider.label())),
-        format!("field\tprovider_label\t{}", encode_nda_text(provider.label())),
+        format!(
+            "field\tprovider_label\t{}",
+            encode_nda_text(provider.label())
+        ),
         format!("field\tmodel\t{}", encode_nda_text(model)),
         format!("field\tprofile_id\t{}", encode_nda_text(&profile.id)),
         format!("field\tprofile_label\t{}", encode_nda_text(&profile.label)),
-        format!("field\tapi_style\t{}", nda_atom(api_style_name(profile.api_style))),
+        format!(
+            "field\tapi_style\t{}",
+            nda_atom(api_style_name(profile.api_style))
+        ),
         format!("field\tsupports_tools\t{}", profile.supports_tools),
         format!("field\tsupports_thinking\t{}", profile.supports_thinking),
         format!("field\tthinking\t{}", thinking),
-        format!("field\tstream\t{}", request_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)),
+        format!(
+            "field\tstream\t{}",
+            request_body
+                .get("stream")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        ),
         format!("message_count {}", messages.len()),
         format!("tool_count {}", tools.len()),
     ];
@@ -1219,27 +1426,65 @@ fn serialize_last_request_nda(
     }
 
     if let Some(reasoning) = request_body.get("reasoning") {
-        lines.push(format!("field\treasoning\t{}", encode_nda_text(&reasoning.to_string())));
+        lines.push(format!(
+            "field\treasoning\t{}",
+            encode_nda_text(&reasoning.to_string())
+        ));
     }
 
     for (index, message) in messages.iter().enumerate() {
         lines.push(format!("message\t{}", index));
-        lines.push(format!("message_field\t{}\trole\t{}", index, nda_atom(&message.role)));
-        lines.push(format!("message_field\t{}\tname\t{}", index, encode_optional_nda_text(message.name.as_deref())));
-        lines.push(format!("message_field\t{}\ttool_call_id\t{}", index, encode_optional_nda_text(message.tool_call_id.as_deref())));
-        lines.push(format!("message_field\t{}\tcontent\t{}", index, encode_nda_text(&message.content)));
-        if let Some(tool_calls) = message.tool_calls.as_ref().and_then(|value| value.as_array()) {
+        lines.push(format!(
+            "message_field\t{}\trole\t{}",
+            index,
+            nda_atom(&message.role)
+        ));
+        lines.push(format!(
+            "message_field\t{}\tname\t{}",
+            index,
+            encode_optional_nda_text(message.name.as_deref())
+        ));
+        lines.push(format!(
+            "message_field\t{}\ttool_call_id\t{}",
+            index,
+            encode_optional_nda_text(message.tool_call_id.as_deref())
+        ));
+        lines.push(format!(
+            "message_field\t{}\tcontent\t{}",
+            index,
+            encode_nda_text(&message.content)
+        ));
+        if let Some(tool_calls) = message
+            .tool_calls
+            .as_ref()
+            .and_then(|value| value.as_array())
+        {
             for (call_index, tool_call) in tool_calls.iter().enumerate() {
                 lines.push(format!("message_tool_call\t{}\t{}", index, call_index));
                 if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
-                    lines.push(format!("message_tool_call_field\t{}\t{}\tid\t{}", index, call_index, encode_nda_text(id)));
+                    lines.push(format!(
+                        "message_tool_call_field\t{}\t{}\tid\t{}",
+                        index,
+                        call_index,
+                        encode_nda_text(id)
+                    ));
                 }
                 if let Some(kind) = tool_call.get("type").and_then(|v| v.as_str()) {
-                    lines.push(format!("message_tool_call_field\t{}\t{}\ttype\t{}", index, call_index, encode_nda_text(kind)));
+                    lines.push(format!(
+                        "message_tool_call_field\t{}\t{}\ttype\t{}",
+                        index,
+                        call_index,
+                        encode_nda_text(kind)
+                    ));
                 }
                 if let Some(function) = tool_call.get("function") {
                     if let Some(name) = function.get("name").and_then(|v| v.as_str()) {
-                        lines.push(format!("message_tool_call_field\t{}\t{}\tfunction_name\t{}", index, call_index, encode_nda_text(name)));
+                        lines.push(format!(
+                            "message_tool_call_field\t{}\t{}\tfunction_name\t{}",
+                            index,
+                            call_index,
+                            encode_nda_text(name)
+                        ));
                     }
                     if let Some(arguments) = function.get("arguments").and_then(|v| v.as_str()) {
                         if let Ok(parsed) = serde_json::from_str::<Value>(arguments) {
@@ -1250,7 +1495,12 @@ fn serialize_last_request_nda(
                                 &parsed,
                             );
                         } else {
-                            lines.push(format!("message_tool_call_field\t{}\t{}\targuments_raw\t{}", index, call_index, encode_nda_text(arguments)));
+                            lines.push(format!(
+                                "message_tool_call_field\t{}\t{}\targuments_raw\t{}",
+                                index,
+                                call_index,
+                                encode_nda_text(arguments)
+                            ));
                         }
                     }
                 }
@@ -1270,13 +1520,23 @@ fn serialize_last_request_nda(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         lines.push(format!("tool\t{}", index));
-        lines.push(format!("tool_field\t{}\tname\t{}", index, encode_nda_text(name)));
-        lines.push(format!("tool_field\t{}\tdescription\t{}", index, encode_nda_text(description)));
-        if let Some(parameters) = tool
-            .get("function")
-            .and_then(|f| f.get("parameters"))
-        {
-            append_nda_json_rows(&mut lines, format!("tool_parameter\t{}", index), "$", parameters);
+        lines.push(format!(
+            "tool_field\t{}\tname\t{}",
+            index,
+            encode_nda_text(name)
+        ));
+        lines.push(format!(
+            "tool_field\t{}\tdescription\t{}",
+            index,
+            encode_nda_text(description)
+        ));
+        if let Some(parameters) = tool.get("function").and_then(|f| f.get("parameters")) {
+            append_nda_json_rows(
+                &mut lines,
+                format!("tool_parameter\t{}", index),
+                "$",
+                parameters,
+            );
         }
     }
 
@@ -1299,15 +1559,35 @@ fn append_nda_json_rows(lines: &mut Vec<String>, prefix: String, path: &str, val
             }
         }
         Value::Array(items) => {
-            lines.push(format!("{}\t{}\tarray\t{}", prefix, encode_nda_text(path), items.len()));
+            lines.push(format!(
+                "{}\t{}\tarray\t{}",
+                prefix,
+                encode_nda_text(path),
+                items.len()
+            ));
             for (index, item) in items.iter().enumerate() {
                 let child_path = format!("{}[{}]", path, index);
                 append_nda_json_rows(lines, prefix.clone(), &child_path, item);
             }
         }
-        Value::String(text) => lines.push(format!("{}\t{}\tstring\t{}", prefix, encode_nda_text(path), encode_nda_text(text))),
-        Value::Number(number) => lines.push(format!("{}\t{}\tnumber\t{}", prefix, encode_nda_text(path), encode_nda_text(&number.to_string()))),
-        Value::Bool(boolean) => lines.push(format!("{}\t{}\tbool\t{}", prefix, encode_nda_text(path), boolean)),
+        Value::String(text) => lines.push(format!(
+            "{}\t{}\tstring\t{}",
+            prefix,
+            encode_nda_text(path),
+            encode_nda_text(text)
+        )),
+        Value::Number(number) => lines.push(format!(
+            "{}\t{}\tnumber\t{}",
+            prefix,
+            encode_nda_text(path),
+            encode_nda_text(&number.to_string())
+        )),
+        Value::Bool(boolean) => lines.push(format!(
+            "{}\t{}\tbool\t{}",
+            prefix,
+            encode_nda_text(path),
+            boolean
+        )),
         Value::Null => lines.push(format!("{}\t{}\tnull\t-", prefix, encode_nda_text(path))),
     }
 }
@@ -1384,7 +1664,9 @@ fn decode_optional_nda_text(value: &str) -> Option<String> {
 }
 
 fn encode_optional_nda_text(value: Option<&str>) -> String {
-    value.map(encode_nda_text).unwrap_or_else(|| "-".to_string())
+    value
+        .map(encode_nda_text)
+        .unwrap_or_else(|| "-".to_string())
 }
 
 pub fn run_agent_thread(
@@ -1411,7 +1693,9 @@ pub fn run_agent_thread(
         AiProvider::CloudflareWorkersAi => std::env::var("CF_MODEL")
             .unwrap_or_else(|_| "@cf/moonshotai/kimi-k2.7-code".to_string()),
     };
-    let mut thinking = std::env::var("CF_THINKING").map(|v| v != "0").unwrap_or(false);
+    let mut thinking = std::env::var("CF_THINKING")
+        .map(|v| v != "0")
+        .unwrap_or(false);
     let mut selected_profile = match provider {
         AiProvider::OpenRouter => ModelInfo {
             id: model.clone(),
@@ -1429,22 +1713,28 @@ pub fn run_agent_thread(
 
     let mut message_history = match load_chatlogs_nda(&workspace_root) {
         Some(history) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate("Loaded previous chat session context.".to_string())).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Loaded previous chat session context.".to_string(),
+                ))
+                .ok();
             let restored: Vec<(String, String)> = history
                 .iter()
                 .filter(|m| m.role == "user" || m.role == "assistant")
                 .map(|m| (m.role.clone(), m.content.clone()))
                 .collect();
             if !restored.is_empty() {
-                ui_tx.send(AgentToUiMessage::ChatHistoryRestored(restored)).ok();
+                ui_tx
+                    .send(AgentToUiMessage::ChatHistoryRestored(restored))
+                    .ok();
             }
             history
         }
         None => {
             // Build system prompt: include inline tool docs only for providers
             // that cannot do native tool_calls (OpenRouter inline mode).
-            let use_inline_tools = provider == AiProvider::OpenRouter
-                || !selected_profile.supports_tools;
+            let use_inline_tools =
+                provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
             let sys = format!(
                 "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
                 You have access to local workspace files and execution sandboxes via tools. \
@@ -1464,9 +1754,19 @@ pub fn run_agent_thread(
     // Build the initial sitemap
     write_sitemap_nda(&workspace_root);
 
-    ui_tx.send(AgentToUiMessage::StatusUpdate("Agent thread initialized and idling.".to_string())).ok();
+    ui_tx
+        .send(AgentToUiMessage::StatusUpdate(
+            "Agent thread initialized and idling.".to_string(),
+        ))
+        .ok();
     ui_tx.send(AgentToUiMessage::ProviderChanged(provider)).ok();
-    ui_tx.send(AgentToUiMessage::ModelCatalog { models: model_catalog.clone(), selected: model.clone(), thinking }).ok();
+    ui_tx
+        .send(AgentToUiMessage::ModelCatalog {
+            models: model_catalog.clone(),
+            selected: model.clone(),
+            thinking,
+        })
+        .ok();
 
     while let Ok(msg) = ui_rx.recv() {
         match msg {
@@ -1479,9 +1779,16 @@ pub fn run_agent_thread(
                     Ok(models) => {
                         model_catalog = models;
                         if !model_catalog.iter().any(|candidate| candidate.id == model) {
-                            model = model_catalog.first().map(|candidate| candidate.id.clone()).unwrap_or(model);
+                            model = model_catalog
+                                .first()
+                                .map(|candidate| candidate.id.clone())
+                                .unwrap_or(model);
                         }
-                        selected_profile = model_catalog.iter().find(|candidate| candidate.id == model).cloned().unwrap_or_else(|| default_model_info(&model));
+                        selected_profile = model_catalog
+                            .iter()
+                            .find(|candidate| candidate.id == model)
+                            .cloned()
+                            .unwrap_or_else(|| default_model_info(&model));
                         // Only enrich via Cloudflare schema API when on that provider
                         if provider == AiProvider::CloudflareWorkersAi {
                             selected_profile = enrich_model_profile(&accounts, &selected_profile);
@@ -1489,7 +1796,13 @@ pub fn run_agent_thread(
                         if !selected_profile.supports_thinking {
                             thinking = false;
                         }
-                        ui_tx.send(AgentToUiMessage::ModelCatalog { models: model_catalog.clone(), selected: model.clone(), thinking }).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::ModelCatalog {
+                                models: model_catalog.clone(),
+                                selected: model.clone(),
+                                thinking,
+                            })
+                            .ok();
                     }
                     Err(error) => {
                         ui_tx.send(AgentToUiMessage::StatusUpdate(error)).ok();
@@ -1502,21 +1815,47 @@ pub fn run_agent_thread(
             UiToAgentMessage::SetModel(selected) => {
                 if !selected.trim().is_empty() {
                     model = selected;
-                    selected_profile = model_catalog.iter().find(|candidate| candidate.id == model).cloned().unwrap_or_else(|| default_model_info(&model));
+                    selected_profile = model_catalog
+                        .iter()
+                        .find(|candidate| candidate.id == model)
+                        .cloned()
+                        .unwrap_or_else(|| default_model_info(&model));
                     selected_profile = enrich_model_profile(&accounts, &selected_profile);
-                    if let Some(entry) = model_catalog.iter_mut().find(|candidate| candidate.id == model) {
+                    if let Some(entry) = model_catalog
+                        .iter_mut()
+                        .find(|candidate| candidate.id == model)
+                    {
                         *entry = selected_profile.clone();
                     }
                     if !selected_profile.supports_thinking {
                         thinking = false;
                     }
-                    ui_tx.send(AgentToUiMessage::ModelCatalog { models: model_catalog.clone(), selected: model.clone(), thinking }).ok();
-                    ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Model set to {model}"))).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::ModelCatalog {
+                            models: model_catalog.clone(),
+                            selected: model.clone(),
+                            thinking,
+                        })
+                        .ok();
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Model set to {model}"
+                        )))
+                        .ok();
                 }
             }
             UiToAgentMessage::SetThinking(enabled) => {
                 thinking = enabled && selected_profile.supports_thinking;
-                ui_tx.send(AgentToUiMessage::StatusUpdate(if thinking { "Thinking enabled" } else { "Thinking disabled" }.to_string())).ok();
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(
+                        if thinking {
+                            "Thinking enabled"
+                        } else {
+                            "Thinking disabled"
+                        }
+                        .to_string(),
+                    ))
+                    .ok();
             }
             UiToAgentMessage::SetProvider(new_provider) => {
                 provider = new_provider;
@@ -1538,13 +1877,30 @@ pub fn run_agent_thread(
                         model_catalog = vec![default_model_info(&model)];
                     }
                 }
-                selected_profile = model_catalog.first().cloned().unwrap_or_else(|| default_model_info(&model));
+                selected_profile = model_catalog
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| default_model_info(&model));
                 thinking = thinking && selected_profile.supports_thinking;
                 ui_tx.send(AgentToUiMessage::ProviderChanged(provider)).ok();
-                ui_tx.send(AgentToUiMessage::ModelCatalog { models: model_catalog.clone(), selected: model.clone(), thinking }).ok();
-                ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Provider switched to {}", provider.label()))).ok();
+                ui_tx
+                    .send(AgentToUiMessage::ModelCatalog {
+                        models: model_catalog.clone(),
+                        selected: model.clone(),
+                        thinking,
+                    })
+                    .ok();
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Provider switched to {}",
+                        provider.label()
+                    )))
+                    .ok();
                 // Immediately kick off model discovery for the new provider
-                let _ = ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Fetching {} model catalog…", provider.label())));
+                let _ = ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                    "Fetching {} model catalog…",
+                    provider.label()
+                )));
             }
             UiToAgentMessage::SetWorkspace(new_root) => {
                 if new_root.is_dir() {
@@ -1574,9 +1930,15 @@ pub fn run_agent_thread(
                         .map(|m| (m.role.clone(), m.content.clone()))
                         .collect();
                     if !restored.is_empty() {
-                        ui_tx.send(AgentToUiMessage::ChatHistoryRestored(restored)).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::ChatHistoryRestored(restored))
+                            .ok();
                     }
-                    ui_tx.send(AgentToUiMessage::StatusUpdate("Agent workspace switched.".to_string())).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(
+                            "Agent workspace switched.".to_string(),
+                        ))
+                        .ok();
                 }
             }
             UiToAgentMessage::UserPrompt(prompt) => {
@@ -1587,7 +1949,7 @@ pub fn run_agent_thread(
                     tool_call_id: None,
                     tool_calls: None,
                 });
-                
+
                 run_agent_reasoning_loop(
                     &workspace_root,
                     &accounts,
@@ -1605,64 +1967,122 @@ pub fn run_agent_thread(
                 );
             }
             UiToAgentMessage::RunLocalBuild => {
-                ui_tx.send(AgentToUiMessage::StatusUpdate("Running local cargo check...".to_string())).ok();
-                ui_tx.send(AgentToUiMessage::OutputToken("\n$ cargo check (Local)\n".to_string())).ok();
-                
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(
+                        "Running local cargo check...".to_string(),
+                    ))
+                    .ok();
+                ui_tx
+                    .send(AgentToUiMessage::OutputToken(
+                        "\n$ cargo check (Local)\n".to_string(),
+                    ))
+                    .ok();
+
                 let output = std::process::Command::new("cargo")
                     .arg("check")
                     .current_dir(&workspace_root)
                     .output();
-                    
+
                 match output {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        ui_tx.send(AgentToUiMessage::OutputToken(stdout.into_owned())).ok();
-                        ui_tx.send(AgentToUiMessage::OutputToken(stderr.into_owned())).ok();
-                        
+                        ui_tx
+                            .send(AgentToUiMessage::OutputToken(stdout.into_owned()))
+                            .ok();
+                        ui_tx
+                            .send(AgentToUiMessage::OutputToken(stderr.into_owned()))
+                            .ok();
+
                         if out.status.success() {
-                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local build succeeded!".to_string())).ok();
+                            ui_tx
+                                .send(AgentToUiMessage::StatusUpdate(
+                                    "Local build succeeded!".to_string(),
+                                ))
+                                .ok();
                         } else {
-                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local build failed!".to_string())).ok();
+                            ui_tx
+                                .send(AgentToUiMessage::StatusUpdate(
+                                    "Local build failed!".to_string(),
+                                ))
+                                .ok();
                         }
                     }
                     Err(e) => {
-                        ui_tx.send(AgentToUiMessage::OutputToken(format!("Failed to run build: {:?}", e))).ok();
-                        ui_tx.send(AgentToUiMessage::StatusUpdate("Local build failed to launch".to_string())).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::OutputToken(format!(
+                                "Failed to run build: {:?}",
+                                e
+                            )))
+                            .ok();
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(
+                                "Local build failed to launch".to_string(),
+                            ))
+                            .ok();
                     }
                 }
-                
+
                 let _ = run_compilation_check(&workspace_root);
                 ui_tx.send(AgentToUiMessage::AgentFinished).ok();
             }
             UiToAgentMessage::RunLocalRun => {
-                ui_tx.send(AgentToUiMessage::StatusUpdate("Running local cargo run...".to_string())).ok();
-                ui_tx.send(AgentToUiMessage::OutputToken("\n$ cargo run (Local)\n".to_string())).ok();
-                
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(
+                        "Running local cargo run...".to_string(),
+                    ))
+                    .ok();
+                ui_tx
+                    .send(AgentToUiMessage::OutputToken(
+                        "\n$ cargo run (Local)\n".to_string(),
+                    ))
+                    .ok();
+
                 let output = std::process::Command::new("cargo")
                     .arg("run")
                     .current_dir(&workspace_root)
                     .output();
-                    
+
                 match output {
                     Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout);
                         let stderr = String::from_utf8_lossy(&out.stderr);
-                        ui_tx.send(AgentToUiMessage::OutputToken(stdout.into_owned())).ok();
-                        ui_tx.send(AgentToUiMessage::OutputToken(stderr.into_owned())).ok();
-                        
+                        ui_tx
+                            .send(AgentToUiMessage::OutputToken(stdout.into_owned()))
+                            .ok();
+                        ui_tx
+                            .send(AgentToUiMessage::OutputToken(stderr.into_owned()))
+                            .ok();
+
                         if out.status.success() {
-                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local run finished successfully!".to_string())).ok();
+                            ui_tx
+                                .send(AgentToUiMessage::StatusUpdate(
+                                    "Local run finished successfully!".to_string(),
+                                ))
+                                .ok();
                         } else {
-                            ui_tx.send(AgentToUiMessage::StatusUpdate("Local run exited with error!".to_string())).ok();
+                            ui_tx
+                                .send(AgentToUiMessage::StatusUpdate(
+                                    "Local run exited with error!".to_string(),
+                                ))
+                                .ok();
                         }
                     }
                     Err(e) => {
-                        ui_tx.send(AgentToUiMessage::OutputToken(format!("Failed to run executable: {:?}", e))).ok();
-                        ui_tx.send(AgentToUiMessage::StatusUpdate("Local run failed to launch".to_string())).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::OutputToken(format!(
+                                "Failed to run executable: {:?}",
+                                e
+                            )))
+                            .ok();
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(
+                                "Local run failed to launch".to_string(),
+                            ))
+                            .ok();
                     }
                 }
-                
+
                 ui_tx.send(AgentToUiMessage::AgentFinished).ok();
             }
             _ => {}
@@ -1717,7 +2137,7 @@ fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String>
         .arg("check")
         .current_dir(workspace_root)
         .output();
-        
+
     match output {
         Ok(out) => {
             if !out.status.success() {
@@ -1725,7 +2145,10 @@ fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String>
                 let mut errors = Vec::new();
                 for line in stderr.lines() {
                     let trimmed = line.trim();
-                    if trimmed.contains("error[E") || trimmed.contains("error:") || trimmed.starts_with("--> src/") {
+                    if trimmed.contains("error[E")
+                        || trimmed.contains("error:")
+                        || trimmed.starts_with("--> src/")
+                    {
                         errors.push(trimmed.to_string());
                     }
                 }
@@ -1733,13 +2156,17 @@ fn run_compilation_check(workspace_root: &std::path::Path) -> Result<(), String>
                     // Build failed but no parseable errors; return raw tail.
                     let lines: Vec<&str> = stderr.lines().collect();
                     let start = lines.len().saturating_sub(10);
-                    return Err(lines[start..].iter().map(|s| s.to_string()).collect::<Vec<_>>().join("\n"));
+                    return Err(lines[start..]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"));
                 }
                 return Err(errors.join("\n"));
             }
             Ok(())
         }
-        Err(e) => Err(format!("Failed to execute cargo check: {:?}", e))
+        Err(e) => Err(format!("Failed to execute cargo check: {:?}", e)),
     }
 }
 
@@ -1781,7 +2208,9 @@ fn apply_headless_control_messages(
                 if let Some(progress) = progress {
                     let mut guard = progress.lock().unwrap();
                     guard.operator_notes.push(note.to_string());
-                    guard.status_updates.push("Operator note routed to this worker thread.".to_string());
+                    guard
+                        .status_updates
+                        .push("Operator note routed to this worker thread.".to_string());
                     guard.events.push(HeadlessSubAgentEvent {
                         kind: HeadlessSubAgentEventKind::OperatorNote,
                         message: note.to_string(),
@@ -1811,7 +2240,12 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     let selected_profile = match request.provider {
         AiProvider::OpenRouter => ModelInfo {
             id: request.model.clone(),
-            label: request.model.rsplit('/').next().unwrap_or(&request.model).to_string(),
+            label: request
+                .model
+                .rsplit('/')
+                .next()
+                .unwrap_or(&request.model)
+                .to_string(),
             api_style: ApiStyle::OpenAiChat,
             supports_tools: false,
             supports_thinking: false,
@@ -1823,7 +2257,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     };
     let thinking = request.thinking && selected_profile.supports_thinking;
 
-    let use_inline_tools = request.provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
+    let use_inline_tools =
+        request.provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
     let mut message_history = vec![ChatMessage {
         role: "system".to_string(),
         content: format!(
@@ -1862,7 +2297,10 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         while let Ok(msg) = agent_event_rx.recv() {
             match msg {
                 AgentToUiMessage::StatusUpdate(status) => {
-                    status_updates_collector.lock().unwrap().push(status.clone());
+                    status_updates_collector
+                        .lock()
+                        .unwrap()
+                        .push(status.clone());
                     if let Some(progress) = &progress_collector {
                         let mut progress = progress.lock().unwrap();
                         progress.status_updates.push(status.clone());
@@ -1900,7 +2338,11 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                         });
                     }
                 }
-                AgentToUiMessage::RequestToolApproval { id, tool_name, arguments } => {
+                AgentToUiMessage::RequestToolApproval {
+                    id,
+                    tool_name,
+                    arguments,
+                } => {
                     let status = format!("Auto-approving tool: {tool_name}");
                     status_updates_collector
                         .lock()
@@ -1918,7 +2360,11 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                             message: status,
                         });
                     }
-                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool { id, tool_name, arguments });
+                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool {
+                        id,
+                        tool_name,
+                        arguments,
+                    });
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     if let Some(progress) = &progress_collector {
@@ -1989,34 +2435,46 @@ fn run_agent_reasoning_loop(
     let mut sitemap_needed = false;
     let mut loop_count = 0;
     let max_loops = 15;
-    
+
     // Map registered tools to Workers AI schema
     let registered_tools = registry::get_tools();
-    let cf_tools: Vec<Value> = registered_tools.iter().map(|t| {
-        json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.input_schema
-            }
+    let cf_tools: Vec<Value> = registered_tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema
+                }
+            })
         })
-    }).collect();
+        .collect();
 
     while loop_count < max_loops {
         if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
             break;
         }
         loop_count += 1;
-        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-            "Querying {} (Turn {})…",
-            provider.label(),
-            loop_count
-        ))).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(format!(
+                "Querying {} (Turn {})…",
+                provider.label(),
+                loop_count
+            )))
+            .ok();
 
         let compressed_history = compress_history(message_history, profile.supports_tools);
 
-        let request_body = build_request(profile, model, &compressed_history, &cf_tools, thinking, provider);
+        let request_body = build_request(
+            profile,
+            model,
+            &compressed_history,
+            &cf_tools,
+            thinking,
+            provider,
+        );
         write_last_request_artifacts(
             workspace_root,
             profile,
@@ -2033,20 +2491,23 @@ fn run_agent_reasoning_loop(
         let mut used_or_account: Option<&OpenRouterAccount> = None;
         let ureq_response = match provider {
             AiProvider::OpenRouter => {
-                let start_idx = usage_tracker.pick_or_account(or_accounts)
+                let start_idx = usage_tracker
+                    .pick_or_account(or_accounts)
                     .and_then(|picked| or_accounts.iter().position(|a| a.n == picked.n))
                     .unwrap_or(0);
-                
+
                 let mut final_res = None;
                 let loop_limit = or_accounts.len().max(1);
-                
+
                 for idx in 0..loop_limit {
                     let mut active_acct = None;
                     let current_key = if or_accounts.is_empty() {
                         openrouter_api_key()
                     } else {
                         let acct = &or_accounts[(start_idx + idx) % or_accounts.len()];
-                        if usage_tracker.is_or_exhausted(acct.n) { continue; }
+                        if usage_tracker.is_or_exhausted(acct.n) {
+                            continue;
+                        }
                         active_acct = Some(acct);
                         acct.token.clone()
                     };
@@ -2072,10 +2533,23 @@ fn run_agent_reasoning_loop(
                             Err(ureq::Error::Status(429, resp)) => {
                                 let body = resp.into_string().unwrap_or_default();
                                 let body_lower = body.to_lowercase();
-                                if body_lower.contains("free-models-per-day") || body_lower.contains("quota") || body_lower.contains("credit") || body_lower.contains("limit exceeded") {
+                                if body_lower.contains("free-models-per-day")
+                                    || body_lower.contains("quota")
+                                    || body_lower.contains("credit")
+                                    || body_lower.contains("limit exceeded")
+                                {
                                     if let Some(acct) = active_acct {
-                                        usage_tracker.mark_or_exhausted(acct.n, &acct.label, &acct.tier);
-                                        send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
+                                        usage_tracker.mark_or_exhausted(
+                                            acct.n,
+                                            &acct.label,
+                                            &acct.tier,
+                                        );
+                                        send_usage_update(
+                                            usage_tracker,
+                                            accounts,
+                                            or_accounts,
+                                            ui_tx,
+                                        );
                                         ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
                                             "OpenRouter account '{}' quota exhausted — trying next…",
                                             acct.label
@@ -2091,44 +2565,61 @@ fn run_agent_reasoning_loop(
                                             active_acct.map(|a| a.label.as_str()).unwrap_or("default"),
                                             wait_secs, attempt, max_attempts
                                         ))).ok();
-                                        std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+                                        std::thread::sleep(std::time::Duration::from_secs(
+                                            wait_secs,
+                                        ));
                                     } else {
-                                        ui_tx.send(AgentToUiMessage::OutputToken(
-                                            format!("\n\nOpenRouter rate limit error (429): {}", body)
-                                        )).ok();
+                                        ui_tx
+                                            .send(AgentToUiMessage::OutputToken(format!(
+                                                "\n\nOpenRouter rate limit error (429): {}",
+                                                body
+                                            )))
+                                            .ok();
                                     }
                                 }
                             }
                             Err(ureq::Error::Status(code, resp)) => {
                                 let body = resp.into_string().unwrap_or_default();
-                                ui_tx.send(AgentToUiMessage::OutputToken(
-                                    format!("\n\nOpenRouter error ({}): {}", code, body)
-                                )).ok();
+                                ui_tx
+                                    .send(AgentToUiMessage::OutputToken(format!(
+                                        "\n\nOpenRouter error ({}): {}",
+                                        code, body
+                                    )))
+                                    .ok();
                                 break;
                             }
                             Err(e) => {
-                                ui_tx.send(AgentToUiMessage::OutputToken(
-                                    format!("\n\nOpenRouter connection error: {:?}", e)
-                                )).ok();
+                                ui_tx
+                                    .send(AgentToUiMessage::OutputToken(format!(
+                                        "\n\nOpenRouter connection error: {:?}",
+                                        e
+                                    )))
+                                    .ok();
                                 break;
                             }
                         }
                     }
-                    
+
                     if final_res.is_some() {
                         break;
                     }
                     if !account_exhausted {
-                        ui_tx.send(AgentToUiMessage::StatusUpdate("OpenRouter request failed, trying next account key…".to_string())).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(
+                                "OpenRouter request failed, trying next account key…".to_string(),
+                            ))
+                            .ok();
                     }
                 }
                 final_res
             }
             AiProvider::CloudflareWorkersAi => {
                 if accounts.is_empty() {
-                    ui_tx.send(AgentToUiMessage::OutputToken(
-                        "\n\nError: No Cloudflare accounts configured.".to_string()
-                    )).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::OutputToken(
+                            "\n\nError: No Cloudflare accounts configured.".to_string(),
+                        ))
+                        .ok();
                     break;
                 }
                 let start_idx = usage_tracker
@@ -2138,7 +2629,9 @@ fn run_agent_reasoning_loop(
                 let mut cf_response = None;
                 for i in 0..accounts.len() {
                     let account = &accounts[(start_idx + i) % accounts.len()];
-                    if usage_tracker.is_exhausted(account.n) { continue; }
+                    if usage_tracker.is_exhausted(account.n) {
+                        continue;
+                    }
                     let api_url = format!(
                         "https://api.cloudflare.com/client/v4/accounts/{}/ai/v1/chat/completions",
                         account.id
@@ -2156,12 +2649,18 @@ fn run_agent_reasoning_loop(
                         Err(ureq::Error::Status(_code, resp)) => {
                             let body = resp.into_string().unwrap_or_default();
                             if is_quota_exhausted_error(&body) {
-                                usage_tracker.mark_exhausted(account.n, &account.label, &account.tier);
+                                usage_tracker.mark_exhausted(
+                                    account.n,
+                                    &account.label,
+                                    &account.tier,
+                                );
                                 send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
-                                ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                    "Account '{}' quota exhausted — trying next…",
-                                    account.label
-                                ))).ok();
+                                ui_tx
+                                    .send(AgentToUiMessage::StatusUpdate(format!(
+                                        "Account '{}' quota exhausted — trying next…",
+                                        account.label
+                                    )))
+                                    .ok();
                             } else {
                                 eprintln!("CF account {} HTTP error: {}", account.label, body);
                             }
@@ -2180,9 +2679,15 @@ fn run_agent_reasoning_loop(
             None => {
                 let err_msg = match provider {
                     AiProvider::OpenRouter => "OpenRouter request failed.",
-                    AiProvider::CloudflareWorkersAi => "All Cloudflare Workers AI accounts exhausted or failed.",
+                    AiProvider::CloudflareWorkersAi => {
+                        "All Cloudflare Workers AI accounts exhausted or failed."
+                    }
                 };
-                ui_tx.send(AgentToUiMessage::OutputToken(format!("\n\nError: {err_msg}"))).ok();
+                ui_tx
+                    .send(AgentToUiMessage::OutputToken(format!(
+                        "\n\nError: {err_msg}"
+                    )))
+                    .ok();
                 break;
             }
         };
@@ -2206,8 +2711,8 @@ fn run_agent_reasoning_loop(
         //
         // Once we see <tool_call> we flip to suppression mode and stop forwarding tokens
         // to the UI. We track how much of `assistant_content` we've already sent.
-        let mut streamed_len: usize = 0;   // chars of assistant_content already sent to UI
-        let mut suppressing = false;       // currently inside a <tool_call> block
+        let mut streamed_len: usize = 0; // chars of assistant_content already sent to UI
+        let mut suppressing = false; // currently inside a <tool_call> block
 
         loop {
             if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
@@ -2218,8 +2723,12 @@ fn run_agent_reasoning_loop(
                 Ok(0) => break,
                 Ok(_) => {
                     let cleaned = line_buf.trim();
-                    if cleaned.is_empty() { continue; }
-                    if cleaned == "data: [DONE]" { break; }
+                    if cleaned.is_empty() {
+                        continue;
+                    }
+                    if cleaned == "data: [DONE]" {
+                        break;
+                    }
 
                     if cleaned.starts_with("data: ") {
                         let json_part = &cleaned[6..];
@@ -2229,11 +2738,14 @@ fn run_agent_reasoning_loop(
                                     let delta = &first_choice["delta"];
 
                                     // Reasoning tokens — always forward immediately to reasoning bubble
-                                    if let Some(r) = delta["reasoning_content"].as_str()
+                                    if let Some(r) = delta["reasoning_content"]
+                                        .as_str()
                                         .or_else(|| delta["reasoning"].as_str())
                                     {
                                         reasoning_content.push_str(r);
-                                        ui_tx.send(AgentToUiMessage::ThoughtToken(r.to_string())).ok();
+                                        ui_tx
+                                            .send(AgentToUiMessage::ThoughtToken(r.to_string()))
+                                            .ok();
                                     }
 
                                     // Content tokens — suppress <tool_call> blocks
@@ -2247,13 +2759,16 @@ fn run_agent_reasoning_loop(
                                             if suppressing {
                                                 // Look for end of tool-call block
                                                 let search = &ac[streamed_len..];
-                                                let end = search.find("</function>")
+                                                let end = search
+                                                    .find("</function>")
                                                     .map(|p| (p, "</function>".len()))
-                                                    .or_else(|| search.find("</tool_call>")
-                                                        .map(|p| (p, "</tool_call>".len())))
+                                                    .or_else(|| {
+                                                        search
+                                                            .find("</tool_call>")
+                                                            .map(|p| (p, "</tool_call>".len()))
+                                                    })
                                                     // [Calling tool ...] ends at the closing ]
-                                                    .or_else(|| search.find(']')
-                                                        .map(|p| (p, 1)));
+                                                    .or_else(|| search.find(']').map(|p| (p, 1)));
                                                 if let Some((p, mlen)) = end {
                                                     streamed_len += p + mlen;
                                                     suppressing = false;
@@ -2263,10 +2778,14 @@ fn run_agent_reasoning_loop(
                                             } else {
                                                 let search = &ac[streamed_len..];
                                                 // Detect either <tool_call> or [Calling tool
-                                                let tc1 = search.find("<tool_call>").map(|p| (p, false));
-                                                let tc2 = search.find("[Calling tool").map(|p| (p, true));
+                                                let tc1 =
+                                                    search.find("<tool_call>").map(|p| (p, false));
+                                                let tc2 =
+                                                    search.find("[Calling tool").map(|p| (p, true));
                                                 let detected = match (tc1, tc2) {
-                                                    (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+                                                    (Some(a), Some(b)) => {
+                                                        Some(if a.0 <= b.0 { a } else { b })
+                                                    }
                                                     (Some(a), None) => Some(a),
                                                     (None, Some(b)) => Some(b),
                                                     (None, None) => None,
@@ -2274,19 +2793,29 @@ fn run_agent_reasoning_loop(
                                                 if let Some((p, _is_bracket)) = detected {
                                                     let safe = &search[..p];
                                                     if !safe.is_empty() {
-                                                        ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(safe))).ok();
+                                                        ui_tx
+                                                            .send(AgentToUiMessage::OutputToken(
+                                                                sanitize_chat_token(safe),
+                                                            ))
+                                                            .ok();
                                                     }
                                                     streamed_len += p;
                                                     suppressing = true;
                                                 } else {
                                                     let total = ac.len();
                                                     let mut safe_end = total.saturating_sub(14); // len("[Calling tool") + 1
-                                                    while safe_end > streamed_len && !ac.is_char_boundary(safe_end) {
+                                                    while safe_end > streamed_len
+                                                        && !ac.is_char_boundary(safe_end)
+                                                    {
                                                         safe_end -= 1;
                                                     }
                                                     if safe_end > streamed_len {
                                                         let chunk = &ac[streamed_len..safe_end];
-                                                        ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(chunk))).ok();
+                                                        ui_tx
+                                                            .send(AgentToUiMessage::OutputToken(
+                                                                sanitize_chat_token(chunk),
+                                                            ))
+                                                            .ok();
                                                         streamed_len = safe_end;
                                                     }
                                                     break;
@@ -2301,38 +2830,52 @@ fn run_agent_reasoning_loop(
                                             let idx = tc["index"].as_u64().unwrap_or(0) as usize;
                                             while accumulated_tools.len() <= idx {
                                                 accumulated_tools.push(ToolCallAccumulator {
-                                                    id: String::new(), name: String::new(), arguments: String::new(),
+                                                    id: String::new(),
+                                                    name: String::new(),
+                                                    arguments: String::new(),
                                                 });
                                             }
                                             if let Some(id) = tc["id"].as_str() {
                                                 accumulated_tools[idx].id.push_str(id);
                                             }
                                             if let Some(func) = tc["function"].as_object() {
-                                                if let Some(n) = func.get("name").and_then(|v| v.as_str()) {
+                                                if let Some(n) =
+                                                    func.get("name").and_then(|v| v.as_str())
+                                                {
                                                     accumulated_tools[idx].name.push_str(n);
                                                 }
-                                                if let Some(a) = func.get("arguments").and_then(|v| v.as_str()) {
+                                                if let Some(a) =
+                                                    func.get("arguments").and_then(|v| v.as_str())
+                                                {
                                                     accumulated_tools[idx].arguments.push_str(a);
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            } else if let Some(content) = parsed["response"].as_str()
+                            } else if let Some(content) = parsed["response"]
+                                .as_str()
                                 .or_else(|| parsed["output"].as_str())
                                 .or_else(|| parsed["text"].as_str())
                             {
                                 assistant_content.push_str(content);
                                 streamed_len += content.len();
-                                ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(content))).ok();
+                                ui_tx
+                                    .send(AgentToUiMessage::OutputToken(sanitize_chat_token(
+                                        content,
+                                    )))
+                                    .ok();
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    ui_tx.send(AgentToUiMessage::OutputToken(
-                        format!("\nError reading stream: {:?}", e)
-                    )).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::OutputToken(format!(
+                            "\nError reading stream: {:?}",
+                            e
+                        )))
+                        .ok();
                     break;
                 }
             }
@@ -2347,7 +2890,9 @@ fn run_agent_reasoning_loop(
             }
             let tail = &assistant_content[flush_start..];
             if !tail.is_empty() {
-                ui_tx.send(AgentToUiMessage::OutputToken(sanitize_chat_token(tail))).ok();
+                ui_tx
+                    .send(AgentToUiMessage::OutputToken(sanitize_chat_token(tail)))
+                    .ok();
             }
         }
 
@@ -2364,14 +2909,19 @@ fn run_agent_reasoning_loop(
             fn find_block_end(s: &str) -> Option<(&str, &str)> {
                 // candidate positions
                 let ef = s.find("</function>").map(|p| (p, p + "</function>".len()));
-                let et = s.find("</tool_call>").map(|p| (p, p + "</tool_call>".len()));
-                let en = s.find("<tool_call>")  // next call starts → current one ends here
+                let et = s
+                    .find("</tool_call>")
+                    .map(|p| (p, p + "</tool_call>".len()));
+                let en = s
+                    .find("<tool_call>") // next call starts → current one ends here
                     .and_then(|p| if p > 0 { Some((p, p)) } else { None });
                 // pick earliest
-                let best = [ef, et, en].into_iter().flatten()
+                let best = [ef, et, en]
+                    .into_iter()
+                    .flatten()
                     .min_by_key(|(pos, _)| *pos);
                 best.map(|(_, after)| (&s[..after - (after - after)], &s[after..]))
-                    // simpler: just return (block_content_before_end, rest_after_end)
+                // simpler: just return (block_content_before_end, rest_after_end)
             }
 
             let mut clean_content = String::new();
@@ -2381,11 +2931,24 @@ fn run_agent_reasoning_loop(
                 let after_open = &rest[start + "<tool_call>".len()..];
 
                 // Find block end: </function>, </tool_call>, or next <tool_call>
-                let ef = after_open.find("</function>").map(|p| (p, p + "</function>".len()));
-                let et = after_open.find("</tool_call>").map(|p| (p, p + "</tool_call>".len()));
+                let ef = after_open
+                    .find("</function>")
+                    .map(|p| (p, p + "</function>".len()));
+                let et = after_open
+                    .find("</tool_call>")
+                    .map(|p| (p, p + "</tool_call>".len()));
                 // next <tool_call> with offset > 0 means current block has no explicit close
-                let en = after_open.find("<tool_call>").and_then(|p| if p > 0 { Some((p, p)) } else { None });
-                let best = [ef, et, en].into_iter().flatten().min_by_key(|(pos, _)| *pos);
+                let en = after_open.find("<tool_call>").and_then(|p| {
+                    if p > 0 {
+                        Some((p, p))
+                    } else {
+                        None
+                    }
+                });
+                let best = [ef, et, en]
+                    .into_iter()
+                    .flatten()
+                    .min_by_key(|(pos, _)| *pos);
 
                 let (block, remainder) = if let Some((end_pos, after_end)) = best {
                     (&after_open[..end_pos], &after_open[after_end..])
@@ -2397,7 +2960,10 @@ fn run_agent_reasoning_loop(
                 // Parse <function=NAME>...<parameter=K>V</parameter>...
                 if let Some(fname_start) = block.find("<function=") {
                     let fname_rest = &block[fname_start + "<function=".len()..];
-                    let fname_end = fname_rest.find('>').or_else(|| fname_rest.find('\n')).unwrap_or(fname_rest.len());
+                    let fname_end = fname_rest
+                        .find('>')
+                        .or_else(|| fname_rest.find('\n'))
+                        .unwrap_or(fname_rest.len());
                     let fname = fname_rest[..fname_end].trim().to_string();
                     if !fname.is_empty() {
                         let mut args = serde_json::Map::new();
@@ -2425,7 +2991,9 @@ fn run_agent_reasoning_loop(
                     }
                 }
                 rest = remainder;
-                if rest.is_empty() { break; }
+                if rest.is_empty() {
+                    break;
+                }
             }
             clean_content.push_str(rest);
             assistant_content = clean_content.trim().to_string();
@@ -2480,16 +3048,19 @@ fn run_agent_reasoning_loop(
             }
         }
         let final_tool_calls_value = if !accumulated_tools.is_empty() {
-            let tc_json: Vec<Value> = accumulated_tools.iter().map(|t| {
-                json!({
-                    "id": t.id,
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "arguments": t.arguments
-                    }
+            let tc_json: Vec<Value> = accumulated_tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "id": t.id,
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "arguments": t.arguments
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
             Some(Value::Array(tc_json))
         } else {
             None
@@ -2497,7 +3068,10 @@ fn run_agent_reasoning_loop(
 
         // Prepends reasoning content wrapped in <think> tags if any was received, matching standard format
         let final_saved_content = if !reasoning_content.is_empty() {
-            format!("<think>\n{}\n</think>\n{}", reasoning_content, assistant_content)
+            format!(
+                "<think>\n{}\n</think>\n{}",
+                reasoning_content, assistant_content
+            )
         } else {
             assistant_content.clone()
         };
@@ -2511,7 +3085,8 @@ fn run_agent_reasoning_loop(
         });
 
         if let Some(account) = used_account {
-            let tokens_out = estimate_tokens(&assistant_content) + estimate_tokens(&reasoning_content);
+            let tokens_out =
+                estimate_tokens(&assistant_content) + estimate_tokens(&reasoning_content);
             usage_tracker.record_request(
                 account.n,
                 &account.label,
@@ -2520,20 +3095,23 @@ fn run_agent_reasoning_loop(
                 tokens_out,
             );
             send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                "Using account: {} ({} req today)",
-                account.label,
-                usage_tracker
-                    .build_views(accounts, or_accounts)
-                    .iter()
-                    .find(|v| v.n == account.n && v.label == account.label)
-                    .map(|v| v.requests)
-                    .unwrap_or(0)
-            ))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Using account: {} ({} req today)",
+                    account.label,
+                    usage_tracker
+                        .build_views(accounts, or_accounts)
+                        .iter()
+                        .find(|v| v.n == account.n && v.label == account.label)
+                        .map(|v| v.requests)
+                        .unwrap_or(0)
+                )))
+                .ok();
         }
 
         if let Some(account) = used_or_account {
-            let tokens_out = estimate_tokens(&assistant_content) + estimate_tokens(&reasoning_content);
+            let tokens_out =
+                estimate_tokens(&assistant_content) + estimate_tokens(&reasoning_content);
             usage_tracker.record_or_request(
                 account.n,
                 &account.label,
@@ -2542,45 +3120,54 @@ fn run_agent_reasoning_loop(
                 tokens_out,
             );
             send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                "Using OpenRouter: {} ({} req today)",
-                account.label,
-                usage_tracker
-                    .build_views(accounts, or_accounts)
-                    .iter()
-                    .find(|v| v.label == account.label)
-                    .map(|v| v.requests)
-                    .unwrap_or(0)
-            ))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Using OpenRouter: {} ({} req today)",
+                    account.label,
+                    usage_tracker
+                        .build_views(accounts, or_accounts)
+                        .iter()
+                        .find(|v| v.label == account.label)
+                        .map(|v| v.requests)
+                        .unwrap_or(0)
+                )))
+                .ok();
         }
 
         // Handle tool calls if any
         if let Some(ref tcs) = final_tool_calls_value {
             let tool_calls_arr = tcs.as_array().unwrap();
-            
+
             let mut pending_ids = std::collections::HashSet::new();
             let mut tool_specs = Vec::new();
-            
+
             for tc in tool_calls_arr {
                 let call_id = tc["id"].as_str().unwrap_or("").to_string();
                 let tool_name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                 let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
                 let arguments: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
-                
-                ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Requesting approval for tool: {}", tool_name))).ok();
-                ui_tx.send(AgentToUiMessage::RequestToolApproval {
-                    id: call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    arguments: arguments.clone(),
-                }).ok();
-                
+
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Requesting approval for tool: {}",
+                        tool_name
+                    )))
+                    .ok();
+                ui_tx
+                    .send(AgentToUiMessage::RequestToolApproval {
+                        id: call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        arguments: arguments.clone(),
+                    })
+                    .ok();
+
                 pending_ids.insert(call_id.clone());
                 tool_specs.push((call_id, tool_name, arguments));
             }
-            
+
             // Wait for all approvals
             let mut resolved_approvals = std::collections::HashMap::new();
-            
+
             while !pending_ids.is_empty() {
                 if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
                     pending_ids.clear();
@@ -2588,7 +3175,11 @@ fn run_agent_reasoning_loop(
                 }
                 if let Ok(ui_msg) = ui_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                     match ui_msg {
-                        UiToAgentMessage::ApproveTool { id, tool_name: _, arguments } => {
+                        UiToAgentMessage::ApproveTool {
+                            id,
+                            tool_name: _,
+                            arguments,
+                        } => {
                             if pending_ids.remove(&id) {
                                 resolved_approvals.insert(id, Some(arguments));
                             }
@@ -2604,38 +3195,55 @@ fn run_agent_reasoning_loop(
                         }
                         _ => {}
                     }
-                } else if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {
+                } else if apply_headless_control_messages(
+                    cancel_rx,
+                    message_history,
+                    ui_tx,
+                    progress,
+                ) {
                     pending_ids.clear();
                     break;
                 }
             }
-            
+
             // Execute approved tools in parallel
             let mut handles = Vec::new();
-            
+
             for (call_id, tool_name, _original_arguments) in tool_specs {
                 let approval = resolved_approvals.get(&call_id).cloned().flatten();
                 let workspace_root_clone = workspace_root.clone();
                 let ui_tx_clone = ui_tx.clone();
-                
+
                 let handle = std::thread::spawn(move || {
                     let mut tool_result = String::new();
                     let mut file_buffer_update = None;
                     let mut changelog_entry = None;
-                    
+
                     if let Some(approved_args) = approval {
-                        ui_tx_clone.send(AgentToUiMessage::ToolExecutionStarted { tool_name: tool_name.clone() }).ok();
-                        
-                        match registry::call_tool_in_workspace(&workspace_root_clone, &tool_name, &approved_args) {
+                        ui_tx_clone
+                            .send(AgentToUiMessage::ToolExecutionStarted {
+                                tool_name: tool_name.clone(),
+                            })
+                            .ok();
+
+                        match registry::call_tool_in_workspace(
+                            &workspace_root_clone,
+                            &tool_name,
+                            &approved_args,
+                        ) {
                             Ok(res) => {
                                 tool_result = res;
                                 if tool_name == "write_file" {
-                                    if let Some(rel_path) = approved_args["relativeFilePath"].as_str() {
+                                    if let Some(rel_path) =
+                                        approved_args["relativeFilePath"].as_str()
+                                    {
                                         let full_path = workspace_root_clone.join(rel_path);
                                         if let Some(content) = approved_args["content"].as_str() {
-                                            file_buffer_update = Some((full_path, content.to_string()));
+                                            file_buffer_update =
+                                                Some((full_path, content.to_string()));
                                         }
-                                        changelog_entry = Some((rel_path.to_string(), "write_file"));
+                                        changelog_entry =
+                                            Some((rel_path.to_string(), "write_file"));
                                     }
                                 }
                             }
@@ -2643,33 +3251,43 @@ fn run_agent_reasoning_loop(
                                 tool_result = format!("Error executing tool: {:?}", e);
                             }
                         }
-                        
-                        ui_tx_clone.send(AgentToUiMessage::ToolExecutionFinished {
-                            tool_name: tool_name.clone(),
-                            result: tool_result.clone(),
-                        }).ok();
+
+                        ui_tx_clone
+                            .send(AgentToUiMessage::ToolExecutionFinished {
+                                tool_name: tool_name.clone(),
+                                result: tool_result.clone(),
+                            })
+                            .ok();
                     } else {
                         tool_result = "Error: Tool execution rejected by the user.".to_string();
                     }
-                    
-                    (call_id, tool_name, tool_result, file_buffer_update, changelog_entry)
+
+                    (
+                        call_id,
+                        tool_name,
+                        tool_result,
+                        file_buffer_update,
+                        changelog_entry,
+                    )
                 });
-                
+
                 handles.push(handle);
             }
-            
+
             let mut thread_results = Vec::new();
             for h in handles {
                 if let Ok(res) = h.join() {
                     thread_results.push(res);
                 }
             }
-            
+
             let mut any_success = false;
             let mut any_rejected = false;
             let mut any_error = false;
-            
-            for (call_id, tool_name, tool_result, file_buffer_update, changelog_entry) in thread_results {
+
+            for (call_id, tool_name, tool_result, file_buffer_update, changelog_entry) in
+                thread_results
+            {
                 if tool_result.contains("Error executing tool") {
                     any_error = true;
                 } else if tool_result.contains("rejected by the user") {
@@ -2677,15 +3295,17 @@ fn run_agent_reasoning_loop(
                 } else {
                     any_success = true;
                 }
-                
+
                 if let Some((path, content)) = file_buffer_update {
-                    ui_tx.send(AgentToUiMessage::UpdateFileBuffer { path, content }).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::UpdateFileBuffer { path, content })
+                        .ok();
                 }
                 if let Some((rel_path, action)) = changelog_entry {
                     append_changelog_nda(workspace_root, &rel_path, action);
                     sitemap_needed = true;
                 }
-                
+
                 // Add tool response to history
                 message_history.push(ChatMessage {
                     role: "tool".to_string(),
@@ -2695,32 +3315,68 @@ fn run_agent_reasoning_loop(
                     tool_calls: None,
                 });
             }
-            
+
             // Handover update
             if any_error {
-                write_handover_nda(workspace_root, "tool_error", loop_count, "tool error in batch", false);
+                write_handover_nda(
+                    workspace_root,
+                    "tool_error",
+                    loop_count,
+                    "tool error in batch",
+                    false,
+                );
             } else if any_rejected {
-                write_handover_nda(workspace_root, "tool_rejected", loop_count, "user reject in batch", false);
+                write_handover_nda(
+                    workspace_root,
+                    "tool_rejected",
+                    loop_count,
+                    "user reject in batch",
+                    false,
+                );
             } else if any_success {
                 write_handover_nda(workspace_root, "executing", loop_count, "batch ok", false);
             }
-            
+
             // Save progress chatlogs
             save_chatlogs_nda(workspace_root, message_history);
         } else {
             // No tool calls, the model claims it is done. Let's validate compilation.
-            ui_tx.send(AgentToUiMessage::StatusUpdate("Running automatic compilation validation...".to_string())).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Running automatic compilation validation...".to_string(),
+                ))
+                .ok();
             match run_compilation_check(workspace_root) {
                 Ok(()) => {
-                    write_handover_nda(workspace_root, "idle", loop_count, "compiler validated", false);
-                    ui_tx.send(AgentToUiMessage::StatusUpdate("Compiler validation succeeded!".to_string())).ok();
+                    write_handover_nda(
+                        workspace_root,
+                        "idle",
+                        loop_count,
+                        "compiler validated",
+                        false,
+                    );
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(
+                            "Compiler validation succeeded!".to_string(),
+                        ))
+                        .ok();
                     break;
                 }
                 Err(errors) => {
                     if loop_count < max_loops {
-                        write_handover_nda(workspace_root, "self_correcting", loop_count, "compile_failed", false);
-                        ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation failed! Self-correcting...".to_string())).ok();
-                        
+                        write_handover_nda(
+                            workspace_root,
+                            "self_correcting",
+                            loop_count,
+                            "compile_failed",
+                            false,
+                        );
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(
+                                "Compilation failed! Self-correcting...".to_string(),
+                            ))
+                            .ok();
+
                         let error_prompt = format!(
                             "[SYSTEM NOTIFICATION: compiler validation failed. Please fix the following build errors immediately]\n{}",
                             errors
@@ -2732,31 +3388,45 @@ fn run_agent_reasoning_loop(
                             tool_call_id: None,
                             tool_calls: None,
                         });
-                        
+
                         // Continue flat loop iteration to self-correct
                         continue;
                     } else {
-                        write_handover_nda(workspace_root, "idle", loop_count, "compile_failed", false);
-                        ui_tx.send(AgentToUiMessage::StatusUpdate("Compilation validation failed (Max limits reached)".to_string())).ok();
+                        write_handover_nda(
+                            workspace_root,
+                            "idle",
+                            loop_count,
+                            "compile_failed",
+                            false,
+                        );
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(
+                                "Compilation validation failed (Max limits reached)".to_string(),
+                            ))
+                            .ok();
                         break;
                     }
                 }
             }
         }
     }
-    
+
     save_chatlogs_nda(workspace_root, message_history);
-    
+
     if sitemap_needed {
         write_sitemap_nda(workspace_root);
     }
     convert_jsonl_to_nda(workspace_root);
-    ui_tx.send(AgentToUiMessage::StatusUpdate("Agent workflow finished. Idling.".to_string())).ok();
+    ui_tx
+        .send(AgentToUiMessage::StatusUpdate(
+            "Agent workflow finished. Idling.".to_string(),
+        ))
+        .ok();
     ui_tx.send(AgentToUiMessage::AgentFinished).ok();
 }
 
 fn hash_str(s: &str) -> u64 {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     let d = h.finalize();
@@ -2766,9 +3436,12 @@ fn hash_str(s: &str) -> u64 {
 fn sanitize_chat_token(s: &str) -> String {
     let mut out = s.to_string();
     let tags = [
-        "</tool_call>", "<tool_call>",
-        "</function>", "<function>",
-        "</parameter>", "<parameter>",
+        "</tool_call>",
+        "<tool_call>",
+        "</function>",
+        "<function>",
+        "</parameter>",
+        "<parameter>",
     ];
     for tag in &tags {
         out = out.replace(&format!("{}\r\n", tag), "");
@@ -2785,7 +3458,16 @@ fn sanitize_chat_token(s: &str) -> String {
             let mut is_tag_structure = false;
             while j < chars.len() && chars[j] != '>' {
                 let c = chars[j];
-                if c.is_alphabetic() || c == '/' || c == '=' || c == '_' || c == '-' || c.is_ascii_digit() || c == '\"' || c == '\'' || c == '.' {
+                if c.is_alphabetic()
+                    || c == '/'
+                    || c == '='
+                    || c == '_'
+                    || c == '-'
+                    || c.is_ascii_digit()
+                    || c == '\"'
+                    || c == '\''
+                    || c == '.'
+                {
                     is_tag_structure = true;
                 } else {
                     is_tag_structure = false;
@@ -2827,7 +3509,14 @@ mod tests {
             supports_tools: false,
             supports_thinking: false,
         };
-        let request = build_request(&profile, &profile.id, &[message()], &[json!({"type": "function"})], true, AiProvider::CloudflareWorkersAi);
+        let request = build_request(
+            &profile,
+            &profile.id,
+            &[message()],
+            &[json!({"type": "function"})],
+            true,
+            AiProvider::CloudflareWorkersAi,
+        );
         assert!(request.get("messages").is_some());
         assert!(request.get("tools").is_none());
         assert!(request.get("thinking").is_none());
@@ -2855,7 +3544,9 @@ mod tests {
                 content: "calling tool".into(),
                 name: None,
                 tool_call_id: None,
-                tool_calls: Some(json!([{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}])),
+                tool_calls: Some(
+                    json!([{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}]),
+                ),
             },
         ];
         let tools = vec![json!({
@@ -2866,7 +3557,14 @@ mod tests {
                 "parameters": {"type": "object"}
             }
         })];
-        let request = build_request(&profile, &profile.id, &messages, &tools, true, AiProvider::CloudflareWorkersAi);
+        let request = build_request(
+            &profile,
+            &profile.id,
+            &messages,
+            &tools,
+            true,
+            AiProvider::CloudflareWorkersAi,
+        );
 
         let nda = serialize_last_request_nda(
             &profile,
@@ -2902,7 +3600,8 @@ mod tests {
         let content = b"{\"role\":\"user\"}\n{\"role\":\"assistant\"}\n";
 
         write_workspace_transcript_nda(tmp.path(), content);
-        let transcript = std::fs::read_to_string(tmp.path().join(".velocity").join("transcript.nda")).unwrap();
+        let transcript =
+            std::fs::read_to_string(tmp.path().join(".velocity").join("transcript.nda")).unwrap();
         assert!(transcript.starts_with("transcript version 2\n"));
         assert!(transcript.contains("field_count 2\n"));
         assert!(transcript.contains("field\tsource\tjsonl\n"));
@@ -2918,11 +3617,20 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("src").join("nested")).unwrap();
         std::fs::create_dir_all(tmp.path().join(".velocity")).unwrap();
         std::fs::write(tmp.path().join("src").join("main.rs"), "fn main() {}\n").unwrap();
-        std::fs::write(tmp.path().join("src").join("nested").join("lib.rs"), "pub fn x() {}\n").unwrap();
-        std::fs::write(tmp.path().join(".velocity").join("ignored.txt"), "ignore me").unwrap();
+        std::fs::write(
+            tmp.path().join("src").join("nested").join("lib.rs"),
+            "pub fn x() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join(".velocity").join("ignored.txt"),
+            "ignore me",
+        )
+        .unwrap();
 
         write_sitemap_nda(tmp.path());
-        let sitemap = std::fs::read_to_string(tmp.path().join(".velocity").join("sitemap.nda")).unwrap();
+        let sitemap =
+            std::fs::read_to_string(tmp.path().join(".velocity").join("sitemap.nda")).unwrap();
         assert!(sitemap.starts_with("sitemap version 2\n"));
         assert!(sitemap.contains("entry_count 4\n"));
         assert!(sitemap.contains("\tdir\tsrc\t-"));
@@ -2942,7 +3650,9 @@ mod tests {
                 content: "hello\nworld".into(),
                 name: None,
                 tool_call_id: None,
-                tool_calls: Some(json!([{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}])),
+                tool_calls: Some(
+                    json!([{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/main.rs\"}"}}]),
+                ),
             },
             ChatMessage {
                 role: "tool".into(),
@@ -2954,7 +3664,8 @@ mod tests {
         ];
 
         save_chatlogs_nda(tmp.path(), &messages);
-        let chatlogs = std::fs::read_to_string(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
+        let chatlogs =
+            std::fs::read_to_string(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
         assert!(chatlogs.starts_with("chatlogs version 3\n"));
         assert!(chatlogs.contains("message_count 2"));
         assert!(chatlogs.contains("field\t0\trole\tassistant"));
@@ -3045,7 +3756,8 @@ mod tests {
     fn writes_plaintext_handover_nda() {
         let tmp = tempfile::tempdir().unwrap();
         write_handover_nda(tmp.path(), "self_correcting", 7, "compile failed", true);
-        let handover = std::fs::read_to_string(tmp.path().join(".velocity").join("handover.nda")).unwrap();
+        let handover =
+            std::fs::read_to_string(tmp.path().join(".velocity").join("handover.nda")).unwrap();
         assert!(handover.starts_with("handover version 2\n"));
         assert!(handover.contains("field_count 4\n"));
         assert!(handover.contains("field\tstate\tself_correcting"));
@@ -3059,7 +3771,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         append_changelog_nda(tmp.path(), "src/main.rs", "edited");
         append_changelog_nda(tmp.path(), "src/lib.rs", "created");
-        let changelog = std::fs::read_to_string(tmp.path().join(".velocity").join("changelog.nda")).unwrap();
+        let changelog =
+            std::fs::read_to_string(tmp.path().join(".velocity").join("changelog.nda")).unwrap();
         assert!(changelog.starts_with("changelog version 2\n"));
         assert!(changelog.contains("entry_count 2\n"));
         assert!(changelog.contains("\tsrc/main.rs\tedited"));
@@ -3101,7 +3814,14 @@ mod tests {
             supports_tools: false,
             supports_thinking: false,
         };
-        let request = build_request(&profile, &profile.id, &[message()], &[json!({"type": "function"})], false, AiProvider::CloudflareWorkersAi);
+        let request = build_request(
+            &profile,
+            &profile.id,
+            &[message()],
+            &[json!({"type": "function"})],
+            false,
+            AiProvider::CloudflareWorkersAi,
+        );
         assert_eq!(request["prompt"], "user: hello");
         assert!(request.get("messages").is_none());
         assert!(request.get("tools").is_none());
@@ -3132,21 +3852,27 @@ mod tests {
                 name: Some("write_file".to_string()),
                 tool_call_id: Some("call_abc".to_string()),
                 tool_calls: None,
-            }
+            },
         ];
 
         // When supports_tools = false
         let compressed = compress_history(&original_messages, false);
         assert_eq!(compressed.len(), 2);
-        
+
         // Assistant message should be flattened
         assert_eq!(compressed[0].role, "assistant");
-        assert_eq!(compressed[0].content, "[Calling tool 'write_file' with arguments '{\"path\":\"hello.txt\"}']");
+        assert_eq!(
+            compressed[0].content,
+            "[Calling tool 'write_file' with arguments '{\"path\":\"hello.txt\"}']"
+        );
         assert!(compressed[0].tool_calls.is_none());
 
         // Tool message should become user message
         assert_eq!(compressed[1].role, "user");
-        assert_eq!(compressed[1].content, "[Tool result for 'write_file']: Success");
+        assert_eq!(
+            compressed[1].content,
+            "[Tool result for 'write_file']: Success"
+        );
         assert!(compressed[1].name.is_none());
         assert!(compressed[1].tool_call_id.is_none());
     }
@@ -3162,8 +3888,17 @@ mod tests {
             supports_thinking: false,
         };
         let messages = vec![message()];
-        let tools = vec![json!({"type": "function", "function": {"name": "search", "description": "Search"}})];
-        let request = build_request(&profile, &profile.id, &messages, &tools, false, AiProvider::CloudflareWorkersAi);
+        let tools = vec![
+            json!({"type": "function", "function": {"name": "search", "description": "Search"}}),
+        ];
+        let request = build_request(
+            &profile,
+            &profile.id,
+            &messages,
+            &tools,
+            false,
+            AiProvider::CloudflareWorkersAi,
+        );
 
         write_last_request_artifacts(
             tmp.path(),
@@ -3176,8 +3911,10 @@ mod tests {
             &request,
         );
 
-        let nda = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
-        let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json")).unwrap();
+        let nda =
+            std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
+        let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json"))
+            .unwrap();
         assert!(nda.contains("last-request version 3"));
         assert!(nda.contains("field\tmodel\t@cf/example/chat"));
         assert!(json.contains("\"model\""));
@@ -3186,7 +3923,8 @@ mod tests {
     #[test]
     fn test_eager_merkle_compaction() {
         let mut long_content = String::new();
-        long_content.push_str("fn test_function() {\n    println!(\"Hello\");\n}\nclass TestClass {}");
+        long_content
+            .push_str("fn test_function() {\n    println!(\"Hello\");\n}\nclass TestClass {}");
         for i in 0..100 {
             long_content.push_str(&format!("\n// Dummy line padding number {} to ensure we are well above the one thousand character compaction threshold.", i));
         }
@@ -3205,13 +3943,13 @@ mod tests {
                 name: None,
                 tool_call_id: None,
                 tool_calls: None,
-            }
+            },
         ];
 
         let compressed = compress_history(&original_messages, true);
         assert_eq!(compressed.len(), 2);
         assert_eq!(compressed[0].role, "tool");
-        
+
         let content = &compressed[0].content;
         assert!(content.contains("compressed to optimize context"));
         assert!(content.contains("Merkle Hash:"));

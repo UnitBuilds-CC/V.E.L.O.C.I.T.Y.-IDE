@@ -14,12 +14,18 @@ pub struct Collision {
 }
 
 /// Report files modified by more than one task.
-pub fn detect_collisions(graph: &TaskGraph, outputs: &HashMap<TaskId, Vec<String>>) -> Vec<Collision> {
+pub fn detect_collisions(
+    graph: &TaskGraph,
+    outputs: &HashMap<TaskId, Vec<String>>,
+) -> Vec<Collision> {
     let mut files_to_tasks: HashMap<String, Vec<TaskId>> = HashMap::new();
 
     for (task_id, files) in outputs {
         for file in files {
-            files_to_tasks.entry(file.clone()).or_default().push(*task_id);
+            files_to_tasks
+                .entry(file.clone())
+                .or_default()
+                .push(*task_id);
         }
     }
 
@@ -41,7 +47,10 @@ pub fn detect_collisions(graph: &TaskGraph, outputs: &HashMap<TaskId, Vec<String
 }
 
 /// Report files touched by a task that were not in its declared scope.
-pub fn scope_violations(graph: &TaskGraph, outputs: &HashMap<TaskId, Vec<String>>) -> Vec<(TaskId, String)> {
+pub fn scope_violations(
+    graph: &TaskGraph,
+    outputs: &HashMap<TaskId, Vec<String>>,
+) -> Vec<(TaskId, String)> {
     let mut violations = Vec::new();
     for (task_id, files) in outputs {
         if let Some(task) = graph.tasks.get(task_id) {

@@ -80,14 +80,20 @@ pub fn render_thinking_panel(ui: &mut egui::Ui, snapshot: &RenderSnapshot, palet
                                         .color(egui::Color32::from_rgb(168, 85, 247)),
                                 );
                                 ui.label(
-                                    egui::RichText::new(format!("{:.1}s", entry.timestamp_ms as f32 / 1000.0))
-                                        .size(9.0)
-                                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                                    egui::RichText::new(format!(
+                                        "{:.1}s",
+                                        entry.timestamp_ms as f32 / 1000.0
+                                    ))
+                                    .size(9.0)
+                                    .color(egui::Color32::from_rgb(125, 131, 166)),
                                 );
                             });
 
                             // Get and display step text (zero-copy via text pool)
-                            let text = snapshot.state.thinking.get_step_text(entry.text_offset as usize);
+                            let text = snapshot
+                                .state
+                                .thinking
+                                .get_step_text(entry.text_offset as usize);
                             if !text.is_empty() {
                                 ui.label(
                                     egui::RichText::new(text)
@@ -146,7 +152,7 @@ pub fn render_pending_approvals(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
 /// Render agent metrics bar (immutable render)
 pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
     let metrics = &snapshot.state.metrics;
-    
+
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
 
@@ -174,31 +180,19 @@ pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
         ui.label(
             egui::RichText::new(format!(
                 "{} Tokens: {}/{} ({:.0}%)",
-                warning_icon,
-                metrics.tokens_used,
-                metrics.tokens_max,
-                budget_pct as f32
+                warning_icon, metrics.tokens_used, metrics.tokens_max, budget_pct as f32
             ))
             .size(10.0),
         );
 
         // Progress bar
-        ui.add(
-            egui::ProgressBar::new((budget_pct as f32) / 100.0)
-                .desired_width(80.0),
-        );
+        ui.add(egui::ProgressBar::new((budget_pct as f32) / 100.0).desired_width(80.0));
 
         ui.separator();
 
         // Cost
         let cost_usd = metrics.estimated_cost as f32 * 0.0001;
-        ui.label(
-            egui::RichText::new(format!(
-                "Cost: ${:.4}",
-                cost_usd
-            ))
-            .size(10.0),
-        );
+        ui.label(egui::RichText::new(format!("Cost: ${:.4}", cost_usd)).size(10.0));
 
         ui.separator();
 
@@ -206,8 +200,7 @@ pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
         ui.label(
             egui::RichText::new(format!(
                 "Tools: {} | Last: {}ms",
-                metrics.tool_call_count,
-                metrics.last_tool_duration_ms
+                metrics.tool_call_count, metrics.last_tool_duration_ms
             ))
             .size(10.0),
         );

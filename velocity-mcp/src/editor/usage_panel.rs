@@ -26,9 +26,11 @@ pub fn render_usage_panel(
                                 .color(palette.text_muted),
                         );
                         ui.label(
-                            egui::RichText::new("Add CF_ACCOUNT_N_ID and CF_ACCOUNT_N_TOKEN to .env")
-                                .small()
-                                .color(palette.text_muted),
+                            egui::RichText::new(
+                                "Add CF_ACCOUNT_N_ID and CF_ACCOUNT_N_TOKEN to .env",
+                            )
+                            .small()
+                            .color(palette.text_muted),
                         );
                     });
                     return;
@@ -64,7 +66,11 @@ fn render_header(
         );
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("↻ Refresh").on_hover_text("Reload usage stats").clicked() {
+            if ui
+                .button("↻ Refresh")
+                .on_hover_text("Reload usage stats")
+                .clicked()
+            {
                 on_refresh();
             }
             let available = accounts.iter().filter(|a| !a.exhausted).count();
@@ -100,18 +106,8 @@ fn render_summary_cards(ui: &mut egui::Ui, accounts: &[AccountUsageView], palett
             &format!("{total_remaining} / {total_limit}"),
             palette,
         );
-        summary_card(
-            ui,
-            "Tokens in",
-            &format_tokens(total_tokens_in),
-            palette,
-        );
-        summary_card(
-            ui,
-            "Tokens out",
-            &format_tokens(total_tokens_out),
-            palette,
-        );
+        summary_card(ui, "Tokens in", &format_tokens(total_tokens_in), palette);
+        summary_card(ui, "Tokens out", &format_tokens(total_tokens_out), palette);
     });
 }
 
@@ -124,11 +120,7 @@ fn summary_card(ui: &mut egui::Ui, label: &str, value: &str, palette: IdePalette
         .show(ui, |ui| {
             ui.set_min_width(120.0);
             ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(label)
-                        .small()
-                        .color(palette.text_muted),
-                );
+                ui.label(egui::RichText::new(label).small().color(palette.text_muted));
                 ui.label(egui::RichText::new(value).strong().size(15.0));
             });
         });
@@ -225,10 +217,7 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
-pub fn render_usage_compact(
-    ui: &mut egui::Ui,
-    accounts: &[AccountUsageView],
-) -> bool {
+pub fn render_usage_compact(ui: &mut egui::Ui, accounts: &[AccountUsageView]) -> bool {
     let palette = IdePalette::dark();
     let total_remaining: u32 = accounts.iter().map(|a| a.remaining).sum();
     let total_limit: u32 = accounts.iter().map(|a| a.daily_limit).sum();

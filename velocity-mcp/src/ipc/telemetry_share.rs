@@ -1,7 +1,9 @@
-use crate::ipc::shmem::{SharedMemoryBuffer, STATE_IDLE, STATE_REQ_READY, STATE_PROCESSING, STATE_RES_READY, STATE_ERROR};
-use std::path::Path;
+use crate::ipc::shmem::{
+    SharedMemoryBuffer, STATE_ERROR, STATE_IDLE, STATE_PROCESSING, STATE_REQ_READY, STATE_RES_READY,
+};
+use serde::{Deserialize, Serialize};
 use std::error::Error;
-use serde::{Serialize, Deserialize};
+use std::path::Path;
 use std::sync::atomic::AtomicU64;
 
 pub static TELEMETRY_LATENCY_US: AtomicU64 = AtomicU64::new(0);
@@ -147,9 +149,9 @@ impl TelemetryServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::thread;
     use std::time::Duration;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_telemetry_shared_memory_communication() {
@@ -160,8 +162,8 @@ mod tests {
         // Spawn server in a background thread
         let handle = thread::spawn(move || {
             let mut server = TelemetryServer::open(&path_clone).unwrap();
-            server.listen(|req| {
-                match req {
+            server
+                .listen(|req| match req {
                     TelemetryRequest::AstUpdate { file_path, triples } => {
                         assert_eq!(file_path, "src/main.rs");
                         assert_eq!(triples.len(), 2);
@@ -177,7 +179,10 @@ mod tests {
                             warning: None,
                         }
                     }
-                    TelemetryRequest::PresenceUpdate { cursor_line, cursor_col } => {
+                    TelemetryRequest::PresenceUpdate {
+                        cursor_line,
+                        cursor_col,
+                    } => {
                         assert_eq!(cursor_line, 42);
                         assert_eq!(cursor_col, 10);
                         TelemetryResponse {
@@ -185,8 +190,8 @@ mod tests {
                             warning: Some("Overlap warning!".to_string()),
                         }
                     }
-                }
-            }).ok();
+                })
+                .ok();
         });
 
         // Sleep to give server time to set up

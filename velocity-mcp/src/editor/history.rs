@@ -53,7 +53,11 @@ impl FileHistory {
         let mut index = Self::load_index_from_nda(&base, &index_path)
             .unwrap_or_else(|| Self::load_index_from_snapshots(&base));
         Self::sort_index(&mut index);
-        Self { base, index_path, index }
+        Self {
+            base,
+            index_path,
+            index,
+        }
     }
 
     pub fn record(&mut self, file_path: &Path, content: &str) {
@@ -71,7 +75,9 @@ impl FileHistory {
         list.push(snapshot);
         if list.len() > MAX_SNAPSHOTS_PER_FILE {
             list.sort_by_key(|s| s.timestamp);
-            let removed = list.drain(0..=list.len() - MAX_SNAPSHOTS_PER_FILE - 1).collect::<Vec<_>>();
+            let removed = list
+                .drain(0..=list.len() - MAX_SNAPSHOTS_PER_FILE - 1)
+                .collect::<Vec<_>>();
             for snap in removed {
                 let _ = fs::remove_file(self.snapshot_path(file_path, snap.timestamp));
             }
@@ -151,10 +157,16 @@ impl FileHistory {
         }
     }
 
-    fn load_index_from_nda(base: &Path, index_path: &Path) -> Option<HashMap<PathBuf, Vec<Snapshot>>> {
+    fn load_index_from_nda(
+        base: &Path,
+        index_path: &Path,
+    ) -> Option<HashMap<PathBuf, Vec<Snapshot>>> {
         let content = fs::read_to_string(index_path).ok()?;
         let mut lines = content.lines();
-        let header = lines.find(|line| !line.trim().is_empty())?.trim().to_string();
+        let header = lines
+            .find(|line| !line.trim().is_empty())?
+            .trim()
+            .to_string();
         let mut index: HashMap<PathBuf, Vec<Snapshot>> = HashMap::new();
 
         if header == "history version 2" {
@@ -216,7 +228,10 @@ impl FileHistory {
                         let file_name = parts[1];
                         let snapshot = Self::load_snapshot(&path, ts);
                         let file_path = Self::decode_name(file_name);
-                        index.entry(file_path).or_insert_with(Vec::new).push(snapshot);
+                        index
+                            .entry(file_path)
+                            .or_insert_with(Vec::new)
+                            .push(snapshot);
                     }
                 }
             }
@@ -234,7 +249,11 @@ impl FileHistory {
     fn persist_index(&self) -> Result<(), String> {
         let mut file_paths = self.index.keys().cloned().collect::<Vec<_>>();
         file_paths.sort();
-        let snapshot_total = self.index.values().map(|snapshots| snapshots.len()).sum::<usize>();
+        let snapshot_total = self
+            .index
+            .values()
+            .map(|snapshots| snapshots.len())
+            .sum::<usize>();
 
         let mut entries = file_paths
             .iter()
@@ -242,21 +261,23 @@ impl FileHistory {
                 self.index
                     .get(file_path)
                     .into_iter()
-                    .flat_map(move |snapshots| snapshots.iter().map(move |snapshot| {
-                        let snap_name = self
-                            .snapshot_path(file_path, snapshot.timestamp)
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
-                        format!(
-                            "snapshot\t{}\t{}\t{}\t{}",
-                            file_path.display(),
-                            snapshot.timestamp,
-                            snapshot.size,
-                            snap_name
-                        )
-                    }))
+                    .flat_map(move |snapshots| {
+                        snapshots.iter().map(move |snapshot| {
+                            let snap_name = self
+                                .snapshot_path(file_path, snapshot.timestamp)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            format!(
+                                "snapshot\t{}\t{}\t{}\t{}",
+                                file_path.display(),
+                                snapshot.timestamp,
+                                snapshot.size,
+                                snap_name
+                            )
+                        })
+                    })
             })
             .collect::<Vec<_>>();
         entries.sort();
@@ -294,7 +315,13 @@ mod tests {
         let mut hist = FileHistory::new(tmp.path());
         hist.record(Path::new("src/main.rs"), "fn main() {}");
 
-        let index = fs::read_to_string(tmp.path().join(".velocity").join("history").join("index.nda")).unwrap();
+        let index = fs::read_to_string(
+            tmp.path()
+                .join(".velocity")
+                .join("history")
+                .join("index.nda"),
+        )
+        .unwrap();
         assert!(index.starts_with("history version 2\n"));
         assert!(index.contains("file_count 1\n"));
         assert!(index.contains("snapshot_count 1\n"));

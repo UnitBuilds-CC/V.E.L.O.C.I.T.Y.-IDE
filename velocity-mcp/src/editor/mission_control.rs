@@ -63,7 +63,10 @@ impl MissionControlState {
     }
 
     pub fn mirrored_worker_event_count(&self, task_id: u64) -> usize {
-        self.mirrored_worker_event_counts.get(&task_id).copied().unwrap_or(0)
+        self.mirrored_worker_event_counts
+            .get(&task_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn set_mirrored_worker_event_count(&mut self, task_id: u64, count: usize) {

@@ -1,10 +1,10 @@
 use eframe::egui;
 use eframe::egui::{Color32, FontId, Response, Stroke, TextEdit, TextFormat};
+use once_cell::sync::Lazy;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{self, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use once_cell::sync::Lazy;
 
 static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(|| SyntaxSet::load_defaults_newlines());
 static THEME_SET: Lazy<ThemeSet> = Lazy::new(|| ThemeSet::load_defaults());
@@ -39,7 +39,10 @@ impl CodeEditor {
             .and_then(|ext| ext.to_str())
             .unwrap_or("txt");
 
-        let theme = THEME_SET.themes.get("base16-ocean.dark").unwrap_or(&THEME_SET.themes["InspiredGitHub"]);
+        let theme = THEME_SET
+            .themes
+            .get("base16-ocean.dark")
+            .unwrap_or(&THEME_SET.themes["InspiredGitHub"]);
         let syntax = SYNTAX_SET
             .find_syntax_by_extension(extension)
             .cloned()
@@ -63,7 +66,7 @@ impl CodeEditor {
                         font_id: FontId::monospace(13.0),
                         color,
                         ..Default::default()
-                     };
+                    };
                     layout_job.append(word, 0.0, format);
                 }
                 if line.ends_with('\n') {
@@ -110,28 +113,25 @@ impl CodeEditor {
         }
 
         // Wrap the entire editor and gutter in a ScrollArea so they scroll together vertically
-        let scroll_output = egui::ScrollArea::vertical()
-            .show(ui, |ui: &mut egui::Ui| {
-                ui.horizontal_top(|ui: &mut egui::Ui| {
-                    // Line number gutter
-                    ui.add(
-                        egui::Label::new(gutter_job)
-                        .selectable(false),
-                    );
+        let scroll_output = egui::ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
+            ui.horizontal_top(|ui: &mut egui::Ui| {
+                // Line number gutter
+                ui.add(egui::Label::new(gutter_job).selectable(false));
 
-                    // Vertical divider line
-                    ui.add(egui::Separator::default().vertical());
+                // Vertical divider line
+                ui.add(egui::Separator::default().vertical());
 
-                    // Code Editor TextEdit
-                    let text_edit = TextEdit::multiline(text)
-                        .id(self.id)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .layouter(&mut layouter);
+                // Code Editor TextEdit
+                let text_edit = TextEdit::multiline(text)
+                    .id(self.id)
+                    .code_editor()
+                    .desired_width(f32::INFINITY)
+                    .layouter(&mut layouter);
 
-                    ui.add(text_edit)
-                }).inner
-            });
+                ui.add(text_edit)
+            })
+            .inner
+        });
 
         let mut response = scroll_output.inner;
 
@@ -146,7 +146,9 @@ impl CodeEditor {
 
             let mut state = egui::widgets::text_edit::TextEditState::default();
             let ccursor = egui::text::CCursor::new(char_idx);
-            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
             state.store(ui.ctx(), response.id);
             response.request_focus();
         }

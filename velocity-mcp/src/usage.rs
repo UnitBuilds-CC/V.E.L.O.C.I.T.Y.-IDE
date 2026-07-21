@@ -125,16 +125,20 @@ impl UsageTracker {
             if entry.get("date").and_then(|v| v.as_str()) != Some(&today) {
                 continue;
             }
-            let stats = self.data.accounts.entry(key).or_insert_with(|| AccountStats {
-                label: String::new(),
-                tier: "free".into(),
-                requests: 0,
-                tokens_in: 0,
-                tokens_out: 0,
-                exhausted: false,
-                exhausted_at: None,
-                daily_limit: 50,
-            });
+            let stats = self
+                .data
+                .accounts
+                .entry(key)
+                .or_insert_with(|| AccountStats {
+                    label: String::new(),
+                    tier: "free".into(),
+                    requests: 0,
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    exhausted: false,
+                    exhausted_at: None,
+                    daily_limit: 50,
+                });
             stats.exhausted = true;
             if stats.exhausted_at.is_none() {
                 stats.exhausted_at = entry
@@ -160,18 +164,27 @@ impl UsageTracker {
         let daily_limit = std::env::var(format!("CF_ACCOUNT_{n}_DAILY_LIMIT"))
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or_else(|| if tier == "paid" { 500 } else { DEFAULT_LIMITS.1 });
+            .unwrap_or_else(|| {
+                if tier == "paid" {
+                    500
+                } else {
+                    DEFAULT_LIMITS.1
+                }
+            });
 
-        self.data.accounts.entry(key).or_insert_with(|| AccountStats {
-            label: label.to_string(),
-            tier: tier.to_string(),
-            requests: 0,
-            tokens_in: 0,
-            tokens_out: 0,
-            exhausted: false,
-            exhausted_at: None,
-            daily_limit,
-        });
+        self.data
+            .accounts
+            .entry(key)
+            .or_insert_with(|| AccountStats {
+                label: label.to_string(),
+                tier: tier.to_string(),
+                requests: 0,
+                tokens_in: 0,
+                tokens_out: 0,
+                exhausted: false,
+                exhausted_at: None,
+                daily_limit,
+            });
         let stats = self.data.accounts.get_mut(&n.to_string()).unwrap();
         if stats.label.is_empty() {
             stats.label = label.to_string();
@@ -247,16 +260,19 @@ impl UsageTracker {
             .and_then(|v| v.parse().ok())
             .unwrap_or(50);
 
-        self.data.accounts.entry(key.clone()).or_insert_with(|| AccountStats {
-            label: label.to_string(),
-            tier: tier.to_string(),
-            requests: 0,
-            tokens_in: 0,
-            tokens_out: 0,
-            exhausted: false,
-            exhausted_at: None,
-            daily_limit,
-        });
+        self.data
+            .accounts
+            .entry(key.clone())
+            .or_insert_with(|| AccountStats {
+                label: label.to_string(),
+                tier: tier.to_string(),
+                requests: 0,
+                tokens_in: 0,
+                tokens_out: 0,
+                exhausted: false,
+                exhausted_at: None,
+                daily_limit,
+            });
         let stats = self.data.accounts.get_mut(&key).unwrap();
         if stats.label.is_empty() {
             stats.label = label.to_string();
@@ -354,7 +370,10 @@ impl UsageTracker {
         self.data.date.clone()
     }
 
-    pub fn pick_account<'a>(&self, accounts: &'a [CloudflareAccount]) -> Option<&'a CloudflareAccount> {
+    pub fn pick_account<'a>(
+        &self,
+        accounts: &'a [CloudflareAccount],
+    ) -> Option<&'a CloudflareAccount> {
         let available: Vec<&CloudflareAccount> = accounts
             .iter()
             .filter(|a| !self.is_exhausted(a.n))
@@ -370,7 +389,10 @@ impl UsageTracker {
         Some(available[idx])
     }
 
-    pub fn pick_or_account<'a>(&self, accounts: &'a [OpenRouterAccount]) -> Option<&'a OpenRouterAccount> {
+    pub fn pick_or_account<'a>(
+        &self,
+        accounts: &'a [OpenRouterAccount],
+    ) -> Option<&'a OpenRouterAccount> {
         let available: Vec<&OpenRouterAccount> = accounts
             .iter()
             .filter(|a| !self.is_or_exhausted(a.n))
@@ -394,7 +416,8 @@ pub fn load_accounts_from_env() -> Vec<CloudflareAccount> {
         let id_key = format!("CF_ACCOUNT_{i}_ID");
         let token_key = format!("CF_ACCOUNT_{i}_TOKEN");
         if let (Ok(id), Ok(token)) = (std::env::var(&id_key), std::env::var(&token_key)) {
-            let tier = std::env::var(format!("CF_ACCOUNT_{i}_TIER")).unwrap_or_else(|_| "free".into());
+            let tier =
+                std::env::var(format!("CF_ACCOUNT_{i}_TIER")).unwrap_or_else(|_| "free".into());
             let label = std::env::var(format!("CF_ACCOUNT_{i}_LABEL"))
                 .unwrap_or_else(|_| format!("account-{i}"));
             accounts.push(CloudflareAccount {
@@ -407,7 +430,10 @@ pub fn load_accounts_from_env() -> Vec<CloudflareAccount> {
         }
     }
     if accounts.is_empty() {
-        if let (Ok(id), Ok(token)) = (std::env::var("CF_ACCOUNT_ID"), std::env::var("CF_API_TOKEN")) {
+        if let (Ok(id), Ok(token)) = (
+            std::env::var("CF_ACCOUNT_ID"),
+            std::env::var("CF_API_TOKEN"),
+        ) {
             accounts.push(CloudflareAccount {
                 n: 1,
                 id,
@@ -470,18 +496,46 @@ fn serialize_usage_nda(data: &UsageFile) -> String {
     for key in keys {
         if let Some(stats) = data.accounts.get(key) {
             lines.push(format!("account\t{}", encode_nda_text(key)));
-            lines.push(format!("field\t{}\tlabel\t{}", encode_nda_text(key), encode_nda_text(&stats.label)));
-            lines.push(format!("field\t{}\ttier\t{}", encode_nda_text(key), encode_nda_text(&stats.tier)));
-            lines.push(format!("field\t{}\trequests\t{}", encode_nda_text(key), stats.requests));
-            lines.push(format!("field\t{}\ttokens_in\t{}", encode_nda_text(key), stats.tokens_in));
-            lines.push(format!("field\t{}\ttokens_out\t{}", encode_nda_text(key), stats.tokens_out));
-            lines.push(format!("field\t{}\texhausted\t{}", encode_nda_text(key), stats.exhausted));
+            lines.push(format!(
+                "field\t{}\tlabel\t{}",
+                encode_nda_text(key),
+                encode_nda_text(&stats.label)
+            ));
+            lines.push(format!(
+                "field\t{}\ttier\t{}",
+                encode_nda_text(key),
+                encode_nda_text(&stats.tier)
+            ));
+            lines.push(format!(
+                "field\t{}\trequests\t{}",
+                encode_nda_text(key),
+                stats.requests
+            ));
+            lines.push(format!(
+                "field\t{}\ttokens_in\t{}",
+                encode_nda_text(key),
+                stats.tokens_in
+            ));
+            lines.push(format!(
+                "field\t{}\ttokens_out\t{}",
+                encode_nda_text(key),
+                stats.tokens_out
+            ));
+            lines.push(format!(
+                "field\t{}\texhausted\t{}",
+                encode_nda_text(key),
+                stats.exhausted
+            ));
             lines.push(format!(
                 "field\t{}\texhausted_at\t{}",
                 encode_nda_text(key),
                 encode_optional_nda_text(stats.exhausted_at.as_deref())
             ));
-            lines.push(format!("field\t{}\tdaily_limit\t{}", encode_nda_text(key), stats.daily_limit));
+            lines.push(format!(
+                "field\t{}\tdaily_limit\t{}",
+                encode_nda_text(key),
+                stats.daily_limit
+            ));
         }
     }
     lines.join("\n") + "\n"
@@ -613,7 +667,9 @@ fn decode_nda_text(value: &str) -> String {
 }
 
 fn encode_optional_nda_text(value: Option<&str>) -> String {
-    value.map(encode_nda_text).unwrap_or_else(|| "-".to_string())
+    value
+        .map(encode_nda_text)
+        .unwrap_or_else(|| "-".to_string())
 }
 
 fn decode_optional_nda_text(value: &str) -> Option<String> {
@@ -682,8 +738,10 @@ mod tests {
         tracker.record_request(2, "primary account", "paid", 11, 22);
         tracker.mark_or_exhausted(3, "OR account", "free");
 
-        let nda = std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.nda")).unwrap();
-        let json = std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.json")).unwrap();
+        let nda =
+            std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.nda")).unwrap();
+        let json =
+            std::fs::read_to_string(tmp.path().join("memory").join(".account_usage.json")).unwrap();
 
         assert!(nda.starts_with("account-usage version 2\n"));
         assert!(nda.contains("account_count 2"));
@@ -718,13 +776,16 @@ mod tests {
         .unwrap();
 
         let mut tracker = UsageTracker::new(tmp.path());
-        let views = tracker.build_views(&[CloudflareAccount {
-            n: 2,
-            id: "id".to_string(),
-            token: "token".to_string(),
-            tier: "free".to_string(),
-            label: "fallback".to_string(),
-        }], &[]);
+        let views = tracker.build_views(
+            &[CloudflareAccount {
+                n: 2,
+                id: "id".to_string(),
+                token: "token".to_string(),
+                tier: "free".to_string(),
+                label: "fallback".to_string(),
+            }],
+            &[],
+        );
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].label, "nda label");
@@ -747,13 +808,16 @@ mod tests {
         .unwrap();
 
         let mut tracker = UsageTracker::new(tmp.path());
-        let views = tracker.build_views(&[CloudflareAccount {
-            n: 2,
-            id: "id".to_string(),
-            token: "token".to_string(),
-            tier: "free".to_string(),
-            label: "fallback".to_string(),
-        }], &[]);
+        let views = tracker.build_views(
+            &[CloudflareAccount {
+                n: 2,
+                id: "id".to_string(),
+                token: "token".to_string(),
+                tier: "free".to_string(),
+                label: "fallback".to_string(),
+            }],
+            &[],
+        );
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].label, "legacy label");

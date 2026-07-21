@@ -1,8 +1,8 @@
+use crate::automation::mediator::MediatorArena;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use crate::automation::mediator::MediatorArena;
 
 pub struct MerkleGraphView {
     // Cache node positions to avoid layout jumping on redraw
@@ -16,12 +16,7 @@ impl MerkleGraphView {
         }
     }
 
-    pub fn ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        workspace_root: &Path,
-        mediator: &MediatorArena,
-    ) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, workspace_root: &Path, mediator: &MediatorArena) {
         ui.vertical(|ui| {
             ui.label(egui::RichText::new("🌲 MERKLE SEMANTIC GRAPH EXPLORER").size(14.0).strong().color(Color32::from_rgb(34, 211, 238)));
             ui.label("Interactive visualization of declarations, method calls, and active edit locks using canonical workspace-relative path identities.");
