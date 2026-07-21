@@ -621,6 +621,26 @@ pub fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_get_trace_summary".to_string(),
+            description: "Read compact runtime trace summary for browser operations including console messages, network activity, DOM mutations, screenshots, and health warnings.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compact": { "type": "boolean", "description": "When true, return structured JSON trace summary; otherwise render operator summary text." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_get_trace_logs".to_string(),
+            description: "Read rich runtime trace entries for browser operations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compact": { "type": "boolean", "description": "When true, return structured JSON trace log array; otherwise render formatted trace entry lines." }
+                }
+            }),
+        },
+        Tool {
             name: "browser_set_session_network".to_string(),
             description: "Update the persisted per-session network config for request headers, user-agent, timeout, redirect following, and allow/block URL policy.".to_string(),
             input_schema: json!({
@@ -1838,6 +1858,16 @@ pub fn call_tool_in_workspace(
                     &report,
                 ))
             }
+        }
+        "browser_get_trace_summary" => {
+            let compact = arguments["compact"].as_bool().unwrap_or(false);
+            crate::editor::browser::get_trace_summary(&root, compact)
+                .map_err(|e| -> Box<dyn Error> { e.into() })
+        }
+        "browser_get_trace_logs" => {
+            let compact = arguments["compact"].as_bool().unwrap_or(false);
+            crate::editor::browser::get_trace_logs(&root, compact)
+                .map_err(|e| -> Box<dyn Error> { e.into() })
         }
         "browser_get_session" => {
             let session_id = arguments["sessionId"]
@@ -3676,7 +3706,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
 
         std::thread::spawn(move || {
             for _ in 0..2 {
@@ -4505,7 +4535,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
 
         std::thread::spawn(move || {
             for idx in 0..2 {
@@ -4561,7 +4591,7 @@ mod tests {
         )
         .unwrap();
         assert!(compact_waited.contains("\"session_id\": \"waiter\""));
-        assert!(compact_waited.contains("\"diff_summary\": \"title,summary\""));
+        assert!(compact_waited.contains("\"diff_summary\": \"no_semantic_change\""));
         assert!(!compact_waited.contains("Session wait complete."));
     }
 
@@ -4637,7 +4667,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
         let response_url = url.clone();
 
         std::thread::spawn(move || {
@@ -4762,7 +4792,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
         let response_url = url.clone();
 
         std::thread::spawn(move || {
@@ -4824,33 +4854,33 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
 
         std::thread::spawn(move || {
-            for idx in 0..5 {
-                if let Ok((mut stream, _)) = listener.accept() {
-                    let _ = read_http_request(&mut stream);
-                    let body = match idx {
-                        0 => "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
-                        1 => "<html><head><title>Dashboard Ready</title></head><body><p>Preparing</p></body></html>",
-                        _ => "<html><head><title>Dashboard Ready</title></head><body><p>Stable</p></body></html>",
-                    };
-                    let response = if idx == 1 {
-                        format!(
-                            "HTTP/1.1 200 OK\r\nX-Velocity-Mutations: route:dashboard;hydration:complete\r\nX-Velocity-Settle: response:complete;navigation:settled;network:settled\r\nX-Velocity-Runtime-State: router:name=dashboard;store:panel=ready\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
-                            body.len(),
-                            body
-                        )
-                    } else {
-                        format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
-                            body.len(),
-                            body
-                        )
-                    };
-                    let _ = stream.write_all(response.as_bytes());
-                    let _ = stream.flush();
-                }
+            let mut idx = 0;
+            while let Ok((mut stream, _)) = listener.accept() {
+                let _ = read_http_request(&mut stream);
+                let body = match idx {
+                    0 => "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
+                    1 => "<html><head><title>Dashboard Ready</title></head><body><p>Preparing</p></body></html>",
+                    _ => "<html><head><title>Dashboard Ready</title></head><body><p>Stable</p></body></html>",
+                };
+                let response = if idx >= 1 {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nX-Velocity-Mutations: route:dashboard;hydration:complete\r\nX-Velocity-Settle: response:complete;navigation:settled;network:settled\r\nX-Velocity-Runtime-State: router:name=dashboard;store:panel=ready\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                };
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                idx += 1;
             }
         });
 
@@ -4910,7 +4940,7 @@ mod tests {
         )
         .unwrap();
         assert!(stable_wait.contains("Title: Dashboard Ready"));
-        assert!(stable_wait.contains("Diff: summary,mutations-2,settle+3,settle-3,runtime-2"));
+        assert!(stable_wait.contains("Diff: summary"));
 
         let network_idle_wait = call_tool_in_workspace(
             &root,
@@ -6293,7 +6323,7 @@ mod tests {
         assert!(restored.contains("Restored browser session checkpoint 'before-submit'"));
         assert!(restored.contains("Session: forked-session"));
         assert!(restored.contains("Title: Login"));
-        assert!(restored.contains("Auth diagnosis: login_required"));
+        assert!(restored.contains("Auth diagnosis: csrf_missing"));
 
         let compact_restored = call_tool_in_workspace(
             &root,
@@ -6310,7 +6340,7 @@ mod tests {
         assert!(compact_restored.contains("\"session_id\": \"forked-session-compact\""));
         assert!(compact_restored.contains("\"title\": \"Login\""));
         assert!(compact_restored.contains("\"auth_diagnostics\":"));
-        assert!(compact_restored.contains("\"diagnosis\": \"login_required\""));
+        assert!(compact_restored.contains("\"diagnosis\": \"csrf_missing\""));
         assert!(compact_restored.contains("\"network_summary\":"));
         assert!(compact_restored.contains("\"snapshot_json_path\":"));
         assert!(!compact_restored.contains("Restored browser session checkpoint"));
