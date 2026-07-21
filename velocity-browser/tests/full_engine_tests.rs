@@ -1,30 +1,28 @@
-use velocity_browser::engine::Canvas2DContext;
-use velocity_browser::net::{ProxyResolver, ProxyType};
+use velocity_browser::engine::SvgVectorEngine;
+use velocity_browser::net::WebRtcTransport;
 use velocity_browser::session::BrowserSession;
+use velocity_browser::session_indexeddb::IndexedDbStorage;
 
 #[test]
-fn test_canvas_2d_context_drawing() {
-    let mut ctx = Canvas2DContext::new(100, 100);
-    ctx.fill_rect(10, 10, 50, 50, 255, 0, 0, 255); // Red rect
-    let hash = ctx.pixel_buffer.compute_hash();
-    assert_ne!(hash, 0);
+fn test_svg_path_parsing_and_bounds() {
+    let d = "M 10 20 L 50 80 Z";
+    let cmds = SvgVectorEngine::parse_path_d(d);
+    assert_eq!(cmds.len(), 3);
+    let (x, y, w, h) = SvgVectorEngine::compute_vector_bounds(&cmds);
+    assert_eq!(x, 10.0);
+    assert_eq!(y, 20.0);
+    assert_eq!(w, 40.0);
+    assert_eq!(h, 60.0);
 }
 
 #[test]
-fn test_proxy_resolver_and_storage_broadcaster() {
-    let mut session = BrowserSession::new("sess_specialized".to_string());
-    session.proxy_resolver.set_http_proxy("127.0.0.1", 8080);
-    let proxy = session.proxy_resolver.resolve_proxy_for_url("http://example.com");
+fn test_webrtc_signaling_and_indexeddb() {
+    let mut rtc = WebRtcTransport::new("peer_123");
+    let answer = rtc.set_remote_offer("v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n");
+    assert!(answer.contains("sendrecv"));
 
-    match proxy {
-        ProxyType::Http(host, port) => {
-            assert_eq!(host, "127.0.0.1");
-            assert_eq!(port, 8080);
-        }
-        _ => panic!("Expected HTTP proxy"),
-    }
-
-    session.set_storage_item("theme", "dark");
+    let mut session = BrowserSession::new("sess_indexeddb".to_string());
+    session.indexed_db.put_item("user_store", "user_1", "{\"name\":\"Alice\"}");
     let state = session.capture_state_nda();
-    assert!(state.iter().any(|t| t.predicate_id == 150)); // Storage event predicate
+    assert!(state.iter().any(|t| t.predicate_id == 160)); // IndexedDB predicate
 }

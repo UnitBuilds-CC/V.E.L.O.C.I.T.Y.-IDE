@@ -1,16 +1,17 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
-use crate::dom::{DomTree, NativeMutationObserver};
+use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
     FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
-    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, TraceCollector,
+    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TraceCollector,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine};
 use crate::layout::{DisplayMode, FlexDirection, FlexLayoutEngine, LayoutBox, LayoutEngine2D};
-use crate::net::{HttpClient, NativeWsClient, ProxyResolver};
+use crate::net::{HttpClient, NativeWsClient, ProxyResolver, WebRtcTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
+use crate::session_indexeddb::IndexedDbStorage;
 use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
 use crate::style::StyleCascader;
 use std::collections::HashMap;
@@ -37,7 +38,9 @@ pub struct BrowserSession {
     pub device_profile: DeviceProfile,
     pub trace_collector: TraceCollector,
     pub mutation_observer: NativeMutationObserver,
+    pub mutation_batcher: MutationBatcher,
     pub storage_broadcaster: StorageEventBroadcaster,
+    pub indexed_db: IndexedDbStorage,
     pub proxy_resolver: ProxyResolver,
     pub cascader: StyleCascader,
     pub js_vm: JsVirtualMachine,
@@ -52,7 +55,7 @@ pub struct BrowserSession {
 impl BrowserSession {
     pub fn new(session_id: String) -> Self {
         Self {
-            session_id,
+            session_id: session_id.clone(),
             current_url: String::new(),
             page_title: "Untitled Page".to_string(),
             dom_tree: None,
@@ -62,7 +65,9 @@ impl BrowserSession {
             device_profile: DeviceProfile::desktop_chrome(),
             trace_collector: TraceCollector::new(),
             mutation_observer: NativeMutationObserver::new(),
+            mutation_batcher: MutationBatcher::new(),
             storage_broadcaster: StorageEventBroadcaster::new(),
+            indexed_db: IndexedDbStorage::new(&format!("db_{}", session_id)),
             proxy_resolver: ProxyResolver::direct(),
             cascader: StyleCascader::new(),
             js_vm: JsVirtualMachine::new(),
@@ -204,12 +209,13 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, storage event, and trace triples
+        // Add device profile, file, mutation, storage event, indexeddb, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
         encoder.triples.extend(self.mutation_observer.export_mutations_nda());
         encoder.triples.extend(self.storage_broadcaster.export_events_nda());
+        encoder.triples.extend(self.indexed_db.export_indexeddb_nda());
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {
