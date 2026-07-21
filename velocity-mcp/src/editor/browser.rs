@@ -115,6 +115,27 @@ pub struct BrowserProtocolEvent {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserFrameInventoryEntry {
+    pub selector: String,
+    pub name: String,
+    pub title: String,
+    pub source: String,
+    pub same_origin: bool,
+    pub accessible: bool,
+    pub semantic_node_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserShadowHostInventoryEntry {
+    pub selector: String,
+    pub tag: String,
+    pub role: String,
+    pub mode: String,
+    pub semantic_node_count: usize,
+    pub text_sample: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct BrowserNetworkSummary {
     pub redirect_count: usize,
@@ -628,6 +649,12 @@ pub struct BrowserRuntimeCaptureReport {
     pub settle_signal_count: usize,
     pub runtime_state_count: usize,
     pub protocol_event_count: usize,
+    pub frame_count: usize,
+    pub shadow_host_count: usize,
+    #[serde(default)]
+    pub frames: Vec<BrowserFrameInventoryEntry>,
+    #[serde(default)]
+    pub shadow_hosts: Vec<BrowserShadowHostInventoryEntry>,
     #[serde(default)]
     pub network_summary: BrowserNetworkSummary,
     pub local_storage_count: usize,
@@ -1231,6 +1258,40 @@ struct RuntimeCaptureApiProtocolEvent {
     detail: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+struct RuntimeCaptureApiFrameEntry {
+    #[serde(default)]
+    selector: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    same_origin: bool,
+    #[serde(default)]
+    accessible: bool,
+    #[serde(default)]
+    semantic_node_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+struct RuntimeCaptureApiShadowHostEntry {
+    #[serde(default)]
+    selector: String,
+    #[serde(default)]
+    tag: String,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    semantic_node_count: usize,
+    #[serde(default)]
+    text_sample: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeActionApiResult {
     pub action: String,
@@ -1274,6 +1335,10 @@ struct RuntimeCaptureApiResponse {
     protocol_events: Vec<RuntimeCaptureApiProtocolEvent>,
     #[serde(default)]
     requests: Vec<RuntimeCaptureApiRequestRecord>,
+    #[serde(default)]
+    frames: Vec<RuntimeCaptureApiFrameEntry>,
+    #[serde(default)]
+    shadow_hosts: Vec<RuntimeCaptureApiShadowHostEntry>,
     #[serde(default)]
     warnings: Vec<String>,
     #[serde(default)]
@@ -1559,6 +1624,27 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         }
         warnings
     };
+    let frames = value
+        .get("frames")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value::<RuntimeCaptureApiFrameEntry>(item.clone()).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let shadow_hosts = value
+        .get("shadowHosts")
+        .or_else(|| value.get("shadow_hosts"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value::<RuntimeCaptureApiShadowHostEntry>(item.clone()).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     let mut runtime_state = Vec::new();
     if let Some(state) = value.get("runtimeState").and_then(serde_json::Value::as_object) {
@@ -1625,6 +1711,20 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
                 value: created_at.to_string(),
             });
         }
+        if let Some(frame_count) = state.get("frameCount").and_then(serde_json::Value::as_u64) {
+            runtime_state.push(RuntimeCaptureApiState {
+                scope: "runtime_session".to_string(),
+                key: "frame_count".to_string(),
+                value: frame_count.to_string(),
+            });
+        }
+        if let Some(shadow_host_count) = state.get("shadowHostCount").and_then(serde_json::Value::as_u64) {
+            runtime_state.push(RuntimeCaptureApiState {
+                scope: "runtime_session".to_string(),
+                key: "shadow_host_count".to_string(),
+                value: shadow_host_count.to_string(),
+            });
+        }
     }
     if let Some(protocol) = value.get("protocolEvidence").and_then(serde_json::Value::as_object) {
         if let Some(backend) = protocol.get("backend").and_then(serde_json::Value::as_str) {
@@ -1662,6 +1762,41 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
                 });
             }
         }
+    }
+    if !frames.is_empty() {
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_frames".to_string(),
+            key: "count".to_string(),
+            value: frames.len().to_string(),
+        });
+        let accessible_count = frames.iter().filter(|frame| frame.accessible).count();
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_frames".to_string(),
+            key: "accessible_count".to_string(),
+            value: accessible_count.to_string(),
+        });
+        let same_origin_count = frames.iter().filter(|frame| frame.same_origin).count();
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_frames".to_string(),
+            key: "same_origin_count".to_string(),
+            value: same_origin_count.to_string(),
+        });
+    }
+    if !shadow_hosts.is_empty() {
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_shadow".to_string(),
+            key: "host_count".to_string(),
+            value: shadow_hosts.len().to_string(),
+        });
+        let semantic_count = shadow_hosts
+            .iter()
+            .map(|host| host.semantic_node_count)
+            .sum::<usize>();
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_shadow".to_string(),
+            key: "semantic_node_count".to_string(),
+            value: semantic_count.to_string(),
+        });
     }
     if let Some(action_result) = &action {
         runtime_state.push(RuntimeCaptureApiState {
@@ -1726,6 +1861,8 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         runtime_state,
         protocol_events: Vec::new(),
         requests: Vec::new(),
+        frames,
+        shadow_hosts,
         warnings,
         action,
     })
@@ -4440,6 +4577,31 @@ fn build_compatibility_report(
             if live_runtime_count > 0 {
                 signals.push(format!("runtime:live_channels={live_runtime_count}"));
             }
+            let frame_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| entry.scope == "runtime_session" && entry.key == "frame_count")
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or(0);
+            let shadow_host_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| entry.scope == "runtime_session" && entry.key == "shadow_host_count")
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or(0);
+            let accessible_frame_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| entry.scope == "runtime_frames" && entry.key == "accessible_count")
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or(0);
+            if frame_count > 0 {
+                signals.push(format!("runtime:frames={frame_count}"));
+                signals.push(format!("runtime:accessible_frames={accessible_frame_count}"));
+            }
+            if shadow_host_count > 0 {
+                signals.push(format!("runtime:shadow_hosts={shadow_host_count}"));
+            }
 
             if challenge_blocked {
                 (
@@ -4464,6 +4626,20 @@ fn build_compatibility_report(
                     "runtime_only_surface".to_string(),
                     "The page looks runtime-driven but exposes no usable semantic controls in the persisted snapshot, so it is effectively unsupported by the current static engine.".to_string(),
                     "Escalate to a browser/runtime with real JS execution, or capture the same workflow through a server-rendered or less dynamic route if one exists.".to_string(),
+                )
+            } else if frame_count > 0 && accessible_frame_count < frame_count {
+                (
+                    "runtime_limited".to_string(),
+                    "cross_origin_embeds".to_string(),
+                    "The page includes embedded frames that are not all same-origin or script-accessible, so the current browser evidence can only partially inspect the full surface.".to_string(),
+                    "Prefer same-origin routes or richer runtime flows that can explicitly operate the embedded experience; treat inaccessible frames as a hard limit instead of assuming their controls are available.".to_string(),
+                )
+            } else if shadow_host_count > 0 && semantic_surface_missing {
+                (
+                    "runtime_limited".to_string(),
+                    "shadow_dom_surface".to_string(),
+                    "The page appears to rely on shadow-DOM components, and the persisted snapshot surface may still be incomplete even though runtime discovery found shadow hosts.".to_string(),
+                    "Use runtime-backed capture/action flows for the current page and verify the needed controls become visible before proceeding; do not assume hidden shadow content is already reflected in the persisted snapshot.".to_string(),
                 )
             } else if device_or_identity_limited && runtime_heavy {
                 (
@@ -5520,13 +5696,30 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
             format!("\nAction: {}", parts.join(" | "))
         })
         .unwrap_or_default();
+    let frame_summary = if report.frame_count == 0 {
+        String::new()
+    } else {
+        let accessible = report.frames.iter().filter(|frame| frame.accessible).count();
+        let same_origin = report.frames.iter().filter(|frame| frame.same_origin).count();
+        format!("\nFrames: {} (accessible {}, same-origin {})", report.frame_count, accessible, same_origin)
+    };
+    let shadow_summary = if report.shadow_host_count == 0 {
+        String::new()
+    } else {
+        let semantic_nodes = report
+            .shadow_hosts
+            .iter()
+            .map(|host| host.semantic_node_count)
+            .sum::<usize>();
+        format!("\nShadow hosts: {} (semantic nodes {})", report.shadow_host_count, semantic_nodes)
+    };
     let warnings = if report.warnings.is_empty() {
         String::new()
     } else {
         format!("\nWarnings ({}): {}", report.warning_count, report.warnings.join(" | "))
     };
     format!(
-        "Runtime capture complete.\nSession: {}\nURL: {}\nTitle: {}\nBackend: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nAOM summary chars: {}{}{}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
+        "Runtime capture complete.\nSession: {}\nURL: {}\nTitle: {}\nBackend: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}{}{}\nLocal storage: {}\nSession storage: {}\nAOM summary chars: {}{}{}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
         report.session_id,
         report.url,
         report.title,
@@ -5538,6 +5731,8 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
         report.runtime_state_count,
         report.protocol_event_count,
         network_summary,
+        frame_summary,
+        shadow_summary,
         report.local_storage_count,
         report.session_storage_count,
         report.aom_summary_chars,
@@ -5664,6 +5859,31 @@ fn persist_runtime_capture_artifacts(
             detail: event.detail.clone(),
         })
         .collect::<Vec<_>>();
+    let frames = captured
+        .frames
+        .iter()
+        .map(|frame| BrowserFrameInventoryEntry {
+            selector: frame.selector.clone(),
+            name: frame.name.clone(),
+            title: frame.title.clone(),
+            source: frame.source.clone(),
+            same_origin: frame.same_origin,
+            accessible: frame.accessible,
+            semantic_node_count: frame.semantic_node_count,
+        })
+        .collect::<Vec<_>>();
+    let shadow_hosts = captured
+        .shadow_hosts
+        .iter()
+        .map(|host| BrowserShadowHostInventoryEntry {
+            selector: host.selector.clone(),
+            tag: host.tag.clone(),
+            role: host.role.clone(),
+            mode: host.mode.clone(),
+            semantic_node_count: host.semantic_node_count,
+            text_sample: host.text_sample.clone(),
+        })
+        .collect::<Vec<_>>();
 
     let mut snapshot = parse_html_to_snapshot_with_runtime_state(
         &captured.final_url,
@@ -5740,6 +5960,10 @@ fn persist_runtime_capture_artifacts(
         settle_signal_count: snapshot.settle_signals.len(),
         runtime_state_count: snapshot.runtime_state.len(),
         protocol_event_count: snapshot.protocol_events.len(),
+        frame_count: frames.len(),
+        shadow_host_count: shadow_hosts.len(),
+        frames,
+        shadow_hosts,
         network_summary: summarize_network_activity(&snapshot.protocol_events),
         local_storage_count: session.local_storage.len(),
         session_storage_count: session.session_storage.len(),
@@ -9318,15 +9542,15 @@ mod tests {
         parse_html_to_snapshot, read_auth_profile_report, render_access_diagnostics_report, render_auth_profile_apply_report,
         read_session_transcript_entry, read_session_transcript_report, render_auth_profile_save_report,
         render_auth_reseed_report, render_checkpoint_restore_report, render_cookie_read_report,
-        render_session_action_report, render_session_navigation_report, render_session_transcript_report,
+        render_runtime_capture_report, render_session_action_report, render_session_navigation_report, render_session_transcript_report,
         render_session_wait_report, render_storage_read_report, render_web_navigate_report, render_workflow_dsl,
         replay_workflow, replay_workflow_in_session, reseed_auth_state_report, restore_session_checkpoint,
         restore_session_checkpoint_report, run_workflow_suite, save_auth_profile_report, save_session_checkpoint,
         save_session_state, save_workflow, save_workflow_suite, session_click_report,
         session_fill_report, session_submit_report, set_session_cookies, set_session_storage_entries, summarize_snapshot_diff,
         wait_for_session, wait_for_session_report, write_crawl_facts, write_snapshot_json, AomElement, BrowserCookie,
-        BrowserForm, BrowserFormField, BrowserListSortDirection,
-        BrowserPageSnapshot, BrowserProtocolEvent, BrowserRuntimeState, BrowserStorageBucket,
+        BrowserForm, BrowserFormField, BrowserFrameInventoryEntry, BrowserListSortDirection,
+        BrowserPageSnapshot, BrowserProtocolEvent, BrowserRuntimeCaptureReport, BrowserRuntimeState, BrowserShadowHostInventoryEntry, BrowserStorageBucket,
         BrowserWorkflow, BrowserWorkflowStep, BrowserWorkflowSuite,
     };
     use std::collections::HashMap;
@@ -11864,6 +12088,142 @@ mod tests {
         let rendered = render_session_health_report(&report);
         assert!(rendered.contains("Compatibility: unsupported"));
         assert!(rendered.contains("Compatibility cause: canvas_or_webgl_surface"));
+    }
+
+    #[test]
+    fn renders_runtime_capture_report_with_frame_and_shadow_inventory() {
+        let report = BrowserRuntimeCaptureReport {
+            session_id: "runtime-explicit".to_string(),
+            url: "https://runtime.test/captured".to_string(),
+            title: "Runtime Captured".to_string(),
+            form_count: 1,
+            cookie_count: 1,
+            request_count: 0,
+            settle_signal_count: 0,
+            runtime_state_count: 6,
+            protocol_event_count: 0,
+            frame_count: 2,
+            shadow_host_count: 1,
+            frames: vec![
+                BrowserFrameInventoryEntry {
+                    selector: "iframe#checkout".to_string(),
+                    name: String::new(),
+                    title: String::new(),
+                    source: "https://payments.example/frame".to_string(),
+                    same_origin: false,
+                    accessible: false,
+                    semantic_node_count: 0,
+                },
+                BrowserFrameInventoryEntry {
+                    selector: "iframe[name=embedded]".to_string(),
+                    name: "embedded".to_string(),
+                    title: String::new(),
+                    source: "/embedded".to_string(),
+                    same_origin: true,
+                    accessible: true,
+                    semantic_node_count: 4,
+                },
+            ],
+            shadow_hosts: vec![BrowserShadowHostInventoryEntry {
+                selector: "checkout-shell".to_string(),
+                tag: "checkout-shell".to_string(),
+                role: String::new(),
+                mode: "open".to_string(),
+                semantic_node_count: 3,
+                text_sample: "Pay now".to_string(),
+            }],
+            network_summary: Default::default(),
+            local_storage_count: 1,
+            session_storage_count: 1,
+            snapshot_json_path: "snapshot.json".to_string(),
+            session_json_path: "session.json".to_string(),
+            nda_facts_path: "facts.nda".to_string(),
+            html_fallback_path: None,
+            capture_backend: "go-chromedp".to_string(),
+            aom_summary_chars: 9,
+            warning_count: 1,
+            warnings: vec!["capture-warning".to_string()],
+            action: None,
+        };
+
+        let rendered = render_runtime_capture_report(&report);
+        assert!(rendered.contains("Frames: 2 (accessible 1, same-origin 1)"));
+        assert!(rendered.contains("Shadow hosts: 1 (semantic nodes 3)"));
+        assert!(rendered.contains("Warnings (1): capture-warning"));
+    }
+
+    #[test]
+    fn compatibility_reports_cross_origin_embeds_and_shadow_surface_limits() {
+        let snapshot = BrowserPageSnapshot {
+            url: "https://example.test/app".to_string(),
+            title: "Embedded App".to_string(),
+            summary: "Runtime-heavy page".to_string(),
+            elements: vec![AomElement {
+                role: "link".to_string(),
+                name: "Open".to_string(),
+                value: String::new(),
+                target_url: Some("/open".to_string()),
+                supported_actions: vec!["click".to_string()],
+                provenance: "native".to_string(),
+                actionability: 100,
+            }],
+            forms: Vec::new(),
+            cookies: Vec::new(),
+            storage: Vec::new(),
+            mutations: Vec::new(),
+            requests: Vec::new(),
+            settle_signals: Vec::new(),
+            runtime_state: vec![
+                BrowserRuntimeState { scope: "runtime_session".to_string(), key: "frame_count".to_string(), value: "2".to_string() },
+                BrowserRuntimeState { scope: "runtime_frames".to_string(), key: "accessible_count".to_string(), value: "1".to_string() },
+            ],
+            protocol_events: Vec::new(),
+        };
+        let access = super::BrowserAccessDiagnosticsReport {
+            session: super::summarize_session(super::BrowserSessionState {
+                id: "compat-session".to_string(),
+                current_url: Some("https://example.test/app".to_string()),
+                cookies: Vec::new(),
+                local_storage: HashMap::new(),
+                session_storage: HashMap::new(),
+                network: super::BrowserSessionNetworkConfig::default(),
+                last_html: None,
+            }),
+            diagnosis: "clear".to_string(),
+            recommended_action: "Proceed".to_string(),
+            snapshot_available: true,
+            challenge_signal_count: 0,
+            challenge_signals: Vec::new(),
+            router_name: None,
+            session_json_path: "session.json".to_string(),
+            snapshot_json_path: Some("snapshot.json".to_string()),
+        };
+        let compatibility = super::build_compatibility_report(Some(&snapshot), Some("<html><body><iframe></iframe></body></html>"), &access);
+        assert_eq!(compatibility.level, "runtime_limited");
+        assert_eq!(compatibility.cause, "cross_origin_embeds");
+        assert!(compatibility.signals.iter().any(|signal| signal == "runtime:frames=2"));
+        assert!(compatibility.signals.iter().any(|signal| signal == "runtime:accessible_frames=1"));
+
+        let shadow_snapshot = BrowserPageSnapshot {
+            url: "https://example.test/shadow".to_string(),
+            title: "Shadow App".to_string(),
+            summary: "Shadow DOM shell".to_string(),
+            elements: Vec::new(),
+            forms: Vec::new(),
+            cookies: Vec::new(),
+            storage: Vec::new(),
+            mutations: Vec::new(),
+            requests: Vec::new(),
+            settle_signals: Vec::new(),
+            runtime_state: vec![
+                BrowserRuntimeState { scope: "runtime_session".to_string(), key: "shadow_host_count".to_string(), value: "1".to_string() },
+            ],
+            protocol_events: Vec::new(),
+        };
+        let shadow_compatibility = super::build_compatibility_report(Some(&shadow_snapshot), Some("<html><body><checkout-shell></checkout-shell></body></html>"), &access);
+        assert_eq!(shadow_compatibility.level, "runtime_limited");
+        assert_eq!(shadow_compatibility.cause, "shadow_dom_surface");
+        assert!(shadow_compatibility.signals.iter().any(|signal| signal == "runtime:shadow_hosts=1"));
     }
 
     #[test]

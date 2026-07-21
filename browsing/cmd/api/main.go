@@ -59,15 +59,36 @@ type runtimeSessionActionRequest struct {
 }
 
 type runtimeSessionState struct {
-	SessionID    string    `json:"sessionId,omitempty"`
-	Alive        bool      `json:"alive"`
-	Mode         string    `json:"mode"`
-	DebugPort    int       `json:"debugPort,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastAction   string    `json:"lastAction,omitempty"`
-	ActiveTarget string    `json:"activeTargetId,omitempty"`
-	MainTarget   string    `json:"mainTargetId,omitempty"`
-	LastAomNodes int       `json:"lastAomNodeCount"`
+	SessionID       string    `json:"sessionId,omitempty"`
+	Alive           bool      `json:"alive"`
+	Mode            string    `json:"mode"`
+	DebugPort       int       `json:"debugPort,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	LastAction      string    `json:"lastAction,omitempty"`
+	ActiveTarget    string    `json:"activeTargetId,omitempty"`
+	MainTarget      string    `json:"mainTargetId,omitempty"`
+	LastAomNodes    int       `json:"lastAomNodeCount"`
+	FrameCount      int       `json:"frameCount,omitempty"`
+	ShadowHostCount int       `json:"shadowHostCount,omitempty"`
+}
+
+type runtimeFrameSummary struct {
+	Selector          string `json:"selector,omitempty"`
+	Name              string `json:"name,omitempty"`
+	Title             string `json:"title,omitempty"`
+	Source            string `json:"source,omitempty"`
+	SameOrigin        bool   `json:"sameOrigin"`
+	Accessible        bool   `json:"accessible"`
+	SemanticNodeCount int    `json:"semanticNodeCount,omitempty"`
+}
+
+type runtimeShadowHostSummary struct {
+	Selector          string `json:"selector,omitempty"`
+	Tag               string `json:"tag,omitempty"`
+	Role              string `json:"role,omitempty"`
+	Mode              string `json:"mode,omitempty"`
+	SemanticNodeCount int    `json:"semanticNodeCount,omitempty"`
+	TextSample        string `json:"textSample,omitempty"`
 }
 
 type runtimeProtocolEvidence struct {
@@ -96,20 +117,22 @@ type runtimeActionResult struct {
 }
 
 type runtimeSessionCaptureResponse struct {
-	SessionID        string                  `json:"sessionId,omitempty"`
-	FinalURL         string                  `json:"finalUrl"`
-	Title            string                  `json:"title"`
-	HTML             string                  `json:"html"`
-	Cookies          []string                `json:"cookies"`
-	Storage          runtimeStorageSnapshot  `json:"storage"`
-	Fields           map[string]string       `json:"fields"`
-	RuntimeState     runtimeSessionState     `json:"runtimeState"`
-	ProtocolEvidence runtimeProtocolEvidence `json:"protocolEvidence"`
-	Warnings         []string                `json:"warnings,omitempty"`
-	Action           *runtimeActionResult    `json:"action,omitempty"`
-	AOM              string                  `json:"aom,omitempty"`
-	PageText         string                  `json:"pageText,omitempty"`
-	Scripts          []string                `json:"scripts,omitempty"`
+	SessionID        string                     `json:"sessionId,omitempty"`
+	FinalURL         string                     `json:"finalUrl"`
+	Title            string                     `json:"title"`
+	HTML             string                     `json:"html"`
+	Cookies          []string                   `json:"cookies"`
+	Storage          runtimeStorageSnapshot     `json:"storage"`
+	Fields           map[string]string          `json:"fields"`
+	Frames           []runtimeFrameSummary      `json:"frames,omitempty"`
+	ShadowHosts      []runtimeShadowHostSummary `json:"shadowHosts,omitempty"`
+	RuntimeState     runtimeSessionState        `json:"runtimeState"`
+	ProtocolEvidence runtimeProtocolEvidence    `json:"protocolEvidence"`
+	Warnings         []string                   `json:"warnings,omitempty"`
+	Action           *runtimeActionResult       `json:"action,omitempty"`
+	AOM              string                     `json:"aom,omitempty"`
+	PageText         string                     `json:"pageText,omitempty"`
+	Scripts          []string                   `json:"scripts,omitempty"`
 }
 
 type runtimeOpenSessionResponse struct {
@@ -606,7 +629,16 @@ func captureRuntimeSession(entry *runtimeSessionEntry) (*runtimeSessionCaptureRe
 		warnings = append(warnings, fmt.Sprintf("failed to extract fields: %v", err))
 		fields = map[string]string{}
 	}
+	frames, shadowHosts, err := captureFrameAndShadowInventory(entry.Session)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("failed to inventory frames/shadow hosts: %v", err))
+		frames = nil
+		shadowHosts = nil
+	}
 
+	state := runtimeStateFromEntry(entry)
+	state.FrameCount = len(frames)
+	state.ShadowHostCount = len(shadowHosts)
 	resp := &runtimeSessionCaptureResponse{
 		SessionID:        entry.ID,
 		FinalURL:         finalURL,
@@ -615,7 +647,9 @@ func captureRuntimeSession(entry *runtimeSessionEntry) (*runtimeSessionCaptureRe
 		Cookies:          entry.Session.GetCookies(),
 		Storage:          storage,
 		Fields:           fields,
-		RuntimeState:     runtimeStateFromEntry(entry),
+		Frames:           frames,
+		ShadowHosts:      shadowHosts,
+		RuntimeState:     state,
 		ProtocolEvidence: protocolEvidenceFromEntry(entry),
 		Warnings:         warnings,
 		AOM:              truncateWithWarning("aom", aom, 20000, &warnings),
@@ -784,6 +818,84 @@ func runtimeStateFromEntry(entry *runtimeSessionEntry) runtimeSessionState {
 		state.LastAomNodes = countAomNodes(entry.Session.LastAom)
 	}
 	return state
+}
+
+func captureFrameAndShadowInventory(session *browserpkg.Session) ([]runtimeFrameSummary, []runtimeShadowHostSummary, error) {
+	if session == nil {
+		return nil, nil, fmt.Errorf("session is nil")
+	}
+	var result struct {
+		Frames      []runtimeFrameSummary      `json:"frames"`
+		ShadowHosts []runtimeShadowHostSummary `json:"shadowHosts"`
+	}
+	const inventoryScript = `(function() {
+		const cssEscape = (value) => {
+			if (typeof value !== 'string') return '';
+			if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+			return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+		};
+		const selectorFor = (el) => {
+			if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+			const tag = (el.tagName || '').toLowerCase();
+			if (!tag) return '';
+			if (el.id) return tag + '#' + cssEscape(el.id);
+			if (el.getAttribute) {
+				const name = el.getAttribute('name');
+				if (name) return tag + '[name="' + String(name).replace(/"/g, '\\"') + '"]';
+			}
+			const parent = el.parentElement;
+			if (!parent) return tag;
+			const siblings = Array.from(parent.children).filter((child) => child.tagName === el.tagName);
+			if (siblings.length <= 1) return tag;
+			return tag + ':nth-of-type(' + (siblings.indexOf(el) + 1) + ')';
+		};
+		const semanticSelector = 'a,button,input,select,textarea,[role],summary,label';
+		const frames = Array.from(document.querySelectorAll('iframe,frame')).map((el) => {
+			let accessible = false;
+			let sameOrigin = false;
+			let semanticNodeCount = 0;
+			let title = '';
+			try {
+				const doc = el.contentDocument;
+				accessible = !!doc;
+				sameOrigin = !!doc;
+				if (doc) {
+					semanticNodeCount = doc.querySelectorAll(semanticSelector).length;
+					title = (doc.title || '').trim();
+				}
+			} catch (err) {
+				accessible = false;
+				sameOrigin = false;
+			}
+			return {
+				selector: selectorFor(el),
+				name: el.getAttribute('name') || '',
+				title,
+				source: el.getAttribute('src') || '',
+				sameOrigin,
+				accessible,
+				semanticNodeCount,
+			};
+		});
+		const shadowHosts = [];
+		const all = Array.from(document.querySelectorAll('*'));
+		for (const el of all) {
+			if (!el.shadowRoot) continue;
+			shadowHosts.push({
+				selector: selectorFor(el),
+				tag: (el.tagName || '').toLowerCase(),
+				role: el.getAttribute('role') || '',
+				mode: 'open',
+				semanticNodeCount: el.shadowRoot.querySelectorAll(semanticSelector).length,
+				textSample: ((el.shadowRoot.innerText || el.shadowRoot.textContent || '').trim()).slice(0, 120),
+			});
+		}
+		return { frames, shadowHosts };
+	})()`
+	if err := chromedp.Run(session.Ctx, chromedp.Evaluate(inventoryScript, &result)); err != nil {
+		return nil, nil, err
+	}
+	return result.Frames, result.ShadowHosts, nil
 }
 
 func protocolEvidenceFromEntry(entry *runtimeSessionEntry) runtimeProtocolEvidence {

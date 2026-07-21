@@ -299,6 +299,65 @@ func TestRuntimeSessionActionEndpointReturnsCaptureWithAction(t *testing.T) {
 	}
 }
 
+func TestRuntimeSessionCaptureEndpointReturnsFrameAndShadowInventory(t *testing.T) {
+	originalOpen := openRuntimeSessionFn
+	originalCapture := captureRuntimeSessionFn
+	defer func() {
+		openRuntimeSessionFn = originalOpen
+		captureRuntimeSessionFn = originalCapture
+	}()
+
+	stubSession := &browserpkg.Session{Ctx: context.Background()}
+	entry := &runtimeSessionEntry{ID: "rt-capture", Mode: "managed", CreatedAt: time.Unix(1700000004, 0).UTC(), Session: stubSession}
+	openRuntimeSessionFn = func(req runtimeOpenSessionRequest) (*runtimeSessionEntry, []string, error) {
+		return entry, nil, nil
+	}
+	captureRuntimeSessionFn = func(got *runtimeSessionEntry) (*runtimeSessionCaptureResponse, error) {
+		state := runtimeStateFromEntry(got)
+		state.FrameCount = 2
+		state.ShadowHostCount = 1
+		return &runtimeSessionCaptureResponse{
+			SessionID: got.ID,
+			FinalURL:  "https://example.com/capture",
+			RuntimeState: state,
+			Frames: []runtimeFrameSummary{
+				{Selector: "iframe#checkout", Source: "https://payments.example/frame", Accessible: false, SameOrigin: false},
+				{Selector: "iframe[name=embedded]", Source: "/embedded", Accessible: true, SameOrigin: true, SemanticNodeCount: 4},
+			},
+			ShadowHosts: []runtimeShadowHostSummary{
+				{Selector: "checkout-shell", Tag: "checkout-shell", Mode: "open", SemanticNodeCount: 3, TextSample: "Pay now"},
+			},
+		}, nil
+	}
+
+	router := buildRouter(func() (runtimeBrowser, error) { return &stubRuntimeBrowser{}, nil })
+	openReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session", bytes.NewReader([]byte(`{}`)))
+	openReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), openReq)
+
+	captureReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-capture/capture", bytes.NewReader([]byte(`{}`)))
+	captureReq.Header.Set("Content-Type", "application/json")
+	captureRecorder := httptest.NewRecorder()
+	router.ServeHTTP(captureRecorder, captureReq)
+
+	if captureRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 capture, got %d with body %s", captureRecorder.Code, captureRecorder.Body.String())
+	}
+	var captureResp runtimeSessionCaptureResponse
+	if err := json.Unmarshal(captureRecorder.Body.Bytes(), &captureResp); err != nil {
+		t.Fatalf("unmarshal capture response: %v", err)
+	}
+	if captureResp.RuntimeState.FrameCount != 2 || captureResp.RuntimeState.ShadowHostCount != 1 {
+		t.Fatalf("unexpected runtime inventory counts: %+v", captureResp.RuntimeState)
+	}
+	if len(captureResp.Frames) != 2 || captureResp.Frames[1].SemanticNodeCount != 4 {
+		t.Fatalf("unexpected frame inventory payload: %+v", captureResp.Frames)
+	}
+	if len(captureResp.ShadowHosts) != 1 || captureResp.ShadowHosts[0].Mode != "open" {
+		t.Fatalf("unexpected shadow host payload: %+v", captureResp.ShadowHosts)
+	}
+}
+
 func TestRuntimeSessionActionEndpointReturnsEvaluateResult(t *testing.T) {
 	originalOpen := openRuntimeSessionFn
 	originalAction := performRuntimeActionFn

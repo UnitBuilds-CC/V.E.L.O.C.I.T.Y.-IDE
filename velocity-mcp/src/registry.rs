@@ -4265,9 +4265,16 @@ mod tests {
                             "cookies": [{"name": "rt", "value": "cookie"}],
                             "storage": {"local": {"theme": "dark"}, "session": {"csrf": "token"}},
                             "fields": {"email": "input[name='email']"},
-                            "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "capture"},
+                            "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "capture", "frameCount": 2, "shadowHostCount": 1},
                             "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["navigate"], "supportsCapture": true, "supportsSessions": true},
                             "warnings": ["capture-warning"],
+                            "frames": [
+                                {"selector": "iframe#checkout", "source": "https://payments.example/frame", "accessible": false, "sameOrigin": false, "semanticNodeCount": 0},
+                                {"selector": "iframe[name=embedded]", "source": "/embedded", "accessible": true, "sameOrigin": true, "semanticNodeCount": 4}
+                            ],
+                            "shadowHosts": [
+                                {"selector": "checkout-shell", "tag": "checkout-shell", "mode": "open", "semanticNodeCount": 3, "textSample": "Pay now"}
+                            ],
                             "aom": "main form",
                             "pageText": "Runtime Captured",
                             "scripts": ["https://cdn.example/app.js"]
@@ -4379,6 +4386,10 @@ mod tests {
         assert!(captured.contains("\"title\": \"Runtime Captured\""));
         assert!(captured.contains("\"capture_backend\": \"go-chromedp\""));
         assert!(captured.contains("\"warning_count\": 1"));
+        assert!(captured.contains("\"frame_count\": 2"));
+        assert!(captured.contains("\"shadow_host_count\": 1"));
+        assert!(captured.contains("\"iframe#checkout\""));
+        assert!(captured.contains("\"checkout-shell\""));
 
         let filled = call_tool_in_workspace(
             &root,
