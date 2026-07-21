@@ -187,8 +187,17 @@ type RuntimeCaptureRequest struct {
 }
 
 type RuntimeCaptureCookie struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Name         string  `json:"name"`
+	Value        string  `json:"value"`
+	Domain       string  `json:"domain,omitempty"`
+	Path         string  `json:"path,omitempty"`
+	Secure       bool    `json:"secure,omitempty"`
+	HTTPOnly     bool    `json:"httpOnly,omitempty"`
+	SameSite     string  `json:"sameSite,omitempty"`
+	ExpiresUnix  *int64  `json:"expiresUnix,omitempty"`
+	Session      bool    `json:"session,omitempty"`
+	SourceScheme string  `json:"sourceScheme,omitempty"`
+	SourcePort   *int64  `json:"sourcePort,omitempty"`
 }
 
 type RuntimeCaptureRequestRecord struct {
@@ -788,18 +797,31 @@ func applyRuntimeSessionState(entry *runtimeSessionEntry, req runtimeSessionAppl
 		}
 	}
 
-	cookieMap := make(map[string]string, len(req.Cookies))
+	runtimeCookies := make([]browserpkg.RuntimeCookie, 0, len(req.Cookies))
 	appliedCookieNames := make([]string, 0, len(req.Cookies))
 	for _, cookie := range req.Cookies {
 		name := strings.TrimSpace(cookie.Name)
 		if name == "" {
 			continue
 		}
-		cookieMap[name] = cookie.Value
+		runtimeCookie := browserpkg.RuntimeCookie{
+			Name:         name,
+			Value:        cookie.Value,
+			Domain:       strings.TrimSpace(cookie.Domain),
+			Path:         strings.TrimSpace(cookie.Path),
+			Secure:       cookie.Secure,
+			HTTPOnly:     cookie.HTTPOnly,
+			SameSite:     strings.TrimSpace(cookie.SameSite),
+			ExpiresUnix:  cookie.ExpiresUnix,
+			Session:      cookie.Session,
+			SourceScheme: strings.TrimSpace(cookie.SourceScheme),
+			SourcePort:   cookie.SourcePort,
+		}
+		runtimeCookies = append(runtimeCookies, runtimeCookie)
 		appliedCookieNames = append(appliedCookieNames, name)
 	}
-	if len(cookieMap) > 0 {
-		if err := entry.Session.SetCookieValues(cookieMap); err != nil {
+	if len(runtimeCookies) > 0 {
+		if err := entry.Session.SetCookies(runtimeCookies); err != nil {
 			return nil, fmt.Errorf("apply runtime cookies: %w", err)
 		}
 	}
@@ -1198,7 +1220,29 @@ func readRuntimeCookies(session *browserpkg.Session) ([]RuntimeCaptureCookie, er
 	}
 	cookies := make([]RuntimeCaptureCookie, 0, len(rawCookies))
 	for _, cookie := range rawCookies {
-		cookies = append(cookies, RuntimeCaptureCookie{Name: cookie.Name, Value: cookie.Value})
+		var expiresUnix *int64
+		if !cookie.Session && cookie.Expires >= 0 {
+			expires := int64(cookie.Expires)
+			expiresUnix = &expires
+		}
+		var sourcePort *int64
+		if cookie.SourcePort != 0 {
+			port := cookie.SourcePort
+			sourcePort = &port
+		}
+		cookies = append(cookies, RuntimeCaptureCookie{
+			Name:         cookie.Name,
+			Value:        cookie.Value,
+			Domain:       cookie.Domain,
+			Path:         cookie.Path,
+			Secure:       cookie.Secure,
+			HTTPOnly:     cookie.HTTPOnly,
+			SameSite:     cookie.SameSite.String(),
+			ExpiresUnix:  expiresUnix,
+			Session:      cookie.Session,
+			SourceScheme: cookie.SourceScheme.String(),
+			SourcePort:   sourcePort,
+		})
 	}
 	return cookies, nil
 }

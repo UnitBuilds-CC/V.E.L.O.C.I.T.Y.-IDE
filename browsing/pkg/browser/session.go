@@ -818,29 +818,99 @@ func (s *Session) CurrentURL() (string, error) {
 	return currentURL, nil
 }
 
-// SetCookieValues applies name/value cookies to the current origin using document.cookie.
-func (s *Session) SetCookieValues(cookies map[string]string) error {
-	payload, err := json.Marshal(cookies)
+type RuntimeCookie struct {
+	Name         string
+	Value        string
+	Domain       string
+	Path         string
+	Secure       bool
+	HTTPOnly     bool
+	SameSite     string
+	ExpiresUnix  *int64
+	Session      bool
+	SourceScheme string
+	SourcePort   *int64
+}
+
+func parseCookieSameSite(value string) (network.CookieSameSite, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "strict":
+		return network.CookieSameSiteStrict, true
+	case "lax":
+		return network.CookieSameSiteLax, true
+	case "none":
+		return network.CookieSameSiteNone, true
+	default:
+		return "", false
+	}
+}
+
+func parseCookieSourceScheme(value string) (network.CookieSourceScheme, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "unset":
+		return network.CookieSourceSchemeUnset, true
+	case "nonsecure":
+		return network.CookieSourceSchemeNonSecure, true
+	case "secure":
+		return network.CookieSourceSchemeSecure, true
+	default:
+		return "", false
+	}
+}
+
+func (s *Session) SetCookies(cookies []RuntimeCookie) error {
+	if len(cookies) == 0 {
+		return nil
+	}
+	currentURL, err := s.CurrentURL()
 	if err != nil {
-		return err
+		currentURL = ""
 	}
 	ctx, cancel := context.WithTimeout(s.Ctx, 10*time.Second)
 	defer cancel()
-	var applied bool
-	script := fmt.Sprintf(`(function() {
-		const cookies = %s;
-		for (const [name, value] of Object.entries(cookies)) {
-			document.cookie = encodeURIComponent(name) + "=" + encodeURIComponent(String(value)) + "; path=/";
+	for _, cookie := range cookies {
+		name := strings.TrimSpace(cookie.Name)
+		if name == "" {
+			continue
 		}
-		return true;
-	})()`, string(payload))
-	if err := chromedp.Run(ctx, chromedp.Evaluate(script, &applied)); err != nil {
-		return err
-	}
-	if !applied {
-		return fmt.Errorf("cookie application was not acknowledged")
+		params := network.SetCookie(name, cookie.Value)
+		if currentURL != "" {
+			params = params.WithURL(currentURL)
+		}
+		if cookie.Domain != "" {
+			params = params.WithDomain(cookie.Domain)
+		}
+		if cookie.Path != "" {
+			params = params.WithPath(cookie.Path)
+		}
+		params = params.WithSecure(cookie.Secure).WithHTTPOnly(cookie.HTTPOnly)
+		if sameSite, ok := parseCookieSameSite(cookie.SameSite); ok {
+			params = params.WithSameSite(sameSite)
+		}
+		if !cookie.Session && cookie.ExpiresUnix != nil {
+			expires := cdp.TimeSinceEpoch(time.Unix(*cookie.ExpiresUnix, 0).UTC())
+			params = params.WithExpires(&expires)
+		}
+		if sourceScheme, ok := parseCookieSourceScheme(cookie.SourceScheme); ok {
+			params = params.WithSourceScheme(sourceScheme)
+		}
+		if cookie.SourcePort != nil {
+			params = params.WithSourcePort(*cookie.SourcePort)
+		}
+		if err := chromedp.Run(ctx, params); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// SetCookieValues applies name/value cookies to the current origin.
+func (s *Session) SetCookieValues(cookies map[string]string) error {
+	runtimeCookies := make([]RuntimeCookie, 0, len(cookies))
+	for name, value := range cookies {
+		runtimeCookies = append(runtimeCookies, RuntimeCookie{Name: name, Value: value, Path: "/", Session: true})
+	}
+	return s.SetCookies(runtimeCookies)
 }
 
 // ApplyStorage writes localStorage and sessionStorage entries for the current origin.

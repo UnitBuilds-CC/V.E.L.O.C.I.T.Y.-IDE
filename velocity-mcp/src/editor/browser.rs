@@ -245,6 +245,8 @@ pub struct BrowserSessionState {
     pub current_url: Option<String>,
     pub cookies: Vec<BrowserCookie>,
     #[serde(default)]
+    pub runtime_cookies: Vec<RuntimeBrowserCookie>,
+    #[serde(default)]
     pub local_storage: HashMap<String, String>,
     #[serde(default)]
     pub session_storage: HashMap<String, String>,
@@ -1301,10 +1303,29 @@ struct BrowserHttpResponse {
     protocol_events: Vec<BrowserProtocolEvent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct RuntimeCaptureApiCookie {
-    name: String,
-    value: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeBrowserCookie {
+    pub name: String,
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub http_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_site: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_unix: Option<i64>,
+    #[serde(default)]
+    pub session: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_port: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1423,7 +1444,7 @@ struct RuntimeCaptureApiResponse {
     #[serde(default)]
     fields: HashMap<String, String>,
     #[serde(default)]
-    cookies: Vec<RuntimeCaptureApiCookie>,
+    cookies: Vec<RuntimeBrowserCookie>,
     #[serde(default)]
     local_storage: HashMap<String, String>,
     #[serde(default)]
@@ -1461,7 +1482,8 @@ pub struct RuntimeBrowserSessionState {
     pub api_base: String,
     pub current_url: Option<String>,
     pub last_title: Option<String>,
-    pub cookies: Vec<BrowserCookie>,
+    #[serde(default)]
+    pub cookies: Vec<RuntimeBrowserCookie>,
     #[serde(default)]
     pub local_storage: HashMap<String, String>,
     #[serde(default)]
@@ -1579,12 +1601,13 @@ fn runtime_capture_response_from_value(
     Err("runtime capture response did not match a supported payload shape".to_string())
 }
 
-fn parse_runtime_session_cookie_value(raw: &str) -> BrowserCookie {
+fn parse_runtime_session_cookie_value(raw: &str) -> RuntimeBrowserCookie {
     let trimmed = raw.trim();
     let (name, value) = trimmed.split_once('=').unwrap_or((trimmed, ""));
-    BrowserCookie {
+    RuntimeBrowserCookie {
         name: name.trim().to_string(),
         value: value.trim().to_string(),
+        ..RuntimeBrowserCookie::default()
     }
 }
 
@@ -1666,7 +1689,7 @@ fn parse_runtime_session_capture_response(
                 .iter()
                 .filter_map(|item| {
                     if let Some(object) = item.as_object() {
-                        Some(RuntimeCaptureApiCookie {
+                        Some(RuntimeBrowserCookie {
                             name: object
                                 .get("name")
                                 .and_then(serde_json::Value::as_str)
@@ -1677,14 +1700,51 @@ fn parse_runtime_session_capture_response(
                                 .and_then(serde_json::Value::as_str)
                                 .unwrap_or_default()
                                 .to_string(),
+                            domain: object
+                                .get("domain")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string),
+                            path: object
+                                .get("path")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string),
+                            secure: object
+                                .get("secure")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
+                            http_only: object
+                                .get("httpOnly")
+                                .or_else(|| object.get("http_only"))
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
+                            same_site: object
+                                .get("sameSite")
+                                .or_else(|| object.get("same_site"))
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string),
+                            expires_unix: object
+                                .get("expiresUnix")
+                                .or_else(|| object.get("expires_unix"))
+                                .or_else(|| object.get("expires"))
+                                .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|v| v as i64))),
+                            session: object
+                                .get("session")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
+                            source_scheme: object
+                                .get("sourceScheme")
+                                .or_else(|| object.get("source_scheme"))
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string),
+                            source_port: object
+                                .get("sourcePort")
+                                .or_else(|| object.get("source_port"))
+                                .and_then(serde_json::Value::as_i64),
                         })
                     } else {
                         item.as_str().map(|raw| {
                             let parsed = parse_runtime_session_cookie_value(raw);
-                            RuntimeCaptureApiCookie {
-                                name: parsed.name,
-                                value: parsed.value,
-                            }
+                            parsed
                         })
                     }
                 })
@@ -2107,6 +2167,7 @@ fn empty_browser_session_state(session_id: &str) -> BrowserSessionState {
         id: session_id.to_string(),
         current_url: None,
         cookies: Vec::new(),
+        runtime_cookies: Vec::new(),
         local_storage: HashMap::new(),
         session_storage: HashMap::new(),
         network: BrowserSessionNetworkConfig::default(),
@@ -2486,6 +2547,30 @@ fn merge_cookie(cookies: &mut Vec<BrowserCookie>, cookie: BrowserCookie) {
         *existing = cookie;
     } else {
         cookies.push(cookie);
+    }
+}
+
+fn sync_runtime_cookies_from_browser_cookies(session: &mut BrowserSessionState) {
+    session.runtime_cookies = session
+        .cookies
+        .iter()
+        .map(browser_cookie_as_runtime_cookie)
+        .collect();
+}
+
+fn auth_runtime_cookies_for_source(source: &BrowserSessionState) -> Vec<RuntimeBrowserCookie> {
+    if !source.runtime_cookies.is_empty() {
+        source
+            .runtime_cookies
+            .iter()
+            .filter(|cookie| is_auth_cookie_name(&cookie.name) || is_csrf_key(&cookie.name))
+            .cloned()
+            .collect()
+    } else {
+        filter_auth_cookies(&source.cookies)
+            .iter()
+            .map(browser_cookie_as_runtime_cookie)
+            .collect()
     }
 }
 
@@ -3975,11 +4060,31 @@ pub fn load_runtime_session_state(
     serde_json::from_slice(&raw).map_err(|err| format!("parse runtime browser session: {err}"))
 }
 
+fn runtime_cookie_as_browser_cookie(cookie: &RuntimeBrowserCookie) -> BrowserCookie {
+    BrowserCookie {
+        name: cookie.name.clone(),
+        value: cookie.value.clone(),
+    }
+}
+
+fn browser_cookie_as_runtime_cookie(cookie: &BrowserCookie) -> RuntimeBrowserCookie {
+    RuntimeBrowserCookie {
+        name: cookie.name.clone(),
+        value: cookie.value.clone(),
+        ..RuntimeBrowserCookie::default()
+    }
+}
+
 fn runtime_session_as_browser_session(runtime_session: &RuntimeBrowserSessionState) -> BrowserSessionState {
     BrowserSessionState {
         id: runtime_session.id.clone(),
         current_url: runtime_session.current_url.clone(),
-        cookies: runtime_session.cookies.clone(),
+        cookies: runtime_session
+            .cookies
+            .iter()
+            .map(runtime_cookie_as_browser_cookie)
+            .collect(),
+        runtime_cookies: runtime_session.cookies.clone(),
         local_storage: runtime_session.local_storage.clone(),
         session_storage: runtime_session.session_storage.clone(),
         network: BrowserSessionNetworkConfig::default(),
@@ -4021,7 +4126,11 @@ pub fn save_session_state(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create session dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(session)
+    let mut serializable = session.clone();
+    if serializable.runtime_cookies.is_empty() && !serializable.cookies.is_empty() {
+        sync_runtime_cookies_from_browser_cookies(&mut serializable);
+    }
+    let json = serde_json::to_vec_pretty(&serializable)
         .map_err(|err| format!("serialise browser session: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write browser session: {err}"))?;
     Ok(path)
@@ -4033,7 +4142,12 @@ pub fn load_session_state(
 ) -> Result<BrowserSessionState, String> {
     let path = session_file_path(workspace_root, session_id);
     let raw = fs::read(&path).map_err(|err| format!("read browser session: {err}"))?;
-    serde_json::from_slice(&raw).map_err(|err| format!("parse browser session: {err}"))
+    let mut session: BrowserSessionState =
+        serde_json::from_slice(&raw).map_err(|err| format!("parse browser session: {err}"))?;
+    if session.runtime_cookies.is_empty() && !session.cookies.is_empty() {
+        sync_runtime_cookies_from_browser_cookies(&mut session);
+    }
+    Ok(session)
 }
 
 pub fn read_session_report(
@@ -4338,6 +4452,16 @@ fn summarize_cookie_names(cookies: &[BrowserCookie]) -> Vec<String> {
     names
 }
 
+fn summarize_runtime_cookie_names(cookies: &[RuntimeBrowserCookie]) -> Vec<String> {
+    let mut names = cookies
+        .iter()
+        .map(|cookie| cookie.name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn contains_any_case_insensitive(haystack: &str, needles: &[&str]) -> bool {
     needles
         .iter()
@@ -4365,6 +4489,18 @@ fn filter_auth_cookies(cookies: &[BrowserCookie]) -> Vec<BrowserCookie> {
         .filter(|cookie| is_auth_cookie_name(&cookie.name) || is_csrf_key(&cookie.name))
         .cloned()
         .collect()
+}
+
+fn merge_runtime_cookie(cookies: &mut Vec<RuntimeBrowserCookie>, cookie: RuntimeBrowserCookie) {
+    if let Some(existing) = cookies.iter_mut().find(|existing| {
+        existing.name == cookie.name
+            && existing.domain == cookie.domain
+            && existing.path == cookie.path
+    }) {
+        *existing = cookie;
+    } else {
+        cookies.push(cookie);
+    }
 }
 
 fn filter_csrf_storage(entries: &HashMap<String, String>) -> HashMap<String, String> {
@@ -4932,6 +5068,7 @@ pub fn set_session_cookies_report(
     for cookie in cookies.iter().cloned() {
         merge_cookie(&mut session.cookies, cookie);
     }
+    sync_runtime_cookies_from_browser_cookies(&mut session);
     let cookie_count = session.cookies.len();
     let cookie_names = summarize_cookie_names(&session.cookies);
     let path = save_session_state(workspace_root, &session)?;
@@ -6111,15 +6248,13 @@ pub fn reseed_runtime_auth_state_report(
     let (source_kind, source) =
         resolve_auth_profile_source(workspace_root, source_session_id, source_checkpoint_name)?;
     let copied_cookies = filter_auth_cookies(&source.cookies);
+    let copied_runtime_cookies = auth_runtime_cookies_for_source(&source);
     let copied_local_storage = filter_csrf_storage(&source.local_storage);
     let copied_session_storage = filter_csrf_storage(&source.session_storage);
     let mut target = load_runtime_session_state(workspace_root, target_session_id)?;
     let request_body = serde_json::json!({
         "url": target.current_url,
-        "cookies": copied_cookies
-            .iter()
-            .map(|cookie| serde_json::json!({"name": cookie.name, "value": cookie.value}))
-            .collect::<Vec<_>>(),
+        "cookies": copied_runtime_cookies,
         "localStorage": copied_local_storage,
         "sessionStorage": copied_session_storage,
         "waitTimeoutMs": wait_timeout_ms.unwrap_or(1_000),
@@ -6134,8 +6269,8 @@ pub fn reseed_runtime_auth_state_report(
     )?;
     let warnings = parse_runtime_string_list(value.get("warnings"));
 
-    for cookie in copied_cookies.iter().cloned() {
-        merge_cookie(&mut target.cookies, cookie);
+    for cookie in auth_runtime_cookies_for_source(&source) {
+        merge_runtime_cookie(&mut target.cookies, cookie);
     }
     apply_storage_updates(&mut target.local_storage, &copied_local_storage);
     apply_storage_updates(&mut target.session_storage, &copied_session_storage);
@@ -6919,11 +7054,9 @@ fn persist_runtime_capture_artifacts(
     session.cookies = captured
         .cookies
         .iter()
-        .map(|cookie| BrowserCookie {
-            name: cookie.name.clone(),
-            value: cookie.value.clone(),
-        })
+        .map(runtime_cookie_as_browser_cookie)
         .collect();
+    session.runtime_cookies = captured.cookies.clone();
     session.local_storage = captured.local_storage.clone();
     session.session_storage = captured.session_storage.clone();
     session.last_html = Some(captured.html.clone());
@@ -7265,7 +7398,7 @@ fn sync_runtime_capture_session(
         persist_runtime_capture_artifacts(workspace_root, &mut session, captured, sitemap_path)?;
     runtime_session.current_url = Some(report.url.clone());
     runtime_session.last_title = Some(report.title.clone());
-    runtime_session.cookies = session.cookies.clone();
+    runtime_session.cookies = captured.cookies.clone();
     runtime_session.local_storage = session.local_storage.clone();
     runtime_session.session_storage = session.session_storage.clone();
     save_runtime_session_state(workspace_root, runtime_session)?;
@@ -8111,6 +8244,7 @@ pub fn crawl_page_snapshot(url: &str) -> Result<BrowserPageSnapshot, String> {
         id: "ephemeral".to_string(),
         current_url: Some(url.to_string()),
         cookies: Vec::new(),
+        runtime_cookies: Vec::new(),
         local_storage: HashMap::new(),
         session_storage: HashMap::new(),
         network: BrowserSessionNetworkConfig::default(),
@@ -9556,6 +9690,7 @@ pub fn crawl_and_sync_sitemap_report(
         id: "ephemeral".to_string(),
         current_url: Some(url.to_string()),
         cookies: Vec::new(),
+        runtime_cookies: Vec::new(),
         local_storage: HashMap::new(),
         session_storage: HashMap::new(),
         network: BrowserSessionNetworkConfig::default(),
@@ -10916,6 +11051,7 @@ pub fn replay_workflow(workflow: &BrowserWorkflow) -> Result<String, String> {
         id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
         current_url: Some(workflow.start_url.clone()),
         cookies: Vec::new(),
+        runtime_cookies: Vec::new(),
         local_storage: HashMap::new(),
         session_storage: HashMap::new(),
         network: BrowserSessionNetworkConfig::default(),
@@ -10942,6 +11078,7 @@ pub fn replay_workflow_with_artifacts_report(
         id: format!("replay-{}", sanitize_file_stem(&workflow.name)),
         current_url: Some(workflow.start_url.clone()),
         cookies: Vec::new(),
+        runtime_cookies: Vec::new(),
         local_storage: HashMap::new(),
         session_storage: HashMap::new(),
         network: BrowserSessionNetworkConfig::default(),
@@ -11466,6 +11603,7 @@ mod tests {
                 id: "branch-session".to_string(),
                 current_url: Some("https://example.com".to_string()),
                 cookies: Vec::new(),
+                runtime_cookies: Vec::new(),
                 local_storage: HashMap::new(),
                 session_storage: HashMap::new(),
                 network: super::BrowserSessionNetworkConfig::default(),
@@ -13174,6 +13312,7 @@ mod tests {
                 id: "static-wait-session".to_string(),
                 current_url: Some(start_url),
                 cookies: Vec::new(),
+                runtime_cookies: Vec::new(),
                 local_storage: HashMap::new(),
                 session_storage: HashMap::new(),
                 network: super::BrowserSessionNetworkConfig::default(),
@@ -14159,6 +14298,7 @@ mod tests {
                 id: "compat-session".to_string(),
                 current_url: Some("https://example.test/app".to_string()),
                 cookies: Vec::new(),
+                runtime_cookies: Vec::new(),
                 local_storage: HashMap::new(),
                 session_storage: HashMap::new(),
                 network: super::BrowserSessionNetworkConfig::default(),
@@ -14674,6 +14814,34 @@ mod tests {
         .unwrap();
         let mut source_session = load_session_state(root, "source-session").unwrap();
         source_session.current_url = Some(login_url.to_string());
+        source_session.runtime_cookies = vec![
+            super::RuntimeBrowserCookie {
+                name: "session".to_string(),
+                value: "source-session-token".to_string(),
+                domain: Some("runtime.test".to_string()),
+                path: Some("/login".to_string()),
+                secure: true,
+                http_only: true,
+                same_site: Some("Lax".to_string()),
+                expires_unix: Some(1_730_000_000),
+                session: false,
+                source_scheme: Some("Secure".to_string()),
+                source_port: Some(443),
+            },
+            super::RuntimeBrowserCookie {
+                name: "csrf_cookie".to_string(),
+                value: "cookie-token".to_string(),
+                path: Some("/".to_string()),
+                session: true,
+                ..super::RuntimeBrowserCookie::default()
+            },
+            super::RuntimeBrowserCookie {
+                name: "theme".to_string(),
+                value: "dark".to_string(),
+                session: true,
+                ..super::RuntimeBrowserCookie::default()
+            },
+        ];
         save_session_state(root, &source_session).unwrap();
         save_session_checkpoint(root, "source-session", "auth-seed", &sitemap_path).unwrap();
 
@@ -14685,9 +14853,11 @@ mod tests {
                 api_base: api_base.clone(),
                 current_url: Some(login_url.to_string()),
                 last_title: Some("Login".to_string()),
-                cookies: vec![BrowserCookie {
+                cookies: vec![super::RuntimeBrowserCookie {
                     name: "existing".to_string(),
                     value: "keep".to_string(),
+                    session: true,
+                    ..super::RuntimeBrowserCookie::default()
                 }],
                 local_storage: HashMap::new(),
                 session_storage: HashMap::new(),
@@ -14727,13 +14897,23 @@ mod tests {
             Some("session-seed")
         );
 
-        let requests = observed.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert!(requests[0].contains("POST /api/runtime/session/rt-auth/state HTTP/1.1"));
-        assert!(requests[0].contains("\"waitTimeoutMs\":900"));
-        assert!(requests[0].contains("\"name\":\"session\""));
-        assert!(requests[0].contains("\"localStorage\":{\"csrf_token\":\"local-seed\"}"));
-        assert!(!requests[0].contains("\"theme\""));
+        {
+            let requests = observed.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].contains("POST /api/runtime/session/rt-auth/state HTTP/1.1"));
+            assert!(requests[0].contains("\"waitTimeoutMs\":900"));
+            assert!(requests[0].contains("\"name\":\"session\""));
+            assert!(requests[0].contains("\"domain\":\"runtime.test\""));
+            assert!(requests[0].contains("\"path\":\"/login\""));
+            assert!(requests[0].contains("\"secure\":true"));
+            assert!(requests[0].contains("\"httpOnly\":true"));
+            assert!(requests[0].contains("\"sameSite\":\"Lax\""));
+            assert!(requests[0].contains("\"expiresUnix\":1730000000"));
+            assert!(requests[0].contains("\"sourceScheme\":\"Secure\""));
+            assert!(requests[0].contains("\"sourcePort\":443"));
+            assert!(requests[0].contains("\"localStorage\":{\"csrf_token\":\"local-seed\"}"));
+            assert!(!requests[0].contains("\"theme\""));
+        }
 
         let reseeded_checkpoint = super::reseed_runtime_auth_state_report(
             root,
@@ -14753,6 +14933,9 @@ mod tests {
         let requests = observed.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(requests[1].contains("\"waitTimeoutMs\":1000"));
+        assert!(requests[1].contains("\"domain\":\"runtime.test\""));
+        assert!(requests[1].contains("\"httpOnly\":true"));
+        assert!(requests[1].contains("\"sameSite\":\"Lax\""));
     }
 
     #[test]

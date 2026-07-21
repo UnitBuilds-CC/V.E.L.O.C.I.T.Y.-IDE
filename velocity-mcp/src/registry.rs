@@ -4793,7 +4793,7 @@ mod tests {
                                 "finalUrl": "https://runtime.test/after-evaluate",
                                 "title": "Runtime After Evaluate",
                                 "html": "<html><head><title>Runtime After Evaluate</title></head><body><p>eval</p></body></html>",
-                                "cookies": ["flow=ok"],
+                                "cookies": [{"name": "flow", "value": "ok", "domain": "runtime.test", "path": "/", "secure": true, "httpOnly": true, "sameSite": "Lax", "expiresUnix": 1730000100, "sourceScheme": "Secure", "sourcePort": 443}],
                                 "storage": {"local": {"theme": "light"}, "session": {"csrf": "token2"}},
                                 "fields": {},
                                 "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "evaluate"},
@@ -4810,7 +4810,7 @@ mod tests {
                                 "finalUrl": "https://runtime.test/after-action",
                                 "title": "Runtime After Action",
                                 "html": "<html><head><title>Runtime After Action</title></head><body><p>done</p></body></html>",
-                                "cookies": ["flow=ok"],
+                                "cookies": [{"name": "flow", "value": "ok", "domain": "runtime.test", "path": "/", "secure": true, "httpOnly": true, "sameSite": "Lax", "expiresUnix": 1730000200, "sourceScheme": "Secure", "sourcePort": 443}],
                                 "storage": {"local": {"theme": "light"}, "session": {"csrf": "token2"}},
                                 "fields": {},
                                 "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "fill"},
@@ -4916,12 +4916,10 @@ mod tests {
             &json!({"sessionId": "browser-seed", "scope": "session", "entries": {"xsrf_nonce": "session-seed", "theme": "dark"}, "replace": true}),
         )
         .unwrap();
-        call_tool_in_workspace(
-            &root,
-            "browser_session_navigate",
-            &json!({"sessionId": "browser-seed", "url": "https://runtime.test/login", "compact": true}),
-        )
-        .unwrap();
+        let mut browser_seed_session =
+            crate::editor::browser::load_session_state(&root, "browser-seed").unwrap();
+        browser_seed_session.current_url = Some("https://runtime.test/login".to_string());
+        crate::editor::browser::save_session_state(&root, &browser_seed_session).unwrap();
         call_tool_in_workspace(
             &root,
             "browser_save_checkpoint",
@@ -5030,6 +5028,9 @@ mod tests {
         let runtime_session_json = fs::read_to_string(&runtime_session_path).unwrap();
         assert!(runtime_session_json.contains("\"session\""));
         assert!(runtime_session_json.contains("\"csrf_cookie\""));
+        assert!(runtime_session_json.contains("\"httpOnly\": true"));
+        assert!(runtime_session_json.contains("\"sameSite\": \"Lax\""));
+        assert!(runtime_session_json.contains("\"sourceScheme\": \"Secure\""));
         assert!(runtime_session_json.contains("\"csrf_token\": \"local-seed\""));
         assert!(runtime_session_json.contains("\"xsrf_nonce\": \"session-seed\""));
 

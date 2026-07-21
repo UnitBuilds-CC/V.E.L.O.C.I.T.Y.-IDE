@@ -340,7 +340,7 @@ func TestRuntimeSessionApplyStateEndpointForwardsRequest(t *testing.T) {
 	openReq.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(httptest.NewRecorder(), openReq)
 
-	applyBody := []byte(`{"url":"https://example.com/login","cookies":[{"name":"session","value":"abc"},{"name":"csrf_token","value":"seed"}],"localStorage":{"csrf_token":"local-seed"},"sessionStorage":{"xsrf_nonce":"session-seed"},"waitTimeoutMs":1200}`)
+	applyBody := []byte(`{"url":"https://example.com/login","cookies":[{"name":"session","value":"abc","domain":"example.com","path":"/login","secure":true,"httpOnly":true,"sameSite":"Lax","expiresUnix":1730000000,"sourceScheme":"Secure","sourcePort":443},{"name":"csrf_token","value":"seed","path":"/","session":true}],"localStorage":{"csrf_token":"local-seed"},"sessionStorage":{"xsrf_nonce":"session-seed"},"waitTimeoutMs":1200}`)
 	applyReqHTTP := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-state/state", bytes.NewReader(applyBody))
 	applyReqHTTP.Header.Set("Content-Type", "application/json")
 	applyRecorder := httptest.NewRecorder()
@@ -355,6 +355,15 @@ func TestRuntimeSessionApplyStateEndpointForwardsRequest(t *testing.T) {
 	}
 	if len(appliedReq.Cookies) != 2 || appliedReq.Cookies[1].Name != "csrf_token" {
 		t.Fatalf("unexpected applied cookies payload: %+v", appliedReq.Cookies)
+	}
+	if appliedReq.Cookies[0].Domain != "example.com" || appliedReq.Cookies[0].Path != "/login" || !appliedReq.Cookies[0].Secure || !appliedReq.Cookies[0].HTTPOnly {
+		t.Fatalf("expected first cookie metadata to be preserved: %+v", appliedReq.Cookies[0])
+	}
+	if appliedReq.Cookies[0].SameSite != "Lax" || appliedReq.Cookies[0].ExpiresUnix == nil || *appliedReq.Cookies[0].ExpiresUnix != 1730000000 {
+		t.Fatalf("expected same-site and expiry metadata to be preserved: %+v", appliedReq.Cookies[0])
+	}
+	if appliedReq.Cookies[0].SourceScheme != "Secure" || appliedReq.Cookies[0].SourcePort == nil || *appliedReq.Cookies[0].SourcePort != 443 {
+		t.Fatalf("expected source metadata to be preserved: %+v", appliedReq.Cookies[0])
 	}
 	if got := appliedReq.LocalStorage["csrf_token"]; got != "local-seed" {
 		t.Fatalf("unexpected local storage payload: %+v", appliedReq.LocalStorage)
