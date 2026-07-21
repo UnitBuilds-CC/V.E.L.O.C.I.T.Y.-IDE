@@ -54,6 +54,7 @@ pub struct CssRule {
     pub declarations: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct StyleCascader {
     pub rules: Vec<CssRule>,
 }
