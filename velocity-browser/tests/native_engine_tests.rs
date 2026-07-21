@@ -15,6 +15,8 @@ fn test_device_profile_export() {
 #[test]
 fn test_file_attachment_and_trace_collector() {
     let mut session = BrowserSession::new("sess_file_trace".to_string());
+    session.tab_sandbox.capabilities.allow_file_system = true; // Allow file access in test
+
     let html = r#"
         <html>
             <body>

@@ -2,8 +2,9 @@ use crate::agentic::{AgenticAomTree, NdaEncoder};
 use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
-    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer, ServiceWorkerManager,
-    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TraceCollector,
+    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer, SandboxCapabilities,
+    ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TabSandbox, TraceCollector,
+    WebCryptoEngine, WebGLContext,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
@@ -12,9 +13,10 @@ use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
 use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
+use crate::session_history::{HistoryItem, HistoryStack};
 use crate::session_indexeddb::IndexedDbStorage;
 use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
-use crate::style::StyleCascader;
+use crate::style::{ScopedCssMatcher, StyleCascader};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -34,6 +36,9 @@ pub struct BrowserSession {
     pub page_title: String,
     pub dom_tree: Option<DomTree>,
     pub slab_tree: SlabDomTree,
+    pub tab_sandbox: TabSandbox,
+    pub history_stack: HistoryStack,
+    pub webgl_context: WebGLContext,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -66,6 +71,9 @@ impl BrowserSession {
             page_title: "Untitled Page".to_string(),
             dom_tree: None,
             slab_tree: SlabDomTree::new(1024),
+            tab_sandbox: TabSandbox::new(&session_id, SandboxCapabilities::strict_isolation()),
+            history_stack: HistoryStack::new("about:blank"),
+            webgl_context: WebGLContext::new(800, 600),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -93,6 +101,9 @@ impl BrowserSession {
 
     /// Fetch HTML over native HTTP transport client and parse into DOM tree
     pub fn fetch_and_load(&mut self, url: &str) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
+        if let Err(e) = self.tab_sandbox.check_network_access(url) {
+            return Err(e.into());
+        }
         let resp = self.http_client.get(url)?;
         self.network_tracker.record_request(url, "GET", resp.status_code, "document");
         Ok(self.load_html(url, &resp.body))
@@ -101,6 +112,7 @@ impl BrowserSession {
     /// Native pure-Rust HTML document loading and DOM tree compilation
     pub fn load_html(&mut self, url: &str, html: &str) -> Vec<NdaTriple> {
         self.current_url = url.to_string();
+        self.history_stack.push_state(url, "{}", "");
         let _tokens = Html5Tokenizer::new(html).tokenize();
         let nodes = HtmlParser::parse(html);
         let tree = DomTree::new(nodes);
@@ -189,6 +201,9 @@ impl BrowserSession {
     }
 
     pub fn attach_file(&mut self, selector: &str, file_path: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        if let Err(e) = self.tab_sandbox.check_file_access(file_path) {
+            return Err(e.into());
+        }
         if let Some(tree) = &mut self.dom_tree {
             let res = self.file_manager.attach_file(tree, selector, file_path)?;
             self.trace_collector.record_mutation(selector, "file_attached", file_path);
@@ -229,7 +244,7 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, storage event, indexeddb, cookiestore, inspector, and trace triples
+        // Add device profile, file, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox violations, inspector, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
@@ -237,6 +252,9 @@ impl BrowserSession {
         encoder.triples.extend(self.storage_broadcaster.export_events_nda());
         encoder.triples.extend(self.indexed_db.export_indexeddb_nda());
         encoder.triples.extend(self.cookie_store.export_cookies_nda());
+        encoder.triples.extend(self.history_stack.export_history_nda(&self.session_id));
+        encoder.triples.extend(WebCryptoEngine::export_crypto_nda(&self.session_id, "ready"));
+        encoder.triples.extend(self.tab_sandbox.export_sandbox_nda());
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
 
         // Add unmanaged slab node triples

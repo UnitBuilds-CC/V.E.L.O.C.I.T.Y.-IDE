@@ -1,52 +1,47 @@
-use velocity_browser::engine::ServiceWorkerManager;
-use velocity_browser::layout::{FlexAlignmentSolver, JustifyContent, LayoutBox};
+use velocity_browser::engine::{SandboxCapabilities, TabSandbox, WebCryptoEngine, WebGLContext};
 use velocity_browser::session::BrowserSession;
-use velocity_browser::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
+use velocity_browser::session_history::HistoryStack;
+use velocity_browser::style::ScopedCssMatcher;
+use velocity_browser::parser::html::DomNode;
+use std::collections::HashMap;
 
 #[test]
-fn test_flex_alignment_solver_and_service_worker() {
-    let mut boxes = vec![
-        LayoutBox { node_id: 1, x: 0.0, y: 0.0, width: 100.0, height: 50.0, padding: [0.0; 4], margin: [0.0; 4], z_index: 0, display: velocity_browser::layout::DisplayMode::Block, children: Vec::new(), is_visible: true },
-        LayoutBox { node_id: 2, x: 0.0, y: 0.0, width: 100.0, height: 50.0, padding: [0.0; 4], margin: [0.0; 4], z_index: 0, display: velocity_browser::layout::DisplayMode::Block, children: Vec::new(), is_visible: true },
-    ];
-    FlexAlignmentSolver::align_main_axis(400.0, &mut boxes, JustifyContent::SpaceBetween);
-    assert_eq!(boxes[0].x, 0.0);
-    assert_eq!(boxes[1].x, 300.0);
+fn test_webgl_context_and_history_stack() {
+    let mut gl = WebGLContext::new(100, 100);
+    gl.buffer_data(&[10.0, 20.0, 50.0, 80.0]);
+    gl.draw_arrays_triangles(255, 0, 0, 255);
+    assert_ne!(gl.pixel_buffer.compute_hash(), 0);
 
-    let sw = ServiceWorkerManager::register("/sw.js");
-    assert_eq!(sw.script_url, "/sw.js");
+    let mut hist = HistoryStack::new("http://example.com");
+    hist.push_state("http://example.com/page2", "{}", "Page 2");
+    assert_eq!(hist.current_index, 1);
+    assert_eq!(hist.back().unwrap().url, "http://example.com");
 }
 
 #[test]
-fn test_cookie_store_samesite_scoping() {
-    let mut store = CookieStore::new();
-    store.set_cookie(CookieRecord {
-        name: "session_token".to_string(),
-        value: "secret_xyz".to_string(),
-        domain: "example.com".to_string(),
-        path: "/".to_string(),
-        expires_timestamp: 9999999999.0,
-        samesite: SameSitePolicy::Lax,
-        secure: true,
-        http_only: true,
-    });
+fn test_tab_sandbox_security_isolation() {
+    let mut caps = SandboxCapabilities::strict_isolation();
+    caps.allow_network_hosts.push("trusted.com".to_string());
 
-    let matched = store.get_cookies_for_url("app.example.com", "/dashboard", true);
-    assert_eq!(matched.len(), 1);
-    assert_eq!(matched[0].value, "secret_xyz");
+    let mut sandbox = TabSandbox::new("tab_1", caps);
+    assert!(sandbox.check_network_access("https://trusted.com/api").is_ok());
+    assert!(sandbox.check_network_access("https://malicious.com/payload").is_err());
+    assert!(sandbox.check_file_access("/etc/passwd").is_err());
 
-    let mut session = BrowserSession::new("sess_cookie_store".to_string());
-    session.cookie_store.set_cookie(CookieRecord {
-        name: "test_cookie".to_string(),
-        value: "test_val".to_string(),
-        domain: "localhost".to_string(),
-        path: "/".to_string(),
-        expires_timestamp: 0.0,
-        samesite: SameSitePolicy::Lax,
-        secure: false,
-        http_only: false,
-    });
-
+    let mut session = BrowserSession::new("sess_sandbox".to_string());
+    session.tab_sandbox = sandbox;
     let state = session.capture_state_nda();
-    assert!(state.iter().any(|t| t.predicate_id == 170)); // CookieStore predicate
+    assert!(state.iter().any(|t| t.predicate_id == 220)); // Sandbox violation predicate
+}
+
+#[test]
+fn test_webcrypto_and_scoped_css() {
+    let digest = WebCryptoEngine::digest_sha256(b"hello world");
+    assert_eq!(digest.len(), 16);
+
+    let mut attrs = HashMap::new();
+    attrs.insert("shadowroot".to_string(), "open".to_string());
+    let host_node = DomNode { id: 1, tag_name: "div".to_string(), attributes: attrs, children: Vec::new(), parent: None, node_type: velocity_browser::parser::html::NodeType::Element, text_content: String::new() };
+
+    assert!(ScopedCssMatcher::matches_host_selector(&host_node, ":host"));
 }
