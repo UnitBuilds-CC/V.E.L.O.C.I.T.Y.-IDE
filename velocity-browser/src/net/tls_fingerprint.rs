@@ -10,7 +10,7 @@ pub struct TlsFingerprintRotator {
 }
 
 impl TlsFingerprintRotator {
-    pub fn chrome_desktop() -> Self {
+    pub fn velocity_native() -> Self {
         Self {
             active_profile: TlsJa3Profile {
                 ja3_hash: "771,4865-4866-4867-49195-49199,0-23-65281-10-11,29-23-24,0".to_string(),
@@ -21,7 +21,7 @@ impl TlsFingerprintRotator {
     }
 
     pub fn rotate_profile(&mut self) -> &TlsJa3Profile {
-        self.active_profile.ja3_hash = format!("rotated_ja3_{}", self.active_profile.cipher_suites.len());
+        self.active_profile.ja3_hash = format!("velocity_native_ja3_{}", self.active_profile.cipher_suites.len());
         &self.active_profile
     }
 }

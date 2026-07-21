@@ -1,17 +1,17 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder, VelocityOcrEngine, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
-    AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
+    AudioContextNode, BezierPoint, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
     DeviceProfile, DownloadStreamArtifact, FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider,
     GpuTileCompositor, InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor,
     PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
-    SvgVectorEngine, TabSandbox, TraceCollector, VelocityCodecsEngine, WebAudioEngine, WebCryptoEngine, WebGLContext,
+    StealthHumanBehavior, SvgVectorEngine, TabSandbox, TraceCollector, VelocityCodecsEngine, WebAudioEngine, WebCryptoEngine, WebGLContext,
 };
-use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WebWorkerPool};
-use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
+use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WasmSimdPipeline, WebWorkerPool};
+use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D, ParallelLayoutEngine};
 use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport, WebRtcTransport};
 use crate::nda::NdaTriple;
-use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
+use crate::parser::{CssMatcher, FastCssParser, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
 use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 use crate::session_history::{HistoryItem, HistoryStack};
@@ -55,6 +55,8 @@ pub struct BrowserSession {
     pub codecs_engine: VelocityCodecsEngine,
     pub font_shaper: FontShaperEngine,
     pub gpu_compositor: GpuTileCompositor,
+    pub parallel_layout: ParallelLayoutEngine,
+    pub wasm_simd: WasmSimdPipeline,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -98,16 +100,18 @@ impl BrowserSession {
             geolocation_provider: GeolocationProvider::mock_sf(),
             bluetooth_transport: WebBluetoothTransport::new(),
             audio_engine: WebAudioEngine::new(44100),
-            tls_rotator: TlsFingerprintRotator::chrome_desktop(),
+            tls_rotator: TlsFingerprintRotator::velocity_native(),
             ocr_engine: VelocityOcrEngine::new(),
             quic_transport: None,
             codecs_engine: VelocityCodecsEngine::new("h264_opus"),
             font_shaper: FontShaperEngine::new("Roboto"),
             gpu_compositor: GpuTileCompositor::new(),
+            parallel_layout: ParallelLayoutEngine::new(4),
+            wasm_simd: WasmSimdPipeline::new(),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
-            device_profile: DeviceProfile::desktop_chrome(),
+            device_profile: DeviceProfile::velocity_native(),
             trace_collector: TraceCollector::new(),
             mutation_observer: NativeMutationObserver::new(),
             mutation_batcher: MutationBatcher::new(),
@@ -139,9 +143,10 @@ impl BrowserSession {
     pub fn click_ocr_text(&mut self, target_text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ocr_boxes = self.perform_ocr_scan();
         if let Some(target_box) = ocr_boxes.iter().find(|b| b.text.contains(target_text)) {
+            let trajectory = StealthHumanBehavior::generate_bezier_trajectory((0.0, 0.0), (target_box.x as f64, target_box.y as f64), 10);
             self.trace_collector.record_console(
                 "info",
-                &format!("OCR Click on '{}' at ({}, {})", target_box.text, target_box.x, target_box.y),
+                &format!("OCR Click on '{}' with Bezier trajectory length {}", target_box.text, trajectory.len()),
             );
             return Ok(());
         }
@@ -163,6 +168,7 @@ impl BrowserSession {
         self.current_url = url.to_string();
         self.history_stack.push_state(url, "{}", "");
         let _tokens = Html5Tokenizer::new(html).tokenize();
+        let _fast_rules = FastCssParser::parse_rules_fast(html);
         let nodes = HtmlParser::parse(html);
         let tree = DomTree::new(nodes);
         self.page_title = tree.extract_page_title();
@@ -229,10 +235,11 @@ impl BrowserSession {
 
             if let Some(id) = target_id {
                 if let Some(node) = tree.get_node_mut(id) {
+                    let jitter = StealthHumanBehavior::compute_typing_jitter(text.len());
                     node.attributes.insert("value".to_string(), text.to_string());
                     let _ = self.js_vm.dispatch_event(tree, selector, "input");
                     self.mutation_observer.observe_attribute_change(id, "value");
-                    self.trace_collector.record_mutation(selector, "attribute_changed", &format!("value={}", text));
+                    self.trace_collector.record_mutation(selector, "attribute_changed", &format!("value={}, jitter_len={}", text, jitter.len()));
                     return Ok(());
                 }
             }
@@ -335,7 +342,7 @@ impl BrowserSession {
 
             let layout_engine = LayoutEngine2D::new(self.cascader.clone());
             let mut boxes = layout_engine.build_layout_tree(tree);
-            let root_box = LayoutBox {
+            let mut root_box = LayoutBox {
                 node_id: 0,
                 x: 0.0,
                 y: 0.0,
@@ -350,6 +357,7 @@ impl BrowserSession {
             };
             FlexLayoutEngine::compute_flex_children(&root_box, &mut boxes, FlexDirection::Row);
             FlexAlignmentSolver::align_main_axis(1920.0, &mut boxes, JustifyContent::FlexStart);
+            self.parallel_layout.compute_parallel_subtrees(&mut root_box);
 
             for t in layout_engine.export_layout_nda(&boxes) {
                 encoder.triples.push(t);
