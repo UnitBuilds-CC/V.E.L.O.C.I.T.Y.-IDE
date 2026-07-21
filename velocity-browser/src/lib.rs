@@ -13,7 +13,7 @@ pub mod style;
 pub use agentic::{AgenticAomNode, AgenticAomTree};
 pub use dom::DomTree;
 pub use engine::*;
-pub use js::JsEvaluator;
+pub use js::{JsEventListener, JsValue, JsVirtualMachine, JsEvaluator};
 pub use layout::{BoundingBox, DisplayMode, LayoutBox, LayoutEngine, LayoutEngine2D};
 pub use net::{HttpClient, HttpResponse};
 pub use nda::NdaTriple;
