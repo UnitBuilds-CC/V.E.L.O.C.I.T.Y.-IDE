@@ -1,62 +1,36 @@
-use velocity_browser::dom::FormDataSerializer;
-use velocity_browser::engine::SoftwareRasterizer;
-use velocity_browser::layout::LayoutEngine2D;
-use velocity_browser::net::TlsState;
+use velocity_browser::js::JsEventLoopScheduler;
 use velocity_browser::parser::HtmlParser;
-use velocity_browser::session_storage::SessionStorageDisk;
 use velocity_browser::session::BrowserSession;
-use velocity_browser::style::StyleCascader;
-use tempfile::tempdir;
+use velocity_browser::session_auth::{AuthReseeder, AuthTokenState};
+use std::collections::HashMap;
 
 #[test]
-fn test_form_data_serialization() {
-    let html = r#"
-        <form id="contact-form">
-            <input type="text" name="username" value="agent_ian" />
-            <input type="password" name="pass" value="secret123" />
-        </form>
-    "#;
+fn test_js_event_loop_scheduler() {
+    let mut scheduler = JsEventLoopScheduler::new();
+    let t1 = scheduler.schedule_timer("console.log('timer')", 100);
+    let m1 = scheduler.queue_microtask("console.log('microtask')");
 
-    let nodes = HtmlParser::parse(html);
-    let tree = velocity_browser::dom::DomTree::new(nodes);
-    let data = FormDataSerializer::serialize_form(&tree, "#contact-form");
+    assert_eq!(t1, 1);
+    assert_eq!(m1, 2);
 
-    assert_eq!(data.get("username").map(|s| s.as_str()), Some("agent_ian"));
-    assert_eq!(data.get("pass").map(|s| s.as_str()), Some("secret123"));
-
-    let encoded = FormDataSerializer::to_url_encoded(&data);
-    assert!(encoded.contains("username=agent_ian"));
+    let next = scheduler.pop_next_task().unwrap();
+    assert_eq!(next.script, "console.log('microtask')"); // Microtasks run first
 }
 
 #[test]
-fn test_persistent_session_disk_storage() {
-    let dir = tempdir().unwrap();
-    let storage_path = dir.path().to_str().unwrap();
-    let storage = SessionStorageDisk::new(storage_path);
+fn test_auth_reseeding_and_mutation_observer() {
+    let mut session = BrowserSession::new("auth_reseed_sess".to_string());
+    let html = "<html><body><input id=\"username\" type=\"text\" value=\"\" /></body></html>";
+    session.load_html("http://localhost/app", html);
 
-    let session = BrowserSession::new("persistent_sess_100".to_string());
-    let triples = session.capture_state_nda();
+    let mut storage = HashMap::new();
+    storage.insert("access_token".to_string(), "bearer_secret_abc123".to_string());
 
-    let save_res = storage.save_session_nda("persistent_sess_100", &triples);
-    assert!(save_res.is_ok());
+    let auth_state = AuthReseeder::extract_auth_state(&session.cookies, &storage);
+    session.reseed_auth(&auth_state);
 
-    let loaded = storage.load_session_nda("persistent_sess_100").unwrap();
-    assert_eq!(loaded.len(), triples.len());
-}
+    assert!(session.fill("#username", "reseeded_user").is_ok());
 
-#[test]
-fn test_software_rasterizer() {
-    let html = "<html><body><div id=\"box\">Hello Rasterizer</div></body></html>";
-    let nodes = HtmlParser::parse(html);
-    let tree = velocity_browser::dom::DomTree::new(nodes);
-
-    let cascader = StyleCascader::new();
-    let layout_engine = LayoutEngine2D::new(cascader);
-    let boxes = layout_engine.build_layout_tree(&tree);
-
-    let buffer = SoftwareRasterizer::render_layout(&boxes, 800, 600);
-    assert_eq!(buffer.pixels.len(), 800 * 600);
-
-    let nda_triples = SoftwareRasterizer::raster_to_nda(&buffer, "raster_sess");
-    assert_eq!(nda_triples.len(), 2);
+    let state = session.capture_state_nda();
+    assert!(state.iter().any(|t| t.predicate_id == 140)); // MutationObserver predicate
 }

@@ -1,15 +1,16 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
-use crate::dom::DomTree;
+use crate::dom::{DomTree, NativeMutationObserver};
 use crate::engine::{
     CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
     FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
     ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, TraceCollector,
 };
-use crate::js::JsVirtualMachine;
+use crate::js::{JsEventLoopScheduler, JsVirtualMachine};
 use crate::layout::LayoutEngine2D;
-use crate::net::HttpClient;
+use crate::net::{HttpClient, NativeWsClient};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
+use crate::session_auth::{AuthReseeder, AuthTokenState};
 use crate::style::StyleCascader;
 use std::collections::HashMap;
 
@@ -34,8 +35,10 @@ pub struct BrowserSession {
     pub file_manager: FileManager,
     pub device_profile: DeviceProfile,
     pub trace_collector: TraceCollector,
+    pub mutation_observer: NativeMutationObserver,
     pub cascader: StyleCascader,
     pub js_vm: JsVirtualMachine,
+    pub js_scheduler: JsEventLoopScheduler,
     pub cookies: Vec<Cookie>,
     pub storage: HashMap<String, String>,
     pub shadow_hosts: Vec<ShadowHost>,
@@ -55,8 +58,10 @@ impl BrowserSession {
             file_manager: FileManager::new(),
             device_profile: DeviceProfile::desktop_chrome(),
             trace_collector: TraceCollector::new(),
+            mutation_observer: NativeMutationObserver::new(),
             cascader: StyleCascader::new(),
             js_vm: JsVirtualMachine::new(),
+            js_scheduler: JsEventLoopScheduler::new(),
             cookies: Vec::new(),
             storage: HashMap::new(),
             shadow_hosts: Vec::new(),
@@ -90,6 +95,12 @@ impl BrowserSession {
         if let Some(tree) = &mut self.dom_tree {
             let res = self.js_vm.eval_statement(tree, expr)?;
             self.trace_collector.record_console("info", &format!("Evaluated JS: '{}'", expr));
+
+            // Drain async microtasks
+            while let Some(task) = self.js_scheduler.pop_next_task() {
+                let _ = self.js_vm.eval_statement(tree, &task.script);
+            }
+
             return Ok(format!("{:?}", res));
         }
         Err("No DOM tree loaded in session".into())
@@ -106,7 +117,9 @@ impl BrowserSession {
 
             let matches = CssMatcher::find_matches(&tree.nodes, selector);
             if !matches.is_empty() {
+                let node_id = matches[0].id;
                 let _ = self.js_vm.dispatch_event(tree, selector, "click");
+                self.mutation_observer.observe_attribute_change(node_id, "click");
                 self.trace_collector.record_mutation(selector, "click", "Native click event dispatched");
                 return Ok(());
             }
@@ -127,6 +140,7 @@ impl BrowserSession {
                 if let Some(node) = tree.get_node_mut(id) {
                     node.attributes.insert("value".to_string(), text.to_string());
                     let _ = self.js_vm.dispatch_event(tree, selector, "input");
+                    self.mutation_observer.observe_attribute_change(id, "value");
                     self.trace_collector.record_mutation(selector, "attribute_changed", &format!("value={}", text));
                     return Ok(());
                 }
@@ -136,7 +150,11 @@ impl BrowserSession {
         Err("No DOM tree loaded in session".into())
     }
 
-    /// Attach a local file to a file input element
+    /// Extract auth state and reseed into session
+    pub fn reseed_auth(&mut self, auth: &AuthTokenState) {
+        AuthReseeder::reseed_into_session(self, auth);
+    }
+
     pub fn attach_file(&mut self, selector: &str, file_path: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(tree) = &mut self.dom_tree {
             let res = self.file_manager.attach_file(tree, selector, file_path)?;
@@ -178,10 +196,11 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, and trace triples
+        // Add device profile, file, mutation, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
+        encoder.triples.extend(self.mutation_observer.export_mutations_nda());
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {
