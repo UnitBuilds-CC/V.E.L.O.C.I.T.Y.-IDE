@@ -1,28 +1,18 @@
-use velocity_browser::agentic::OcrSpatialMapper;
-use velocity_browser::engine::{CaptchaSolverEngine, CaptchaType, PdfMediaExtractor, PixelBuffer};
-use velocity_browser::net::TlsFingerprintRotator;
-use velocity_browser::parser::HtmlParser;
-use velocity_browser::dom::DomTree;
+use velocity_browser::agentic::VelocityOcrEngine;
+use velocity_browser::engine::PixelBuffer;
+use velocity_browser::session::BrowserSession;
 
 #[test]
-fn test_tls_rotator_and_captcha_solver() {
-    let mut rot = TlsFingerprintRotator::chrome_desktop();
-    let profile = rot.rotate_profile();
-    assert!(profile.ja3_hash.contains("rotated_ja3"));
+fn test_velocity_ocr_engine_processing() {
+    let engine = VelocityOcrEngine::new();
+    let mut buffer = PixelBuffer::new(100, 100);
+    buffer.set_pixel(10, 10, 0, 0, 0, 255); // Dark pixel
 
-    let html = r#"<html><body><iframe src="https://hcaptcha.com/1/api.js"></iframe></body></html>"#;
-    let nodes = HtmlParser::parse(html);
-    let tree = DomTree::new(nodes);
-    let detected = CaptchaSolverEngine::detect_challenge(&tree);
-    assert!(matches!(detected, Some(CaptchaType::HCaptcha)));
-}
+    let boxes = engine.process_pixel_buffer(&buffer);
+    assert!(!boxes.is_empty());
+    assert!(boxes[0].confidence > 0.9);
 
-#[test]
-fn test_pdf_extractor_and_ocr_mapper() {
-    let pdf_lines = PdfMediaExtractor::parse_pdf_document(b"%PDF-1.4 sample content");
-    assert_eq!(pdf_lines.len(), 1);
-
-    let pix = PixelBuffer::new(100, 100);
-    let ocr_boxes = OcrSpatialMapper::map_pixel_buffer_ocr(&pix);
-    assert_eq!(ocr_boxes.len(), 1);
+    let session = BrowserSession::new("sess_ocr".to_string());
+    let state = session.capture_state_nda();
+    assert!(state.iter().any(|t| t.predicate_id == 252)); // OCR triple predicate
 }

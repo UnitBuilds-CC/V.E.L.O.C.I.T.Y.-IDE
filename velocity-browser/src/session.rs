@@ -1,4 +1,4 @@
-use crate::agentic::{AgenticAomTree, NdaEncoder, OcrSpatialMapper, ZeroAllocNdaWriter};
+use crate::agentic::{AgenticAomTree, NdaEncoder, VelocityOcrEngine, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
@@ -17,7 +17,7 @@ use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 use crate::session_history::{HistoryItem, HistoryStack};
 use crate::session_indexeddb::IndexedDbStorage;
 use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
-use crate::session_storage_quota::StorageQuotaManager;
+pub use crate::session_storage_quota::StorageQuotaManager;
 use crate::style::{ScopedCssMatcher, StyleCascader};
 use std::collections::HashMap;
 
@@ -50,6 +50,7 @@ pub struct BrowserSession {
     pub bluetooth_transport: WebBluetoothTransport,
     pub audio_engine: WebAudioEngine,
     pub tls_rotator: TlsFingerprintRotator,
+    pub ocr_engine: VelocityOcrEngine,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -94,6 +95,7 @@ impl BrowserSession {
             bluetooth_transport: WebBluetoothTransport::new(),
             audio_engine: WebAudioEngine::new(44100),
             tls_rotator: TlsFingerprintRotator::chrome_desktop(),
+            ocr_engine: VelocityOcrEngine::new(),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -286,6 +288,10 @@ impl BrowserSession {
                 encoder.triples.extend(CaptchaSolverEngine::solve_challenge_nda(&self.session_id, &c_type));
             }
         }
+
+        let pix = PixelBuffer::new(800, 600);
+        let ocr_boxes = self.ocr_engine.process_pixel_buffer(&pix);
+        encoder.triples.extend(self.ocr_engine.export_ocr_nda(&self.session_id, &ocr_boxes));
 
         // Add unmanaged slab node triples
         for slot in &self.slab_tree.arena.slots {
