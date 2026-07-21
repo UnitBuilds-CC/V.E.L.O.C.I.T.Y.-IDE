@@ -1,12 +1,12 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
-use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
+use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
-    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer, SandboxCapabilities,
-    ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TabSandbox, TraceCollector,
-    WebCryptoEngine, WebGLContext,
+    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer, PushNotificationManager,
+    SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TabSandbox,
+    TraceCollector, WebCryptoEngine, WebGLContext,
 };
-use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter};
+use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WebWorkerPool};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
 use crate::net::{HttpClient, InspectorServer, NativeWsClient, ProxyResolver, WebRtcTransport};
 use crate::nda::NdaTriple;
@@ -16,6 +16,7 @@ use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 use crate::session_history::{HistoryItem, HistoryStack};
 use crate::session_indexeddb::IndexedDbStorage;
 use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
+use crate::session_storage_quota::StorageQuotaManager;
 use crate::style::{ScopedCssMatcher, StyleCascader};
 use std::collections::HashMap;
 
@@ -39,6 +40,10 @@ pub struct BrowserSession {
     pub tab_sandbox: TabSandbox,
     pub history_stack: HistoryStack,
     pub webgl_context: WebGLContext,
+    pub push_notifications: PushNotificationManager,
+    pub worker_pool: WebWorkerPool,
+    pub storage_quota: StorageQuotaManager,
+    pub custom_elements: CustomElementRegistry,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -74,6 +79,10 @@ impl BrowserSession {
             tab_sandbox: TabSandbox::new(&session_id, SandboxCapabilities::strict_isolation()),
             history_stack: HistoryStack::new("about:blank"),
             webgl_context: WebGLContext::new(800, 600),
+            push_notifications: PushNotificationManager::new(),
+            worker_pool: WebWorkerPool::new(),
+            storage_quota: StorageQuotaManager::new(50 * 1024 * 1024), // 50MB quota
+            custom_elements: CustomElementRegistry::new(),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -193,6 +202,7 @@ impl BrowserSession {
     }
 
     pub fn set_storage_item(&mut self, key: &str, value: &str) {
+        let _ = self.storage_quota.reserve(key.len() + value.len());
         self.storage_broadcaster.set_item(&mut self.storage, key, value, &self.current_url);
     }
 
@@ -244,7 +254,7 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox violations, inspector, and trace triples
+        // Add device profile, file, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push notifications, inspector, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
@@ -255,6 +265,7 @@ impl BrowserSession {
         encoder.triples.extend(self.history_stack.export_history_nda(&self.session_id));
         encoder.triples.extend(WebCryptoEngine::export_crypto_nda(&self.session_id, "ready"));
         encoder.triples.extend(self.tab_sandbox.export_sandbox_nda());
+        encoder.triples.extend(self.push_notifications.export_push_nda(&self.session_id));
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
 
         // Add unmanaged slab node triples

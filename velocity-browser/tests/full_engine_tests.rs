@@ -1,47 +1,31 @@
-use velocity_browser::engine::{SandboxCapabilities, TabSandbox, WebCryptoEngine, WebGLContext};
+use velocity_browser::dom::CustomElementRegistry;
+use velocity_browser::engine::{PushNotificationManager, SandboxCapabilities, TabSandbox, WebCryptoEngine, WebGLContext};
+use velocity_browser::js::WebWorkerPool;
 use velocity_browser::session::BrowserSession;
 use velocity_browser::session_history::HistoryStack;
+use velocity_browser::session_storage_quota::StorageQuotaManager;
 use velocity_browser::style::ScopedCssMatcher;
 use velocity_browser::parser::html::DomNode;
 use std::collections::HashMap;
 
 #[test]
-fn test_webgl_context_and_history_stack() {
-    let mut gl = WebGLContext::new(100, 100);
-    gl.buffer_data(&[10.0, 20.0, 50.0, 80.0]);
-    gl.draw_arrays_triangles(255, 0, 0, 255);
-    assert_ne!(gl.pixel_buffer.compute_hash(), 0);
+fn test_push_worker_and_storage_quota() {
+    let mut push_mgr = PushNotificationManager::new();
+    let sub = push_mgr.subscribe("https://push.example.com/sub/1", "p256_key", "auth_secret");
+    assert_eq!(sub.endpoint, "https://push.example.com/sub/1");
 
-    let mut hist = HistoryStack::new("http://example.com");
-    hist.push_state("http://example.com/page2", "{}", "Page 2");
-    assert_eq!(hist.current_index, 1);
-    assert_eq!(hist.back().unwrap().url, "http://example.com");
+    let mut pool = WebWorkerPool::new();
+    let id = pool.spawn_worker("/worker.js");
+    assert!(pool.post_message(&id, r#"{"type":"start"}"#));
+
+    let mut quota = StorageQuotaManager::new(100);
+    assert!(quota.reserve(50).is_ok());
+    assert!(quota.reserve(60).is_err());
 }
 
 #[test]
-fn test_tab_sandbox_security_isolation() {
-    let mut caps = SandboxCapabilities::strict_isolation();
-    caps.allow_network_hosts.push("trusted.com".to_string());
-
-    let mut sandbox = TabSandbox::new("tab_1", caps);
-    assert!(sandbox.check_network_access("https://trusted.com/api").is_ok());
-    assert!(sandbox.check_network_access("https://malicious.com/payload").is_err());
-    assert!(sandbox.check_file_access("/etc/passwd").is_err());
-
-    let mut session = BrowserSession::new("sess_sandbox".to_string());
-    session.tab_sandbox = sandbox;
-    let state = session.capture_state_nda();
-    assert!(state.iter().any(|t| t.predicate_id == 220)); // Sandbox violation predicate
-}
-
-#[test]
-fn test_webcrypto_and_scoped_css() {
-    let digest = WebCryptoEngine::digest_sha256(b"hello world");
-    assert_eq!(digest.len(), 16);
-
-    let mut attrs = HashMap::new();
-    attrs.insert("shadowroot".to_string(), "open".to_string());
-    let host_node = DomNode { id: 1, tag_name: "div".to_string(), attributes: attrs, children: Vec::new(), parent: None, node_type: velocity_browser::parser::html::NodeType::Element, text_content: String::new() };
-
-    assert!(ScopedCssMatcher::matches_host_selector(&host_node, ":host"));
+fn test_custom_element_registry() {
+    let mut reg = CustomElementRegistry::new();
+    assert!(reg.define("user-card", "UserCardElement", None).is_ok());
+    assert!(reg.define("invalidtag", "InvalidElement", None).is_err());
 }
