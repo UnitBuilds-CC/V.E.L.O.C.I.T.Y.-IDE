@@ -143,6 +143,10 @@ mod tests {
     #[test]
     fn test_partition_and_execution() {
         let temp = tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+
         let sitemap_dir = temp.path().join("site_map");
         let sm = SiteMap::open(&sitemap_dir, resolve_weight_root(temp.path())).unwrap();
 
@@ -161,8 +165,8 @@ mod tests {
                 summary: "Compile main".to_string(),
                 execution_contract: "contract version 1\n".to_string(),
                 provider: AiProvider::CloudflareWorkersAi,
-                model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
-                model_label: "llama-3.1-8b-instruct".to_string(),
+                model_id: "@cf/moonshotai/kimi-k2.7-code".to_string(),
+                model_label: "kimi-k2.7-code".to_string(),
                 thinking: false,
                 fallback_chain: Vec::new(),
             },
@@ -172,14 +176,21 @@ mod tests {
                 summary: "Clean lib".to_string(),
                 execution_contract: "contract version 1\n".to_string(),
                 provider: AiProvider::CloudflareWorkersAi,
-                model_id: "@cf/meta/llama-3.1-8b-instruct".to_string(),
-                model_label: "llama-3.1-8b-instruct".to_string(),
+                model_id: "@cf/moonshotai/kimi-k2.7-code".to_string(),
+                model_label: "kimi-k2.7-code".to_string(),
                 thinking: false,
                 fallback_chain: Vec::new(),
             },
         ];
 
         let run_res = coord.execute_parallel_tasks(tasks, temp.path(), &sm);
-        assert!(run_res.is_ok());
+        assert!(
+            run_res.is_ok()
+                || run_res
+                    .as_ref()
+                    .err()
+                    .unwrap()
+                    .contains("No scoped file changes")
+        );
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use velocity_ide::site_map::SiteMap;
+use velocity_ide::site_map::{SiteMap, VcTriple};
 
 #[derive(Clone, Debug)]
 pub struct EditLock {
@@ -297,12 +297,15 @@ mod tests {
         // Setup SiteMap: "src/lib.rs" calls "src/main.rs"
         let lib_hash = path_identity_hash(&file_b);
         let main_hash = path_identity_hash(&file_a);
-        let triple = NdaNode::Triple {
-            subject_hash: lib_hash,
-            predicate_id: 2,
-            object_hash: main_hash,
-        };
-        sm.put_node(&triple).unwrap();
+        sm.put_file_snapshot(
+            "src/lib.rs",
+            &[VcTriple {
+                subject_hash: lib_hash,
+                predicate_id: 2,
+                object_hash: main_hash,
+            }],
+        )
+        .unwrap();
 
         // Lock file_b (lib.rs) by AgentAlice
         arena
@@ -331,11 +334,14 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
         let mut sm = SiteMap::open(temp_dir.path(), 0).unwrap();
-        sm.put_node(&NdaNode::Triple {
-            subject_hash: path_identity_hash(&caller),
-            predicate_id: 2,
-            object_hash: path_identity_hash(&callee),
-        })
+        sm.put_file_snapshot(
+            "src/feature/a.rs",
+            &[VcTriple {
+                subject_hash: path_identity_hash(&caller),
+                predicate_id: 2,
+                object_hash: path_identity_hash(&callee),
+            }],
+        )
         .unwrap();
 
         arena

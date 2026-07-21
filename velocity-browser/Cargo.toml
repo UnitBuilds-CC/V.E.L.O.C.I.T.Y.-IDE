@@ -1,0 +1,10 @@
+[package]
+name = "velocity-browser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+velocity-ide = { path = "../velocity-ide" }
+
+[dev-dependencies]
+tempfile = "3.8"

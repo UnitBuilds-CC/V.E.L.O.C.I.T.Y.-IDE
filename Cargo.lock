@@ -4059,6 +4059,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "velocity-browser"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "velocity-ide",
+]
+
+[[package]]
 name = "velocity-ide"
 version = "0.1.0"
 dependencies = [

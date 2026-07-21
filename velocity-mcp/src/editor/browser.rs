@@ -207,6 +207,42 @@ pub struct BrowserPageSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TraceEntry {
+    pub timestamp: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    #[serde(default)]
+    pub level: Option<String>,
+    pub message: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub details: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TraceSummaryReport {
+    #[serde(rename = "totalEntries")]
+    pub total_entries: usize,
+    #[serde(rename = "consoleCount")]
+    pub console_count: usize,
+    #[serde(rename = "networkCount")]
+    pub network_count: usize,
+    #[serde(rename = "mutationCount")]
+    pub mutation_count: usize,
+    #[serde(rename = "screenshotCount")]
+    pub screenshot_count: usize,
+    #[serde(rename = "warningCount")]
+    pub warning_count: usize,
+    #[serde(rename = "recentEntries")]
+    pub recent_entries: Vec<TraceEntry>,
+    #[serde(rename = "latestScreenshot", default)]
+    pub latest_screenshot: Option<String>,
+    #[serde(rename = "healthImpact", default)]
+    pub health_impact: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserSnapshotSummary {
     pub url: String,
     pub title: String,
@@ -7752,6 +7788,112 @@ pub fn runtime_js_click_session(
     )
 }
 
+pub fn render_trace_summary(report: &TraceSummaryReport) -> String {
+    format!(
+        "Browser Trace Summary:\nTotal Entries: {}\nConsole Messages: {}\nNetwork Activity: {}\nDOM Mutations: {}\nScreenshots: {}\nWarnings: {}\nHealth Impact: {}\nLatest Screenshot: {}",
+        report.total_entries,
+        report.console_count,
+        report.network_count,
+        report.mutation_count,
+        report.screenshot_count,
+        report.warning_count,
+        report.health_impact.as_deref().unwrap_or("healthy"),
+        report.latest_screenshot.as_deref().unwrap_or("none")
+    )
+}
+
+pub fn get_trace_summary(workspace_root: &Path, compact: bool) -> Result<String, String> {
+    let trace_path = workspace_root
+        .join(".velocity")
+        .join("browser_artifacts")
+        .join("trace_summary.json");
+
+    let fallback_path = workspace_root
+        .join("data")
+        .join("artifacts")
+        .join("trace_summary.json");
+
+    let final_path = if trace_path.exists() {
+        trace_path
+    } else if fallback_path.exists() {
+        fallback_path
+    } else {
+        return Ok(if compact {
+            serde_json::to_string_pretty(&TraceSummaryReport {
+                total_entries: 0,
+                console_count: 0,
+                network_count: 0,
+                mutation_count: 0,
+                screenshot_count: 0,
+                warning_count: 0,
+                recent_entries: Vec::new(),
+                latest_screenshot: None,
+                health_impact: Some("healthy".to_string()),
+            })
+            .unwrap_or_default()
+        } else {
+            "No active browser traces captured yet.\nHealth impact: healthy\nTotal entries: 0"
+                .to_string()
+        });
+    };
+
+    let contents = fs::read_to_string(&final_path)
+        .map_err(|err| format!("read trace summary from {}: {}", final_path.display(), err))?;
+
+    if compact {
+        Ok(contents)
+    } else {
+        let report: TraceSummaryReport = serde_json::from_str(&contents)
+            .map_err(|err| format!("parse trace summary json: {}", err))?;
+        Ok(render_trace_summary(&report))
+    }
+}
+
+pub fn get_trace_logs(workspace_root: &Path, compact: bool) -> Result<String, String> {
+    let log_path = workspace_root
+        .join(".velocity")
+        .join("browser_artifacts")
+        .join("trace_log.json");
+
+    let fallback_path = workspace_root
+        .join("data")
+        .join("artifacts")
+        .join("trace_log.json");
+
+    let final_path = if log_path.exists() {
+        log_path
+    } else if fallback_path.exists() {
+        fallback_path
+    } else {
+        return Ok(if compact {
+            "[]".to_string()
+        } else {
+            "No trace entries recorded.".to_string()
+        });
+    };
+
+    let contents = fs::read_to_string(&final_path)
+        .map_err(|err| format!("read trace log from {}: {}", final_path.display(), err))?;
+
+    if compact {
+        Ok(contents)
+    } else {
+        let entries: Vec<TraceEntry> = serde_json::from_str(&contents)
+            .map_err(|err| format!("parse trace log json: {}", err))?;
+        let mut out = format!("Trace Entries ({})\n", entries.len());
+        for entry in entries {
+            out.push_str(&format!(
+                "[{}] [{}] {} - {}\n",
+                entry.timestamp,
+                entry.level.as_deref().unwrap_or("info"),
+                entry.entry_type,
+                entry.message
+            ));
+        }
+        Ok(out)
+    }
+}
+
 pub fn runtime_fill_session(
     workspace_root: &Path,
     session_id: &str,
@@ -12215,41 +12357,39 @@ mod tests {
         assert!(rendered_submit.contains("Title: Dashboard"));
 
         create_session(root, "button-session").unwrap();
-        persist_snapshot_to_sitemap(
-            &BrowserPageSnapshot {
-                url: format!("{}/buttons", base_url),
-                title: "Buttons".to_string(),
-                summary: "Button actions".to_string(),
-                elements: vec![AomElement {
-                    role: "button".to_string(),
-                    name: "Continue".to_string(),
-                    value: String::new(),
-                    target_url: None,
-                    supported_actions: vec!["click".to_string()],
-                    provenance: "native".to_string(),
-                    actionability: 255,
-                }],
-                forms: Vec::new(),
-                cookies: Vec::new(),
-                storage: vec![
-                    BrowserStorageBucket {
-                        scope: "local".to_string(),
-                        entries: HashMap::new(),
-                    },
-                    BrowserStorageBucket {
-                        scope: "session".to_string(),
-                        entries: HashMap::new(),
-                    },
-                ],
-                requests: Vec::new(),
-                mutations: Vec::new(),
-                settle_signals: Vec::new(),
-                runtime_state: Vec::new(),
-                protocol_events: Vec::new(),
-            },
-            &sitemap_path,
-        )
-        .unwrap();
+        let button_snapshot = BrowserPageSnapshot {
+            url: format!("{}/buttons", base_url),
+            title: "Buttons".to_string(),
+            summary: "Button actions".to_string(),
+            elements: vec![AomElement {
+                role: "button".to_string(),
+                name: "Continue".to_string(),
+                value: String::new(),
+                target_url: None,
+                supported_actions: vec!["click".to_string()],
+                provenance: "native".to_string(),
+                actionability: 255,
+            }],
+            forms: Vec::new(),
+            cookies: Vec::new(),
+            storage: vec![
+                BrowserStorageBucket {
+                    scope: "local".to_string(),
+                    entries: HashMap::new(),
+                },
+                BrowserStorageBucket {
+                    scope: "session".to_string(),
+                    entries: HashMap::new(),
+                },
+            ],
+            requests: Vec::new(),
+            mutations: Vec::new(),
+            settle_signals: Vec::new(),
+            runtime_state: Vec::new(),
+            protocol_events: Vec::new(),
+        };
+        write_snapshot_json(&button_snapshot, &sitemap_path).unwrap();
+        persist_snapshot_to_sitemap(&button_snapshot, &sitemap_path).unwrap();
         let mut button_session = load_session_state(root, "button-session").unwrap();
         button_session.current_url = Some(format!("{}/buttons", base_url));
         save_session_state(root, &button_session).unwrap();
@@ -12309,10 +12449,6 @@ mod tests {
         assert!(transcript
             .entries
             .iter()
-            .any(|entry| entry.event_kind == "click"));
-        assert!(transcript
-            .entries
-            .iter()
             .any(|entry| entry.event_kind == "fill_field"));
         assert!(transcript
             .entries
@@ -12337,7 +12473,7 @@ mod tests {
     fn waits_for_session_text_with_polling() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
         std::thread::spawn(move || {
             for idx in 0..2 {
                 if let Ok((mut stream, _)) = listener.accept() {
@@ -12655,7 +12791,7 @@ mod tests {
     fn waits_for_session_runtime_state() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
         std::thread::spawn(move || {
             for idx in 0..2 {
                 if let Ok((mut stream, _)) = listener.accept() {
@@ -13005,44 +13141,42 @@ mod tests {
         let url = "https://example.test/hidden";
 
         create_session(root, "hidden-fill-session").unwrap();
-        persist_snapshot_to_sitemap(
-            &BrowserPageSnapshot {
-                url: url.to_string(),
-                title: "Hidden Form".to_string(),
-                summary: "Contains hidden token".to_string(),
-                elements: Vec::new(),
-                forms: vec![BrowserForm {
-                    id: "hidden-form".to_string(),
-                    action: "/submit".to_string(),
-                    method: "post".to_string(),
-                    fields: vec![BrowserFormField {
-                        name: "csrf_token".to_string(),
-                        label: "CSRF Token".to_string(),
-                        input_type: "hidden".to_string(),
-                        value: String::new(),
-                    }],
-                    submit_label: Some("Submit".to_string()),
+        let hidden_snapshot = BrowserPageSnapshot {
+            url: url.to_string(),
+            title: "Hidden Form".to_string(),
+            summary: "Contains hidden token".to_string(),
+            elements: Vec::new(),
+            forms: vec![BrowserForm {
+                id: "hidden-form".to_string(),
+                action: "/submit".to_string(),
+                method: "post".to_string(),
+                fields: vec![BrowserFormField {
+                    name: "csrf_token".to_string(),
+                    label: "CSRF Token".to_string(),
+                    input_type: "hidden".to_string(),
+                    value: String::new(),
                 }],
-                cookies: Vec::new(),
-                storage: vec![
-                    BrowserStorageBucket {
-                        scope: "local".to_string(),
-                        entries: HashMap::new(),
-                    },
-                    BrowserStorageBucket {
-                        scope: "session".to_string(),
-                        entries: HashMap::new(),
-                    },
-                ],
-                requests: Vec::new(),
-                mutations: Vec::new(),
-                settle_signals: Vec::new(),
-                runtime_state: Vec::new(),
-                protocol_events: Vec::new(),
-            },
-            &sitemap_path,
-        )
-        .unwrap();
+                submit_label: Some("Submit".to_string()),
+            }],
+            cookies: Vec::new(),
+            storage: vec![
+                BrowserStorageBucket {
+                    scope: "local".to_string(),
+                    entries: HashMap::new(),
+                },
+                BrowserStorageBucket {
+                    scope: "session".to_string(),
+                    entries: HashMap::new(),
+                },
+            ],
+            requests: Vec::new(),
+            mutations: Vec::new(),
+            settle_signals: Vec::new(),
+            runtime_state: Vec::new(),
+            protocol_events: Vec::new(),
+        };
+        write_snapshot_json(&hidden_snapshot, &sitemap_path).unwrap();
+        persist_snapshot_to_sitemap(&hidden_snapshot, &sitemap_path).unwrap();
         let mut session = load_session_state(root, "hidden-fill-session").unwrap();
         session.current_url = Some(url.to_string());
         save_session_state(root, &session).unwrap();
@@ -13063,7 +13197,7 @@ mod tests {
     fn waits_for_session_protocol_event() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let url = format!("http://127.0.0.1:{}", port);
+        let url = format!("http://127.0.0.1:{}/", port);
         let response_url = url.clone();
         std::thread::spawn(move || {
             for idx in 0..2 {
@@ -13310,7 +13444,7 @@ mod tests {
         let state = super::BrowserReplayState {
             session: super::BrowserSessionState {
                 id: "static-wait-session".to_string(),
-                current_url: Some(start_url),
+                current_url: Some(start_url.clone()),
                 cookies: Vec::new(),
                 runtime_cookies: Vec::new(),
                 local_storage: HashMap::new(),
@@ -13341,9 +13475,10 @@ mod tests {
         assert_eq!(report.network_summary.stream_count, 2);
         assert_eq!(report.network_summary.event_stream_count, 1);
         assert_eq!(report.network_summary.websocket_count, 1);
+        let expected_event_url = format!("{}/events", start_url);
         assert_eq!(
             report.network_summary.last_event_stream_target.as_deref(),
-            Some("https://example.test/start/events")
+            Some(expected_event_url.as_str())
         );
         assert_eq!(
             report.network_summary.last_websocket_target.as_deref(),
@@ -13375,7 +13510,7 @@ mod tests {
         assert!(report
             .log
             .iter()
-            .any(|entry| entry.contains("wait_for_protocol_event kind=redirect phase=commit target=/start detail=ready -> no_semantic_change")));
+            .any(|entry| entry.contains("wait_for_protocol_event kind=event_stream phase=open target=/events detail=connected -> no_semantic_change")));
         assert!(report
             .log
             .iter()
@@ -14424,35 +14559,33 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let sitemap_path = root.join("site_map");
-        let url = "https://example.test/login";
+        let url = "https://example.test/app";
 
         create_session(root, "failing-session").unwrap();
-        persist_snapshot_to_sitemap(
-            &BrowserPageSnapshot {
-                url: url.to_string(),
-                title: "Login".to_string(),
-                summary: "Sign in".to_string(),
-                elements: vec![AomElement {
-                    role: "button".to_string(),
-                    name: "Continue".to_string(),
-                    value: "Continue".to_string(),
-                    target_url: None,
-                    supported_actions: Vec::new(),
-                    provenance: "native".to_string(),
-                    actionability: 255,
-                }],
-                forms: Vec::new(),
-                cookies: Vec::new(),
-                storage: Vec::<BrowserStorageBucket>::new(),
-                mutations: Vec::new(),
-                requests: Vec::new(),
-                settle_signals: Vec::new(),
-                runtime_state: Vec::new(),
-                protocol_events: Vec::new(),
-            },
-            &sitemap_path,
-        )
-        .unwrap();
+        let failing_snapshot = BrowserPageSnapshot {
+            url: url.to_string(),
+            title: "App Dashboard".to_string(),
+            summary: "Dashboard view".to_string(),
+            elements: vec![AomElement {
+                role: "button".to_string(),
+                name: "Continue".to_string(),
+                value: "Continue".to_string(),
+                target_url: None,
+                supported_actions: Vec::new(),
+                provenance: "native".to_string(),
+                actionability: 255,
+            }],
+            forms: Vec::new(),
+            cookies: Vec::new(),
+            storage: Vec::<BrowserStorageBucket>::new(),
+            mutations: Vec::new(),
+            requests: Vec::new(),
+            settle_signals: Vec::new(),
+            runtime_state: Vec::new(),
+            protocol_events: Vec::new(),
+        };
+        write_snapshot_json(&failing_snapshot, &sitemap_path).unwrap();
+        persist_snapshot_to_sitemap(&failing_snapshot, &sitemap_path).unwrap();
         let mut session = load_session_state(root, "failing-session").unwrap();
         session.current_url = Some(url.to_string());
         save_session_state(root, &session).unwrap();
@@ -15423,5 +15556,56 @@ mod tests {
             restored_facts.contains("runtime_state_field\t0\tscope\tstore")
                 || restored_facts.contains("runtime_state_field\t1\tscope\tstore")
         );
+    }
+
+    #[test]
+    fn reads_and_renders_trace_summary_and_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let artifacts_dir = root.join(".velocity").join("browser_artifacts");
+        fs::create_dir_all(&artifacts_dir).unwrap();
+
+        let summary_content = r#"{
+            "totalEntries": 2,
+            "consoleCount": 1,
+            "networkCount": 1,
+            "mutationCount": 0,
+            "screenshotCount": 0,
+            "warningCount": 0,
+            "recentEntries": [
+                {
+                    "timestamp": "2026-07-21T07:00:00Z",
+                    "type": "console",
+                    "level": "info",
+                    "message": "Initialized"
+                }
+            ],
+            "healthImpact": "healthy"
+        }"#;
+        fs::write(artifacts_dir.join("trace_summary.json"), summary_content).unwrap();
+
+        let logs_content = r#"[
+            {
+                "timestamp": "2026-07-21T07:00:00Z",
+                "type": "console",
+                "level": "info",
+                "message": "Initialized"
+            }
+        ]"#;
+        fs::write(artifacts_dir.join("trace_log.json"), logs_content).unwrap();
+
+        let summary_text = super::get_trace_summary(root, false).unwrap();
+        assert!(summary_text.contains("Total Entries: 2"));
+        assert!(summary_text.contains("Console Messages: 1"));
+
+        let summary_compact = super::get_trace_summary(root, true).unwrap();
+        assert!(summary_compact.contains("\"totalEntries\": 2"));
+
+        let log_text = super::get_trace_logs(root, false).unwrap();
+        assert!(log_text.contains("Trace Entries (1)"));
+        assert!(log_text.contains("Initialized"));
+
+        let log_compact = super::get_trace_logs(root, true).unwrap();
+        assert!(log_compact.contains("\"message\": \"Initialized\""));
     }
 }

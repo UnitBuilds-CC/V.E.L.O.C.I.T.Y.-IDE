@@ -477,7 +477,7 @@ fn hash_str(s: &str) -> u64 {
 mod tests {
     use super::*;
     use crate::agent::{ApiStyle, ModelInfo};
-    use velocity_ide::site_map::NdaNode;
+    use velocity_ide::site_map::VcTriple;
 
     #[test]
     fn routes_coupled_files_together() {
@@ -485,11 +485,14 @@ mod tests {
         let mut sm = SiteMap::open(temp.path(), 0).unwrap();
         let a_hash = path_identity_hash(Path::new("src/a.rs"));
         let b_hash = path_identity_hash(Path::new("src/b.rs"));
-        sm.put_node(&NdaNode::Triple {
-            subject_hash: a_hash,
-            predicate_id: 2,
-            object_hash: b_hash,
-        })
+        sm.put_file_snapshot(
+            "src/a.rs",
+            &[VcTriple {
+                subject_hash: a_hash,
+                predicate_id: 2,
+                object_hash: b_hash,
+            }],
+        )
         .unwrap();
 
         let router = SiteMapTaskRouter::open(temp.path());
@@ -542,11 +545,14 @@ mod tests {
         let mut sm = SiteMap::open(temp.path(), 0).unwrap();
         let caller_hash = path_identity_hash(Path::new("src/feature/a.rs"));
         let callee_hash = path_identity_hash(Path::new("src/shared/a.rs"));
-        sm.put_node(&NdaNode::Triple {
-            subject_hash: caller_hash,
-            predicate_id: 2,
-            object_hash: callee_hash,
-        })
+        sm.put_file_snapshot(
+            "src/feature/a.rs",
+            &[VcTriple {
+                subject_hash: caller_hash,
+                predicate_id: 2,
+                object_hash: callee_hash,
+            }],
+        )
         .unwrap();
 
         let partitions = partition_files_by_coupling(
