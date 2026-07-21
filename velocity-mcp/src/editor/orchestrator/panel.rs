@@ -1,5 +1,4 @@
-//! Optional IDE panel showing the orchestrator task graph.
-
+use super::types::*;
 use crate::automation::{
     resolve_weight_root, AgentTaskKind, DecompositionStyle, InstructionRegistry, RoutedSubAgentTask,
 };
@@ -9,7 +8,7 @@ use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
 use crate::orchestrator::validator;
 use crate::orchestrator::worker::{
-    spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult, WorkerThreadSnapshot,
+    spawn_live_worker, WorkerAssignment, WorkerHandle, WorkerResult,
 };
 use crate::orchestrator::TaskId;
 use eframe::egui;
@@ -17,92 +16,16 @@ use egui::{ScrollArea, Ui};
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Debug, Clone)]
-struct RoutedPlanState {
-    goal: String,
-    kind: AgentTaskKind,
-    scope_count: usize,
-    tasks: Vec<RoutedSubAgentTask>,
-}
-
-#[derive(Debug, Clone)]
-struct PolicyEditorState {
-    kind: AgentTaskKind,
-    selected_policy_id: String,
-    loaded_policy_id: String,
-    draft_label: String,
-    draft_template_id: String,
-    draft_style: DecompositionStyle,
-    draft_expectations: String,
-    status: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct OrchestratorDashboardSnapshot {
-    pub goal: Option<String>,
-    pub task_kind: Option<String>,
-    pub scope_count: usize,
-    pub planning_status: String,
-    pub runtime_status: String,
-    pub execution_running: bool,
-    pub has_routed_plan: bool,
-    pub has_dependency_cycle: bool,
-    pub can_launch_routed_tasks: bool,
-    pub can_reset_runtime: bool,
-    pub active_workers: usize,
-    pub pending_tasks: usize,
-    pub running_tasks: usize,
-    pub done_tasks: usize,
-    pub failed_tasks: usize,
-    pub blocked_tasks: usize,
-    pub retryable_blocked_tasks: usize,
-    pub tasks: Vec<OrchestratorTaskSnapshot>,
-}
-
-#[derive(Debug, Clone)]
-pub struct OrchestratorTaskSnapshot {
-    pub id: u64,
-    pub title: String,
-    pub description: String,
-    pub status_label: String,
-    pub provider_label: String,
-    pub model_label: String,
-    pub scope: Vec<String>,
-    pub rationale: String,
-    pub outputs: Vec<String>,
-    pub message: String,
-    pub run_summary_path: Option<String>,
-    pub run_facts_path: Option<String>,
-    pub wa_run_path: Option<String>,
-    pub wa_run_id: Option<String>,
-    pub live_thread: Option<WorkerThreadSnapshot>,
-}
-
-impl Default for PolicyEditorState {
-    fn default() -> Self {
-        Self {
-            kind: AgentTaskKind::Refactor,
-            selected_policy_id: String::new(),
-            loaded_policy_id: String::new(),
-            draft_label: String::new(),
-            draft_template_id: String::new(),
-            draft_style: DecompositionStyle::CoupledComponents,
-            draft_expectations: String::new(),
-            status: "Select a policy to tune routed planning.".to_string(),
-        }
-    }
-}
-
 pub struct OrchestratorPanel {
     pub graph: TaskGraph,
     pub registry: Option<OrchestratorRegistry>,
     pub expanded: bool,
-    routed_plan: Option<RoutedPlanState>,
-    policy_editor: PolicyEditorState,
-    planning_status: String,
-    runtime_status: String,
-    execution_running: bool,
-    running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
+    pub routed_plan: Option<RoutedPlanState>,
+    pub policy_editor: PolicyEditorState,
+    pub planning_status: String,
+    pub runtime_status: String,
+    pub execution_running: bool,
+    pub running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
     // Builder form state
     pub builder_title: String,
     pub builder_desc: String,
@@ -407,7 +330,7 @@ impl OrchestratorPanel {
         }
     }
 
-    fn ensure_policy_editor_loaded(&mut self, workspace_root: &Path) {
+    pub fn ensure_policy_editor_loaded(&mut self, workspace_root: &Path) {
         let registry = InstructionRegistry::open(workspace_root);
         let policies = registry.policies_for_kind(self.policy_editor.kind);
         let desired_policy_id = registry
@@ -448,7 +371,7 @@ impl OrchestratorPanel {
         }
     }
 
-    fn render_policy_controls(&mut self, ui: &mut Ui, workspace_root: &Path) {
+    pub fn render_policy_controls(&mut self, ui: &mut Ui, workspace_root: &Path) {
         let palette = IdePalette::dark();
         let registry = InstructionRegistry::open(workspace_root);
         let kind = self.policy_editor.kind;
@@ -735,7 +658,6 @@ impl OrchestratorPanel {
         ));
 
         ui.columns(2, |columns: &mut [Ui]| {
-            // Left column: Scroll area with lists and form
             columns[0].vertical(|ui: &mut egui::Ui| {
                 ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
                     if let Some(route_plan) = &self.routed_plan {
@@ -834,7 +756,6 @@ impl OrchestratorPanel {
                         });
                     }
 
-                    // Reconciler checks
                     let outputs = self.registry.as_ref().map(|r| &r.outputs);
                     let collisions = if let Some(outs) = outputs {
                         crate::orchestrator::reconcile::detect_collisions(&self.graph, outs)
@@ -876,7 +797,6 @@ impl OrchestratorPanel {
                         });
                     }
 
-                    // Task Builder Form
                     ui.add_space(8.0);
                     ui.collapsing("⚙️ Add Custom Task", |ui: &mut egui::Ui| {
                         ui.horizontal(|ui: &mut egui::Ui| {
@@ -934,7 +854,6 @@ impl OrchestratorPanel {
                 });
             });
 
-            // Right column: Canvas drawing the task graph pipeline
             columns[1].vertical(|ui: &mut egui::Ui| {
                 ui.label(
                     egui::RichText::new("📊 TASK FLOW PIPELINE")
@@ -946,9 +865,8 @@ impl OrchestratorPanel {
         });
     }
 
-    fn draw_task_graph(&self, ui: &mut Ui, plan: &scheduler::Plan, has_cycle: bool) {
+    pub fn draw_task_graph(&self, ui: &mut Ui, plan: &scheduler::Plan, has_cycle: bool) {
         let palette = IdePalette::dark();
-        use std::collections::HashMap;
 
         let mut canvas_size = ui.available_size();
         if !canvas_size.x.is_finite() {
@@ -962,13 +880,11 @@ impl OrchestratorPanel {
         let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
 
-        // Fill background
         painter.rect_filled(rect, 4.0, palette.bg_primary);
 
         let mut node_positions = HashMap::new();
 
         if !has_cycle {
-            // Compute positions based on Phase layout
             let x_spacing = 160.0;
             let y_spacing = 75.0;
             let start_pos = rect.min + egui::vec2(60.0, 40.0);
@@ -981,7 +897,6 @@ impl OrchestratorPanel {
                 }
             }
         } else {
-            // Draw in a circle if there is a cycle
             let center = rect.center();
             let radius = (rect.width().min(rect.height()) * 0.3).max(80.0);
             let tasks_vec: Vec<TaskId> = self.graph.tasks.keys().cloned().collect();
@@ -994,7 +909,6 @@ impl OrchestratorPanel {
             }
         }
 
-        // 1. Draw connecting dependency lines
         for (&id, task) in &self.graph.tasks {
             if let Some(&p_to) = node_positions.get(&id) {
                 for dep_id in &task.dependencies {
@@ -1006,7 +920,6 @@ impl OrchestratorPanel {
             }
         }
 
-        // 2. Draw Task Node boxes
         for (&id, task) in &self.graph.tasks {
             if let Some(&pos) = node_positions.get(&id) {
                 let status = self
@@ -1046,7 +959,7 @@ impl OrchestratorPanel {
         }
     }
 
-    fn start_execution(
+    pub fn start_execution(
         &mut self,
         workspace_root: &Path,
         mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
@@ -1059,7 +972,7 @@ impl OrchestratorPanel {
         self.poll_live_workers(workspace_root, mediator);
     }
 
-    fn reset_runtime(&mut self) {
+    pub fn reset_runtime(&mut self) {
         self.execution_running = false;
         self.running_workers.clear();
         if let Some(reg) = &mut self.registry {
@@ -1071,7 +984,7 @@ impl OrchestratorPanel {
         self.runtime_status = "Idle".to_string();
     }
 
-    fn retryable_blocked_task_count(&self) -> usize {
+    pub fn retryable_blocked_task_count(&self) -> usize {
         self.registry
             .as_ref()
             .map(|reg| {
@@ -1083,7 +996,7 @@ impl OrchestratorPanel {
             .unwrap_or(0)
     }
 
-    fn stale_plan_blocked_task_count(&self) -> usize {
+    pub fn stale_plan_blocked_task_count(&self) -> usize {
         self.registry
             .as_ref()
             .map(|reg| {
@@ -1095,7 +1008,7 @@ impl OrchestratorPanel {
             .unwrap_or(0)
     }
 
-    fn blocked_task_count(&self) -> usize {
+    pub fn blocked_task_count(&self) -> usize {
         self.registry
             .as_ref()
             .map(|reg| {
@@ -1107,7 +1020,7 @@ impl OrchestratorPanel {
             .unwrap_or(0)
     }
 
-    fn refresh_runtime_status(&mut self) {
+    pub fn refresh_runtime_status(&mut self) {
         let blocked = self.blocked_task_count();
         let retryable = self.retryable_blocked_task_count();
         let stale_plan = self.stale_plan_blocked_task_count();
@@ -1128,7 +1041,7 @@ impl OrchestratorPanel {
         };
     }
 
-    fn retry_blocked_tasks(
+    pub fn retry_blocked_tasks(
         &mut self,
         workspace_root: &Path,
         mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
@@ -1157,7 +1070,7 @@ impl OrchestratorPanel {
         }
     }
 
-    fn retry_task(
+    pub fn retry_task(
         &mut self,
         task_id: TaskId,
         workspace_root: &Path,
@@ -1181,7 +1094,7 @@ impl OrchestratorPanel {
         true
     }
 
-    fn reset_task(&mut self, task_id: TaskId) -> bool {
+    pub fn reset_task(&mut self, task_id: TaskId) -> bool {
         if self.registry.is_none() {
             self.registry = Some(OrchestratorRegistry::new(&self.graph));
         }
@@ -1199,7 +1112,7 @@ impl OrchestratorPanel {
         true
     }
 
-    fn stop_task(&mut self, task_id: TaskId) -> bool {
+    pub fn stop_task(&mut self, task_id: TaskId) -> bool {
         let Some(handle) = self.running_workers.get_mut(&task_id) else {
             return false;
         };
@@ -1210,7 +1123,7 @@ impl OrchestratorPanel {
         cancelled
     }
 
-    fn send_task_note(&mut self, task_id: TaskId, note: String) -> bool {
+    pub fn send_task_note(&mut self, task_id: TaskId, note: String) -> bool {
         let Some(handle) = self.running_workers.get_mut(&task_id) else {
             return false;
         };
@@ -1221,7 +1134,7 @@ impl OrchestratorPanel {
         sent
     }
 
-    fn poll_live_workers(
+    pub fn poll_live_workers(
         &mut self,
         workspace_root: &Path,
         mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
@@ -1339,7 +1252,7 @@ impl OrchestratorPanel {
         self.refresh_runtime_status();
     }
 
-    fn task_row(&self, ui: &mut Ui, task: &Task) {
+    pub fn task_row(&self, ui: &mut Ui, task: &Task) {
         let status = self
             .registry
             .as_ref()
@@ -1513,821 +1426,4 @@ impl OrchestratorPanel {
             }
         }
     }
-}
-
-fn routed_task_for_id(
-    plan: &Option<RoutedPlanState>,
-    task_id: TaskId,
-) -> Option<&RoutedSubAgentTask> {
-    let routed_idx = task_id.0.checked_sub(2)? as usize;
-    plan.as_ref()?.tasks.get(routed_idx)
-}
-
-fn task_result_outputs(result: &WorkerResult) -> Vec<String> {
-    let mut outputs = result.outputs.clone();
-    outputs.extend(result.created_files.clone());
-    outputs.extend(result.deleted_files.clone());
-    outputs.sort();
-    outputs.dedup();
-    outputs
-}
-
-fn reconciliation_error(
-    graph: &TaskGraph,
-    existing_outputs: &HashMap<TaskId, Vec<String>>,
-    task_id: TaskId,
-    outputs: &[String],
-) -> Option<String> {
-    let mut candidate_outputs = existing_outputs.clone();
-    candidate_outputs.insert(task_id, outputs.to_vec());
-
-    let scope_violations =
-        crate::orchestrator::reconcile::scope_violations(graph, &candidate_outputs)
-            .into_iter()
-            .filter(|(violating_task_id, _)| *violating_task_id == task_id)
-            .map(|(_, path)| path)
-            .collect::<Vec<_>>();
-    if !scope_violations.is_empty() {
-        return Some(format!(
-            "Reconciliation blocked: task touched files outside its declared scope: {}",
-            scope_violations.join(", ")
-        ));
-    }
-
-    let collisions = crate::orchestrator::reconcile::detect_collisions(graph, &candidate_outputs)
-        .into_iter()
-        .filter(|collision| collision.task_a == task_id || collision.task_b == task_id)
-        .map(|collision| {
-            let other_task_id = if collision.task_a == task_id {
-                collision.task_b.0
-            } else {
-                collision.task_a.0
-            };
-            format!("{} with task {}", collision.path, other_task_id)
-        })
-        .collect::<Vec<_>>();
-    if !collisions.is_empty() {
-        return Some(format!(
-            "Reconciliation blocked: overlapping outputs detected for {}",
-            collisions.join(", ")
-        ));
-    }
-
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::orchestrator::registry::OrchestratorRegistry;
-    use crate::orchestrator::worker::WorkerThreadSnapshot;
-
-    struct StubWorkerHandle {
-        snapshot: WorkerThreadSnapshot,
-        cancelled: bool,
-        notes: Vec<String>,
-    }
-
-    impl WorkerHandle for StubWorkerHandle {
-        fn poll(&mut self) -> Option<WorkerResult> {
-            None
-        }
-
-        fn cancel(&mut self) -> bool {
-            self.cancelled = true;
-            true
-        }
-
-        fn send_note(&mut self, note: String) -> bool {
-            self.notes.push(note.clone());
-            self.snapshot.operator_notes.push(note.clone());
-            self.snapshot
-                .events
-                .push(crate::orchestrator::worker::WorkerThreadEvent {
-                    kind: crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote,
-                    message: note,
-                });
-            self.snapshot
-                .events
-                .push(crate::orchestrator::worker::WorkerThreadEvent {
-                    kind: crate::orchestrator::worker::WorkerThreadEventKind::Status,
-                    message: "Operator note routed to this worker thread.".to_string(),
-                });
-            self.snapshot
-                .status_updates
-                .push("Operator note routed to this worker thread.".to_string());
-            true
-        }
-
-        fn snapshot(&self) -> WorkerThreadSnapshot {
-            self.snapshot.clone()
-        }
-    }
-
-    fn sample_result(task_id: TaskId, message: &str) -> WorkerResult {
-        WorkerResult {
-            success: false,
-            task_id,
-            outputs: Vec::new(),
-            duration: std::time::Duration::ZERO,
-            message: message.to_string(),
-            provider_label: String::new(),
-            model_label: String::new(),
-            transcript: String::new(),
-            status_updates: Vec::new(),
-            attempts: Vec::new(),
-            created_files: Vec::new(),
-            deleted_files: Vec::new(),
-            out_of_scope_created_files: Vec::new(),
-            run_summary_path: None,
-            run_facts_path: None,
-            wa_run_path: None,
-            wa_run_id: None,
-        }
-    }
-
-    #[test]
-    fn follow_up_detection_matches_mediation_and_reconciliation() {
-        assert!(requires_follow_up(&sample_result(
-            TaskId(2),
-            "MEDIATION CONTRACT:\nConflict Type: DIRECT LINE COLLISION"
-        )));
-        assert!(requires_follow_up(&sample_result(
-            TaskId(2),
-            "Reconciliation blocked: overlapping outputs detected"
-        )));
-        let mut out_of_scope = sample_result(TaskId(2), "provider call succeeded");
-        out_of_scope
-            .out_of_scope_created_files
-            .push("docs/rogue.md".to_string());
-        assert!(requires_follow_up(&out_of_scope));
-        assert!(!requires_follow_up(&sample_result(
-            TaskId(2),
-            "provider call failed"
-        )));
-    }
-
-    #[test]
-    fn blocked_tasks_propagate_to_dependents() {
-        let mut graph = TaskGraph::default();
-        graph.root = TaskId(1);
-        graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        graph.add(TaskId(2), "child", "child", vec![], vec![], None);
-        let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")),
-        );
-
-        propagate_blocked_dependents(&graph, &mut registry);
-
-        assert!(matches!(
-            registry.statuses.get(&TaskId(1)),
-            Some(TaskStatus::Blocked(_))
-        ));
-    }
-
-    #[test]
-    fn dependency_blocked_tasks_return_to_pending_when_dependencies_clear() {
-        let mut graph = TaskGraph::default();
-        graph.root = TaskId(1);
-        graph.add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        graph.add(TaskId(2), "child", "child", vec![], vec![], None);
-        let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")),
-        );
-
-        propagate_blocked_dependents(&graph, &mut registry);
-        assert!(matches!(
-            registry.statuses.get(&TaskId(1)),
-            Some(TaskStatus::Blocked(_))
-        ));
-
-        registry.statuses.insert(
-            TaskId(2),
-            TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())),
-        );
-        propagate_blocked_dependents(&graph, &mut registry);
-
-        assert!(matches!(
-            registry.statuses.get(&TaskId(1)),
-            Some(TaskStatus::Pending)
-        ));
-    }
-
-    #[test]
-    fn stale_routed_plan_blocks_dispatch() {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_root = temp.path();
-        let site_map_dir = workspace_root.join(".velocity").join("site_map");
-        std::fs::create_dir_all(&site_map_dir).unwrap();
-        let mut site_map = velocity_ide::site_map::SiteMap::open(&site_map_dir, 0).unwrap();
-        site_map
-            .put_node(&velocity_ide::site_map::NdaNode::Triple {
-                subject_hash: 1,
-                predicate_id: 2,
-                object_hash: 2,
-            })
-            .unwrap();
-        let current_root = site_map.root();
-
-        let mut panel = OrchestratorPanel::new();
-        panel.set_routed_tasks(
-            "goal".to_string(),
-            AgentTaskKind::Refactor,
-            1,
-            vec![RoutedSubAgentTask {
-                task_id: "task-1".to_string(),
-                task_kind: AgentTaskKind::Refactor,
-                planned_site_map_root: current_root.wrapping_add(1),
-                files: vec![std::path::PathBuf::from("src/main.rs")],
-                provider: crate::agent::AiProvider::CloudflareWorkersAi,
-                model_id: "model".to_string(),
-                model_label: "model".to_string(),
-                thinking: false,
-                fallback_chain: Vec::new(),
-                instruction_template_id: "template".to_string(),
-                decomposition_policy_id: "policy".to_string(),
-                decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
-                execution_contract: String::new(),
-                summary: String::new(),
-                rationale: String::new(),
-            }],
-        );
-
-        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
-        panel.poll_live_workers(workspace_root, &mediator);
-
-        let registry = panel.registry.as_ref().unwrap();
-        assert!(matches!(
-            registry.statuses.get(&TaskId(2)),
-            Some(TaskStatus::Blocked(_))
-        ));
-        assert!(panel.running_workers.is_empty());
-    }
-
-    #[test]
-    fn retry_blocked_tasks_requeues_follow_up_blocks_only() {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_root = temp.path();
-        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(1);
-        panel.graph.add(
-            TaskId(1),
-            "root",
-            "root",
-            vec![],
-            vec![TaskId(2), TaskId(3)],
-            None,
-        );
-        panel
-            .graph
-            .add(TaskId(2), "follow-up", "follow-up", vec![], vec![], None);
-        panel
-            .graph
-            .add(TaskId(3), "stale", "stale", vec![], vec![], None);
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-
-        let reg = panel.registry.as_mut().unwrap();
-        reg.statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT:")),
-        );
-        reg.statuses.insert(TaskId(3), TaskStatus::Blocked(sample_result(TaskId(3), "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002")));
-
-        panel.retry_blocked_tasks(workspace_root, &mediator);
-
-        let reg = panel.registry.as_ref().unwrap();
-        assert!(matches!(
-            reg.statuses.get(&TaskId(2)),
-            Some(TaskStatus::Pending)
-        ));
-        assert!(matches!(
-            reg.statuses.get(&TaskId(3)),
-            Some(TaskStatus::Blocked(_))
-        ));
-    }
-
-    #[test]
-    fn reconcile_root_completes_after_successful_children() {
-        let graph = build_routed_graph("goal", &[]);
-        let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(TaskId(1), TaskStatus::Pending);
-        complete_reconcile_root(&graph, &mut registry);
-        assert!(matches!(
-            registry.statuses.get(&TaskId(1)),
-            Some(TaskStatus::Pending)
-        ));
-
-        let graph = build_routed_graph(
-            "goal",
-            &[RoutedSubAgentTask {
-                task_id: "task-1".to_string(),
-                task_kind: AgentTaskKind::Refactor,
-                planned_site_map_root: 0,
-                files: Vec::new(),
-                provider: crate::agent::AiProvider::CloudflareWorkersAi,
-                model_id: "model".to_string(),
-                model_label: "model".to_string(),
-                thinking: false,
-                fallback_chain: Vec::new(),
-                instruction_template_id: "template".to_string(),
-                decomposition_policy_id: "policy".to_string(),
-                decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
-                execution_contract: String::new(),
-                summary: String::new(),
-                rationale: String::new(),
-            }],
-        );
-        let mut registry = OrchestratorRegistry::new(&graph);
-        registry.statuses.insert(
-            TaskId(2),
-            TaskStatus::Done(WorkerResult::new(graph.tasks.get(&TaskId(2)).unwrap())),
-        );
-
-        complete_reconcile_root(&graph, &mut registry);
-
-        assert!(matches!(
-            registry.statuses.get(&TaskId(1)),
-            Some(TaskStatus::Done(_))
-        ));
-    }
-
-    #[test]
-    fn send_task_note_routes_to_running_worker() {
-        let mut panel = OrchestratorPanel::new();
-        panel.running_workers.insert(
-            TaskId(7),
-            Box::new(StubWorkerHandle {
-                snapshot: WorkerThreadSnapshot::default(),
-                cancelled: false,
-                notes: Vec::new(),
-            }),
-        );
-
-        assert!(panel.send_task_note(TaskId(7), "Tighten validation".to_string()));
-        assert_eq!(panel.runtime_status, "Sent operator note to task 7");
-    }
-
-    #[test]
-    fn dashboard_snapshot_includes_live_worker_thread() {
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(1);
-        panel
-            .graph
-            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(
-            TaskId(2),
-            "worker",
-            "worker",
-            vec!["src/main.rs".to_string()],
-            vec![],
-            None,
-        );
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        panel
-            .registry
-            .as_mut()
-            .unwrap()
-            .statuses
-            .insert(TaskId(2), TaskStatus::Running);
-        panel.running_workers.insert(
-            TaskId(2),
-            Box::new(StubWorkerHandle {
-                snapshot: WorkerThreadSnapshot {
-                    events: vec![
-                        crate::orchestrator::worker::WorkerThreadEvent {
-                            kind: crate::orchestrator::worker::WorkerThreadEventKind::Status,
-                            message: "Querying provider".to_string(),
-                        },
-                        crate::orchestrator::worker::WorkerThreadEvent {
-                            kind: crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote,
-                            message: "Keep login flow".to_string(),
-                        },
-                    ],
-                    status_updates: vec!["Querying provider".to_string()],
-                    transcript: "partial answer".to_string(),
-                    changed_files: vec!["src/main.rs".to_string()],
-                    operator_notes: vec!["Keep login flow".to_string()],
-                },
-                cancelled: false,
-                notes: Vec::new(),
-            }),
-        );
-
-        let snapshot = panel.dashboard_snapshot();
-        let task = snapshot.tasks.iter().find(|task| task.id == 2).unwrap();
-        let thread = task.live_thread.as_ref().unwrap();
-        assert_eq!(thread.status_updates, vec!["Querying provider"]);
-        assert_eq!(thread.operator_notes, vec!["Keep login flow"]);
-        assert_eq!(thread.changed_files, vec!["src/main.rs"]);
-        assert_eq!(thread.transcript, "partial answer");
-        assert_eq!(thread.events.len(), 2);
-        assert_eq!(task.run_summary_path, None);
-        assert_eq!(task.run_facts_path, None);
-        assert_eq!(task.wa_run_path, None);
-        assert_eq!(task.wa_run_id, None);
-    }
-
-    #[test]
-    fn dashboard_snapshot_includes_worker_artifact_paths() {
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(1);
-        panel
-            .graph
-            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(
-            TaskId(2),
-            "worker",
-            "worker",
-            vec!["src/main.rs".to_string()],
-            vec![],
-            None,
-        );
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-
-        let mut result = WorkerResult::new(panel.graph.tasks.get(&TaskId(2)).unwrap());
-        result.provider_label = "Provider".to_string();
-        result.model_label = "Model".to_string();
-        result.run_summary_path = Some(std::path::PathBuf::from("C:\\temp\\summary.txt"));
-        result.run_facts_path = Some(std::path::PathBuf::from("C:\\temp\\facts.nda"));
-        result.wa_run_path = Some(".velocity/wa-runs/desktop-run.wa-run.nda".to_string());
-        result.wa_run_id = Some("desktop-run".to_string());
-        panel
-            .registry
-            .as_mut()
-            .unwrap()
-            .statuses
-            .insert(TaskId(2), TaskStatus::Done(result));
-
-        let snapshot = panel.dashboard_snapshot();
-        let task = snapshot.tasks.iter().find(|task| task.id == 2).unwrap();
-        assert_eq!(
-            task.run_summary_path.as_deref(),
-            Some("C:\\temp\\summary.txt")
-        );
-        assert_eq!(task.run_facts_path.as_deref(), Some("C:\\temp\\facts.nda"));
-        assert_eq!(
-            task.wa_run_path.as_deref(),
-            Some(".velocity/wa-runs/desktop-run.wa-run.nda")
-        );
-        assert_eq!(task.wa_run_id.as_deref(), Some("desktop-run"));
-    }
-
-    #[test]
-    fn stop_task_updates_runtime_status() {
-        let mut panel = OrchestratorPanel::new();
-        panel.running_workers.insert(
-            TaskId(3),
-            Box::new(StubWorkerHandle {
-                snapshot: WorkerThreadSnapshot::default(),
-                cancelled: false,
-                notes: Vec::new(),
-            }),
-        );
-
-        assert!(panel.stop_task(TaskId(3)));
-        assert_eq!(panel.runtime_status, "Stopping task 3");
-    }
-
-    #[test]
-    fn reset_task_clears_outputs_and_running_handle() {
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(1);
-        panel
-            .graph
-            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel.graph.add(
-            TaskId(2),
-            "worker",
-            "worker",
-            vec!["src/main.rs".to_string()],
-            vec![],
-            None,
-        );
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        let reg = panel.registry.as_mut().unwrap();
-        reg.outputs
-            .insert(TaskId(2), vec!["src/main.rs".to_string()]);
-        reg.statuses.insert(
-            TaskId(2),
-            TaskStatus::Done(WorkerResult::new(
-                panel.graph.tasks.get(&TaskId(2)).unwrap(),
-            )),
-        );
-        panel.running_workers.insert(
-            TaskId(2),
-            Box::new(StubWorkerHandle {
-                snapshot: WorkerThreadSnapshot::default(),
-                cancelled: false,
-                notes: Vec::new(),
-            }),
-        );
-
-        assert!(panel.reset_task(TaskId(2)));
-        let reg = panel.registry.as_ref().unwrap();
-        assert!(matches!(
-            reg.statuses.get(&TaskId(2)),
-            Some(TaskStatus::Pending)
-        ));
-        assert!(!reg.outputs.contains_key(&TaskId(2)));
-        assert!(!panel.running_workers.contains_key(&TaskId(2)));
-        assert_eq!(panel.runtime_status, "Reset task 2 to pending");
-    }
-
-    #[test]
-    fn retry_task_requeues_retryable_blocked_task() {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_root = temp.path();
-        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(1);
-        panel
-            .graph
-            .add(TaskId(1), "root", "root", vec![], vec![TaskId(2)], None);
-        panel
-            .graph
-            .add(TaskId(2), "worker", "worker", vec![], vec![], None);
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        panel.registry.as_mut().unwrap().statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT: retry me")),
-        );
-
-        assert!(panel.retry_task(TaskId(2), workspace_root, &mediator));
-        assert_eq!(panel.runtime_status, "Waiting for executable routed tasks");
-        assert!(matches!(
-            panel.registry.as_ref().unwrap().statuses.get(&TaskId(2)),
-            Some(TaskStatus::Pending)
-        ));
-    }
-
-    #[test]
-    fn runtime_status_expands_retry_waits() {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_root = temp.path();
-        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(2);
-        panel
-            .graph
-            .add(TaskId(2), "worker", "worker", vec![], vec![], None);
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        panel.registry.as_mut().unwrap().statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT: retry me")),
-        );
-
-        panel.poll_live_workers(workspace_root, &mediator);
-        assert_eq!(
-            panel.runtime_status,
-            "Waiting for retry on 1 blocked task(s)"
-        );
-    }
-
-    #[test]
-    fn runtime_status_expands_stale_plan_waits() {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_root = temp.path();
-        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(2);
-        panel
-            .graph
-            .add(TaskId(2), "worker", "worker", vec![], vec![], None);
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        panel.registry.as_mut().unwrap().statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(
-                TaskId(2),
-                "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002",
-            )),
-        );
-
-        panel.poll_live_workers(workspace_root, &mediator);
-        assert_eq!(
-            panel.runtime_status,
-            "Waiting for routed plan refresh on 1 blocked task(s)"
-        );
-    }
-
-    #[test]
-    fn runtime_status_expands_mixed_blocked_waits() {
-        let temp = tempfile::tempdir().unwrap();
-        let workspace_root = temp.path();
-        let mediator = std::sync::Arc::new(crate::automation::mediator::MediatorArena::new());
-        let mut panel = OrchestratorPanel::new();
-        panel.graph = TaskGraph::default();
-        panel.graph.root = TaskId(1);
-        panel.graph.add(
-            TaskId(1),
-            "root",
-            "root",
-            vec![],
-            vec![TaskId(2), TaskId(3)],
-            None,
-        );
-        panel
-            .graph
-            .add(TaskId(2), "retryable", "retryable", vec![], vec![], None);
-        panel
-            .graph
-            .add(TaskId(3), "stale", "stale", vec![], vec![], None);
-        panel.registry = Some(OrchestratorRegistry::new(&panel.graph));
-        let reg = panel.registry.as_mut().unwrap();
-        reg.statuses.insert(
-            TaskId(2),
-            TaskStatus::Blocked(sample_result(TaskId(2), "MEDIATION CONTRACT: retry me")),
-        );
-        reg.statuses.insert(
-            TaskId(3),
-            TaskStatus::Blocked(sample_result(
-                TaskId(3),
-                "stale routed plan: planned SiteMap root 0000000000000001 but current root is 0000000000000002",
-            )),
-        );
-
-        panel.poll_live_workers(workspace_root, &mediator);
-        assert_eq!(
-            panel.runtime_status,
-            "Waiting on 3 blocked task(s) (2 retryable)"
-        );
-    }
-}
-
-fn requires_follow_up(result: &WorkerResult) -> bool {
-    !result.out_of_scope_created_files.is_empty()
-        || result.message.contains("MEDIATION CONTRACT:")
-        || result.message.contains("Reconciliation blocked:")
-        || result.message.contains("cancelled by operator")
-        || result.status_updates.iter().any(|status| {
-            status.contains("MEDIATION CONTRACT:")
-                || status.contains("Reconciliation blocked:")
-                || status.contains("cancelled by operator")
-        })
-}
-
-fn is_dependency_blocked_message(message: &str) -> bool {
-    message.starts_with("Follow-up required before this task can run because dependency task(s)")
-}
-
-fn is_retryable_blocked_result(result: &WorkerResult) -> bool {
-    !is_stale_plan_blocked_result(result)
-        && (requires_follow_up(result) || is_dependency_blocked_message(&result.message))
-}
-
-fn is_stale_plan_blocked_result(result: &WorkerResult) -> bool {
-    result.message.contains("stale routed plan:")
-        || result
-            .status_updates
-            .iter()
-            .any(|status| status.contains("stale routed plan:"))
-}
-
-fn propagate_blocked_dependents(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
-    loop {
-        let mut changed = false;
-        for task in graph.tasks.values() {
-            let current_status = registry.statuses.get(&task.id).cloned().unwrap_or_default();
-            if matches!(current_status, TaskStatus::Done(_) | TaskStatus::Running) {
-                continue;
-            }
-
-            let dependency_blocked = matches!(
-                &current_status,
-                TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message)
-            );
-            if !matches!(current_status, TaskStatus::Pending | TaskStatus::Blocked(_))
-                || (!dependency_blocked && matches!(current_status, TaskStatus::Blocked(_)))
-            {
-                continue;
-            }
-
-            let blocking_dependencies = task
-                .dependencies
-                .iter()
-                .filter(|dependency| {
-                    matches!(
-                        registry.statuses.get(dependency),
-                        Some(TaskStatus::Failed(_)) | Some(TaskStatus::Blocked(_))
-                    )
-                })
-                .copied()
-                .collect::<Vec<_>>();
-
-            if blocking_dependencies.is_empty() {
-                if dependency_blocked {
-                    registry.statuses.insert(task.id, TaskStatus::Pending);
-                    changed = true;
-                }
-                continue;
-            }
-
-            let message = format!(
-                "Follow-up required before this task can run because dependency task(s) {} did not complete cleanly.",
-                blocking_dependencies
-                    .iter()
-                    .map(|dependency| dependency.0.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-
-            let needs_update = match &current_status {
-                TaskStatus::Pending => true,
-                TaskStatus::Blocked(result) if is_dependency_blocked_message(&result.message) => {
-                    result.message != message
-                }
-                _ => false,
-            };
-
-            if !needs_update {
-                continue;
-            }
-
-            let mut result = WorkerResult::new(task);
-            result.success = false;
-            result.message = message;
-            result.status_updates.push(result.message.clone());
-            registry
-                .statuses
-                .insert(task.id, TaskStatus::Blocked(result));
-            changed = true;
-        }
-        if !changed {
-            break;
-        }
-    }
-}
-
-fn complete_reconcile_root(graph: &TaskGraph, registry: &mut OrchestratorRegistry) {
-    let Some(root_task) = graph.tasks.get(&graph.root) else {
-        return;
-    };
-    if !matches!(
-        registry.statuses.get(&graph.root),
-        Some(TaskStatus::Pending) | None
-    ) {
-        return;
-    }
-    if root_task.dependencies.is_empty() {
-        return;
-    }
-    if !root_task
-        .dependencies
-        .iter()
-        .all(|dependency| matches!(registry.statuses.get(dependency), Some(TaskStatus::Done(_))))
-    {
-        return;
-    }
-
-    let mut result = WorkerResult::new(root_task);
-    result.message = format!(
-        "Reconciliation complete across {} routed task(s).",
-        root_task.dependencies.len()
-    );
-    result.status_updates.push(result.message.clone());
-    registry
-        .statuses
-        .insert(graph.root, TaskStatus::Done(result));
-}
-
-fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph {
-    let mut graph = TaskGraph::default();
-    graph.root = TaskId(1);
-    graph.add(
-        TaskId(1),
-        "Reconcile routed plan",
-        format!("Reconcile sub-agent outputs for goal: {goal}"),
-        vec![".velocity/agentic".to_string()],
-        vec![],
-        None,
-    );
-
-    for (idx, task) in tasks.iter().enumerate() {
-        let scope = task
-            .files
-            .iter()
-            .map(|file| file.display().to_string())
-            .collect::<Vec<_>>();
-        graph.add(
-            TaskId(idx as u64 + 2),
-            format!("{} {}", task.task_kind.as_str(), idx + 1),
-            format!("{}\n{}", task.summary, task.rationale),
-            scope,
-            vec![],
-            Some(TaskId(1)),
-        );
-    }
-
-    graph
 }
