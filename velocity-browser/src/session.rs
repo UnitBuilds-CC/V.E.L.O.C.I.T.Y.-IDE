@@ -1,4 +1,5 @@
 use crate::cdp::NativeCdpClient;
+use crate::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, ShadowFrameExtractor, ShadowHost};
 use crate::nda::NdaTriple;
 use std::collections::HashMap;
 
@@ -30,6 +31,9 @@ pub struct BrowserSession {
     pub storage: HashMap<String, String>,
     pub downloads: Vec<DownloadArtifact>,
     pub trace_logs: Vec<String>,
+    pub shadow_hosts: Vec<ShadowHost>,
+    pub frames: Vec<FrameTarget>,
+    pub canvases: Vec<CanvasElement>,
 }
 
 impl BrowserSession {
@@ -42,6 +46,9 @@ impl BrowserSession {
             storage: HashMap::new(),
             downloads: Vec::new(),
             trace_logs: Vec::new(),
+            shadow_hosts: Vec::new(),
+            frames: Vec::new(),
+            canvases: Vec::new(),
         }
     }
 
@@ -89,25 +96,8 @@ impl BrowserSession {
         Err("Client not connected".into())
     }
 
-    pub fn set_files(&mut self, selector: &str, files: &[&str]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let files_str = files.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(",");
-            let params = format!("{{\"selector\":\"{}\",\"files\":[{}]}}", selector, files_str);
-            let _ = client.send_command("DOM.setFileInputFiles", &params)?;
-            self.trace_logs.push(format!("Attached files to selector '{}'", selector));
-            return Ok(());
-        }
-        Err("Client not connected".into())
-    }
-
-    pub fn set_download_behavior(&mut self, download_dir: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let params = format!("{{\"behavior\":\"allow\",\"downloadPath\":\"{}\"}}", download_dir);
-            let _ = client.send_command("Page.setDownloadBehavior", &params)?;
-            self.trace_logs.push(format!("Set download directory to '{}'", download_dir));
-            return Ok(());
-        }
-        Err("Client not connected".into())
+    pub fn classify_interstitial(&self, title: &str, html_snippet: &str) -> InterstitialKind {
+        InterstitialClassifier::classify_page(title, html_snippet)
     }
 
     pub fn capture_state_nda(&self) -> Vec<NdaTriple> {
@@ -119,6 +109,12 @@ impl BrowserSession {
         for (k, v) in &self.storage {
             triples.push(NdaTriple::new(k, 102, v));
         }
+
+        // Add Shadow DOM, frame, and canvas triples
+        triples.extend(ShadowFrameExtractor::extract_shadow_hosts_nda(&self.shadow_hosts));
+        triples.extend(ShadowFrameExtractor::extract_frames_nda(&self.frames));
+        triples.extend(CanvasExtractor::extract_canvases_nda(&self.canvases));
+
         triples
     }
 }
