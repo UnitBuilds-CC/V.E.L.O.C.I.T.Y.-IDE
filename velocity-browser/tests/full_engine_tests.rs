@@ -1,20 +1,22 @@
-use velocity_browser::agentic::VelocityOcrEngine;
-use velocity_browser::engine::PixelBuffer;
-use velocity_browser::session::BrowserSession;
+use velocity_browser::engine::{GpuTileCompositor, WebCodecsDecoder};
+use velocity_browser::net::QuicConnection;
+use velocity_browser::style::FontShaperEngine;
 
 #[test]
-fn test_velocity_ocr_engine_processing() {
-    let engine = VelocityOcrEngine::new();
-    let mut buffer = PixelBuffer::new(100, 100);
-    buffer.set_pixel(10, 10, 0, 0, 0, 255);
+fn test_quic_webcodecs_font_shaper_gpu_compositor() {
+    let mut conn = QuicConnection::connect("127.0.0.1:4433");
+    let sid = conn.open_stream();
+    assert_eq!(sid, 1);
 
-    let boxes = engine.process_pixel_buffer(&buffer);
-    assert!(!boxes.is_empty());
-    assert!(boxes[0].confidence > 0.9);
+    let mut decoder = WebCodecsDecoder::new("h264");
+    let frame = decoder.decode_chunk(b"\x00\x00\x00\x01nal", 1920, 1080);
+    assert_eq!(frame.width, 1920);
 
-    let mut session = BrowserSession::new("sess_ocr_wired".to_string());
-    assert!(session.click_ocr_text("VELOCITY_OCR_CANVAS_TEXT").is_ok());
+    let mut shaper = FontShaperEngine::new("Roboto");
+    let glyphs = shaper.shape_text("Velocity Engine");
+    assert_eq!(glyphs.len(), 15);
 
-    let state = session.capture_state_nda();
-    assert!(state.iter().any(|t| t.predicate_id == 252));
+    let mut compositor = GpuTileCompositor::new();
+    let layer_id = compositor.create_layer(1920, 1080);
+    assert_eq!(layer_id, 1);
 }

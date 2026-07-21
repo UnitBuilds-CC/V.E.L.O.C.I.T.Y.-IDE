@@ -1,15 +1,15 @@
-use crate::agentic::{AgenticAomTree, NdaEncoder, OcrTextBoundingBox, VelocityOcrEngine, ZeroAllocNdaWriter};
+use crate::agentic::{AgenticAomTree, NdaEncoder, VelocityOcrEngine, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
     DeviceProfile, DownloadStreamArtifact, FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider,
-    InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor, PixelBuffer,
-    PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
-    SvgVectorEngine, TabSandbox, TraceCollector, WebAudioEngine, WebCryptoEngine, WebGLContext,
+    GpuTileCompositor, InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor,
+    PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
+    SvgVectorEngine, TabSandbox, TraceCollector, WebAudioEngine, WebCodecsDecoder, WebCryptoEngine, WebGLContext,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WebWorkerPool};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
-use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, TlsFingerprintRotator, WebBluetoothTransport, WebRtcTransport};
+use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport, WebRtcTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -18,7 +18,7 @@ use crate::session_history::{HistoryItem, HistoryStack};
 use crate::session_indexeddb::IndexedDbStorage;
 use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
 pub use crate::session_storage_quota::StorageQuotaManager;
-use crate::style::{ScopedCssMatcher, StyleCascader};
+use crate::style::{FontShaperEngine, ScopedCssMatcher, StyleCascader};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -51,6 +51,10 @@ pub struct BrowserSession {
     pub audio_engine: WebAudioEngine,
     pub tls_rotator: TlsFingerprintRotator,
     pub ocr_engine: VelocityOcrEngine,
+    pub quic_transport: Option<QuicConnection>,
+    pub webcodecs_decoder: WebCodecsDecoder,
+    pub font_shaper: FontShaperEngine,
+    pub gpu_compositor: GpuTileCompositor,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -96,6 +100,10 @@ impl BrowserSession {
             audio_engine: WebAudioEngine::new(44100),
             tls_rotator: TlsFingerprintRotator::chrome_desktop(),
             ocr_engine: VelocityOcrEngine::new(),
+            quic_transport: None,
+            webcodecs_decoder: WebCodecsDecoder::new("h264"),
+            font_shaper: FontShaperEngine::new("Roboto"),
+            gpu_compositor: GpuTileCompositor::new(),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -122,7 +130,7 @@ impl BrowserSession {
     }
 
     /// Execute OCR extraction on active software pixel buffer
-    pub fn perform_ocr_scan(&self) -> Vec<OcrTextBoundingBox> {
+    pub fn perform_ocr_scan(&self) -> Vec<crate::agentic::OcrTextBoundingBox> {
         let pix = SoftwareRasterizer::render_blank(800, 600);
         self.ocr_engine.process_pixel_buffer(&pix)
     }
@@ -206,7 +214,6 @@ impl BrowserSession {
                 self.trace_collector.record_mutation(selector, "click", "Native click event dispatched");
                 return Ok(());
             }
-            // Fall back to OCR spatial target click if CSS query yields no match
             return self.click_ocr_text(selector);
         }
         Err("No DOM tree loaded in session".into())
