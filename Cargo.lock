@@ -4114,6 +4114,7 @@ dependencies = [
  "tempfile",
  "tree-sitter",
  "ureq",
+ "velocity-browser",
  "velocity-ide",
  "winres",
 ]
