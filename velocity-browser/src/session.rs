@@ -1,5 +1,5 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
-use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver, SlotProjectionEngine};
+use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
     FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
@@ -32,6 +32,7 @@ pub struct BrowserSession {
     pub current_url: String,
     pub page_title: String,
     pub dom_tree: Option<DomTree>,
+    pub slab_tree: SlabDomTree,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -61,6 +62,7 @@ impl BrowserSession {
             current_url: String::new(),
             page_title: "Untitled Page".to_string(),
             dom_tree: None,
+            slab_tree: SlabDomTree::new(1024),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -221,6 +223,12 @@ impl BrowserSession {
         encoder.triples.extend(self.storage_broadcaster.export_events_nda());
         encoder.triples.extend(self.indexed_db.export_indexeddb_nda());
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
+
+        // Add unmanaged slab node triples
+        for slot in &self.slab_tree.arena.slots {
+            let slot_str = format!("slab_slot_{}", slot.slot_id);
+            encoder.encode_fact(&self.session_id, 210, &slot_str);
+        }
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {

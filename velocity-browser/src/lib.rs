@@ -15,7 +15,7 @@ pub mod session_storage_events;
 pub mod style;
 
 pub use agentic::{AgenticAomNode, AgenticAomTree, NdaEncoder};
-pub use dom::{DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver, SlotProjection, SlotProjectionEngine};
+pub use dom::{DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver, RawSlabNode, SlabDomTree, SlotProjection, SlotProjectionEngine, UnmanagedSlabArena, SLAB_NODE_DIRTY, SLAB_NODE_VISIBLE};
 pub use engine::*;
 pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, JsEvaluator, ScheduledTask, TaskKind, WasmInterpreter, WasmValue};
 pub use layout::{DisplayMode, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, LayoutBox, LayoutEngine2D};
