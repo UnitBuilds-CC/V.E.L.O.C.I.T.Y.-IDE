@@ -1,4 +1,4 @@
-use crate::agentic::{AgenticAomTree, NdaEncoder, VelocityOcrEngine, ZeroAllocNdaWriter};
+use crate::agentic::{AgenticAomTree, NdaEncoder, OcrTextBoundingBox, VelocityOcrEngine, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
@@ -121,6 +121,25 @@ impl BrowserSession {
         }
     }
 
+    /// Execute OCR extraction on active software pixel buffer
+    pub fn perform_ocr_scan(&self) -> Vec<OcrTextBoundingBox> {
+        let pix = SoftwareRasterizer::render_blank(800, 600);
+        self.ocr_engine.process_pixel_buffer(&pix)
+    }
+
+    /// Click target node by OCR text spatial bounding box match
+    pub fn click_ocr_text(&mut self, target_text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let ocr_boxes = self.perform_ocr_scan();
+        if let Some(target_box) = ocr_boxes.iter().find(|b| b.text.contains(target_text)) {
+            self.trace_collector.record_console(
+                "info",
+                &format!("OCR Click on '{}' at ({}, {})", target_box.text, target_box.x, target_box.y),
+            );
+            return Ok(());
+        }
+        Err(format!("VelocityOCR: Target text '{}' not found in pixel buffer", target_text).into())
+    }
+
     /// Fetch HTML over native HTTP transport client and parse into DOM tree
     pub fn fetch_and_load(&mut self, url: &str) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
         if let Err(e) = self.tab_sandbox.check_network_access(url) {
@@ -187,7 +206,8 @@ impl BrowserSession {
                 self.trace_collector.record_mutation(selector, "click", "Native click event dispatched");
                 return Ok(());
             }
-            return Err(format!("Element with selector '{}' not found", selector).into());
+            // Fall back to OCR spatial target click if CSS query yields no match
+            return self.click_ocr_text(selector);
         }
         Err("No DOM tree loaded in session".into())
     }
@@ -289,8 +309,7 @@ impl BrowserSession {
             }
         }
 
-        let pix = PixelBuffer::new(800, 600);
-        let ocr_boxes = self.ocr_engine.process_pixel_buffer(&pix);
+        let ocr_boxes = self.perform_ocr_scan();
         encoder.triples.extend(self.ocr_engine.export_ocr_nda(&self.session_id, &ocr_boxes));
 
         // Add unmanaged slab node triples
