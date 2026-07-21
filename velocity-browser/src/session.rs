@@ -1,15 +1,15 @@
-use crate::agentic::{AgenticAomTree, NdaEncoder, ZeroAllocNdaWriter};
+use crate::agentic::{AgenticAomTree, NdaEncoder, OcrSpatialMapper, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
-    AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact,
-    FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider, InterstitialClassifier, InterstitialKind,
-    NetworkTracker, PaymentItem, PaymentRequestEngine, PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager,
-    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TabSandbox, TraceCollector, WebAudioEngine, WebCryptoEngine,
-    WebGLContext,
+    AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
+    DeviceProfile, DownloadStreamArtifact, FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider,
+    InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor, PixelBuffer,
+    PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
+    SvgVectorEngine, TabSandbox, TraceCollector, WebAudioEngine, WebCryptoEngine, WebGLContext,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WebWorkerPool};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
-use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, WebBluetoothTransport, WebRtcTransport};
+use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, TlsFingerprintRotator, WebBluetoothTransport, WebRtcTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -49,6 +49,7 @@ pub struct BrowserSession {
     pub geolocation_provider: GeolocationProvider,
     pub bluetooth_transport: WebBluetoothTransport,
     pub audio_engine: WebAudioEngine,
+    pub tls_rotator: TlsFingerprintRotator,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -92,6 +93,7 @@ impl BrowserSession {
             geolocation_provider: GeolocationProvider::mock_sf(),
             bluetooth_transport: WebBluetoothTransport::new(),
             audio_engine: WebAudioEngine::new(44100),
+            tls_rotator: TlsFingerprintRotator::chrome_desktop(),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -263,7 +265,7 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add profile, file, trace, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push, payment, geolocation, inspector triples
+        // Add profile, file, trace, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push, payment, geolocation, captcha, OCR, inspector triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
@@ -278,6 +280,12 @@ impl BrowserSession {
         encoder.triples.extend(self.payment_engine.export_payment_nda(&self.session_id));
         encoder.triples.extend(self.geolocation_provider.export_geolocation_nda(&self.session_id));
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
+
+        if let Some(tree) = &self.dom_tree {
+            if let Some(c_type) = CaptchaSolverEngine::detect_challenge(tree) {
+                encoder.triples.extend(CaptchaSolverEngine::solve_challenge_nda(&self.session_id, &c_type));
+            }
+        }
 
         // Add unmanaged slab node triples
         for slot in &self.slab_tree.arena.slots {

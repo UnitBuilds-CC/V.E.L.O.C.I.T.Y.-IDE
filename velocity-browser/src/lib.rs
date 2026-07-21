@@ -17,12 +17,12 @@ pub mod session_storage_events;
 pub mod session_storage_quota;
 pub mod style;
 
-pub use agentic::{AgenticAomNode, AgenticAomTree, NdaEncoder, ZeroAllocNdaWriter};
+pub use agentic::{AgenticAomNode, AgenticAomTree, NdaEncoder, OcrSpatialMapper, OcrTextBoundingBox, ZeroAllocNdaWriter};
 pub use dom::{CustomElementDefinition, CustomElementRegistry, DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver, RawSlabNode, SlabDomTree, SlotProjection, SlotProjectionEngine, UnmanagedSlabArena, SLAB_NODE_DIRTY, SLAB_NODE_VISIBLE};
 pub use engine::*;
 pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, PointerEvent, ScheduledTask, SyntheticEventDispatcher, TaskKind, WasmInterpreter, WasmValue, WebWorkerPool, WorkerMessage, WorkerThread};
 pub use layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
-pub use net::{BluetoothDevice, HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, TlsState, WebBluetoothTransport, WebRtcTransport, WsFrame};
+pub use net::{BluetoothDevice, HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, TlsFingerprintRotator, TlsJa3Profile, TlsState, WebBluetoothTransport, WebRtcTransport, WsFrame};
 pub use nda::NdaTriple;
 pub use parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 pub use session::BrowserSession;
