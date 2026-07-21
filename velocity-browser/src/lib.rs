@@ -8,13 +8,15 @@ pub mod net;
 pub mod nda;
 pub mod parser;
 pub mod session;
+pub mod style;
 
 pub use agentic::{AgenticAomNode, AgenticAomTree};
 pub use dom::DomTree;
 pub use engine::*;
 pub use js::JsEvaluator;
-pub use layout::{BoundingBox, LayoutEngine};
+pub use layout::{BoundingBox, DisplayMode, LayoutBox, LayoutEngine, LayoutEngine2D};
 pub use net::{HttpClient, HttpResponse};
 pub use nda::NdaTriple;
-pub use parser::{CssMatcher, HtmlParser};
+pub use parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 pub use session::BrowserSession;
+pub use style::{CssRule, Specificity, StyleCascader};
