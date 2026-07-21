@@ -1,6 +1,10 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
 use crate::dom::DomTree;
-use crate::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, ShadowFrameExtractor, ShadowHost};
+use crate::engine::{
+    CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
+    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
+    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, TraceCollector,
+};
 use crate::js::JsVirtualMachine;
 use crate::layout::LayoutEngine2D;
 use crate::net::HttpClient;
@@ -20,15 +24,6 @@ pub struct Cookie {
     pub secure: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct DownloadArtifact {
-    pub guid: String,
-    pub url: String,
-    pub file_name: String,
-    pub total_bytes: i64,
-    pub save_path: String,
-}
-
 pub struct BrowserSession {
     pub session_id: String,
     pub current_url: String,
@@ -36,12 +31,13 @@ pub struct BrowserSession {
     pub dom_tree: Option<DomTree>,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
+    pub file_manager: FileManager,
+    pub device_profile: DeviceProfile,
+    pub trace_collector: TraceCollector,
     pub cascader: StyleCascader,
     pub js_vm: JsVirtualMachine,
     pub cookies: Vec<Cookie>,
     pub storage: HashMap<String, String>,
-    pub downloads: Vec<DownloadArtifact>,
-    pub trace_logs: Vec<String>,
     pub shadow_hosts: Vec<ShadowHost>,
     pub frames: Vec<FrameTarget>,
     pub canvases: Vec<CanvasElement>,
@@ -56,12 +52,13 @@ impl BrowserSession {
             dom_tree: None,
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
+            file_manager: FileManager::new(),
+            device_profile: DeviceProfile::desktop_chrome(),
+            trace_collector: TraceCollector::new(),
             cascader: StyleCascader::new(),
             js_vm: JsVirtualMachine::new(),
             cookies: Vec::new(),
             storage: HashMap::new(),
-            downloads: Vec::new(),
-            trace_logs: Vec::new(),
             shadow_hosts: Vec::new(),
             frames: Vec::new(),
             canvases: Vec::new(),
@@ -84,7 +81,7 @@ impl BrowserSession {
         self.page_title = tree.extract_page_title();
         self.dom_tree = Some(tree);
 
-        self.trace_logs.push(format!("Loaded HTML from {}", url));
+        self.trace_collector.record_console("info", &format!("Loaded HTML from {}", url));
         self.capture_state_nda()
     }
 
@@ -92,7 +89,7 @@ impl BrowserSession {
     pub fn eval_js(&mut self, expr: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(tree) = &mut self.dom_tree {
             let res = self.js_vm.eval_statement(tree, expr)?;
-            self.trace_logs.push(format!("Evaluated JS: '{}'", expr));
+            self.trace_collector.record_console("info", &format!("Evaluated JS: '{}'", expr));
             return Ok(format!("{:?}", res));
         }
         Err("No DOM tree loaded in session".into())
@@ -101,10 +98,16 @@ impl BrowserSession {
     /// Native CSS selector element query & click event execution
     pub fn click(&mut self, selector: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(tree) = &mut self.dom_tree {
+            let file_event = self.file_manager.handle_file_input_click(tree, selector);
+            if file_event.is_some() {
+                self.trace_collector.record_console("info", &format!("File chooser opened for '{}'", selector));
+                return Ok(());
+            }
+
             let matches = CssMatcher::find_matches(&tree.nodes, selector);
             if !matches.is_empty() {
                 let _ = self.js_vm.dispatch_event(tree, selector, "click");
-                self.trace_logs.push(format!("Clicked native element matching '{}'", selector));
+                self.trace_collector.record_mutation(selector, "click", "Native click event dispatched");
                 return Ok(());
             }
             return Err(format!("Element with selector '{}' not found", selector).into());
@@ -124,7 +127,7 @@ impl BrowserSession {
                 if let Some(node) = tree.get_node_mut(id) {
                     node.attributes.insert("value".to_string(), text.to_string());
                     let _ = self.js_vm.dispatch_event(tree, selector, "input");
-                    self.trace_logs.push(format!("Filled native element '{}' with text '{}'", selector, text));
+                    self.trace_collector.record_mutation(selector, "attribute_changed", &format!("value={}", text));
                     return Ok(());
                 }
             }
@@ -133,18 +136,28 @@ impl BrowserSession {
         Err("No DOM tree loaded in session".into())
     }
 
+    /// Attach a local file to a file input element
+    pub fn attach_file(&mut self, selector: &str, file_path: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(tree) = &mut self.dom_tree {
+            let res = self.file_manager.attach_file(tree, selector, file_path)?;
+            self.trace_collector.record_mutation(selector, "file_attached", file_path);
+            return Ok(res);
+        }
+        Err("No DOM tree loaded in session".into())
+    }
+
     pub fn scroll(&mut self, delta_x: i32, delta_y: i32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.trace_logs.push(format!("Scrolled window by ({}, {})", delta_x, delta_y));
+        self.trace_collector.record_console("info", &format!("Scrolled window by ({}, {})", delta_x, delta_y));
         Ok(())
     }
 
     pub fn hover(&mut self, selector: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.trace_logs.push(format!("Hovered native selector '{}'", selector));
+        self.trace_collector.record_console("info", &format!("Hovered native selector '{}'", selector));
         Ok(())
     }
 
     pub fn press_key(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.trace_logs.push(format!("Pressed key '{}'", key));
+        self.trace_collector.record_console("info", &format!("Pressed key '{}'", key));
         Ok(())
     }
 
@@ -164,6 +177,11 @@ impl BrowserSession {
         for (k, v) in &self.storage {
             encoder.encode_fact(k, 103, v);
         }
+
+        // Add device profile, file, and trace triples
+        encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
+        encoder.triples.extend(self.file_manager.export_files_nda());
+        encoder.triples.extend(self.trace_collector.export_traces_nda());
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {
