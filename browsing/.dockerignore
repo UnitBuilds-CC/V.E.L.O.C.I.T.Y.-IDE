@@ -1,7 +1,0 @@
-mcp_chrome_profile*
-ghost_chrome_profile*
-*.png
-node_modules
-.git
-.gemini
-tmp
