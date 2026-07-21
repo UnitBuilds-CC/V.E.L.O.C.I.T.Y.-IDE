@@ -1,5 +1,5 @@
-use crate::cdp::NativeCdpClient;
-use crate::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, ShadowFrameExtractor, ShadowHost};
+use crate::cdp::{CdpEventLoop, NativeCdpClient};
+use crate::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, ShadowFrameExtractor, ShadowHost};
 use crate::nda::NdaTriple;
 use std::collections::HashMap;
 
@@ -26,6 +26,8 @@ pub struct DownloadArtifact {
 pub struct BrowserSession {
     pub session_id: String,
     pub client: Option<NativeCdpClient>,
+    pub event_loop: CdpEventLoop,
+    pub network_tracker: NetworkTracker,
     pub current_url: String,
     pub cookies: Vec<Cookie>,
     pub storage: HashMap<String, String>,
@@ -41,6 +43,8 @@ impl BrowserSession {
         Self {
             session_id,
             client: None,
+            event_loop: CdpEventLoop::new(),
+            network_tracker: NetworkTracker::new(),
             current_url: String::new(),
             cookies: Vec::new(),
             storage: HashMap::new(),
@@ -96,6 +100,45 @@ impl BrowserSession {
         Err("Client not connected".into())
     }
 
+    pub fn scroll(&mut self, delta_x: i32, delta_y: i32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(client) = self.client.as_mut() {
+            let eval_script = format!(
+                "{{\"expression\":\"window.scrollBy({}, {})\"}}",
+                delta_x, delta_y
+            );
+            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
+            self.trace_logs.push(format!("Scrolled window by ({}, {})", delta_x, delta_y));
+            return Ok(());
+        }
+        Err("Client not connected".into())
+    }
+
+    pub fn hover(&mut self, selector: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(client) = self.client.as_mut() {
+            let eval_script = format!(
+                "{{\"expression\":\"let el = document.querySelector('{}'); if (el) el.dispatchEvent(new MouseEvent('mouseover', {{bubbles:true}}));\"}}",
+                selector
+            );
+            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
+            self.trace_logs.push(format!("Hovered selector '{}'", selector));
+            return Ok(());
+        }
+        Err("Client not connected".into())
+    }
+
+    pub fn press_key(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(client) = self.client.as_mut() {
+            let eval_script = format!(
+                "{{\"expression\":\"document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {{key:'{}', bubbles:true}}));\"}}",
+                key
+            );
+            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
+            self.trace_logs.push(format!("Pressed key '{}'", key));
+            return Ok(());
+        }
+        Err("Client not connected".into())
+    }
+
     pub fn classify_interstitial(&self, title: &str, html_snippet: &str) -> InterstitialKind {
         InterstitialClassifier::classify_page(title, html_snippet)
     }
@@ -110,10 +153,11 @@ impl BrowserSession {
             triples.push(NdaTriple::new(k, 102, v));
         }
 
-        // Add Shadow DOM, frame, and canvas triples
+        // Add Shadow DOM, frame, canvas, and network triples
         triples.extend(ShadowFrameExtractor::extract_shadow_hosts_nda(&self.shadow_hosts));
         triples.extend(ShadowFrameExtractor::extract_frames_nda(&self.frames));
         triples.extend(CanvasExtractor::extract_canvases_nda(&self.canvases));
+        triples.extend(self.network_tracker.export_triples_nda());
 
         triples
     }
