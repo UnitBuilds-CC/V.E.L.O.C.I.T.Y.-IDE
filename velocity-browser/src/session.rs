@@ -1,6 +1,9 @@
-use crate::agentic::{AgenticAomNode, AgenticAomTree};
+use crate::agentic::AgenticAomTree;
 use crate::dom::DomTree;
 use crate::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, ShadowFrameExtractor, ShadowHost};
+use crate::js::JsEvaluator;
+use crate::layout::LayoutEngine;
+use crate::net::HttpClient;
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser};
 use std::collections::HashMap;
@@ -30,6 +33,7 @@ pub struct BrowserSession {
     pub current_url: String,
     pub page_title: String,
     pub dom_tree: Option<DomTree>,
+    pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub cookies: Vec<Cookie>,
     pub storage: HashMap<String, String>,
@@ -47,6 +51,7 @@ impl BrowserSession {
             current_url: String::new(),
             page_title: "Untitled Page".to_string(),
             dom_tree: None,
+            http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             cookies: Vec::new(),
             storage: HashMap::new(),
@@ -56,6 +61,13 @@ impl BrowserSession {
             frames: Vec::new(),
             canvases: Vec::new(),
         }
+    }
+
+    /// Fetch HTML over native HTTP transport client and parse into DOM tree
+    pub fn fetch_and_load(&mut self, url: &str) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
+        let resp = self.http_client.get(url)?;
+        self.network_tracker.record_request(url, "GET", resp.status_code, "document");
+        Ok(self.load_html(url, &resp.body))
     }
 
     /// Native pure-Rust HTML document loading and DOM tree compilation
@@ -68,6 +80,16 @@ impl BrowserSession {
 
         self.trace_logs.push(format!("Loaded HTML from {}", url));
         self.capture_state_nda()
+    }
+
+    /// Execute JavaScript expression natively via JS micro-evaluator
+    pub fn eval_js(&mut self, expr: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(tree) = &mut self.dom_tree {
+            let res = JsEvaluator::eval_expression(tree, expr)?;
+            self.trace_logs.push(format!("Evaluated JS: '{}'", expr));
+            return Ok(res);
+        }
+        Err("No DOM tree loaded in session".into())
     }
 
     /// Native CSS selector element query & click event execution
@@ -135,10 +157,11 @@ impl BrowserSession {
             triples.push(NdaTriple::new(k, 103, v));
         }
 
-        // Add native Agentic AOM triples from DOM tree
+        // Add native Agentic AOM and CSS Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {
             let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
             triples.extend(AgenticAomTree::to_nda_triples(&aom_nodes));
+            triples.extend(LayoutEngine::compute_layout_triples(tree));
         }
 
         // Add Shadow DOM, frame, canvas, and network triples
