@@ -17,7 +17,7 @@ pub mod session_storage_events;
 pub mod session_storage_quota;
 pub mod style;
 
-pub use agentic::{AgenticAomNode, AgenticAomTree, NdaEncoder};
+pub use agentic::{AgenticAomNode, AgenticAomTree, NdaEncoder, ZeroAllocNdaWriter};
 pub use dom::{CustomElementDefinition, CustomElementRegistry, DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver, RawSlabNode, SlabDomTree, SlotProjection, SlotProjectionEngine, UnmanagedSlabArena, SLAB_NODE_DIRTY, SLAB_NODE_VISIBLE};
 pub use engine::*;
 pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, PointerEvent, ScheduledTask, SyntheticEventDispatcher, TaskKind, WasmInterpreter, WasmValue, WebWorkerPool, WorkerMessage, WorkerThread};

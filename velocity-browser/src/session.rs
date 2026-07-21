@@ -1,4 +1,4 @@
-use crate::agentic::{AgenticAomTree, NdaEncoder};
+use crate::agentic::{AgenticAomTree, NdaEncoder, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
