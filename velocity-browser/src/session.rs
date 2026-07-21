@@ -2,15 +2,16 @@ use crate::agentic::{AgenticAomTree, NdaEncoder};
 use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
-    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
+    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer, ServiceWorkerManager,
     ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TraceCollector,
 };
-use crate::js::{JsEventLoopScheduler, JsVirtualMachine, WasmInterpreter};
-use crate::layout::{DisplayMode, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, LayoutBox, LayoutEngine2D};
+use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter};
+use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
 use crate::net::{HttpClient, InspectorServer, NativeWsClient, ProxyResolver, WebRtcTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
+use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 use crate::session_indexeddb::IndexedDbStorage;
 use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
 use crate::style::StyleCascader;
@@ -42,6 +43,8 @@ pub struct BrowserSession {
     pub mutation_batcher: MutationBatcher,
     pub storage_broadcaster: StorageEventBroadcaster,
     pub indexed_db: IndexedDbStorage,
+    pub cookie_store: CookieStore,
+    pub service_worker: Option<ServiceWorkerManager>,
     pub proxy_resolver: ProxyResolver,
     pub inspector_server: InspectorServer,
     pub wasm_engine: WasmInterpreter,
@@ -72,6 +75,8 @@ impl BrowserSession {
             mutation_batcher: MutationBatcher::new(),
             storage_broadcaster: StorageEventBroadcaster::new(),
             indexed_db: IndexedDbStorage::new(&format!("db_{}", session_id)),
+            cookie_store: CookieStore::new(),
+            service_worker: None,
             proxy_resolver: ProxyResolver::direct(),
             inspector_server: InspectorServer::new(9222),
             wasm_engine: WasmInterpreter::new(1),
@@ -134,7 +139,16 @@ impl BrowserSession {
             let matches = CssMatcher::find_matches(&tree.nodes, selector);
             if !matches.is_empty() {
                 let node_id = matches[0].id;
-                let _ = self.js_vm.dispatch_event(tree, selector, "click");
+                let event = PointerEvent {
+                    event_type: "click".to_string(),
+                    client_x: 100.0,
+                    client_y: 100.0,
+                    button: 0,
+                    bubbles: true,
+                    default_prevented: false,
+                    propagation_stopped: false,
+                };
+                let _ = SyntheticEventDispatcher::dispatch_pointer_event(tree, node_id, event);
                 self.mutation_observer.observe_attribute_change(node_id, "click");
                 self.trace_collector.record_mutation(selector, "click", "Native click event dispatched");
                 return Ok(());
@@ -215,13 +229,14 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, storage event, indexeddb, inspector, and trace triples
+        // Add device profile, file, mutation, storage event, indexeddb, cookiestore, inspector, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
         encoder.triples.extend(self.mutation_observer.export_mutations_nda());
         encoder.triples.extend(self.storage_broadcaster.export_events_nda());
         encoder.triples.extend(self.indexed_db.export_indexeddb_nda());
+        encoder.triples.extend(self.cookie_store.export_cookies_nda());
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
 
         // Add unmanaged slab node triples
@@ -253,6 +268,7 @@ impl BrowserSession {
                 is_visible: true,
             };
             FlexLayoutEngine::compute_flex_children(&root_box, &mut boxes, FlexDirection::Row);
+            FlexAlignmentSolver::align_main_axis(1920.0, &mut boxes, JustifyContent::FlexStart);
 
             for t in layout_engine.export_layout_nda(&boxes) {
                 encoder.triples.push(t);
