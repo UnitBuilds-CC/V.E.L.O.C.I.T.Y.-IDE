@@ -1,13 +1,13 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
-use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver};
+use crate::dom::{DomTree, MutationBatcher, NativeMutationObserver, SlotProjectionEngine};
 use crate::engine::{
     Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
     FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
     ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TraceCollector,
 };
-use crate::js::{JsEventLoopScheduler, JsVirtualMachine};
-use crate::layout::{DisplayMode, FlexDirection, FlexLayoutEngine, LayoutBox, LayoutEngine2D};
-use crate::net::{HttpClient, NativeWsClient, ProxyResolver, WebRtcTransport};
+use crate::js::{JsEventLoopScheduler, JsVirtualMachine, WasmInterpreter};
+use crate::layout::{DisplayMode, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, LayoutBox, LayoutEngine2D};
+use crate::net::{HttpClient, InspectorServer, NativeWsClient, ProxyResolver, WebRtcTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -42,6 +42,8 @@ pub struct BrowserSession {
     pub storage_broadcaster: StorageEventBroadcaster,
     pub indexed_db: IndexedDbStorage,
     pub proxy_resolver: ProxyResolver,
+    pub inspector_server: InspectorServer,
+    pub wasm_engine: WasmInterpreter,
     pub cascader: StyleCascader,
     pub js_vm: JsVirtualMachine,
     pub js_scheduler: JsEventLoopScheduler,
@@ -69,6 +71,8 @@ impl BrowserSession {
             storage_broadcaster: StorageEventBroadcaster::new(),
             indexed_db: IndexedDbStorage::new(&format!("db_{}", session_id)),
             proxy_resolver: ProxyResolver::direct(),
+            inspector_server: InspectorServer::new(9222),
+            wasm_engine: WasmInterpreter::new(1),
             cascader: StyleCascader::new(),
             js_vm: JsVirtualMachine::new(),
             js_scheduler: JsEventLoopScheduler::new(),
@@ -209,13 +213,14 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, storage event, indexeddb, and trace triples
+        // Add device profile, file, mutation, storage event, indexeddb, inspector, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
         encoder.triples.extend(self.mutation_observer.export_mutations_nda());
         encoder.triples.extend(self.storage_broadcaster.export_events_nda());
         encoder.triples.extend(self.indexed_db.export_indexeddb_nda());
+        encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {

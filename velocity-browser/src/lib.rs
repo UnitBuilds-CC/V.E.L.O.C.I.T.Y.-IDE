@@ -15,11 +15,11 @@ pub mod session_storage_events;
 pub mod style;
 
 pub use agentic::{AgenticAomNode, AgenticAomTree, NdaEncoder};
-pub use dom::{DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver};
+pub use dom::{DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver, SlotProjection, SlotProjectionEngine};
 pub use engine::*;
-pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, JsEvaluator, ScheduledTask, TaskKind};
-pub use layout::{DisplayMode, FlexDirection, FlexLayoutEngine, LayoutBox, LayoutEngine2D};
-pub use net::{HttpClient, HttpResponse, IceCandidateState, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, TlsState, WebRtcTransport, WsFrame};
+pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, JsEvaluator, ScheduledTask, TaskKind, WasmInterpreter, WasmValue};
+pub use layout::{DisplayMode, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, LayoutBox, LayoutEngine2D};
+pub use net::{HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, TlsState, WebRtcTransport, WsFrame};
 pub use nda::NdaTriple;
 pub use parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 pub use session::BrowserSession;
