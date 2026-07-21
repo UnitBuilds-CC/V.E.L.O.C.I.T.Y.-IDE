@@ -7,6 +7,10 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+use crate::wa::{WaNode, WaScriptStep};
+#[cfg(test)]
+use std::fs;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Tool {
     pub name: String,
@@ -968,7 +972,337 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["suiteName"]
             }),
         },
+        Tool {
+            name: "wa_create_session".to_string(),
+            description: "Create a Rust-native WA semantic session artifact with NDA-backed persistence.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Stable WA session identifier." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured WA session creation summary instead of human-readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "wa_get_session".to_string(),
+            description: "Read a persisted WA semantic session artifact.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured WA session read summary instead of the raw session payload." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "wa_list_sessions".to_string(),
+            description: "List persisted WA sessions using compact summaries.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionIdContains": { "type": "string", "description": "Optional case-insensitive substring filter on WA session id." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of sessions to return." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for session ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_save_snapshot".to_string(),
+            description: "Persist a WA semantic snapshot with compact node metadata and NDA sidecar.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Logical name for the saved snapshot." },
+                    "url": { "type": "string", "description": "Source URL or logical surface identifier." },
+                    "title": { "type": "string", "description": "Snapshot title or label." },
+                    "focusNodeId": { "type": "string", "description": "Optional id of the focused node." },
+                    "nodes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "role": { "type": "string" },
+                                "name": { "type": "string" },
+                                "value": { "type": "string" },
+                                "actions": { "type": "array", "items": { "type": "string" } },
+                                "visible": { "type": "boolean" },
+                                "enabled": { "type": "boolean" },
+                                "provenance": { "type": "string" },
+                                "confidence": { "type": "number" }
+                            },
+                            "required": ["id", "role", "name"]
+                        }
+                    },
+                    "compact": { "type": "boolean", "description": "When true, return a structured WA snapshot save summary instead of human-readable text." }
+                },
+                "required": ["sessionId", "snapshotName", "url", "title", "nodes"]
+            }),
+        },
+        Tool {
+            name: "wa_capture_windows_snapshot".to_string(),
+            description: "Capture a live Windows accessibility snapshot via UIAutomation and persist it as a WA snapshot.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Logical name for the captured snapshot." },
+                    "title": { "type": "string", "description": "Optional title override for the captured snapshot." },
+                    "processId": { "type": "integer", "minimum": 1, "description": "Optional target process id. Defaults to the foreground or first named window when omitted." },
+                    "windowNameContains": { "type": "string", "description": "Optional case-insensitive window title substring filter." },
+                    "maxDepth": { "type": "integer", "minimum": 0, "description": "Optional maximum UIAutomation traversal depth. Defaults to 3." },
+                    "maxChildrenPerNode": { "type": "integer", "minimum": 1, "description": "Optional maximum number of children to inspect per node. Defaults to 64." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured Windows capture report instead of human-readable text." }
+                },
+                "required": ["sessionId", "snapshotName"]
+            }),
+        },
+        Tool {
+            name: "wa_read_snapshot".to_string(),
+            description: "Read a persisted WA semantic snapshot.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Saved snapshot name." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured WA snapshot read summary instead of the raw snapshot payload." }
+                },
+                "required": ["sessionId", "snapshotName"]
+            }),
+        },
+        Tool {
+            name: "wa_list_snapshots".to_string(),
+            description: "List persisted WA snapshots using compact summaries.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Optional WA session id filter." },
+                    "snapshotNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on snapshot name." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of snapshots to return." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for snapshot ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_save_script".to_string(),
+            description: "Persist a deterministic WA semantic script artifact with NDA sidecar.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Workflow/script name." },
+                    "startUrl": { "type": "string", "description": "Optional start URL for the script." },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": { "type": "string" },
+                                "nodeId": { "type": "string" },
+                                "role": { "type": "string" },
+                                "name": { "type": "string" },
+                                "value": { "type": "string" },
+                                "required": { "type": "boolean" }
+                            },
+                            "required": ["action"]
+                        }
+                    },
+                    "compact": { "type": "boolean", "description": "When true, return a structured WA script save summary instead of human-readable text." }
+                },
+                "required": ["name", "steps"]
+            }),
+        },
+        Tool {
+            name: "wa_read_script".to_string(),
+            description: "Read a saved WA semantic script artifact.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .wa.nda file relative to the workspace root. Legacy .wa.json paths are still accepted for read fallback." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured WA script read summary instead of the raw script payload." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "wa_list_scripts".to_string(),
+            description: "List saved WA semantic script artifacts.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scriptNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on script name." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of scripts to return." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for script ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_resolve_selector".to_string(),
+            description: "Resolve a deterministic WA selector against a saved semantic snapshot.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "nodeId": { "type": "string", "description": "Optional exact node id." },
+                    "role": { "type": "string", "description": "Optional semantic role filter." },
+                    "name": { "type": "string", "description": "Optional semantic name filter." },
+                    "action": { "type": "string", "description": "Optional required action capability." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured selector resolution report." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "wa_plan_action".to_string(),
+            description: "Plan a deterministic WA action against a saved semantic snapshot without executing it.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "action": { "type": "string", "description": "Action to plan, such as click, focus, type, or submit." },
+                    "nodeId": { "type": "string", "description": "Optional exact node id." },
+                    "role": { "type": "string", "description": "Optional semantic role filter." },
+                    "name": { "type": "string", "description": "Optional semantic name filter." },
+                    "value": { "type": "string", "description": "Optional input value for type/fill style actions." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured action plan report instead of human-readable text." }
+                },
+                "required": ["sessionId", "action"]
+            }),
+        },
+        Tool {
+            name: "wa_execute_windows_action".to_string(),
+            description: "Execute a deterministic Windows UIAutomation action against a saved WA snapshot.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "action": { "type": "string", "description": "Action to execute, such as click, focus, type, select, toggle, expand, or collapse." },
+                    "nodeId": { "type": "string", "description": "Optional exact node id." },
+                    "role": { "type": "string", "description": "Optional semantic role filter." },
+                    "name": { "type": "string", "description": "Optional semantic name filter." },
+                    "value": { "type": "string", "description": "Optional input value for type actions." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured Windows action execution report." }
+                },
+                "required": ["sessionId", "action"]
+            }),
+        },
+        Tool {
+            name: "wa_wait_for_windows_condition".to_string(),
+            description: "Wait for a deterministic Windows UIAutomation condition against a saved WA snapshot.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "condition": { "type": "string", "description": "Condition to wait for: exists, focused, or value_equals." },
+                    "nodeId": { "type": "string", "description": "Optional exact node id." },
+                    "role": { "type": "string", "description": "Optional semantic role filter." },
+                    "name": { "type": "string", "description": "Optional semantic name filter." },
+                    "expectedValue": { "type": "string", "description": "Expected value when condition is value_equals." },
+                    "timeoutMs": { "type": "integer", "minimum": 1, "description": "Maximum wait duration in milliseconds. Defaults to 3000." },
+                    "pollIntervalMs": { "type": "integer", "minimum": 1, "description": "Polling interval in milliseconds. Defaults to 100." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured Windows wait report." }
+                },
+                "required": ["sessionId", "condition"]
+            }),
+        },
+        Tool {
+            name: "wa_run_script".to_string(),
+            description: "Run a saved WA semantic script deterministically against the Windows automation layer.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "WA session identifier." },
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .wa.nda file relative to the workspace root." },
+                    "snapshotName": { "type": "string", "description": "Optional snapshot name. Defaults to the latest snapshot for the session." },
+                    "startStepIndex": { "type": "integer", "minimum": 0, "description": "Optional zero-based step index to resume execution from." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured persisted WA script run artifact." }
+                },
+                "required": ["sessionId", "relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "wa_read_run".to_string(),
+            description: "Read a persisted WA script run artifact.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .wa-run.nda file relative to the workspace root." },
+                    "compact": { "type": "boolean", "description": "When true, return the structured persisted WA run artifact." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "wa_list_runs".to_string(),
+            description: "List persisted WA script run artifacts.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Optional WA session id filter." },
+                    "scriptNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on script name." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of runs to return." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for run ordering. Defaults to asc." }
+                }
+            }),
+        },
     ]
+}
+
+fn parse_wa_nodes(nodes: &[Value]) -> Result<Vec<WaNode>, Box<dyn Error>> {
+    let mut parsed_nodes = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let actions = node["actions"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(|text| text.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        parsed_nodes.push(WaNode {
+            id: node["id"].as_str().ok_or("WA node id is required")?.to_string(),
+            role: node["role"]
+                .as_str()
+                .ok_or("WA node role is required")?
+                .to_string(),
+            name: node["name"]
+                .as_str()
+                .ok_or("WA node name is required")?
+                .to_string(),
+            value: node["value"].as_str().unwrap_or("").to_string(),
+            actions,
+            visible: node["visible"].as_bool().unwrap_or(true),
+            enabled: node["enabled"].as_bool().unwrap_or(true),
+            provenance: node["provenance"].as_str().unwrap_or("").to_string(),
+            confidence: node["confidence"].as_f64().unwrap_or(1.0) as f32,
+        });
+    }
+    Ok(parsed_nodes)
+}
+
+fn parse_wa_steps(steps: &[Value]) -> Result<Vec<WaScriptStep>, Box<dyn Error>> {
+    let mut parsed_steps = Vec::with_capacity(steps.len());
+    for step in steps {
+        parsed_steps.push(WaScriptStep {
+            action: step["action"]
+                .as_str()
+                .ok_or("WA script step action is required")?
+                .to_string(),
+            node_id: step["nodeId"].as_str().map(|value| value.to_string()),
+            role: step["role"].as_str().map(|value| value.to_string()),
+            name: step["name"].as_str().map(|value| value.to_string()),
+            value: step["value"].as_str().map(|value| value.to_string()),
+            required: step["required"].as_bool().unwrap_or(true),
+        });
+    }
+    Ok(parsed_steps)
 }
 
 fn parse_browser_steps(
@@ -2561,6 +2895,341 @@ pub fn call_tool_in_workspace(
                     .map_err(|err| format!("serialise workflow suite run: {err}").into())
             }
         }
+        "wa_create_session" => {
+            let report = crate::wa::create_session_report(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA session creation summary: {err}").into())
+            } else {
+                Ok(format!(
+                    "Created WA session '{}'\nSession NDA: {}",
+                    report.session.id, report.session_nda_path
+                ))
+            }
+        }
+        "wa_get_session" => {
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let report = crate::wa::get_session_report(&root, session_id)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA session summary: {err}").into())
+            } else {
+                serde_json::to_string_pretty(&report.session)
+                    .map_err(|err| format!("serialise WA session: {err}").into())
+            }
+        }
+        "wa_list_sessions" => {
+            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let limit = arguments["limit"].as_u64().map(|value| value as usize);
+            let sessions = crate::wa::list_sessions(
+                &root,
+                arguments["sessionIdContains"].as_str(),
+                limit,
+                sort_direction,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            serde_json::to_string_pretty(&sessions)
+                .map_err(|err| format!("serialise WA sessions: {err}").into())
+        }
+        "wa_save_snapshot" => {
+            let nodes = parse_wa_nodes(
+                arguments["nodes"]
+                    .as_array()
+                    .ok_or("nodes array is required")?,
+            )?;
+            let report = crate::wa::save_snapshot_report(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                arguments["snapshotName"]
+                    .as_str()
+                    .ok_or("snapshotName is required")?,
+                arguments["url"].as_str().ok_or("url is required")?,
+                arguments["title"].as_str().ok_or("title is required")?,
+                arguments["focusNodeId"].as_str(),
+                nodes,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA snapshot save summary: {err}").into())
+            } else {
+                Ok(format!(
+                    "Saved WA snapshot '{}' for session '{}'\nNodes: {}\nSnapshot NDA: {}",
+                    report.snapshot.snapshot_name,
+                    report.snapshot.session_id,
+                    report.snapshot.nodes.len(),
+                    report.snapshot_nda_path,
+                ))
+            }
+        }
+        "wa_read_snapshot" => {
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let snapshot_name = arguments["snapshotName"]
+                .as_str()
+                .ok_or("snapshotName is required")?;
+            let report = crate::wa::read_snapshot_report(&root, session_id, snapshot_name)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA snapshot summary: {err}").into())
+            } else {
+                serde_json::to_string_pretty(&report.snapshot)
+                    .map_err(|err| format!("serialise WA snapshot: {err}").into())
+            }
+        }
+        "wa_capture_windows_snapshot" => {
+            let max_depth = arguments["maxDepth"].as_u64().unwrap_or(3) as u32;
+            let max_children_per_node = arguments["maxChildrenPerNode"].as_u64().unwrap_or(64) as usize;
+            let process_id = arguments["processId"].as_u64().map(|value| value as u32);
+            let report = crate::wa::capture_windows_snapshot_report(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                arguments["snapshotName"]
+                    .as_str()
+                    .ok_or("snapshotName is required")?,
+                arguments["title"].as_str(),
+                process_id,
+                arguments["windowNameContains"].as_str(),
+                max_depth,
+                max_children_per_node,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA Windows capture summary: {err}").into())
+            } else {
+                Ok(crate::wa::render_windows_capture_report(&report))
+            }
+        }
+        "wa_list_snapshots" => {
+            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let limit = arguments["limit"].as_u64().map(|value| value as usize);
+            let snapshots = crate::wa::list_snapshots(
+                &root,
+                arguments["sessionId"].as_str(),
+                arguments["snapshotNameContains"].as_str(),
+                limit,
+                sort_direction,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            serde_json::to_string_pretty(&snapshots)
+                .map_err(|err| format!("serialise WA snapshots: {err}").into())
+        }
+        "wa_save_script" => {
+            let steps = parse_wa_steps(
+                arguments["steps"]
+                    .as_array()
+                    .ok_or("steps array is required")?,
+            )?;
+            let report = crate::wa::save_script_report(
+                &root,
+                arguments["name"].as_str().ok_or("name is required")?,
+                arguments["startUrl"].as_str(),
+                steps,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA script save summary: {err}").into())
+            } else {
+                Ok(format!(
+                    "Saved WA script '{}'\nNDA: {}",
+                    report.script.name, report.nda_path
+                ))
+            }
+        }
+        "wa_read_script" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let report = crate::wa::read_script_report(&root, &full_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA script summary: {err}").into())
+            } else {
+                serde_json::to_string_pretty(&report.script)
+                    .map_err(|err| format!("serialise WA script: {err}").into())
+            }
+        }
+        "wa_list_scripts" => {
+            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let limit = arguments["limit"].as_u64().map(|value| value as usize);
+            let scripts = crate::wa::list_scripts(
+                &root,
+                arguments["scriptNameContains"].as_str(),
+                limit,
+                sort_direction,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            serde_json::to_string_pretty(&scripts)
+                .map_err(|err| format!("serialise WA scripts: {err}").into())
+        }
+        "wa_resolve_selector" => {
+            let report = crate::wa::resolve_selector(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                arguments["snapshotName"].as_str(),
+                arguments["nodeId"].as_str(),
+                arguments["role"].as_str(),
+                arguments["name"].as_str(),
+                arguments["action"].as_str(),
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA selector resolution: {err}").into())
+            } else {
+                Ok(crate::wa::render_resolve_selector_report(&report))
+            }
+        }
+        "wa_plan_action" => {
+            let report = crate::wa::plan_action(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                arguments["snapshotName"].as_str(),
+                arguments["action"]
+                    .as_str()
+                    .ok_or("action is required")?,
+                arguments["nodeId"].as_str(),
+                arguments["role"].as_str(),
+                arguments["name"].as_str(),
+                arguments["value"].as_str(),
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA action plan: {err}").into())
+            } else {
+                Ok(crate::wa::render_plan_action_report(&report))
+            }
+        }
+        "wa_execute_windows_action" => {
+            let report = crate::wa::execute_windows_action_report(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                arguments["snapshotName"].as_str(),
+                arguments["action"]
+                    .as_str()
+                    .ok_or("action is required")?,
+                arguments["nodeId"].as_str(),
+                arguments["role"].as_str(),
+                arguments["name"].as_str(),
+                arguments["value"].as_str(),
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA Windows action report: {err}").into())
+            } else {
+                Ok(crate::wa::render_windows_action_report(&report))
+            }
+        }
+        "wa_wait_for_windows_condition" => {
+            let report = crate::wa::wait_for_windows_condition_report(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                arguments["snapshotName"].as_str(),
+                arguments["condition"]
+                    .as_str()
+                    .ok_or("condition is required")?,
+                arguments["nodeId"].as_str(),
+                arguments["role"].as_str(),
+                arguments["name"].as_str(),
+                arguments["expectedValue"].as_str(),
+                arguments["timeoutMs"].as_u64().unwrap_or(3000),
+                arguments["pollIntervalMs"].as_u64().unwrap_or(100),
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA Windows wait report: {err}").into())
+            } else {
+                Ok(crate::wa::render_windows_wait_report(&report))
+            }
+        }
+        "wa_run_script" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let report = crate::wa::run_and_persist_script_report(
+                &root,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
+                &full_path,
+                arguments["snapshotName"].as_str(),
+                arguments["startStepIndex"].as_u64().map(|value| value as usize),
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA script run artifact: {err}").into())
+            } else {
+                let mut rendered = crate::wa::render_script_run_report(&report.run);
+                rendered.push_str(&format!("\nRun NDA: {}", report.nda_path));
+                Ok(rendered)
+            }
+        }
+        "wa_read_run" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(&root, rel_path, false)?;
+            let report = crate::wa::read_run_report(&root, &full_path)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report)
+                    .map_err(|err| format!("serialise WA run artifact: {err}").into())
+            } else {
+                let mut rendered = crate::wa::render_script_run_report(&report.run);
+                rendered.push_str(&format!("\nRun NDA: {}", report.nda_path));
+                Ok(rendered)
+            }
+        }
+        "wa_list_runs" => {
+            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let limit = arguments["limit"].as_u64().map(|value| value as usize);
+            let runs = crate::wa::list_runs(
+                &root,
+                arguments["sessionId"].as_str(),
+                arguments["scriptNameContains"].as_str(),
+                limit,
+                sort_direction,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            serde_json::to_string_pretty(&runs)
+                .map_err(|err| format!("serialise WA runs: {err}").into())
+        }
         "run_command" => {
             let command_str = arguments["command"].as_str().ok_or("command is required")?;
             let output = if cfg!(target_os = "windows") {
@@ -3035,7 +3704,7 @@ mod tests {
         let res = crate::editor::browser::crawl_and_sync_sitemap(&url, &sitemap_path).unwrap();
         assert!(res.contains("Egui Test"));
         assert!(res.contains("Interactive Elements: 1"));
-        assert!(res.contains("Snapshot JSON:"));
+        assert!(res.contains("Snapshot NDA:"));
         assert!(res.contains("NDA Facts:"));
 
         let compact =
@@ -3498,6 +4167,335 @@ mod tests {
         assert!(compact_suite_report.contains("\"failed\": 1"));
         assert!(compact_suite_report.contains("\"suite_report_path\":"));
         assert!(!compact_suite_report.contains("\"items\":"));
+    }
+
+    #[test]
+    fn wa_tools_round_trip() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        let created = call_tool_in_workspace(
+            &root,
+            "wa_create_session",
+            &json!({"sessionId": "desktop-auth"}),
+        )
+        .unwrap();
+        assert!(created.contains("Created WA session 'desktop-auth'"));
+
+        let compact_created = call_tool_in_workspace(
+            &root,
+            "wa_create_session",
+            &json!({"sessionId": "desktop-auth", "compact": true}),
+        )
+        .unwrap();
+        assert!(compact_created.contains("\"session\":"));
+        assert!(compact_created.contains("\"id\": \"desktop-auth\""));
+        assert!(compact_created.contains("\"session_nda_path\":"));
+
+        let snapshot = call_tool_in_workspace(
+            &root,
+            "wa_save_snapshot",
+            &json!({
+                "sessionId": "desktop-auth",
+                "snapshotName": "login-form",
+                "url": "windows://settings/sign-in",
+                "title": "Sign in",
+                "focusNodeId": "email-field",
+                "nodes": [
+                    {
+                        "id": "email-field",
+                        "role": "textbox",
+                        "name": "Email",
+                        "value": "",
+                        "actions": ["focus", "type"],
+                        "visible": true,
+                        "enabled": true,
+                        "provenance": "native",
+                        "confidence": 1.0
+                    },
+                    {
+                        "id": "continue-button",
+                        "role": "button",
+                        "name": "Continue",
+                        "actions": ["click"],
+                        "visible": true,
+                        "enabled": true,
+                        "provenance": "native",
+                        "confidence": 0.98
+                    }
+                ]
+            }),
+        )
+        .unwrap();
+        assert!(snapshot.contains("Saved WA snapshot 'login-form'"));
+        assert!(snapshot.contains("Nodes: 2"));
+
+        let compact_snapshot = call_tool_in_workspace(
+            &root,
+            "wa_save_snapshot",
+            &json!({
+                "sessionId": "desktop-auth",
+                "snapshotName": "login-form-compact",
+                "url": "windows://settings/sign-in",
+                "title": "Sign in",
+                "nodes": [
+                    {
+                        "id": "password-field",
+                        "role": "textbox",
+                        "name": "Password",
+                        "actions": ["focus", "type"],
+                        "visible": true,
+                        "enabled": true,
+                        "provenance": "native",
+                        "confidence": 0.97
+                    }
+                ],
+                "compact": true
+            }),
+        )
+        .unwrap();
+        assert!(compact_snapshot.contains("\"snapshot\":"));
+        assert!(compact_snapshot.contains("\"snapshot_name\": \"login-form-compact\""));
+        assert!(compact_snapshot.contains("\"snapshot_nda_path\":"));
+
+        let listed_sessions = call_tool_in_workspace(
+            &root,
+            "wa_list_sessions",
+            &json!({"sessionIdContains": "desktop", "limit": 1, "sortDirection": "asc"}),
+        )
+        .unwrap();
+        assert!(listed_sessions.contains("desktop-auth"));
+        assert!(listed_sessions.contains("\"snapshot_count\": 2"));
+
+        let read_snapshot = call_tool_in_workspace(
+            &root,
+            "wa_read_snapshot",
+            &json!({"sessionId": "desktop-auth", "snapshotName": "login-form"}),
+        )
+        .unwrap();
+        assert!(read_snapshot.contains("\"snapshot_name\": \"login-form\""));
+        assert!(read_snapshot.contains("\"continue-button\""));
+
+        let listed_snapshots = call_tool_in_workspace(
+            &root,
+            "wa_list_snapshots",
+            &json!({"sessionId": "desktop-auth", "snapshotNameContains": "login", "sortDirection": "desc"}),
+        )
+        .unwrap();
+        assert!(listed_snapshots.contains("login-form"));
+        assert!(listed_snapshots.contains("\"snapshot_nda_path\":"));
+
+        let captured = crate::wa::windows::save_windows_capture_report_from_json(
+            &root,
+            "desktop-auth",
+            "live-window",
+            None,
+            r#"{
+                "window_title": "Desktop Sign in",
+                "process_id": 31337,
+                "focus_node_id": "email-field",
+                "nodes": [
+                    {
+                        "id": "email-field",
+                        "role": "edit",
+                        "name": "Email",
+                        "actions": ["focus", "type"],
+                        "visible": true,
+                        "enabled": true,
+                        "provenance": "native",
+                        "confidence": 1.0
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(captured.target_process_id, Some(31337));
+        let captured_snapshot = call_tool_in_workspace(
+            &root,
+            "wa_read_snapshot",
+            &json!({"sessionId": "desktop-auth", "snapshotName": "live-window", "compact": true}),
+        )
+        .unwrap();
+        assert!(captured_snapshot.contains("\"snapshot_name\": \"live-window\""));
+        assert!(captured_snapshot.contains("windows://uia/process/31337"));
+
+        let script_save = call_tool_in_workspace(
+            &root,
+            "wa_save_script",
+            &json!({
+                "name": "Sign in flow",
+                "startUrl": "windows://settings/sign-in",
+                "steps": [
+                    {"action": "type", "role": "textbox", "name": "Email", "value": "agent@example.com"},
+                    {"action": "click", "role": "button", "name": "Continue"}
+                ]
+            }),
+        )
+        .unwrap();
+        assert!(script_save.contains("Saved WA script 'Sign in flow'"));
+
+        let listed_scripts = call_tool_in_workspace(
+            &root,
+            "wa_list_scripts",
+            &json!({"scriptNameContains": "sign", "limit": 1, "sortDirection": "asc"}),
+        )
+        .unwrap();
+        assert!(listed_scripts.contains("Sign in flow"));
+        assert!(listed_scripts.contains(".wa.nda"));
+
+        let read_script = call_tool_in_workspace(
+            &root,
+            "wa_read_script",
+            &json!({"relativeFilePath": ".velocity\\wa-scripts\\sign-in-flow.wa.nda", "compact": true}),
+        )
+        .unwrap();
+        assert!(read_script.contains("\"script\":"));
+        assert!(read_script.contains("\"name\": \"Sign in flow\""));
+        assert!(read_script.contains("\"nda_path\":"));
+
+        let resolved = call_tool_in_workspace(
+            &root,
+            "wa_resolve_selector",
+            &json!({"sessionId": "desktop-auth", "snapshotName": "login-form", "role": "button", "name": "Continue", "action": "click"}),
+        )
+        .unwrap();
+        assert!(resolved.contains("Matched node: continue-button [button] 'Continue'"));
+
+        let planned = call_tool_in_workspace(
+            &root,
+            "wa_plan_action",
+            &json!({"sessionId": "desktop-auth", "action": "type", "role": "textbox", "name": "Email", "value": "agent@example.com", "compact": true}),
+        )
+        .unwrap();
+        assert!(planned.contains("\"planned_step\":"));
+        assert!(planned.contains("\"action\": \"type\""));
+        assert!(planned.contains("\"node_id\": \"email-field\""));
+
+        let run_script = call_tool_in_workspace(
+            &root,
+            "wa_run_script",
+            &json!({
+                "sessionId": "desktop-auth",
+                "relativeFilePath": ".velocity\\wa-scripts\\sign-in-flow.wa.nda",
+                "snapshotName": "login-form",
+                "compact": true
+            }),
+        )
+        .unwrap_err();
+        assert!(run_script.to_string().contains("WA Windows action execution failed") || run_script.to_string().contains("Windows UIAutomation action execution failed") || run_script.to_string().contains("no WA node matched selector"));
+    }
+
+    #[test]
+    fn wa_run_tools_round_trip() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(&root, "wa_create_session", &json!({"sessionId": "desktop-auth"}))
+            .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "wa_save_snapshot",
+            &json!({
+                "sessionId": "desktop-auth",
+                "snapshotName": "login-form",
+                "url": "windows://settings/sign-in",
+                "title": "Sign in",
+                "focusNodeId": "email-field",
+                "nodes": [
+                    {
+                        "id": "email-field",
+                        "role": "textbox",
+                        "name": "Email",
+                        "value": "",
+                        "actions": ["focus", "type"],
+                        "visible": true,
+                        "enabled": true,
+                        "provenance": "native",
+                        "confidence": 1.0
+                    },
+                    {
+                        "id": "continue-button",
+                        "role": "button",
+                        "name": "Continue",
+                        "actions": ["click"],
+                        "visible": true,
+                        "enabled": true,
+                        "provenance": "native",
+                        "confidence": 1.0
+                    }
+                ]
+            }),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "wa_save_script",
+            &json!({
+                "name": "Sign in flow",
+                "steps": [
+                    {"action": "type", "nodeId": "email-field", "role": "textbox", "name": "Email", "value": "agent@example.com", "required": true},
+                    {"action": "focus", "nodeId": "email-field", "role": "textbox", "name": "Email", "required": true}
+                ]
+            }),
+        )
+        .unwrap();
+
+        let run = call_tool_in_workspace(
+            &root,
+            "wa_run_script",
+            &json!({
+                "sessionId": "desktop-auth",
+                "relativeFilePath": ".velocity\\wa-scripts\\sign-in-flow.wa.nda",
+                "snapshotName": "login-form",
+                "startStepIndex": 1,
+                "compact": true
+            }),
+        )
+        .unwrap();
+        assert!(run.contains("\"run\":"));
+        assert!(run.contains("\"run_id\":"));
+        assert!(run.contains("\"start_step_index\": 1"));
+        assert!(run.contains("\"relative_file_path\":"));
+        assert!(run.contains(".wa-run.nda"));
+        let run_json: serde_json::Value = serde_json::from_str(&run).unwrap();
+        let run_path = run_json["relative_file_path"].as_str().unwrap();
+
+        let listed_runs = call_tool_in_workspace(
+            &root,
+            "wa_list_runs",
+            &json!({"sessionId": "desktop-auth", "scriptNameContains": "sign", "limit": 1, "sortDirection": "desc"}),
+        )
+        .unwrap();
+        assert!(listed_runs.contains("Sign in flow"));
+        assert!(listed_runs.contains("\"start_step_index\": 1"));
+        assert!(listed_runs.contains(".wa-run.nda"));
+
+        let read_run = call_tool_in_workspace(
+            &root,
+            "wa_read_run",
+            &json!({"relativeFilePath": run_path, "compact": true}),
+        )
+        .unwrap();
+        assert!(read_run.contains("\"run\":"));
+        assert!(read_run.contains("\"script_name\": "));
+        assert!(read_run.contains("\"Sign in flow\""));
+        assert!(read_run.contains("\"start_step_index\": 1"));
+
+        let out_of_range = call_tool_in_workspace(
+            &root,
+            "wa_run_script",
+            &json!({
+                "sessionId": "desktop-auth",
+                "relativeFilePath": ".velocity\\wa-scripts\\sign-in-flow.wa.nda",
+                "snapshotName": "login-form",
+                "startStepIndex": 3,
+                "compact": true
+            }),
+        )
+        .unwrap_err();
+        assert!(out_of_range.to_string().contains("startStepIndex") || out_of_range.to_string().contains("out of range"));
     }
 
     #[test]
@@ -4053,7 +5051,7 @@ mod tests {
         .unwrap();
         assert!(compact_created.contains("\"session\":"));
         assert!(compact_created.contains("\"id\": \"qa-session\""));
-        assert!(compact_created.contains("\"session_json_path\":"));
+        assert!(compact_created.contains("\"session_nda_path\":"));
 
         let runtime_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let runtime_port = runtime_listener.local_addr().unwrap().port();
@@ -4315,14 +5313,14 @@ mod tests {
         .unwrap();
         assert!(compact_session.contains("\"id\": \"qa-session\""));
         assert!(compact_session.contains("\"cookie_count\": 1"));
-        assert!(compact_session.contains("\"session_json_path\":"));
+        assert!(compact_session.contains("\"session_nda_path\":"));
         assert!(!compact_session.contains("\"cookies\":"));
 
         let sessions = call_tool_in_workspace(&root, "browser_list_sessions", &json!({})).unwrap();
         assert!(sessions.contains("qa-session"));
         assert!(sessions.contains("\"cookie_count\": 1"));
         assert!(sessions.contains(&url));
-        assert!(sessions.contains("\"session_json_path\":"));
+        assert!(sessions.contains("\"session_nda_path\":"));
 
         call_tool_in_workspace(
             &root,

@@ -13,6 +13,7 @@ use crate::agent::{
     run_headless_subagent, AiProvider, HeadlessSubAgentEvent, HeadlessSubAgentEventKind,
     HeadlessSubAgentProgress, HeadlessSubAgentRequest,
 };
+use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;
 use crate::automation::task_router::RoutedModelRoute;
 
@@ -46,6 +47,8 @@ pub struct WorkerResult {
     pub out_of_scope_created_files: Vec<String>,
     pub run_summary_path: Option<PathBuf>,
     pub run_facts_path: Option<PathBuf>,
+    pub wa_run_path: Option<String>,
+    pub wa_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +95,8 @@ impl WorkerResult {
             out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
             run_facts_path: None,
+            wa_run_path: None,
+            wa_run_id: None,
         }
     }
 }
@@ -176,6 +181,7 @@ impl WorkerHandle for LiveWorkerHandle {
 #[derive(Debug, Clone)]
 pub struct WorkerAssignment {
     pub task: Task,
+    pub task_kind: AgentTaskKind,
     pub workspace_root: PathBuf,
     pub instructions: String,
     pub planned_site_map_root: u64,
@@ -277,6 +283,8 @@ fn run_assignment(
 
     match outcome {
         Ok(execution) => {
+            let wa_run_path = detect_wa_run_artifact_path(&execution.changed_files, &execution.created_files);
+            let wa_run_id = wa_run_path.as_deref().and_then(wa_run_id_from_path);
             result.outputs = execution.changed_files;
             result.created_files = execution.created_files;
             result.deleted_files = execution.deleted_files;
@@ -288,10 +296,14 @@ fn run_assignment(
             result.attempts = execution.attempts;
             result.run_summary_path = Some(run_dir.join("summary.txt"));
             result.run_facts_path = Some(run_dir.join("facts.nda"));
+            result.wa_run_path = wa_run_path;
+            result.wa_run_id = wa_run_id;
             result.duration = start.elapsed();
             result.message = execution.message;
         }
         Err(execution) => {
+            let wa_run_path = detect_wa_run_artifact_path(&execution.changed_files, &execution.created_files);
+            let wa_run_id = wa_run_path.as_deref().and_then(wa_run_id_from_path);
             result.success = false;
             result.outputs = execution.changed_files;
             result.created_files = execution.created_files;
@@ -304,6 +316,8 @@ fn run_assignment(
             result.attempts = execution.attempts;
             result.run_summary_path = Some(run_dir.join("summary.txt"));
             result.run_facts_path = Some(run_dir.join("facts.nda"));
+            result.wa_run_path = wa_run_path;
+            result.wa_run_id = wa_run_id;
             result.duration = start.elapsed();
             result.message = execution.message;
         }
@@ -315,6 +329,7 @@ fn run_assignment(
 #[derive(Debug, Clone)]
 struct ExecutionOutcome {
     success: bool,
+    task_kind: AgentTaskKind,
     provider_label: String,
     model_label: String,
     changed_files: Vec<String>,
@@ -423,13 +438,29 @@ fn execute_live_task(
         let success =
             !changed_files.is_empty() || !created_files.is_empty() || !deleted_files.is_empty();
         let message = if success {
+            if assignment.task_kind == AgentTaskKind::DesktopAutomation {
+                format!(
+                    "Desktop automation evidence captured: changed {}, created {}, deleted {} via {} / {}",
+                    changed_files.len(),
+                    created_files.len(),
+                    deleted_files.len(),
+                    final_provider_label,
+                    final_model_label,
+                )
+            } else {
+                format!(
+                    "Changed {}, created {}, deleted {} via {} / {}",
+                    changed_files.len(),
+                    created_files.len(),
+                    deleted_files.len(),
+                    final_provider_label,
+                    final_model_label,
+                )
+            }
+        } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
             format!(
-                "Changed {}, created {}, deleted {} via {} / {}",
-                changed_files.len(),
-                created_files.len(),
-                deleted_files.len(),
-                final_provider_label,
-                final_model_label,
+                "Desktop automation run produced no scoped file changes via {} / {}",
+                final_provider_label, final_model_label
             )
         } else {
             format!(
@@ -455,6 +486,7 @@ fn execute_live_task(
             }
             let outcome = ExecutionOutcome {
                 success: true,
+                task_kind: assignment.task_kind,
                 provider_label: final_provider_label,
                 model_label: final_model_label,
                 changed_files,
@@ -476,12 +508,19 @@ fn execute_live_task(
         .iter()
         .any(|update| update.contains("cancelled by operator"));
     let message = if cancelled {
-        "cancelled by operator before scoped changes were produced".to_string()
+        if assignment.task_kind == AgentTaskKind::DesktopAutomation {
+            "desktop automation run cancelled before WA evidence was captured".to_string()
+        } else {
+            "cancelled by operator before scoped changes were produced".to_string()
+        }
+    } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
+        "Desktop automation run finished without scoped file changes or captured WA evidence.".to_string()
     } else {
         "No scoped file changes were produced by any provider-backed sub-agent route.".to_string()
     };
     let outcome = ExecutionOutcome {
         success: false,
+        task_kind: assignment.task_kind,
         provider_label: final_provider_label,
         model_label: final_model_label,
         changed_files: Vec::new(),
@@ -501,6 +540,7 @@ fn execute_live_task(
 fn failed_execution(assignment: &WorkerAssignment, message: String) -> ExecutionOutcome {
     ExecutionOutcome {
         success: false,
+        task_kind: assignment.task_kind,
         provider_label: assignment.provider_label.clone(),
         model_label: assignment.model_label.clone(),
         changed_files: Vec::new(),
@@ -519,9 +559,23 @@ fn write_execution_artifacts(run_dir: &Path, outcome: &ExecutionOutcome) -> Resu
     write_execution_facts(run_dir, outcome)
 }
 
+fn detect_wa_run_artifact_path(changed_files: &[String], created_files: &[String]) -> Option<String> {
+    changed_files
+        .iter()
+        .chain(created_files.iter())
+        .find(|path| path.to_ascii_lowercase().ends_with(".wa-run.nda"))
+        .cloned()
+}
+
+fn wa_run_id_from_path(path: &str) -> Option<String> {
+    let file_name = Path::new(path).file_name()?.to_str()?;
+    file_name.strip_suffix(".wa-run.nda").map(|value| value.to_string())
+}
+
 fn serialize_execution_contract_nda(assignment: &WorkerAssignment) -> String {
     let mut lines = vec![
         "worker-execution-contract version 2".to_string(),
+        format!("field\ttask_kind\t{}", assignment.task_kind.as_str()),
         format!(
             "field\tprovider\t{}",
             encode_nda_text(&assignment.provider_label)
@@ -632,6 +686,12 @@ fn write_execution_summary(run_dir: &Path, outcome: &ExecutionOutcome) -> Result
     } else {
         "Result: failed\n"
     });
+    summary.push_str("Task kind: ");
+    summary.push_str(outcome.task_kind.as_str());
+    summary.push('\n');
+    if outcome.task_kind == AgentTaskKind::DesktopAutomation {
+        summary.push_str("WA evidence lane: desktop automation\n");
+    }
     summary.push_str("Active route: ");
     summary.push_str(&outcome.provider_label);
     summary.push_str(" / ");
@@ -703,6 +763,7 @@ fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(
 
     let mut facts = vec![
         "worker-run-facts version 2".to_string(),
+        format!("field\ttask_kind\t{}", outcome.task_kind.as_str()),
         format!(
             "field\tresult\t{}",
             if outcome.success { "success" } else { "failed" }
@@ -784,6 +845,14 @@ fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Result<(
     }
     for (index, status) in outcome.status_updates.iter().enumerate() {
         facts.push(format!("status\t{}\t{}", index, encode_nda_text(status)));
+    }
+    if outcome.task_kind == AgentTaskKind::DesktopAutomation {
+        facts.push("wa_field\tevidence_lane\tdesktop_automation".to_string());
+        facts.push(format!("wa_field\tartifact_summary_present\t{}", outcome.success));
+        facts.push(format!(
+            "wa_field\tchanged_signal_count\t{}",
+            outcome.changed_files.len() + outcome.created_files.len() + outcome.deleted_files.len()
+        ));
     }
     for (index, line) in transcript_lines.iter().enumerate() {
         facts.push(format!(
@@ -1022,6 +1091,7 @@ mod tests {
         WorkerAssignment, WorkerAttempt,
     };
     use crate::agent::AiProvider;
+    use crate::automation::instruction_registry::AgentTaskKind;
     use crate::automation::{MediatorArena, RoutedModelRoute};
     use crate::orchestrator::blueprint::Task;
     use std::fs;
@@ -1176,6 +1246,7 @@ mod tests {
                 dependencies: Vec::new(),
                 output: None,
             },
+            task_kind: AgentTaskKind::DesktopAutomation,
             workspace_root: workspace.path().to_path_buf(),
             instructions: "step one\nstep two".to_string(),
             planned_site_map_root: 42,
@@ -1198,6 +1269,7 @@ mod tests {
         let txt = fs::read_to_string(workspace.path().join("instructions.txt")).unwrap();
 
         assert!(nda.starts_with("worker-execution-contract version 2\n"));
+        assert!(nda.contains("field\ttask_kind\tdesktop_automation"));
         assert!(nda.contains("field\tprovider\tWorkers AI"));
         assert!(nda.contains("field\tthinking\ttrue"));
         assert!(nda.contains("field\ttask_id\t1"));
@@ -1218,6 +1290,7 @@ mod tests {
         let workspace = tempdir().unwrap();
         let outcome = ExecutionOutcome {
             success: true,
+            task_kind: AgentTaskKind::DesktopAutomation,
             provider_label: "Workers AI".to_string(),
             model_label: "Llama 3.1 8B".to_string(),
             changed_files: vec!["src/main.rs".to_string()],
@@ -1240,6 +1313,7 @@ mod tests {
         let facts = fs::read_to_string(workspace.path().join("facts.nda")).unwrap();
 
         assert!(facts.starts_with("worker-run-facts version 2\n"));
+        assert!(facts.contains("field\ttask_kind\tdesktop_automation"));
         assert!(facts.contains("field\tresult\tsuccess"));
         assert!(facts.contains("field\tprovider\tWorkers AI"));
         assert!(facts.contains("changed_file\t0\tsrc/main.rs"));
@@ -1247,6 +1321,8 @@ mod tests {
         assert!(facts.contains("attempt\t0"));
         assert!(facts.contains("attempt_field\t0\tresult\tsuccess"));
         assert!(facts.contains("status\t0\tupdated scope"));
+        assert!(facts.contains("wa_field\tevidence_lane\tdesktop_automation"));
+        assert!(facts.contains("wa_field\tartifact_summary_present\ttrue"));
         assert!(facts.contains("transcript_line\t0\tdone"));
     }
 }

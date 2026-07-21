@@ -8,7 +8,7 @@ use crate::editor::buffer::EditorBuffer;
 use crate::editor::chat_panel::{render_chat_panel, ChatPanelState};
 use crate::editor::code_editor::CodeEditor;
 use crate::editor::mission_control::{InterventionDisposition, MissionControlState};
-use crate::editor::orchestrator_panel::OrchestratorPanel;
+use crate::editor::orchestrator_panel::{OrchestratorPanel, OrchestratorTaskSnapshot};
 use crate::editor::smart_sidebar::{render_smart_sidebar, SmartSidebarSnapshot, SmartSidebarState};
 use crate::editor::task_timeline::{
     persist_mission_activity_nda, render_mission_activity_feed, render_task_timeline,
@@ -20,7 +20,7 @@ use crate::usage::AccountUsageView;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::{DockArea, DockState, Style as DockStyle, TabViewer};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1590,9 +1590,322 @@ impl eframe::App for VelocityApp {
     }
 }
 
+fn desktop_automation_smoke_test_brief() -> &'static str {
+    "Run a Windows automation smoke test for the IDE desktop flow: capture a live window snapshot, resolve deterministic selectors, execute a narrow scripted interaction, and report any failing desktop-testing step with truthful WA evidence."
+}
+
+fn desktop_automation_runtime_validation_brief() -> &'static str {
+    "Validate the WA desktop automation runtime end-to-end for a Windows app: capture the target window, verify selectors against the live UIA tree, run the saved script with post-action verification, and summarize any desktop automation mismatch or blocked step."
+}
+
+fn apply_mission_brief_preset(
+    mission_control: &mut MissionControlState,
+    orchestrator: &mut OrchestratorPanel,
+    brief: &str,
+    task_kind: AgentTaskKind,
+) {
+    mission_control.brief = brief.to_string();
+    mission_control.set_selected_task(None);
+    orchestrator.set_selected_policy_kind(task_kind);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopAutomationEvidenceState {
+    LiveEvidence,
+    ArtifactBacked,
+    AwaitingEvidence,
+}
+
+impl DesktopAutomationEvidenceState {
+    fn label(self) -> &'static str {
+        match self {
+            DesktopAutomationEvidenceState::LiveEvidence => "Live WA evidence",
+            DesktopAutomationEvidenceState::ArtifactBacked => "WA artifacts captured",
+            DesktopAutomationEvidenceState::AwaitingEvidence => "Awaiting WA evidence",
+        }
+    }
+
+    fn detail(self) -> &'static str {
+        match self {
+            DesktopAutomationEvidenceState::LiveEvidence => {
+                "Worker is still producing live desktop automation evidence."
+            }
+            DesktopAutomationEvidenceState::ArtifactBacked => {
+                "Run summary or NDA facts are available for truthful desktop-test review."
+            }
+            DesktopAutomationEvidenceState::AwaitingEvidence => {
+                "Desktop automation tasks should capture live WA evidence before they are treated as complete."
+            }
+        }
+    }
+}
+
+fn task_matches_desktop_automation_lane(
+    task: &OrchestratorTaskSnapshot,
+    mission_task_kind: Option<&str>,
+) -> bool {
+    if mission_task_kind == Some(AgentTaskKind::DesktopAutomation.as_str()) {
+        return true;
+    }
+    let mut haystack = String::new();
+    haystack.push_str(&task.title);
+    haystack.push(' ');
+    haystack.push_str(&task.description);
+    haystack.push(' ');
+    haystack.push_str(&task.rationale);
+    haystack.push(' ');
+    haystack.push_str(&task.message);
+    for output in &task.outputs {
+        haystack.push(' ');
+        haystack.push_str(output);
+    }
+    let lower = haystack.to_lowercase();
+    lower.contains("desktop automation")
+        || lower.contains("windows automation")
+        || lower.contains("desktop test")
+        || lower.contains("uia")
+        || lower.contains("wa ")
+        || lower.starts_with("wa")
+}
+
+fn desktop_automation_evidence_state(
+    task: &OrchestratorTaskSnapshot,
+) -> DesktopAutomationEvidenceState {
+    if task.live_thread.is_some() || task.status_label == "Running" {
+        DesktopAutomationEvidenceState::LiveEvidence
+    } else if task.wa_run_path.is_some()
+        || task.wa_run_id.is_some()
+        || task.run_summary_path.is_some()
+        || task.run_facts_path.is_some()
+    {
+        DesktopAutomationEvidenceState::ArtifactBacked
+    } else {
+        DesktopAutomationEvidenceState::AwaitingEvidence
+    }
+}
+
+fn desktop_automation_evidence_lines(task: &OrchestratorTaskSnapshot) -> Vec<String> {
+    let state = desktop_automation_evidence_state(task);
+    let mut lines = vec![format!("Evidence state: {}", state.label()), state.detail().to_string()];
+    if let Some(path) = &task.wa_run_path {
+        lines.push(format!("WA run artifact: {path}"));
+    }
+    if let Some(run_id) = &task.wa_run_id {
+        lines.push(format!("WA run id: {run_id}"));
+    }
+    if let Some(path) = &task.run_summary_path {
+        lines.push(format!("Run summary artifact: {path}"));
+    }
+    if let Some(path) = &task.run_facts_path {
+        lines.push(format!("NDA facts artifact: {path}"));
+    }
+    if !task.outputs.is_empty() {
+        lines.push(format!("Reported outputs: {}", task.outputs.join(", ")));
+    }
+    if let Some(thread) = &task.live_thread {
+        let evidence_event_count = thread
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    crate::orchestrator::worker::WorkerThreadEventKind::Status
+                        | crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted
+                        | crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished
+                )
+            })
+            .count();
+        if evidence_event_count > 0 {
+            lines.push(format!("Live worker evidence updates: {evidence_event_count}"));
+        }
+        if !thread.changed_files.is_empty() {
+            lines.push(format!(
+                "Observed file activity: {}",
+                thread.changed_files.join(", ")
+            ));
+        }
+        if !thread.transcript.trim().is_empty() {
+            lines.push("Live transcript captured for operator review.".to_string());
+        }
+        if !thread.operator_notes.is_empty() {
+            lines.push(format!(
+                "Operator notes recorded: {}",
+                thread.operator_notes.len()
+            ));
+        }
+    }
+    lines
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopAutomationMissionSummary {
+    task_count: usize,
+    live_count: usize,
+    artifact_count: usize,
+    awaiting_count: usize,
+    state_labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopAutomationSelectedTaskStatus {
+    state_label: &'static str,
+    state_detail: &'static str,
+    artifact_count: usize,
+    output_count: usize,
+    evidence_update_count: usize,
+    has_transcript: bool,
+    has_operator_notes: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopAutomationSelectedTaskCues {
+    artifact_lines: Vec<String>,
+    next_action: &'static str,
+}
+
+fn desktop_automation_selected_task_status(
+    task: &OrchestratorTaskSnapshot,
+) -> DesktopAutomationSelectedTaskStatus {
+    let state = desktop_automation_evidence_state(task);
+    let artifact_count = usize::from(task.wa_run_path.is_some())
+        + usize::from(task.run_summary_path.is_some())
+        + usize::from(task.run_facts_path.is_some());
+    let evidence_update_count = task
+        .live_thread
+        .as_ref()
+        .map(|thread| {
+            thread
+                .events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event.kind,
+                        crate::orchestrator::worker::WorkerThreadEventKind::Status
+                            | crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted
+                            | crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished
+                    )
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    let (has_transcript, has_operator_notes) = task
+        .live_thread
+        .as_ref()
+        .map(|thread| {
+            (
+                !thread.transcript.trim().is_empty(),
+                !thread.operator_notes.is_empty(),
+            )
+        })
+        .unwrap_or((false, false));
+
+    DesktopAutomationSelectedTaskStatus {
+        state_label: state.label(),
+        state_detail: state.detail(),
+        artifact_count,
+        output_count: task.outputs.len(),
+        evidence_update_count,
+        has_transcript,
+        has_operator_notes,
+    }
+}
+
+fn desktop_automation_selected_task_cues(
+    task: &OrchestratorTaskSnapshot,
+) -> DesktopAutomationSelectedTaskCues {
+    let mut artifact_lines = Vec::new();
+    if let Some(path) = &task.wa_run_path {
+        artifact_lines.push(format!("WA run ready: {path}"));
+    }
+    if let Some(run_id) = &task.wa_run_id {
+        artifact_lines.push(format!("WA run id: {run_id}"));
+    }
+    if let Some(path) = &task.run_summary_path {
+        artifact_lines.push(format!("Run summary ready: {path}"));
+    }
+    if let Some(path) = &task.run_facts_path {
+        artifact_lines.push(format!("NDA facts ready: {path}"));
+    }
+    if !task.outputs.is_empty() {
+        artifact_lines.push(format!("Reported outputs ready: {}", task.outputs.join(", ")));
+    }
+    if let Some(thread) = &task.live_thread {
+        if !thread.changed_files.is_empty() {
+            artifact_lines.push(format!(
+                "Observed file activity: {}",
+                thread.changed_files.join(", ")
+            ));
+        }
+    }
+
+    let next_action = match desktop_automation_evidence_state(task) {
+        DesktopAutomationEvidenceState::LiveEvidence => {
+            "Monitor live WA evidence and intervene only if capture, action, or verification stalls."
+        }
+        DesktopAutomationEvidenceState::ArtifactBacked => {
+            "Review the captured WA artifacts, then retry or follow up only if the evidence shows the desktop task is incomplete."
+        }
+        DesktopAutomationEvidenceState::AwaitingEvidence => {
+            "Capture WA evidence or rerun the task before treating the desktop automation step as complete."
+        }
+    };
+
+    DesktopAutomationSelectedTaskCues {
+        artifact_lines,
+        next_action,
+    }
+}
+
+fn desktop_automation_mission_summary(
+    tasks: &[OrchestratorTaskSnapshot],
+    mission_task_kind: Option<&str>,
+) -> Option<DesktopAutomationMissionSummary> {
+    let desktop_tasks: Vec<&OrchestratorTaskSnapshot> = tasks
+        .iter()
+        .filter(|task| task_matches_desktop_automation_lane(task, mission_task_kind))
+        .collect();
+    if desktop_tasks.is_empty() {
+        return None;
+    }
+
+    let mut live_count = 0usize;
+    let mut artifact_count = 0usize;
+    let mut awaiting_count = 0usize;
+    let mut labels: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for task in desktop_tasks.iter().copied() {
+        let state = desktop_automation_evidence_state(task);
+        match state {
+            DesktopAutomationEvidenceState::LiveEvidence => live_count += 1,
+            DesktopAutomationEvidenceState::ArtifactBacked => artifact_count += 1,
+            DesktopAutomationEvidenceState::AwaitingEvidence => awaiting_count += 1,
+        }
+        *labels.entry(state.label()).or_insert(0) += 1;
+    }
+
+    Some(DesktopAutomationMissionSummary {
+        task_count: desktop_tasks.len(),
+        live_count,
+        artifact_count,
+        awaiting_count,
+        state_labels: labels
+            .into_iter()
+            .map(|(label, count)| format!("{label}: {count}"))
+            .collect(),
+    })
+}
+
 fn infer_task_kind_from_goal(goal: &str) -> AgentTaskKind {
     let lower = goal.to_lowercase();
-    if lower.contains("refactor") {
+    if lower.contains("windows automation")
+        || lower.contains("desktop automation")
+        || lower.contains("desktop test")
+        || lower.contains("uia")
+        || lower.contains("ui automation")
+        || lower.contains("wa ")
+        || lower.starts_with("wa")
+    {
+        AgentTaskKind::DesktopAutomation
+    } else if lower.contains("refactor") {
         AgentTaskKind::Refactor
     } else if lower.contains("fix") || lower.contains("bug") || lower.contains("error") {
         AgentTaskKind::BugFix
@@ -2363,10 +2676,58 @@ impl<'a> TabViewerImpl<'a> {
             );
             ui.add_space(8.0);
 
+            if let Some(wa_summary) =
+                desktop_automation_mission_summary(&snapshot.tasks, snapshot.task_kind.as_deref())
+            {
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("Desktop testing summary").strong());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!("WA tasks {}", wa_summary.task_count));
+                        ui.separator();
+                        ui.label(format!("Live {}", wa_summary.live_count));
+                        ui.separator();
+                        ui.label(format!("Artifact-backed {}", wa_summary.artifact_count));
+                        ui.separator();
+                        ui.label(format!("Awaiting evidence {}", wa_summary.awaiting_count));
+                    });
+                    if !wa_summary.state_labels.is_empty() {
+                        ui.label(
+                            egui::RichText::new(wa_summary.state_labels.join(" • "))
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    }
+                });
+                ui.add_space(8.0);
+            }
+
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.label("Mission brief:");
                     ui.checkbox(&mut self.app.mission_control.auto_execute, "Auto-launch after planning");
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new("Quick presets:")
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    if ui.small_button("Desktop smoke test").clicked() {
+                        apply_mission_brief_preset(
+                            &mut self.app.mission_control,
+                            &mut self.app.orchestrator,
+                            desktop_automation_smoke_test_brief(),
+                            AgentTaskKind::DesktopAutomation,
+                        );
+                    }
+                    if ui.small_button("WA runtime validation").clicked() {
+                        apply_mission_brief_preset(
+                            &mut self.app.mission_control,
+                            &mut self.app.orchestrator,
+                            desktop_automation_runtime_validation_brief(),
+                            AgentTaskKind::DesktopAutomation,
+                        );
+                    }
                 });
                 ui.add(
                     egui::TextEdit::multiline(&mut self.app.mission_control.brief)
@@ -2475,6 +2836,10 @@ impl<'a> TabViewerImpl<'a> {
                     ui.group(|ui| {
                         ui.label(egui::RichText::new("Selected task thread").strong());
                         if let Some(task) = selected_task {
+                            let is_desktop_automation = task_matches_desktop_automation_lane(
+                                task,
+                                snapshot.task_kind.as_deref(),
+                            );
                             ui.label(egui::RichText::new(format!("#{} {}", task.id, task.title)).strong());
                             if task.status_label == "Running" {
                                 ui.label(
@@ -2488,6 +2853,68 @@ impl<'a> TabViewerImpl<'a> {
                                         .small()
                                         .color(palette.text_muted),
                                 );
+                            }
+                            if is_desktop_automation {
+                                let wa_status = desktop_automation_selected_task_status(task);
+                                let wa_cues = desktop_automation_selected_task_cues(task);
+                                ui.separator();
+                                ui.label(egui::RichText::new("Desktop automation status").small().strong());
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(format!("State {}", wa_status.state_label));
+                                    ui.separator();
+                                    ui.label(format!("Artifacts {}", wa_status.artifact_count));
+                                    ui.separator();
+                                    ui.label(format!("Outputs {}", wa_status.output_count));
+                                    ui.separator();
+                                    ui.label(format!("Evidence updates {}", wa_status.evidence_update_count));
+                                });
+                                ui.label(
+                                    egui::RichText::new(wa_status.state_detail)
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(if wa_status.has_transcript {
+                                        "Transcript captured"
+                                    } else {
+                                        "Transcript pending"
+                                    });
+                                    ui.separator();
+                                    ui.label(if wa_status.has_operator_notes {
+                                        "Operator notes present"
+                                    } else {
+                                        "No operator notes"
+                                    });
+                                });
+                                ui.label(egui::RichText::new("Desktop automation artifacts").small().strong());
+                                if wa_cues.artifact_lines.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new("No WA artifacts captured yet.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                } else {
+                                    for line in &wa_cues.artifact_lines {
+                                        ui.label(
+                                            egui::RichText::new(line)
+                                                .small()
+                                                .color(palette.text_muted),
+                                        );
+                                    }
+                                }
+                                ui.label(
+                                    egui::RichText::new(format!("Next operator step: {}", wa_cues.next_action))
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                ui.label(egui::RichText::new("Desktop automation evidence").small().strong());
+                                for line in desktop_automation_evidence_lines(task) {
+                                    ui.label(
+                                        egui::RichText::new(line)
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                }
                             }
                             ui.add(
                                 egui::TextEdit::multiline(&mut self.app.mission_control.selected_task_note_input)
@@ -2730,6 +3157,12 @@ impl<'a> TabViewerImpl<'a> {
                         egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                             for task in &snapshot.tasks {
                                 let is_selected = self.app.mission_control.selected_task_id == Some(task.id);
+                                let is_desktop_automation = task_matches_desktop_automation_lane(
+                                    task,
+                                    snapshot.task_kind.as_deref(),
+                                );
+                                let desktop_evidence_state =
+                                    is_desktop_automation.then(|| desktop_automation_evidence_state(task));
                                 ui.group(|ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if ui.selectable_label(is_selected, format!("#{} {}", task.id, task.title)).clicked() {
@@ -2740,6 +3173,29 @@ impl<'a> TabViewerImpl<'a> {
                                                 .small()
                                                 .color(IdePalette::dark().accent),
                                         );
+                                        if let Some(evidence_state) = desktop_evidence_state {
+                                            ui.label(
+                                                egui::RichText::new("Desktop automation")
+                                                    .small()
+                                                    .color(IdePalette::dark().warning),
+                                            );
+                                            let evidence_color = match evidence_state {
+                                                DesktopAutomationEvidenceState::LiveEvidence => {
+                                                    IdePalette::dark().accent
+                                                }
+                                                DesktopAutomationEvidenceState::ArtifactBacked => {
+                                                    IdePalette::dark().success
+                                                }
+                                                DesktopAutomationEvidenceState::AwaitingEvidence => {
+                                                    IdePalette::dark().warning
+                                                }
+                                            };
+                                            ui.label(
+                                                egui::RichText::new(evidence_state.label())
+                                                    .small()
+                                                    .color(evidence_color),
+                                            );
+                                        }
                                     });
                                     if !task.provider_label.is_empty() || !task.model_label.is_empty() {
                                         ui.label(
@@ -2763,6 +3219,13 @@ impl<'a> TabViewerImpl<'a> {
                                                 .color(IdePalette::dark().text),
                                         );
                                     }
+                                    if let Some(evidence_state) = desktop_evidence_state {
+                                        ui.label(
+                                            egui::RichText::new(evidence_state.detail())
+                                                .small()
+                                                .color(IdePalette::dark().text_muted),
+                                        );
+                                    }
                                     if !task.outputs.is_empty() {
                                         ui.label(
                                             egui::RichText::new(format!("Outputs: {}", task.outputs.join(", ")))
@@ -2777,6 +3240,13 @@ impl<'a> TabViewerImpl<'a> {
                                                 .color(IdePalette::dark().warning),
                                         );
                                     }
+                                    if let Some(path) = &task.wa_run_path {
+                                        ui.label(
+                                            egui::RichText::new(format!("WA run: {}", path))
+                                                .small()
+                                                .color(IdePalette::dark().text_muted),
+                                        );
+                                    }
                                     if let Some(path) = &task.run_summary_path {
                                         ui.label(
                                             egui::RichText::new(format!("Run summary: {}", path))
@@ -2787,6 +3257,13 @@ impl<'a> TabViewerImpl<'a> {
                                     if let Some(path) = &task.run_facts_path {
                                         ui.label(
                                             egui::RichText::new(format!("Run facts: {}", path))
+                                                .small()
+                                                .color(IdePalette::dark().text_muted),
+                                        );
+                                    }
+                                    if let Some(run_id) = &task.wa_run_id {
+                                        ui.label(
+                                            egui::RichText::new(format!("WA run id: {}", run_id))
                                                 .small()
                                                 .color(IdePalette::dark().text_muted),
                                         );
@@ -3088,6 +3565,8 @@ mod tests {
             message: String::new(),
             run_summary_path: None,
             run_facts_path: None,
+            wa_run_path: None,
+            wa_run_id: None,
             live_thread: Some(WorkerThreadSnapshot {
                 events,
                 status_updates: Vec::new(),
@@ -3106,6 +3585,209 @@ mod tests {
             tasks: vec![task_snapshot(task_id, events)],
             ..OrchestratorDashboardSnapshot::default()
         }
+    }
+
+    #[test]
+    fn infers_desktop_automation_task_kind_from_windows_automation_goals() {
+        assert_eq!(
+            infer_task_kind_from_goal("Add windows automation desktop test coverage for the IDE"),
+            AgentTaskKind::DesktopAutomation
+        );
+        assert_eq!(
+            infer_task_kind_from_goal("WA runtime validation for desktop automation"),
+            AgentTaskKind::DesktopAutomation
+        );
+    }
+
+    #[test]
+    fn desktop_automation_preset_seeds_brief_and_policy_kind() {
+        let mut mission_control = MissionControlState::new();
+        let mut orchestrator = OrchestratorPanel::new();
+
+        apply_mission_brief_preset(
+            &mut mission_control,
+            &mut orchestrator,
+            desktop_automation_runtime_validation_brief(),
+            AgentTaskKind::DesktopAutomation,
+        );
+
+        assert!(mission_control.brief.contains("desktop automation runtime"));
+        assert_eq!(
+            orchestrator.selected_policy_kind(),
+            AgentTaskKind::DesktopAutomation
+        );
+    }
+
+    #[test]
+    fn desktop_automation_task_detection_prefers_lane_and_wa_language() {
+        let mut task = task_snapshot(9, Vec::new());
+        task.title = "Validate WA runtime".to_string();
+        task.description = "Desktop automation evidence pass".to_string();
+
+        assert!(task_matches_desktop_automation_lane(
+            &task,
+            Some(AgentTaskKind::DesktopAutomation.as_str())
+        ));
+        assert!(task_matches_desktop_automation_lane(&task, None));
+        assert!(!task_matches_desktop_automation_lane(&task_snapshot(11, Vec::new()), None));
+    }
+
+    #[test]
+    fn desktop_automation_evidence_state_prefers_live_then_artifacts() {
+        let live_task = task_snapshot(13, vec![WorkerThreadEvent {
+            kind: WorkerThreadEventKind::Status,
+            message: "Capturing WA snapshot".to_string(),
+        }]);
+        assert_eq!(
+            desktop_automation_evidence_state(&live_task),
+            DesktopAutomationEvidenceState::LiveEvidence
+        );
+
+        let mut artifact_task = task_snapshot(14, Vec::new());
+        artifact_task.status_label = "Done".to_string();
+        artifact_task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
+        artifact_task.wa_run_id = Some("desktop-run".to_string());
+        artifact_task.run_summary_path = Some("runs\\desktop\\summary.txt".to_string());
+        assert_eq!(
+            desktop_automation_evidence_state(&artifact_task),
+            DesktopAutomationEvidenceState::ArtifactBacked
+        );
+
+        let mut waiting_task = task_snapshot(15, Vec::new());
+        waiting_task.status_label = "Done".to_string();
+        waiting_task.live_thread = None;
+        assert_eq!(
+            desktop_automation_evidence_state(&waiting_task),
+            DesktopAutomationEvidenceState::AwaitingEvidence
+        );
+    }
+
+    #[test]
+    fn desktop_automation_evidence_lines_include_live_and_artifact_details() {
+        let mut task = task_snapshot(
+            16,
+            vec![
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::Status,
+                    message: "Capturing WA snapshot".to_string(),
+                },
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::ToolFinished,
+                    message: "WA action verified".to_string(),
+                },
+            ],
+        );
+        task.outputs = vec!["snapshot:capture".to_string(), "script:verified".to_string()];
+        task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
+        task.wa_run_id = Some("desktop-run".to_string());
+        task.run_summary_path = Some("runs\\desktop\\summary.txt".to_string());
+        task.run_facts_path = Some("runs\\desktop\\facts.nda".to_string());
+        if let Some(thread) = task.live_thread.as_mut() {
+            thread.changed_files.push(".velocity\\wa-snapshots\\capture.wa.nda".to_string());
+            thread.transcript = "WA transcript evidence".to_string();
+            thread.operator_notes.push("Retry with focused selector".to_string());
+        }
+
+        let lines = desktop_automation_evidence_lines(&task);
+        assert!(lines.iter().any(|line| line.contains("Evidence state: Live WA evidence")));
+        assert!(lines.iter().any(|line| line.contains("WA run artifact:")));
+        assert!(lines.iter().any(|line| line.contains("WA run id: desktop-run")));
+        assert!(lines.iter().any(|line| line.contains("Run summary artifact:")));
+        assert!(lines.iter().any(|line| line.contains("NDA facts artifact:")));
+        assert!(lines.iter().any(|line| line.contains("Reported outputs:")));
+        assert!(lines.iter().any(|line| line.contains("Live worker evidence updates: 2")));
+        assert!(lines.iter().any(|line| line.contains("Observed file activity:")));
+        assert!(lines.iter().any(|line| line.contains("Live transcript captured")));
+        assert!(lines.iter().any(|line| line.contains("Operator notes recorded: 1")));
+    }
+
+    #[test]
+    fn desktop_automation_mission_summary_counts_evidence_states() {
+        let live_task = task_snapshot(21, vec![WorkerThreadEvent {
+            kind: WorkerThreadEventKind::Status,
+            message: "WA capture running".to_string(),
+        }]);
+
+        let mut artifact_task = task_snapshot(22, Vec::new());
+        artifact_task.title = "Desktop automation artifact review".to_string();
+        artifact_task.status_label = "Done".to_string();
+        artifact_task.live_thread = None;
+        artifact_task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
+        artifact_task.wa_run_id = Some("desktop-run".to_string());
+        artifact_task.run_facts_path = Some("runs\\desktop\\facts.nda".to_string());
+
+        let mut waiting_task = task_snapshot(23, Vec::new());
+        waiting_task.title = "Desktop automation follow-up".to_string();
+        waiting_task.status_label = "Done".to_string();
+        waiting_task.live_thread = None;
+
+        let summary = desktop_automation_mission_summary(
+            &[live_task, artifact_task, waiting_task],
+            Some(AgentTaskKind::DesktopAutomation.as_str()),
+        )
+        .expect("desktop automation summary");
+
+        assert_eq!(summary.task_count, 3);
+        assert_eq!(summary.live_count, 1);
+        assert_eq!(summary.artifact_count, 1);
+        assert_eq!(summary.awaiting_count, 1);
+        assert!(summary.state_labels.iter().any(|label| label.contains("Live WA evidence: 1")));
+        assert!(summary.state_labels.iter().any(|label| label.contains("WA artifacts captured: 1")));
+        assert!(summary.state_labels.iter().any(|label| label.contains("Awaiting WA evidence: 1")));
+    }
+
+    #[test]
+    fn desktop_automation_selected_task_status_summarizes_artifacts_and_live_signals() {
+        let mut task = task_snapshot(
+            24,
+            vec![
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::Status,
+                    message: "Capturing WA snapshot".to_string(),
+                },
+                WorkerThreadEvent {
+                    kind: WorkerThreadEventKind::ToolFinished,
+                    message: "WA verification complete".to_string(),
+                },
+            ],
+        );
+        task.outputs = vec!["snapshot:capture".to_string(), "script:verified".to_string()];
+        task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
+        task.wa_run_id = Some("desktop-run".to_string());
+        task.run_summary_path = Some("runs\\desktop\\summary.txt".to_string());
+        task.run_facts_path = Some("runs\\desktop\\facts.nda".to_string());
+        if let Some(thread) = task.live_thread.as_mut() {
+            thread.transcript = "WA transcript evidence".to_string();
+            thread.operator_notes.push("Retry selector".to_string());
+        }
+
+        let status = desktop_automation_selected_task_status(&task);
+        assert_eq!(status.state_label, "Live WA evidence");
+        assert_eq!(status.artifact_count, 3);
+        assert_eq!(status.output_count, 2);
+        assert_eq!(status.evidence_update_count, 2);
+        assert!(status.has_transcript);
+        assert!(status.has_operator_notes);
+    }
+
+    #[test]
+    fn desktop_automation_selected_task_cues_surface_artifacts_and_next_step() {
+        let mut task = task_snapshot(25, Vec::new());
+        task.status_label = "Done".to_string();
+        task.live_thread = None;
+        task.outputs = vec!["snapshot:capture".to_string()];
+        task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
+        task.wa_run_id = Some("desktop-run".to_string());
+        task.run_summary_path = Some("runs\\desktop\\summary.txt".to_string());
+        task.run_facts_path = Some("runs\\desktop\\facts.nda".to_string());
+
+        let cues = desktop_automation_selected_task_cues(&task);
+        assert!(cues.artifact_lines.iter().any(|line| line.contains("WA run ready:")));
+        assert!(cues.artifact_lines.iter().any(|line| line.contains("WA run id: desktop-run")));
+        assert!(cues.artifact_lines.iter().any(|line| line.contains("Run summary ready:")));
+        assert!(cues.artifact_lines.iter().any(|line| line.contains("NDA facts ready:")));
+        assert!(cues.artifact_lines.iter().any(|line| line.contains("Reported outputs ready:")));
+        assert!(cues.next_action.contains("Review the captured WA artifacts"));
     }
 
     #[test]

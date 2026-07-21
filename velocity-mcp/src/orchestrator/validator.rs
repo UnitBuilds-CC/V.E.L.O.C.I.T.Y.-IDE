@@ -101,6 +101,8 @@ mod tests {
             out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
             run_facts_path: None,
+            wa_run_path: None,
+            wa_run_id: None,
         }
     }
 

@@ -17,6 +17,7 @@ use velocity_ide::site_map::SiteMap;
 
 pub struct CoordinatorTask {
     pub task_id: String,
+    pub task_kind: AgentTaskKind,
     pub files: Vec<PathBuf>,
     pub summary: String,
     pub execution_contract: String,
@@ -87,6 +88,7 @@ impl WorkspaceCoordinator {
             let handle = spawn_live_worker(
                 WorkerAssignment {
                     task: orchestrator_task,
+                    task_kind: task.task_kind,
                     workspace_root: base_workspace.to_path_buf(),
                     instructions: task.execution_contract.clone(),
                     planned_site_map_root: site_map.root(),
@@ -157,6 +159,7 @@ mod tests {
         let tasks = vec![
             CoordinatorTask {
                 task_id: "Agent_1".to_string(),
+                task_kind: AgentTaskKind::Test,
                 files: vec![PathBuf::from("src/main.rs")],
                 summary: "Compile main".to_string(),
                 execution_contract: "contract version 1\n".to_string(),
@@ -168,6 +171,7 @@ mod tests {
             },
             CoordinatorTask {
                 task_id: "Agent_2".to_string(),
+                task_kind: AgentTaskKind::Test,
                 files: vec![PathBuf::from("src/lib.rs")],
                 summary: "Clean lib".to_string(),
                 execution_contract: "contract version 1\n".to_string(),

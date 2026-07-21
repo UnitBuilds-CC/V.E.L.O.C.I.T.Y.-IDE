@@ -13,6 +13,7 @@ mod orchestrator;
 mod protocol;
 mod registry;
 mod usage;
+mod wa;
 
 fn persist_ast_update(
     site_map: &mut SiteMap,

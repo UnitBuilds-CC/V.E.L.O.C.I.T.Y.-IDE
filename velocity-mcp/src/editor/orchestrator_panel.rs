@@ -73,6 +73,8 @@ pub struct OrchestratorTaskSnapshot {
     pub message: String,
     pub run_summary_path: Option<String>,
     pub run_facts_path: Option<String>,
+    pub wa_run_path: Option<String>,
+    pub wa_run_id: Option<String>,
     pub live_thread: Option<WorkerThreadSnapshot>,
 }
 
@@ -228,6 +230,8 @@ impl OrchestratorPanel {
                 model_label,
                 run_summary_path,
                 run_facts_path,
+                wa_run_path,
+                wa_run_id,
             ) = match status {
                 TaskStatus::Pending => {
                     snapshot.pending_tasks += 1;
@@ -241,6 +245,8 @@ impl OrchestratorPanel {
                         routed
                             .map(|task| task.model_label.clone())
                             .unwrap_or_default(),
+                        None,
+                        None,
                         None,
                         None,
                     )
@@ -257,6 +263,8 @@ impl OrchestratorPanel {
                         routed
                             .map(|task| task.model_label.clone())
                             .unwrap_or_default(),
+                        None,
+                        None,
                         None,
                         None,
                     )
@@ -277,6 +285,8 @@ impl OrchestratorPanel {
                             .run_facts_path
                             .as_ref()
                             .map(|path| path.display().to_string()),
+                        result.wa_run_path.clone(),
+                        result.wa_run_id.clone(),
                     )
                 }
                 TaskStatus::Failed(result) => {
@@ -295,6 +305,8 @@ impl OrchestratorPanel {
                             .run_facts_path
                             .as_ref()
                             .map(|path| path.display().to_string()),
+                        result.wa_run_path.clone(),
+                        result.wa_run_id.clone(),
                     )
                 }
                 TaskStatus::Blocked(result) => {
@@ -313,6 +325,8 @@ impl OrchestratorPanel {
                             .run_facts_path
                             .as_ref()
                             .map(|path| path.display().to_string()),
+                        result.wa_run_path.clone(),
+                        result.wa_run_id.clone(),
                     )
                 }
             };
@@ -332,6 +346,8 @@ impl OrchestratorPanel {
                 message,
                 run_summary_path,
                 run_facts_path,
+                wa_run_path,
+                wa_run_id,
                 live_thread: self
                     .running_workers
                     .get(&task.id)
@@ -1281,6 +1297,7 @@ impl OrchestratorPanel {
                     let handle = spawn_live_worker(
                         WorkerAssignment {
                             task,
+                            task_kind: routed_task.task_kind,
                             workspace_root: workspace_root.to_path_buf(),
                             instructions: routed_task.execution_contract.clone(),
                             planned_site_map_root: routed_task.planned_site_map_root,
@@ -1624,6 +1641,8 @@ mod tests {
             out_of_scope_created_files: Vec::new(),
             run_summary_path: None,
             run_facts_path: None,
+            wa_run_path: None,
+            wa_run_id: None,
         }
     }
 
@@ -1911,6 +1930,8 @@ mod tests {
         assert_eq!(thread.events.len(), 2);
         assert_eq!(task.run_summary_path, None);
         assert_eq!(task.run_facts_path, None);
+        assert_eq!(task.wa_run_path, None);
+        assert_eq!(task.wa_run_id, None);
     }
 
     #[test]
@@ -1936,6 +1957,8 @@ mod tests {
         result.model_label = "Model".to_string();
         result.run_summary_path = Some(std::path::PathBuf::from("C:\\temp\\summary.txt"));
         result.run_facts_path = Some(std::path::PathBuf::from("C:\\temp\\facts.nda"));
+        result.wa_run_path = Some(".velocity/wa-runs/desktop-run.wa-run.nda".to_string());
+        result.wa_run_id = Some("desktop-run".to_string());
         panel
             .registry
             .as_mut()
@@ -1950,6 +1973,11 @@ mod tests {
             Some("C:\\temp\\summary.txt")
         );
         assert_eq!(task.run_facts_path.as_deref(), Some("C:\\temp\\facts.nda"));
+        assert_eq!(
+            task.wa_run_path.as_deref(),
+            Some(".velocity/wa-runs/desktop-run.wa-run.nda")
+        );
+        assert_eq!(task.wa_run_id.as_deref(), Some("desktop-run"));
     }
 
     #[test]

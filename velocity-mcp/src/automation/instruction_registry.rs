@@ -13,10 +13,11 @@ pub enum AgentTaskKind {
     Analysis,
     Planning,
     Merge,
+    DesktopAutomation,
 }
 
 impl AgentTaskKind {
-    pub const ALL: [AgentTaskKind; 7] = [
+    pub const ALL: [AgentTaskKind; 8] = [
         AgentTaskKind::Refactor,
         AgentTaskKind::BugFix,
         AgentTaskKind::Test,
@@ -24,6 +25,7 @@ impl AgentTaskKind {
         AgentTaskKind::Analysis,
         AgentTaskKind::Planning,
         AgentTaskKind::Merge,
+        AgentTaskKind::DesktopAutomation,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -35,6 +37,7 @@ impl AgentTaskKind {
             AgentTaskKind::Analysis => "analysis",
             AgentTaskKind::Planning => "planning",
             AgentTaskKind::Merge => "merge",
+            AgentTaskKind::DesktopAutomation => "desktop_automation",
         }
     }
 
@@ -47,6 +50,7 @@ impl AgentTaskKind {
             "analysis" => Some(AgentTaskKind::Analysis),
             "planning" => Some(AgentTaskKind::Planning),
             "merge" => Some(AgentTaskKind::Merge),
+            "desktop_automation" => Some(AgentTaskKind::DesktopAutomation),
             _ => None,
         }
     }
@@ -819,6 +823,17 @@ impl InstructionRegistry {
                     "State what must be revalidated after integration.".to_string(),
                 ],
             },
+            InstructionTemplate {
+                id: "desktop-wa-operator".to_string(),
+                label: "Desktop WA operator".to_string(),
+                task_kind: AgentTaskKind::DesktopAutomation,
+                system_prompt: "You are a Windows automation specialist. Prefer deterministic WA flows over fuzzy inference, reuse the existing wa_* tool surface, keep scripts narrow, verify focus/value postconditions honestly, and stay NDA-first and modular.".to_string(),
+                checklist: vec![
+                    "Prefer saved WA sessions, snapshots, and scripts over ad-hoc freeform steps.".to_string(),
+                    "Use truthful wa_capture_windows_snapshot, wa_execute_windows_action, wa_wait_for_windows_condition, and wa_run_script flows when live evidence is required.".to_string(),
+                    "Record clear validation and remaining runtime limitations instead of implying unsupported behavior works.".to_string(),
+                ],
+            },
         ]
     }
 
@@ -901,6 +916,17 @@ impl InstructionRegistry {
                     "Prefer adapter steps when direct reconciliation would collide.".to_string(),
                 ],
             },
+            DecompositionPolicy {
+                id: "desktop-wa-phased".to_string(),
+                label: "Desktop WA phased".to_string(),
+                task_kind: AgentTaskKind::DesktopAutomation,
+                instruction_template_id: "desktop-wa-operator".to_string(),
+                decomposition_style: DecompositionStyle::SequentialPipeline,
+                shared_expectations: vec![
+                    "Prefer narrow deterministic Windows automation slices over broad speculative rewrites.".to_string(),
+                    "Keep execution grounded in the existing WA registry tools, persisted NDA artifacts, and explicit postcondition verification.".to_string(),
+                ],
+            },
         ]
     }
 }
@@ -915,6 +941,8 @@ mod tests {
         let registry = InstructionRegistry::open(dir.path());
         assert!(registry.for_kind(AgentTaskKind::Refactor).is_some());
         assert!(registry.policy_for_kind(AgentTaskKind::Refactor).is_some());
+        assert!(registry.for_kind(AgentTaskKind::DesktopAutomation).is_some());
+        assert!(registry.policy_for_kind(AgentTaskKind::DesktopAutomation).is_some());
         assert!(dir
             .path()
             .join(".velocity")

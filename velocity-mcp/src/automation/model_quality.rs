@@ -46,6 +46,11 @@ impl TaskRequirements {
                 needs_reasoning: true,
                 prefers_long_context: true,
             },
+            AgentTaskKind::DesktopAutomation => Self {
+                needs_tools: true,
+                needs_reasoning: true,
+                prefers_long_context: true,
+            },
         }
     }
 }
