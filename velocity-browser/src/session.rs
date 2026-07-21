@@ -1,16 +1,17 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder};
 use crate::dom::{DomTree, NativeMutationObserver};
 use crate::engine::{
-    CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
+    Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
     FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer,
     ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, TraceCollector,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine};
-use crate::layout::LayoutEngine2D;
-use crate::net::{HttpClient, NativeWsClient};
+use crate::layout::{DisplayMode, FlexDirection, FlexLayoutEngine, LayoutBox, LayoutEngine2D};
+use crate::net::{HttpClient, NativeWsClient, ProxyResolver};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
+use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
 use crate::style::StyleCascader;
 use std::collections::HashMap;
 
@@ -36,6 +37,8 @@ pub struct BrowserSession {
     pub device_profile: DeviceProfile,
     pub trace_collector: TraceCollector,
     pub mutation_observer: NativeMutationObserver,
+    pub storage_broadcaster: StorageEventBroadcaster,
+    pub proxy_resolver: ProxyResolver,
     pub cascader: StyleCascader,
     pub js_vm: JsVirtualMachine,
     pub js_scheduler: JsEventLoopScheduler,
@@ -59,6 +62,8 @@ impl BrowserSession {
             device_profile: DeviceProfile::desktop_chrome(),
             trace_collector: TraceCollector::new(),
             mutation_observer: NativeMutationObserver::new(),
+            storage_broadcaster: StorageEventBroadcaster::new(),
+            proxy_resolver: ProxyResolver::direct(),
             cascader: StyleCascader::new(),
             js_vm: JsVirtualMachine::new(),
             js_scheduler: JsEventLoopScheduler::new(),
@@ -150,7 +155,10 @@ impl BrowserSession {
         Err("No DOM tree loaded in session".into())
     }
 
-    /// Extract auth state and reseed into session
+    pub fn set_storage_item(&mut self, key: &str, value: &str) {
+        self.storage_broadcaster.set_item(&mut self.storage, key, value, &self.current_url);
+    }
+
     pub fn reseed_auth(&mut self, auth: &AuthTokenState) {
         AuthReseeder::reseed_into_session(self, auth);
     }
@@ -196,11 +204,12 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, and trace triples
+        // Add device profile, file, mutation, storage event, and trace triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
         encoder.triples.extend(self.mutation_observer.export_mutations_nda());
+        encoder.triples.extend(self.storage_broadcaster.export_events_nda());
 
         // Add native Agentic AOM and 2D Layout Bounding Box triples
         if let Some(tree) = &self.dom_tree {
@@ -210,7 +219,22 @@ impl BrowserSession {
             }
 
             let layout_engine = LayoutEngine2D::new(self.cascader.clone());
-            let boxes = layout_engine.build_layout_tree(tree);
+            let mut boxes = layout_engine.build_layout_tree(tree);
+            let root_box = LayoutBox {
+                node_id: 0,
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+                padding: [0.0; 4],
+                margin: [0.0; 4],
+                z_index: 0,
+                display: DisplayMode::Block,
+                children: Vec::new(),
+                is_visible: true,
+            };
+            FlexLayoutEngine::compute_flex_children(&root_box, &mut boxes, FlexDirection::Row);
+
             for t in layout_engine.export_layout_nda(&boxes) {
                 encoder.triples.push(t);
             }

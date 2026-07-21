@@ -1,4 +1,5 @@
 pub mod canvas;
+pub mod canvas_context;
 pub mod files;
 pub mod interstitial;
 pub mod network;
@@ -8,6 +9,7 @@ pub mod shadow_dom;
 pub mod trace;
 
 pub use canvas::{CanvasElement, CanvasExtractor};
+pub use canvas_context::Canvas2DContext;
 pub use files::{DownloadStreamArtifact, FileChooserEvent, FileManager};
 pub use interstitial::{InterstitialClassifier, InterstitialKind};
 pub use network::{NetworkRequest, NetworkTracker};

@@ -1,12 +1,7 @@
-use crate::layout::LayoutBox;
-use crate::nda::NdaTriple;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 pub struct PixelBuffer {
     pub width: usize,
     pub height: usize,
-    pub pixels: Vec<u32>, // RGBA 32-bit pixel data
+    pub buffer: Vec<u8>,
 }
 
 impl PixelBuffer {
@@ -14,24 +9,25 @@ impl PixelBuffer {
         Self {
             width,
             height,
-            pixels: vec![0xFFFFFFFF; width * height], // White background default
+            buffer: vec![255; width * height * 4], // 32-bit RGBA
         }
     }
 
-    pub fn draw_rect(&mut self, x: usize, y: usize, w: usize, h: usize, color: u32) {
-        for row in y..(y + h).min(self.height) {
-            for col in x..(x + w).min(self.width) {
-                let idx = row * self.width + col;
-                if idx < self.pixels.len() {
-                    self.pixels[idx] = color;
-                }
-            }
+    pub fn set_pixel(&mut self, x: usize, y: usize, r: u8, g: u8, b: u8, a: u8) {
+        if x < self.width && y < self.height {
+            let idx = (y * self.width + x) * 4;
+            self.buffer[idx] = r;
+            self.buffer[idx + 1] = g;
+            self.buffer[idx + 2] = b;
+            self.buffer[idx + 3] = a;
         }
     }
 
-    pub fn compute_pixel_hash(&self) -> u64 {
+    pub fn compute_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
-        self.pixels.hash(&mut hasher);
+        self.buffer.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -39,25 +35,20 @@ impl PixelBuffer {
 pub struct SoftwareRasterizer;
 
 impl SoftwareRasterizer {
-    pub fn render_layout(boxes: &[LayoutBox], width: usize, height: usize) -> PixelBuffer {
+    pub fn rasterize_layout_boxes(boxes: &[crate::layout::LayoutBox], width: usize, height: usize) -> PixelBuffer {
         let mut buffer = PixelBuffer::new(width, height);
         for b in boxes {
-            if b.is_visible {
-                let bx = (b.x as usize).min(width);
-                let by = (b.y as usize).min(height);
-                let bw = (b.width as usize).min(width - bx);
-                let bh = (b.height as usize).min(height - by);
-                buffer.draw_rect(bx, by, bw, bh, 0xFF0000FF); // Blue elements
+            let x_start = b.x.max(0.0) as usize;
+            let y_start = b.y.max(0.0) as usize;
+            let x_end = (b.x + b.width).max(0.0) as usize;
+            let y_end = (b.y + b.height).max(0.0) as usize;
+
+            for y in y_start..y_end.min(height) {
+                for x in x_start..x_end.min(width) {
+                    buffer.set_pixel(x, y, 200, 200, 200, 255);
+                }
             }
         }
         buffer
-    }
-
-    pub fn raster_to_nda(buffer: &PixelBuffer, session_id: &str) -> Vec<NdaTriple> {
-        let hash = buffer.compute_pixel_hash();
-        vec![
-            NdaTriple::new(session_id, 80, &format!("{}x{}", buffer.width, buffer.height)),
-            NdaTriple::new(session_id, 81, &hash.to_string()),
-        ]
     }
 }
