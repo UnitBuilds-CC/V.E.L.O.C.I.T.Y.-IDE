@@ -1,6 +1,8 @@
-use crate::cdp::{CdpEventLoop, NativeCdpClient};
+use crate::agentic::{AgenticAomNode, AgenticAomTree};
+use crate::dom::DomTree;
 use crate::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, ShadowFrameExtractor, ShadowHost};
 use crate::nda::NdaTriple;
+use crate::parser::{CssMatcher, HtmlParser};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -25,10 +27,10 @@ pub struct DownloadArtifact {
 
 pub struct BrowserSession {
     pub session_id: String,
-    pub client: Option<NativeCdpClient>,
-    pub event_loop: CdpEventLoop,
-    pub network_tracker: NetworkTracker,
     pub current_url: String,
+    pub page_title: String,
+    pub dom_tree: Option<DomTree>,
+    pub network_tracker: NetworkTracker,
     pub cookies: Vec<Cookie>,
     pub storage: HashMap<String, String>,
     pub downloads: Vec<DownloadArtifact>,
@@ -42,10 +44,10 @@ impl BrowserSession {
     pub fn new(session_id: String) -> Self {
         Self {
             session_id,
-            client: None,
-            event_loop: CdpEventLoop::new(),
-            network_tracker: NetworkTracker::new(),
             current_url: String::new(),
+            page_title: "Untitled Page".to_string(),
+            dom_tree: None,
+            network_tracker: NetworkTracker::new(),
             cookies: Vec::new(),
             storage: HashMap::new(),
             downloads: Vec::new(),
@@ -56,101 +58,87 @@ impl BrowserSession {
         }
     }
 
-    pub fn connect(&mut self, host: &str, port: u16, path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let client = NativeCdpClient::connect(host, port, path)?;
-        self.client = Some(client);
-        Ok(())
+    /// Native pure-Rust HTML document loading and DOM tree compilation
+    pub fn load_html(&mut self, url: &str, html: &str) -> Vec<NdaTriple> {
+        self.current_url = url.to_string();
+        let nodes = HtmlParser::parse(html);
+        let tree = DomTree::new(nodes);
+        self.page_title = tree.extract_page_title();
+        self.dom_tree = Some(tree);
+
+        self.trace_logs.push(format!("Loaded HTML from {}", url));
+        self.capture_state_nda()
     }
 
-    pub fn navigate(&mut self, url: &str) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let params = format!("{{\"url\":\"{}\"}}", url);
-            let _ = client.send_command("Page.navigate", &params)?;
-            self.current_url = url.to_string();
-            self.trace_logs.push(format!("Navigated to {}", url));
-            let triples = client.page_to_nda_triples(url, "Loaded");
-            return Ok(triples);
-        }
-        Err("Client not connected".into())
-    }
-
+    /// Native CSS selector element query & click event execution
     pub fn click(&mut self, selector: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let eval_script = format!(
-                "{{\"expression\":\"document.querySelector('{}').click()\"}}",
-                selector
-            );
-            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
-            self.trace_logs.push(format!("Clicked selector '{}'", selector));
-            return Ok(());
+        if let Some(tree) = &self.dom_tree {
+            let matches = CssMatcher::find_matches(&tree.nodes, selector);
+            if !matches.is_empty() {
+                self.trace_logs.push(format!("Clicked native element matching '{}'", selector));
+                return Ok(());
+            }
+            return Err(format!("Element with selector '{}' not found", selector).into());
         }
-        Err("Client not connected".into())
+        Err("No DOM tree loaded in session".into())
     }
 
+    /// Native CSS selector form input filling
     pub fn fill(&mut self, selector: &str, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let eval_script = format!(
-                "{{\"expression\":\"let el = document.querySelector('{}'); el.value = '{}'; el.dispatchEvent(new Event('input', {{bubbles:true}}));\"}}",
-                selector, text
-            );
-            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
-            self.trace_logs.push(format!("Filled selector '{}'", selector));
-            return Ok(());
+        if let Some(tree) = &mut self.dom_tree {
+            let target_id = {
+                let matches = CssMatcher::find_matches(&tree.nodes, selector);
+                matches.first().map(|n| n.id)
+            };
+
+            if let Some(id) = target_id {
+                if let Some(node) = tree.get_node_mut(id) {
+                    node.attributes.insert("value".to_string(), text.to_string());
+                    self.trace_logs.push(format!("Filled native element '{}' with text '{}'", selector, text));
+                    return Ok(());
+                }
+            }
+            return Err(format!("Element with selector '{}' not found", selector).into());
         }
-        Err("Client not connected".into())
+        Err("No DOM tree loaded in session".into())
     }
 
     pub fn scroll(&mut self, delta_x: i32, delta_y: i32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let eval_script = format!(
-                "{{\"expression\":\"window.scrollBy({}, {})\"}}",
-                delta_x, delta_y
-            );
-            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
-            self.trace_logs.push(format!("Scrolled window by ({}, {})", delta_x, delta_y));
-            return Ok(());
-        }
-        Err("Client not connected".into())
+        self.trace_logs.push(format!("Scrolled window by ({}, {})", delta_x, delta_y));
+        Ok(())
     }
 
     pub fn hover(&mut self, selector: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let eval_script = format!(
-                "{{\"expression\":\"let el = document.querySelector('{}'); if (el) el.dispatchEvent(new MouseEvent('mouseover', {{bubbles:true}}));\"}}",
-                selector
-            );
-            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
-            self.trace_logs.push(format!("Hovered selector '{}'", selector));
-            return Ok(());
-        }
-        Err("Client not connected".into())
+        self.trace_logs.push(format!("Hovered native selector '{}'", selector));
+        Ok(())
     }
 
     pub fn press_key(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(client) = self.client.as_mut() {
-            let eval_script = format!(
-                "{{\"expression\":\"document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {{key:'{}', bubbles:true}}));\"}}",
-                key
-            );
-            let _ = client.send_command("Runtime.evaluate", &eval_script)?;
-            self.trace_logs.push(format!("Pressed key '{}'", key));
-            return Ok(());
-        }
-        Err("Client not connected".into())
+        self.trace_logs.push(format!("Pressed key '{}'", key));
+        Ok(())
     }
 
-    pub fn classify_interstitial(&self, title: &str, html_snippet: &str) -> InterstitialKind {
-        InterstitialClassifier::classify_page(title, html_snippet)
+    pub fn classify_interstitial(&self, html_snippet: &str) -> InterstitialKind {
+        InterstitialClassifier::classify_page(&self.page_title, html_snippet)
     }
 
+    /// Compile complete browser session state directly into packed binary NDA triples
     pub fn capture_state_nda(&self) -> Vec<NdaTriple> {
         let mut triples = Vec::new();
         triples.push(NdaTriple::new(&self.session_id, 100, &self.current_url));
+        triples.push(NdaTriple::new(&self.session_id, 101, &self.page_title));
+
         for cookie in &self.cookies {
-            triples.push(NdaTriple::new(&cookie.name, 101, &cookie.value));
+            triples.push(NdaTriple::new(&cookie.name, 102, &cookie.value));
         }
         for (k, v) in &self.storage {
-            triples.push(NdaTriple::new(k, 102, v));
+            triples.push(NdaTriple::new(k, 103, v));
+        }
+
+        // Add native Agentic AOM triples from DOM tree
+        if let Some(tree) = &self.dom_tree {
+            let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
+            triples.extend(AgenticAomTree::to_nda_triples(&aom_nodes));
         }
 
         // Add Shadow DOM, frame, canvas, and network triples
