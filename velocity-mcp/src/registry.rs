@@ -1,11 +1,11 @@
-use serde::{Serialize, Deserialize};
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::error::Error;
-use std::process::{Command, Stdio, Child};
-use std::io::{Write, BufReader, BufRead};
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Tool {
@@ -961,142 +961,301 @@ fn parse_browser_steps(
 ) -> Result<Vec<crate::editor::browser::BrowserWorkflowStep>, Box<dyn Error>> {
     let mut parsed_steps = Vec::with_capacity(steps.len());
     for step in steps {
-        let kind = step["kind"].as_str().ok_or("workflow step kind is required")?;
+        let kind = step["kind"]
+            .as_str()
+            .ok_or("workflow step kind is required")?;
         let parsed = match kind {
             "navigate" => crate::editor::browser::BrowserWorkflowStep::Navigate {
-                url: step["url"].as_str().ok_or("navigate step url is required")?.to_string(),
+                url: step["url"]
+                    .as_str()
+                    .ok_or("navigate step url is required")?
+                    .to_string(),
             },
             "click" => crate::editor::browser::BrowserWorkflowStep::Click {
-                role: step["role"].as_str().ok_or("click step role is required")?.to_string(),
-                name: step["name"].as_str().ok_or("click step name is required")?.to_string(),
+                role: step["role"]
+                    .as_str()
+                    .ok_or("click step role is required")?
+                    .to_string(),
+                name: step["name"]
+                    .as_str()
+                    .ok_or("click step name is required")?
+                    .to_string(),
             },
             "fill_field" => crate::editor::browser::BrowserWorkflowStep::FillField {
-                field: step["field"].as_str().ok_or("fill_field step field is required")?.to_string(),
-                value: step["value"].as_str().ok_or("fill_field step value is required")?.to_string(),
+                field: step["field"]
+                    .as_str()
+                    .ok_or("fill_field step field is required")?
+                    .to_string(),
+                value: step["value"]
+                    .as_str()
+                    .ok_or("fill_field step value is required")?
+                    .to_string(),
             },
             "submit_form" => crate::editor::browser::BrowserWorkflowStep::SubmitForm {
                 form: step["form"].as_str().map(|value| value.to_string()),
             },
             "wait_for_text" => crate::editor::browser::BrowserWorkflowStep::WaitForText {
-                text: step["text"].as_str().ok_or("wait_for_text step text is required")?.to_string(),
+                text: step["text"]
+                    .as_str()
+                    .ok_or("wait_for_text step text is required")?
+                    .to_string(),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
             "wait_for_element" => crate::editor::browser::BrowserWorkflowStep::WaitForElement {
-                role: step["role"].as_str().ok_or("wait_for_element step role is required")?.to_string(),
-                name: step["name"].as_str().ok_or("wait_for_element step name is required")?.to_string(),
+                role: step["role"]
+                    .as_str()
+                    .ok_or("wait_for_element step role is required")?
+                    .to_string(),
+                name: step["name"]
+                    .as_str()
+                    .ok_or("wait_for_element step name is required")?
+                    .to_string(),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
             "wait_for_title" => crate::editor::browser::BrowserWorkflowStep::WaitForTitle {
-                title: step["title"].as_str().ok_or("wait_for_title step title is required")?.to_string(),
+                title: step["title"]
+                    .as_str()
+                    .ok_or("wait_for_title step title is required")?
+                    .to_string(),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
-            "wait_for_url_contains" => crate::editor::browser::BrowserWorkflowStep::WaitForUrlContains {
-                fragment: step["fragment"].as_str().ok_or("wait_for_url_contains step fragment is required")?.to_string(),
-                timeout_ms: step["timeoutMs"].as_u64(),
-                interval_ms: step["intervalMs"].as_u64(),
-            },
+            "wait_for_url_contains" => {
+                crate::editor::browser::BrowserWorkflowStep::WaitForUrlContains {
+                    fragment: step["fragment"]
+                        .as_str()
+                        .ok_or("wait_for_url_contains step fragment is required")?
+                        .to_string(),
+                    timeout_ms: step["timeoutMs"].as_u64(),
+                    interval_ms: step["intervalMs"].as_u64(),
+                }
+            }
             "wait_for_mutation" => crate::editor::browser::BrowserWorkflowStep::WaitForMutation {
-                label: step["label"].as_str().ok_or("wait_for_mutation step label is required")?.to_string(),
+                label: step["label"]
+                    .as_str()
+                    .ok_or("wait_for_mutation step label is required")?
+                    .to_string(),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
             "wait_for_request" => crate::editor::browser::BrowserWorkflowStep::WaitForRequest {
-                method: step["method"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                url_contains: step["urlContains"].as_str().or_else(|| step["url_contains"].as_str()).map(|value| value.to_string()).filter(|value| !value.is_empty()),
+                method: step["method"]
+                    .as_str()
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
+                url_contains: step["urlContains"]
+                    .as_str()
+                    .or_else(|| step["url_contains"].as_str())
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
                 status: step["status"].as_u64().map(|value| value as u16),
-                resource: step["resource"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
+                resource: step["resource"]
+                    .as_str()
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
             "wait_for_storage" => crate::editor::browser::BrowserWorkflowStep::WaitForStorage {
-                scope: step["scope"].as_str().ok_or("wait_for_storage step scope is required")?.to_string(),
-                key: step["key"].as_str().ok_or("wait_for_storage step key is required")?.to_string(),
-                value: step["value"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
+                scope: step["scope"]
+                    .as_str()
+                    .ok_or("wait_for_storage step scope is required")?
+                    .to_string(),
+                key: step["key"]
+                    .as_str()
+                    .ok_or("wait_for_storage step key is required")?
+                    .to_string(),
+                value: step["value"]
+                    .as_str()
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
             "wait_for_settle" => crate::editor::browser::BrowserWorkflowStep::WaitForSettle {
-                label: step["label"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                scope: step["scope"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                state: step["state"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
+                label: step["label"]
+                    .as_str()
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
+                scope: step["scope"]
+                    .as_str()
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
+                state: step["state"]
+                    .as_str()
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.is_empty()),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
-            "wait_for_runtime_state" => crate::editor::browser::BrowserWorkflowStep::WaitForRuntimeState {
-                scope: step["scope"].as_str().ok_or("wait_for_runtime_state step scope is required")?.to_string(),
-                key: step["key"].as_str().ok_or("wait_for_runtime_state step key is required")?.to_string(),
-                value: step["value"].as_str().map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                timeout_ms: step["timeoutMs"].as_u64(),
-                interval_ms: step["intervalMs"].as_u64(),
-            },
-            "wait_for_protocol_event" => crate::editor::browser::BrowserWorkflowStep::WaitForProtocolEvent {
-                event_kind: step["kindName"].as_str().or_else(|| step["eventKind"].as_str()).or_else(|| step["protocolKind"].as_str()).map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                phase: step["phase"].as_str().or_else(|| step["protocolPhase"].as_str()).map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                target: step["target"].as_str().or_else(|| step["targetContains"].as_str()).or_else(|| step["protocolTarget"].as_str()).map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                detail: step["detail"].as_str().or_else(|| step["detailContains"].as_str()).or_else(|| step["protocolDetail"].as_str()).map(|value| value.to_string()).filter(|value| !value.is_empty()),
-                timeout_ms: step["timeoutMs"].as_u64(),
-                interval_ms: step["intervalMs"].as_u64(),
-            },
+            "wait_for_runtime_state" => {
+                crate::editor::browser::BrowserWorkflowStep::WaitForRuntimeState {
+                    scope: step["scope"]
+                        .as_str()
+                        .ok_or("wait_for_runtime_state step scope is required")?
+                        .to_string(),
+                    key: step["key"]
+                        .as_str()
+                        .ok_or("wait_for_runtime_state step key is required")?
+                        .to_string(),
+                    value: step["value"]
+                        .as_str()
+                        .map(|value| value.to_string())
+                        .filter(|value| !value.is_empty()),
+                    timeout_ms: step["timeoutMs"].as_u64(),
+                    interval_ms: step["intervalMs"].as_u64(),
+                }
+            }
+            "wait_for_protocol_event" => {
+                crate::editor::browser::BrowserWorkflowStep::WaitForProtocolEvent {
+                    event_kind: step["kindName"]
+                        .as_str()
+                        .or_else(|| step["eventKind"].as_str())
+                        .or_else(|| step["protocolKind"].as_str())
+                        .map(|value| value.to_string())
+                        .filter(|value| !value.is_empty()),
+                    phase: step["phase"]
+                        .as_str()
+                        .or_else(|| step["protocolPhase"].as_str())
+                        .map(|value| value.to_string())
+                        .filter(|value| !value.is_empty()),
+                    target: step["target"]
+                        .as_str()
+                        .or_else(|| step["targetContains"].as_str())
+                        .or_else(|| step["protocolTarget"].as_str())
+                        .map(|value| value.to_string())
+                        .filter(|value| !value.is_empty()),
+                    detail: step["detail"]
+                        .as_str()
+                        .or_else(|| step["detailContains"].as_str())
+                        .or_else(|| step["protocolDetail"].as_str())
+                        .map(|value| value.to_string())
+                        .filter(|value| !value.is_empty()),
+                    timeout_ms: step["timeoutMs"].as_u64(),
+                    interval_ms: step["intervalMs"].as_u64(),
+                }
+            }
             "wait_for_stable" => crate::editor::browser::BrowserWorkflowStep::WaitForStable {
                 stable_polls: step["stablePolls"].as_u64().map(|value| value as u32),
                 timeout_ms: step["timeoutMs"].as_u64(),
                 interval_ms: step["intervalMs"].as_u64(),
             },
             "extract_text" => crate::editor::browser::BrowserWorkflowStep::ExtractText {
-                output: step["output"].as_str().ok_or("extract_text step output is required")?.to_string(),
-                source: step["source"].as_str().ok_or("extract_text step source is required")?.to_string(),
+                output: step["output"]
+                    .as_str()
+                    .ok_or("extract_text step output is required")?
+                    .to_string(),
+                source: step["source"]
+                    .as_str()
+                    .ok_or("extract_text step source is required")?
+                    .to_string(),
                 role: step["role"].as_str().map(|value| value.to_string()),
                 name: step["name"].as_str().map(|value| value.to_string()),
                 field: step["field"].as_str().map(|value| value.to_string()),
             },
             "save_checkpoint" => crate::editor::browser::BrowserWorkflowStep::SaveCheckpoint {
-                name: step["name"].as_str().ok_or("save_checkpoint step name is required")?.to_string(),
+                name: step["name"]
+                    .as_str()
+                    .ok_or("save_checkpoint step name is required")?
+                    .to_string(),
             },
-            "restore_checkpoint" => crate::editor::browser::BrowserWorkflowStep::RestoreCheckpoint {
-                name: step["name"].as_str().ok_or("restore_checkpoint step name is required")?.to_string(),
-            },
+            "restore_checkpoint" => {
+                crate::editor::browser::BrowserWorkflowStep::RestoreCheckpoint {
+                    name: step["name"]
+                        .as_str()
+                        .ok_or("restore_checkpoint step name is required")?
+                        .to_string(),
+                }
+            }
             "if_text_contains" => crate::editor::browser::BrowserWorkflowStep::IfTextContains {
-                text: step["text"].as_str().ok_or("if_text_contains step text is required")?.to_string(),
-                then_steps: parse_browser_steps(step["thenSteps"].as_array().ok_or("if_text_contains thenSteps must be an array")?)?,
-                else_steps: parse_browser_steps(step["elseSteps"].as_array().map(|steps| steps.as_slice()).unwrap_or(&[]))?,
+                text: step["text"]
+                    .as_str()
+                    .ok_or("if_text_contains step text is required")?
+                    .to_string(),
+                then_steps: parse_browser_steps(
+                    step["thenSteps"]
+                        .as_array()
+                        .ok_or("if_text_contains thenSteps must be an array")?,
+                )?,
+                else_steps: parse_browser_steps(
+                    step["elseSteps"]
+                        .as_array()
+                        .map(|steps| steps.as_slice())
+                        .unwrap_or(&[]),
+                )?,
             },
             "if_output_equals" => crate::editor::browser::BrowserWorkflowStep::IfOutputEquals {
-                output: step["output"].as_str().ok_or("if_output_equals step output is required")?.to_string(),
-                equals: step["equals"].as_str().ok_or("if_output_equals step equals is required")?.to_string(),
-                then_steps: parse_browser_steps(step["thenSteps"].as_array().ok_or("if_output_equals thenSteps must be an array")?)?,
-                else_steps: parse_browser_steps(step["elseSteps"].as_array().map(|steps| steps.as_slice()).unwrap_or(&[]))?,
+                output: step["output"]
+                    .as_str()
+                    .ok_or("if_output_equals step output is required")?
+                    .to_string(),
+                equals: step["equals"]
+                    .as_str()
+                    .ok_or("if_output_equals step equals is required")?
+                    .to_string(),
+                then_steps: parse_browser_steps(
+                    step["thenSteps"]
+                        .as_array()
+                        .ok_or("if_output_equals thenSteps must be an array")?,
+                )?,
+                else_steps: parse_browser_steps(
+                    step["elseSteps"]
+                        .as_array()
+                        .map(|steps| steps.as_slice())
+                        .unwrap_or(&[]),
+                )?,
             },
             "assert_element" => crate::editor::browser::BrowserWorkflowStep::AssertElement {
-                role: step["role"].as_str().ok_or("assert_element step role is required")?.to_string(),
-                name: step["name"].as_str().ok_or("assert_element step name is required")?.to_string(),
+                role: step["role"]
+                    .as_str()
+                    .ok_or("assert_element step role is required")?
+                    .to_string(),
+                name: step["name"]
+                    .as_str()
+                    .ok_or("assert_element step name is required")?
+                    .to_string(),
             },
-            "assert_text_contains" => crate::editor::browser::BrowserWorkflowStep::AssertTextContains {
-                text: step["text"].as_str().ok_or("assert_text_contains step text is required")?.to_string(),
-            },
+            "assert_text_contains" => {
+                crate::editor::browser::BrowserWorkflowStep::AssertTextContains {
+                    text: step["text"]
+                        .as_str()
+                        .ok_or("assert_text_contains step text is required")?
+                        .to_string(),
+                }
+            }
             "assert_output" => crate::editor::browser::BrowserWorkflowStep::AssertOutput {
-                output: step["output"].as_str().ok_or("assert_output step output is required")?.to_string(),
+                output: step["output"]
+                    .as_str()
+                    .ok_or("assert_output step output is required")?
+                    .to_string(),
                 equals: step["equals"].as_str().map(|value| value.to_string()),
                 contains: step["contains"].as_str().map(|value| value.to_string()),
             },
-            other => return Err(format!("unsupported browser workflow step kind: {}", other).into()),
+            other => {
+                return Err(format!("unsupported browser workflow step kind: {}", other).into())
+            }
         };
         parsed_steps.push(parsed);
     }
     Ok(parsed_steps)
 }
 
-pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
+pub fn call_tool_in_workspace(
+    root: &Path,
+    name: &str,
+    arguments: &Value,
+) -> Result<String, Box<dyn Error>> {
     let root = root.canonicalize()?;
     match name {
         "web_navigate" => {
             let url = arguments["url"].as_str().ok_or("url is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
-                let report = crate::editor::browser::crawl_and_sync_sitemap_report(url, &sitemap_path)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let report =
+                    crate::editor::browser::crawl_and_sync_sitemap_report(url, &sitemap_path)
+                        .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser crawl summary: {err}").into())
             } else {
@@ -1105,18 +1264,25 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_create_session" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let report = crate::editor::browser::create_session_report(&root, session_id)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser session creation summary: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser session creation summary: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_session_create_report(&report))
+                Ok(crate::editor::browser::render_session_create_report(
+                    &report,
+                ))
             }
         }
         "browser_runtime_capture" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let url = arguments["url"].as_str().ok_or("url is required")?;
             let timeout_ms = arguments["timeoutMs"].as_u64().unwrap_or(15_000);
             let api_base = arguments["apiBase"].as_str();
@@ -1131,8 +1297,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     &sitemap_path,
                 )
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser runtime capture summary: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser runtime capture summary: {err}").into()
+                })
             } else {
                 crate::editor::browser::runtime_capture(
                     &root,
@@ -1154,7 +1321,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
         .map_err(|e| e.into()),
         "runtime_create_session" => crate::editor::browser::create_runtime_session(
             &root,
-            arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+            arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?,
             arguments["startUrl"].as_str(),
             arguments["waitTimeoutMs"].as_u64(),
             arguments["apiBase"].as_str(),
@@ -1163,13 +1332,17 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
         .map_err(|e| e.into()),
         "runtime_get_session" => crate::editor::browser::get_runtime_session(
             &root,
-            arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+            arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?,
             arguments["compact"].as_bool().unwrap_or(false),
         )
         .map_err(|e| e.into()),
         "runtime_close_session" => crate::editor::browser::close_runtime_session(
             &root,
-            arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+            arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?,
             arguments["compact"].as_bool().unwrap_or(false),
         )
         .map_err(|e| e.into()),
@@ -1177,7 +1350,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::capture_runtime_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
@@ -1187,7 +1362,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_navigate_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["url"].as_str().ok_or("url is required")?,
                 arguments["waitTimeoutMs"].as_u64(),
                 &sitemap_path,
@@ -1199,7 +1376,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_click_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["nodeId"].as_str(),
                 arguments["selector"].as_str(),
                 arguments["waitTimeoutMs"].as_u64(),
@@ -1212,7 +1391,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_js_click_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["nodeId"].as_str().ok_or("nodeId is required")?,
                 arguments["waitTimeoutMs"].as_u64(),
                 &sitemap_path,
@@ -1224,7 +1405,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_evaluate_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["script"].as_str().ok_or("script is required")?,
                 arguments["waitTimeoutMs"].as_u64(),
                 &sitemap_path,
@@ -1236,7 +1419,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_fill_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["nodeId"].as_str(),
                 arguments["selector"].as_str(),
                 arguments["value"].as_str().ok_or("value is required")?,
@@ -1252,7 +1437,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_submit_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["nodeId"].as_str(),
                 arguments["selector"].as_str(),
                 arguments["waitTimeoutMs"].as_u64(),
@@ -1265,7 +1452,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::runtime_press_key_session(
                 &root,
-                arguments["sessionId"].as_str().ok_or("sessionId is required")?,
+                arguments["sessionId"]
+                    .as_str()
+                    .ok_or("sessionId is required")?,
                 arguments["key"].as_str().ok_or("key is required")?,
                 arguments["waitTimeoutMs"].as_u64(),
                 &sitemap_path,
@@ -1274,7 +1463,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             .map_err(|e| e.into())
         }
         "browser_get_session" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let session = crate::editor::browser::load_session_state(&root, session_id)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
@@ -1323,8 +1514,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let url = arguments["url"].as_str().ok_or("url is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
-                let report = crate::editor::browser::read_visual_fallback_report(url, &sitemap_path)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let report =
+                    crate::editor::browser::read_visual_fallback_report(url, &sitemap_path)
+                        .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser html fallback summary: {err}").into())
             } else {
@@ -1333,14 +1525,23 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_diff_snapshots" => {
-            let before_url = arguments["beforeUrl"].as_str().ok_or("beforeUrl is required")?;
-            let after_url = arguments["afterUrl"].as_str().ok_or("afterUrl is required")?;
+            let before_url = arguments["beforeUrl"]
+                .as_str()
+                .ok_or("beforeUrl is required")?;
+            let after_url = arguments["afterUrl"]
+                .as_str()
+                .ok_or("afterUrl is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::diff_saved_snapshots(before_url, after_url, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
-            if arguments["compact"].as_bool().unwrap_or(false) {
-                let compact = crate::editor::browser::read_snapshot_diff_report(before_url, after_url, &sitemap_path)
+            let report =
+                crate::editor::browser::diff_saved_snapshots(before_url, after_url, &sitemap_path)
                     .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                let compact = crate::editor::browser::read_snapshot_diff_report(
+                    before_url,
+                    after_url,
+                    &sitemap_path,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&compact)
                     .map_err(|err| format!("serialise browser snapshot diff summary: {err}").into())
             } else {
@@ -1366,11 +1567,15 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise browser sessions: {err}").into())
         }
         "browser_get_storage" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let scope = arguments["scope"].as_str().ok_or("scope is required")?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                let report = crate::editor::browser::get_session_storage_entries_report(&root, session_id, scope)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let report = crate::editor::browser::get_session_storage_entries_report(
+                    &root, session_id, scope,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser storage summary: {err}").into())
             } else {
@@ -1379,38 +1584,54 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_set_storage" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let scope = arguments["scope"].as_str().ok_or("scope is required")?;
-            let entries_value = arguments["entries"].as_object().ok_or("entries is required")?;
+            let entries_value = arguments["entries"]
+                .as_object()
+                .ok_or("entries is required")?;
             let mut entries = std::collections::HashMap::new();
             for (key, value) in entries_value {
-                let value = value.as_str().ok_or("storage entry values must be strings")?;
+                let value = value
+                    .as_str()
+                    .ok_or("storage entry values must be strings")?;
                 entries.insert(key.clone(), value.to_string());
             }
-            let report = crate::editor::browser::set_session_storage_entries_report(&root, session_id, scope, &entries)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report = crate::editor::browser::set_session_storage_entries_report(
+                &root, session_id, scope, &entries,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser storage update summary: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser storage update summary: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_storage_update_report(&report))
+                Ok(crate::editor::browser::render_storage_update_report(
+                    &report,
+                ))
             }
         }
         "browser_get_cookies" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::get_session_cookies_report(&root, session_id)
                     .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser cookie summary: {err}").into())
             } else {
-                crate::editor::browser::get_session_cookies(&root, session_id)
-                    .map_err(|e| e.into())
+                crate::editor::browser::get_session_cookies(&root, session_id).map_err(|e| e.into())
             }
         }
         "browser_set_cookies" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
-            let cookies_value = arguments["cookies"].as_array().ok_or("cookies is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let cookies_value = arguments["cookies"]
+                .as_array()
+                .ok_or("cookies is required")?;
             let mut cookies = Vec::new();
             for cookie in cookies_value {
                 let name = cookie["name"].as_str().ok_or("cookie name is required")?;
@@ -1420,8 +1641,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     value: value.to_string(),
                 });
             }
-            let report = crate::editor::browser::set_session_cookies_report(&root, session_id, &cookies)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report =
+                crate::editor::browser::set_session_cookies_report(&root, session_id, &cookies)
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser cookie update summary: {err}").into())
@@ -1430,16 +1652,23 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_auth_diagnostics" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::auth_diagnostics_report(&root, session_id, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report =
+                crate::editor::browser::auth_diagnostics_report(&root, session_id, &sitemap_path)
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
             serde_json::to_string_pretty(&report)
                 .map_err(|err| format!("serialise browser auth diagnostics: {err}").into())
         }
         "browser_save_auth_profile" => {
-            let profile_name = arguments["profileName"].as_str().ok_or("profileName is required")?;
-            let source_session_id = arguments["sourceSessionId"].as_str().ok_or("sourceSessionId is required")?;
+            let profile_name = arguments["profileName"]
+                .as_str()
+                .ok_or("profileName is required")?;
+            let source_session_id = arguments["sourceSessionId"]
+                .as_str()
+                .ok_or("sourceSessionId is required")?;
             let source_checkpoint_name = arguments["sourceCheckpointName"].as_str();
             let sitemap_path = root.join(".velocity").join("site_map");
             let report = crate::editor::browser::save_auth_profile_report(
@@ -1451,10 +1680,13 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             )
             .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser auth profile save report: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser auth profile save report: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_auth_profile_save_report(&report))
+                Ok(crate::editor::browser::render_auth_profile_save_report(
+                    &report,
+                ))
             }
         }
         "browser_list_auth_profiles" => {
@@ -1475,7 +1707,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise browser auth profiles: {err}").into())
         }
         "browser_read_auth_profile" => {
-            let profile_name = arguments["profileName"].as_str().ok_or("profileName is required")?;
+            let profile_name = arguments["profileName"]
+                .as_str()
+                .ok_or("profileName is required")?;
             let profile = crate::editor::browser::load_auth_profile(&root, profile_name)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
@@ -1489,8 +1723,12 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_apply_auth_profile" => {
-            let profile_name = arguments["profileName"].as_str().ok_or("profileName is required")?;
-            let target_session_id = arguments["targetSessionId"].as_str().ok_or("targetSessionId is required")?;
+            let profile_name = arguments["profileName"]
+                .as_str()
+                .ok_or("profileName is required")?;
+            let target_session_id = arguments["targetSessionId"]
+                .as_str()
+                .ok_or("targetSessionId is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
             let report = crate::editor::browser::apply_auth_profile_report(
                 &root,
@@ -1500,15 +1738,22 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             )
             .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser auth profile apply report: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser auth profile apply report: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_auth_profile_apply_report(&report))
+                Ok(crate::editor::browser::render_auth_profile_apply_report(
+                    &report,
+                ))
             }
         }
         "browser_reseed_auth" => {
-            let target_session_id = arguments["targetSessionId"].as_str().ok_or("targetSessionId is required")?;
-            let source_session_id = arguments["sourceSessionId"].as_str().ok_or("sourceSessionId is required")?;
+            let target_session_id = arguments["targetSessionId"]
+                .as_str()
+                .ok_or("targetSessionId is required")?;
+            let source_session_id = arguments["sourceSessionId"]
+                .as_str()
+                .ok_or("sourceSessionId is required")?;
             let source_checkpoint_name = arguments["sourceCheckpointName"].as_str();
             let sitemap_path = root.join(".velocity").join("site_map");
             let report = crate::editor::browser::reseed_auth_state_report(
@@ -1527,67 +1772,101 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_access_diagnostics" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::access_diagnostics_report(&root, session_id, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report =
+                crate::editor::browser::access_diagnostics_report(&root, session_id, &sitemap_path)
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(true) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser access diagnostics: {err}").into())
             } else {
-                Ok(crate::editor::browser::render_access_diagnostics_report(&report))
+                Ok(crate::editor::browser::render_access_diagnostics_report(
+                    &report,
+                ))
             }
         }
         "browser_get_session_network" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let report = crate::editor::browser::read_session_network_report(&root, session_id)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser session network report: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser session network report: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_session_network_read_report(&report))
+                Ok(crate::editor::browser::render_session_network_read_report(
+                    &report,
+                ))
             }
         }
         "browser_read_session_transcript" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             if let Some(sequence) = arguments["sequence"].as_u64() {
-                let entry = crate::editor::browser::read_session_transcript_entry(&root, session_id, sequence)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                serde_json::to_string_pretty(&entry)
-                    .map_err(|err| format!("serialise browser session transcript entry: {err}").into())
+                let entry = crate::editor::browser::read_session_transcript_entry(
+                    &root, session_id, sequence,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                serde_json::to_string_pretty(&entry).map_err(|err| {
+                    format!("serialise browser session transcript entry: {err}").into()
+                })
             } else {
-                let sort_direction = crate::editor::browser::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let sort_direction = crate::editor::browser::parse_list_sort_direction(
+                    arguments["sortDirection"].as_str(),
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 let limit = arguments["limit"].as_u64().map(|value| value as usize);
-                let report = crate::editor::browser::read_session_transcript_report(&root, session_id, limit, sort_direction)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let report = crate::editor::browser::read_session_transcript_report(
+                    &root,
+                    session_id,
+                    limit,
+                    sort_direction,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 if arguments["compact"].as_bool().unwrap_or(false) {
-                    serde_json::to_string_pretty(&report)
-                        .map_err(|err| format!("serialise browser session transcript report: {err}").into())
+                    serde_json::to_string_pretty(&report).map_err(|err| {
+                        format!("serialise browser session transcript report: {err}").into()
+                    })
                 } else {
-                    Ok(crate::editor::browser::render_session_transcript_report(&report))
+                    Ok(crate::editor::browser::render_session_transcript_report(
+                        &report,
+                    ))
                 }
             }
         }
         "browser_session_health" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::session_health_report(&root, session_id, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report =
+                crate::editor::browser::session_health_report(&root, session_id, &sitemap_path)
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser session health report: {err}").into())
             } else {
-                Ok(crate::editor::browser::render_session_health_report(&report))
+                Ok(crate::editor::browser::render_session_health_report(
+                    &report,
+                ))
             }
         }
         "browser_set_session_network" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let headers = arguments["headers"].as_object().map(|entries| {
                 entries
                     .iter()
-                    .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_string()))
+                    .map(|(key, value)| {
+                        (key.clone(), value.as_str().unwrap_or_default().to_string())
+                    })
                     .collect::<std::collections::HashMap<_, _>>()
             });
             let allowed_url_prefixes = arguments["allowedUrlPrefixes"].as_array().map(|values| {
@@ -1617,75 +1896,117 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             )
             .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser session network update: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser session network update: {err}").into()
+                })
             } else {
                 Ok(crate::editor::browser::render_session_network_update_report(&report))
             }
         }
         "browser_session_navigate" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let url = arguments["url"].as_str().ok_or("url is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
-                let report = crate::editor::browser::navigate_session_report(&root, session_id, url, &sitemap_path)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser session navigation summary: {err}").into())
+                let report = crate::editor::browser::navigate_session_report(
+                    &root,
+                    session_id,
+                    url,
+                    &sitemap_path,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser session navigation summary: {err}").into()
+                })
             } else {
                 crate::editor::browser::navigate_session(&root, session_id, url, &sitemap_path)
                     .map_err(|e| e.into())
             }
         }
         "browser_session_click" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let role = arguments["role"].as_str().ok_or("role is required")?;
             let name = arguments["name"].as_str().ok_or("name is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::session_click_report(&root, session_id, role, name, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report = crate::editor::browser::session_click_report(
+                &root,
+                session_id,
+                role,
+                name,
+                &sitemap_path,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser click summary: {err}").into())
             } else {
-                Ok(crate::editor::browser::render_session_action_report(&report))
+                Ok(crate::editor::browser::render_session_action_report(
+                    &report,
+                ))
             }
         }
         "browser_session_fill" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let field = arguments["field"].as_str().ok_or("field is required")?;
             let value = arguments["value"].as_str().ok_or("value is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::session_fill_report(&root, session_id, field, value, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report = crate::editor::browser::session_fill_report(
+                &root,
+                session_id,
+                field,
+                value,
+                &sitemap_path,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser fill summary: {err}").into())
             } else {
-                Ok(crate::editor::browser::render_session_action_report(&report))
+                Ok(crate::editor::browser::render_session_action_report(
+                    &report,
+                ))
             }
         }
         "browser_session_submit" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::session_submit_report(&root, session_id, arguments["form"].as_str(), &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report = crate::editor::browser::session_submit_report(
+                &root,
+                session_id,
+                arguments["form"].as_str(),
+                &sitemap_path,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise browser submit summary: {err}").into())
             } else {
-                Ok(crate::editor::browser::render_session_action_report(&report))
+                Ok(crate::editor::browser::render_session_action_report(
+                    &report,
+                ))
             }
         }
         "browser_session_wait" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let text = arguments["text"].as_str();
             let title = arguments["title"].as_str();
             let url_contains = arguments["urlContains"].as_str();
             let mutation = arguments["mutation"].as_str();
             let request_method = arguments["requestMethod"].as_str();
             let request_url_contains = arguments["requestUrlContains"].as_str();
-            let request_status = arguments["requestStatus"].as_u64().map(|value| value as u16);
+            let request_status = arguments["requestStatus"]
+                .as_u64()
+                .map(|value| value as u16);
             let request_resource = arguments["requestResource"].as_str();
             let storage_scope = arguments["storageScope"].as_str();
             let storage_key = arguments["storageKey"].as_str();
@@ -1792,21 +2113,37 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_save_checkpoint" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
-            let checkpoint_name = arguments["checkpointName"].as_str().ok_or("checkpointName is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let checkpoint_name = arguments["checkpointName"]
+                .as_str()
+                .ok_or("checkpointName is required")?;
             let sitemap_path = root.join(".velocity").join("site_map");
-            let report = crate::editor::browser::save_session_checkpoint_report(&root, session_id, checkpoint_name, &sitemap_path)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            let report = crate::editor::browser::save_session_checkpoint_report(
+                &root,
+                session_id,
+                checkpoint_name,
+                &sitemap_path,
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser checkpoint save summary: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser checkpoint save summary: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_checkpoint_save_report(&report))
+                Ok(crate::editor::browser::render_checkpoint_save_report(
+                    &report,
+                ))
             }
         }
         "browser_restore_checkpoint" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
-            let checkpoint_name = arguments["checkpointName"].as_str().ok_or("checkpointName is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let checkpoint_name = arguments["checkpointName"]
+                .as_str()
+                .ok_or("checkpointName is required")?;
             let target_session_id = arguments["targetSessionId"].as_str();
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
@@ -1818,8 +2155,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     &sitemap_path,
                 )
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser checkpoint restore summary: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser checkpoint restore summary: {err}").into()
+                })
             } else {
                 crate::editor::browser::restore_session_checkpoint(
                     &root,
@@ -1832,7 +2170,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_list_checkpoints" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
             let sort_direction = crate::editor::browser::parse_list_sort_direction(
                 arguments["sortDirection"].as_str(),
             )
@@ -1851,13 +2191,22 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise checkpoint list: {err}").into())
         }
         "browser_read_checkpoint" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
-            let checkpoint_name = arguments["checkpointName"].as_str().ok_or("checkpointName is required")?;
-            let checkpoint = crate::editor::browser::read_session_checkpoint(&root, session_id, checkpoint_name)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
-            if arguments["compact"].as_bool().unwrap_or(false) {
-                let report = crate::editor::browser::read_session_checkpoint_report(&root, session_id, checkpoint_name)
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let checkpoint_name = arguments["checkpointName"]
+                .as_str()
+                .ok_or("checkpointName is required")?;
+            let checkpoint =
+                crate::editor::browser::read_session_checkpoint(&root, session_id, checkpoint_name)
                     .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                let report = crate::editor::browser::read_session_checkpoint_report(
+                    &root,
+                    session_id,
+                    checkpoint_name,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| format!("serialise checkpoint summary: {err}").into())
             } else {
@@ -1866,9 +2215,15 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_diff_checkpoints" => {
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
-            let before_checkpoint_name = arguments["beforeCheckpointName"].as_str().ok_or("beforeCheckpointName is required")?;
-            let after_checkpoint_name = arguments["afterCheckpointName"].as_str().ok_or("afterCheckpointName is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let before_checkpoint_name = arguments["beforeCheckpointName"]
+                .as_str()
+                .ok_or("beforeCheckpointName is required")?;
+            let after_checkpoint_name = arguments["afterCheckpointName"]
+                .as_str()
+                .ok_or("afterCheckpointName is required")?;
             let report = crate::editor::browser::diff_session_checkpoints(
                 &root,
                 session_id,
@@ -1893,12 +2248,18 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
         }
         "browser_save_workflow" => {
             let name = arguments["name"].as_str().ok_or("name is required")?;
-            let start_url = arguments["startUrl"].as_str().ok_or("startUrl is required")?;
-            let steps = arguments["steps"].as_array().ok_or("steps must be an array")?;
+            let start_url = arguments["startUrl"]
+                .as_str()
+                .ok_or("startUrl is required")?;
+            let steps = arguments["steps"]
+                .as_array()
+                .ok_or("steps must be an array")?;
             let mut variables = std::collections::HashMap::new();
             if let Some(map) = arguments["variables"].as_object() {
                 for (key, value) in map {
-                    let text = value.as_str().ok_or("workflow variables must be string values")?;
+                    let text = value
+                        .as_str()
+                        .ok_or("workflow variables must be string values")?;
                     variables.insert(key.to_string(), text.to_string());
                 }
             }
@@ -1920,7 +2281,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "browser_read_workflow" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let workflow = crate::editor::browser::load_workflow(&full_path)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
@@ -1950,7 +2313,9 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise workflows: {err}").into())
         }
         "browser_replay_workflow" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let workflow = crate::editor::browser::load_workflow(&full_path)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
@@ -1958,22 +2323,42 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let compact = arguments["compact"].as_bool().unwrap_or(false);
             if let Some(session_id) = arguments["sessionId"].as_str() {
                 if compact {
-                    let report = crate::editor::browser::replay_workflow_in_session_report(&root, session_id, &workflow, &sitemap_path)
-                        .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                    serde_json::to_string_pretty(&report)
-                        .map_err(|err| format!("serialise browser workflow replay summary: {err}").into())
+                    let report = crate::editor::browser::replay_workflow_in_session_report(
+                        &root,
+                        session_id,
+                        &workflow,
+                        &sitemap_path,
+                    )
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                    serde_json::to_string_pretty(&report).map_err(|err| {
+                        format!("serialise browser workflow replay summary: {err}").into()
+                    })
                 } else {
-                    crate::editor::browser::replay_workflow_in_session(&root, session_id, &workflow, &sitemap_path)
-                        .map_err(|e| e.into())
+                    crate::editor::browser::replay_workflow_in_session(
+                        &root,
+                        session_id,
+                        &workflow,
+                        &sitemap_path,
+                    )
+                    .map_err(|e| e.into())
                 }
             } else if compact {
-                let report = crate::editor::browser::replay_workflow_with_artifacts_report(&root, &workflow, &sitemap_path)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser workflow replay summary: {err}").into())
+                let report = crate::editor::browser::replay_workflow_with_artifacts_report(
+                    &root,
+                    &workflow,
+                    &sitemap_path,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser workflow replay summary: {err}").into()
+                })
             } else {
-                crate::editor::browser::replay_workflow_with_artifacts(&root, &workflow, &sitemap_path)
-                    .map_err(|e| e.into())
+                crate::editor::browser::replay_workflow_with_artifacts(
+                    &root,
+                    &workflow,
+                    &sitemap_path,
+                )
+                .map_err(|e| e.into())
             }
         }
         "browser_list_workflow_runs" => {
@@ -1995,13 +2380,22 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise workflow runs: {err}").into())
         }
         "browser_read_workflow_run" => {
-            let workflow_name = arguments["workflowName"].as_str().ok_or("workflowName is required")?;
-            let session_id = arguments["sessionId"].as_str().ok_or("sessionId is required")?;
-            let report = crate::editor::browser::read_workflow_run(&root, workflow_name, session_id)
-                .map_err(|e| -> Box<dyn Error> { e.into() })?;
-            if arguments["compact"].as_bool().unwrap_or(false) {
-                let compact = crate::editor::browser::read_workflow_run_report(&root, workflow_name, session_id)
+            let workflow_name = arguments["workflowName"]
+                .as_str()
+                .ok_or("workflowName is required")?;
+            let session_id = arguments["sessionId"]
+                .as_str()
+                .ok_or("sessionId is required")?;
+            let report =
+                crate::editor::browser::read_workflow_run(&root, workflow_name, session_id)
                     .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                let compact = crate::editor::browser::read_workflow_run_report(
+                    &root,
+                    workflow_name,
+                    session_id,
+                )
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&compact)
                     .map_err(|err| format!("serialise workflow run summary: {err}").into())
             } else {
@@ -2011,12 +2405,18 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
         }
         "browser_save_workflow_suite" => {
             let name = arguments["name"].as_str().ok_or("name is required")?;
-            let workflows = arguments["workflows"].as_array().ok_or("workflows must be an array")?;
+            let workflows = arguments["workflows"]
+                .as_array()
+                .ok_or("workflows must be an array")?;
             let suite = crate::editor::browser::BrowserWorkflowSuite {
                 name: name.to_string(),
                 workflows: workflows
                     .iter()
-                    .map(|entry| entry.as_str().ok_or("workflow suite entries must be strings"))
+                    .map(|entry| {
+                        entry
+                            .as_str()
+                            .ok_or("workflow suite entries must be strings")
+                    })
                     .collect::<Result<Vec<_>, _>>()?
                     .into_iter()
                     .map(|value| value.to_string())
@@ -2025,14 +2425,19 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             let report = crate::editor::browser::save_workflow_suite_report(&root, &suite)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser workflow suite save summary: {err}").into())
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser workflow suite save summary: {err}").into()
+                })
             } else {
-                Ok(crate::editor::browser::render_workflow_suite_save_report(&report))
+                Ok(crate::editor::browser::render_workflow_suite_save_report(
+                    &report,
+                ))
             }
         }
         "browser_read_workflow_suite" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let suite = crate::editor::browser::load_workflow_suite(&full_path)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
@@ -2061,16 +2466,20 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise workflow suites: {err}").into())
         }
         "browser_run_workflow_suite" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let suite = crate::editor::browser::load_workflow_suite(&full_path)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
-                let report = crate::editor::browser::run_workflow_suite_report(&root, &suite, &sitemap_path)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| format!("serialise browser workflow suite execution summary: {err}").into())
+                let report =
+                    crate::editor::browser::run_workflow_suite_report(&root, &suite, &sitemap_path)
+                        .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise browser workflow suite execution summary: {err}").into()
+                })
             } else {
                 crate::editor::browser::run_workflow_suite(&root, &suite, &sitemap_path)
                     .map_err(|e| e.into())
@@ -2093,12 +2502,15 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 .map_err(|err| format!("serialise workflow suite runs: {err}").into())
         }
         "browser_read_workflow_suite_run" => {
-            let suite_name = arguments["suiteName"].as_str().ok_or("suiteName is required")?;
+            let suite_name = arguments["suiteName"]
+                .as_str()
+                .ok_or("suiteName is required")?;
             let report = crate::editor::browser::read_workflow_suite_run(&root, suite_name)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                let compact = crate::editor::browser::read_workflow_suite_run_report(&root, suite_name)
-                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let compact =
+                    crate::editor::browser::read_workflow_suite_run_report(&root, suite_name)
+                        .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 serde_json::to_string_pretty(&compact)
                     .map_err(|err| format!("serialise workflow suite run summary: {err}").into())
             } else {
@@ -2127,11 +2539,13 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                     let combined = format!("{}{}", stdout, stderr);
                     Ok(combined)
                 }
-                Err(e) => Err(format!("Failed to execute command: {:?}", e).into())
+                Err(e) => Err(format!("Failed to execute command: {:?}", e).into()),
             }
         }
         "convert_to_nda" => {
-            let _file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+            let _file_path = arguments["filePath"]
+                .as_str()
+                .ok_or("filePath is required")?;
             let _output_path = arguments["outputPath"].as_str().unwrap_or("");
             execute_csharp_mcp_tool("convert_to_nda", arguments)
         }
@@ -2144,24 +2558,28 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             execute_csharp_mcp_tool("execute_nda", arguments)
         }
         "read_file" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
             let content = std::fs::read_to_string(full_path)?;
             Ok(content)
         }
         "write_file" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let content = arguments["content"].as_str().ok_or("content is required")?;
-            
+
             // Run safety scanner warnings detection
             let scan_warning = scan_file_content(content);
-            
+
             let full_path = resolve_workspace_path(&root, rel_path, true)?;
             if let Some(parent) = full_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(full_path, content)?;
-            
+
             if let Some(warn) = scan_warning {
                 Ok(format!(
                     "Success: File written successfully. WARNING: Security scan warning triggered: [{}]. Please immediately correct this exposure in your next step.",
@@ -2172,17 +2590,24 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             }
         }
         "list_dir" => {
-            let rel_path = arguments["relativeDirPath"].as_str().ok_or("relativeDirPath is required")?;
+            let rel_path = arguments["relativeDirPath"]
+                .as_str()
+                .ok_or("relativeDirPath is required")?;
             let target_dir = if rel_path == "." || rel_path.is_empty() {
                 root.clone()
             } else {
                 resolve_workspace_path(&root, rel_path, false)?
             };
-            
+
             let mut entries_list = Vec::new();
-            let entries = std::fs::read_dir(&target_dir)
-                .map_err(|e| format!("Failed to read directory '{}': {:?}", target_dir.display(), e))?;
-                
+            let entries = std::fs::read_dir(&target_dir).map_err(|e| {
+                format!(
+                    "Failed to read directory '{}': {:?}",
+                    target_dir.display(),
+                    e
+                )
+            })?;
+
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let is_dir = entry.file_type()?.is_dir();
@@ -2191,63 +2616,87 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
             Ok(entries_list.join("\n"))
         }
         "delete_file" => {
-            let rel_path = arguments["relativeFilePath"].as_str().ok_or("relativeFilePath is required")?;
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(&root, rel_path, false)?;
-            
+
             if full_path.is_dir() {
                 return Err("delete_file cannot be used to delete a directory. Use a command line tool if needed.".into());
             }
-            
+
             std::fs::remove_file(&full_path)?;
-            Ok(format!("Success: File '{}' deleted successfully.", rel_path))
+            Ok(format!(
+                "Success: File '{}' deleted successfully.",
+                rel_path
+            ))
         }
         "grep_search" => {
             let query = arguments["query"].as_str().ok_or("query is required")?;
             let root_dir = root.clone();
             let mut matches = Vec::new();
-            
-            fn search_dir(dir: &std::path::Path, query: &str, matches: &mut Vec<String>, root: &std::path::Path) -> Result<(), Box<dyn Error>> {
+
+            fn search_dir(
+                dir: &std::path::Path,
+                query: &str,
+                matches: &mut Vec<String>,
+                root: &std::path::Path,
+            ) -> Result<(), Box<dyn Error>> {
                 if let Ok(entries) = std::fs::read_dir(dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         let file_type = entry.file_type()?;
-                        
+
                         if file_type.is_dir() {
                             let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                            if dir_name == "node_modules" 
-                                || dir_name == ".git" 
+                            if dir_name == "node_modules"
+                                || dir_name == ".git"
                                 || dir_name == "target"
                                 || dir_name == "dist"
                                 || dir_name == "build"
                                 || dir_name == ".vscode"
                                 || dir_name == ".idea"
                                 || dir_name == "bin"
-                                || dir_name == "obj" 
+                                || dir_name == "obj"
                             {
                                 continue;
                             }
                             search_dir(&path, query, matches, root)?;
                         } else if file_type.is_file() {
-                            let extension = path.extension()
+                            let extension = path
+                                .extension()
                                 .and_then(|ext| ext.to_str())
                                 .unwrap_or("")
                                 .to_lowercase();
-                            let skip_exts = ["png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz", "7z", "rar", "exe", "dll", "so", "dylib", "class", "pyc", "nda"];
+                            let skip_exts = [
+                                "png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz",
+                                "7z", "rar", "exe", "dll", "so", "dylib", "class", "pyc", "nda",
+                            ];
                             if skip_exts.contains(&extension.as_str()) {
                                 continue;
                             }
-                            
+
                             if let Ok(metadata) = path.metadata() {
-                                if metadata.len() > 1024 * 1024 { // skip files > 1 MB
+                                if metadata.len() > 1024 * 1024 {
+                                    // skip files > 1 MB
                                     continue;
                                 }
                             }
-                            
+
                             if let Ok(content) = std::fs::read_to_string(&path) {
-                                let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
+                                let rel = path
+                                    .strip_prefix(root)
+                                    .unwrap_or(&path)
+                                    .to_string_lossy()
+                                    .to_string();
                                 for (idx, line) in content.lines().enumerate() {
                                     if line.contains(query) {
-                                        matches.push(format!("{}:{}: {}", rel, idx + 1, line.trim()));
+                                        matches.push(format!(
+                                            "{}:{}: {}",
+                                            rel,
+                                            idx + 1,
+                                            line.trim()
+                                        ));
                                         if matches.len() >= 100 {
                                             return Ok(());
                                         }
@@ -2259,7 +2708,7 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
                 }
                 Ok(())
             }
-            
+
             search_dir(&root_dir, query, &mut matches, &root_dir)?;
             Ok(matches.join("\n"))
         }
@@ -2267,7 +2716,11 @@ pub fn call_tool_in_workspace(root: &Path, name: &str, arguments: &Value) -> Res
     }
 }
 
-fn resolve_workspace_path(root: &Path, raw: &str, allow_missing: bool) -> Result<PathBuf, Box<dyn Error>> {
+fn resolve_workspace_path(
+    root: &Path,
+    raw: &str,
+    allow_missing: bool,
+) -> Result<PathBuf, Box<dyn Error>> {
     let candidate = Path::new(raw);
 
     // If the model passed an absolute path, try to make it relative to root first.
@@ -2280,7 +2733,9 @@ fn resolve_workspace_path(root: &Path, raw: &str, allow_missing: bool) -> Result
                 let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
                 match candidate.strip_prefix(&canon_root) {
                     Ok(rel) => rel.to_string_lossy().into(),
-                    Err(_) => return Err("workspace tool path is outside the workspace root".into()),
+                    Err(_) => {
+                        return Err("workspace tool path is outside the workspace root".into())
+                    }
                 }
             }
         }
@@ -2289,7 +2744,12 @@ fn resolve_workspace_path(root: &Path, raw: &str, allow_missing: bool) -> Result
     };
 
     let candidate = Path::new(raw_rel.as_ref());
-    if candidate.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+    if candidate.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return Err("workspace tool path escapes the workspace".into());
     }
 
@@ -2329,15 +2789,15 @@ fn safe_canonicalize(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
-
 pub fn call_tool(name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let root = std::env::current_dir()?;
     call_tool_in_workspace(&root, name, arguments)
 }
 
 fn scan_file_content(content: &str) -> Option<&'static str> {
-    if (content.contains("mysql ") || content.contains("mysqldump ") || content.contains("sqlcmd ")) && 
-       (content.contains(" -p") || content.contains(" --password=")) {
+    if (content.contains("mysql ") || content.contains("mysqldump ") || content.contains("sqlcmd "))
+        && (content.contains(" -p") || content.contains(" --password="))
+    {
         if !content.contains("$") && !content.contains("temp_") {
             return Some("MySQL command-line password exposure detected.");
         }
@@ -2371,7 +2831,9 @@ mod tests {
                 Ok(read) => {
                     data.extend_from_slice(&buf[..read]);
                     if expected_total.is_none() {
-                        if let Some(header_end) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                        if let Some(header_end) =
+                            data.windows(4).position(|window| window == b"\r\n\r\n")
+                        {
                             let headers_end = header_end + 4;
                             let headers = String::from_utf8_lossy(&data[..headers_end]);
                             let content_length = headers
@@ -2412,7 +2874,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}");
+        assert_eq!(
+            fs::read_to_string(root.join("src/main.rs")).unwrap(),
+            "fn main() {}"
+        );
     }
 
     #[test]
@@ -2437,7 +2902,8 @@ mod tests {
         let root = temp.path().join("project");
         fs::create_dir_all(&root).unwrap();
 
-        let output = call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
+        let output =
+            call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
         assert!(output.to_lowercase().contains("project"));
     }
 
@@ -2529,7 +2995,9 @@ mod tests {
         assert!(res.contains("Snapshot JSON:"));
         assert!(res.contains("NDA Facts:"));
 
-        let compact = call_tool_in_workspace(&root, "web_navigate", &json!({"url": url, "compact": true})).unwrap();
+        let compact =
+            call_tool_in_workspace(&root, "web_navigate", &json!({"url": url, "compact": true}))
+                .unwrap();
         assert!(compact.contains("\"snapshot\":"));
         assert!(compact.contains("\"title\": \"Egui Test\""));
         assert!(compact.contains("\"element_count\": 1"));
@@ -2540,7 +3008,8 @@ mod tests {
         let sm = SiteMap::open(&sitemap_path, 0).unwrap();
         assert!(sm.len() > 0);
 
-        let snapshots = call_tool_in_workspace(&root, "browser_list_snapshots", &json!({})).unwrap();
+        let snapshots =
+            call_tool_in_workspace(&root, "browser_list_snapshots", &json!({})).unwrap();
         assert!(snapshots.contains(&url));
         assert!(snapshots.contains("Egui Test"));
         assert!(snapshots.contains("\"json_path\":"));
@@ -2554,7 +3023,8 @@ mod tests {
         assert!(filtered_snapshots.contains("Egui Test"));
         assert!(filtered_snapshots.contains("\"json_path\":"));
 
-        let snapshot = call_tool_in_workspace(&root, "browser_read_snapshot", &json!({"url": url})).unwrap();
+        let snapshot =
+            call_tool_in_workspace(&root, "browser_read_snapshot", &json!({"url": url})).unwrap();
         assert!(snapshot.contains("\"title\": \"Egui Test\""));
         assert!(snapshot.contains("\"url\":"));
 
@@ -2698,12 +3168,8 @@ mod tests {
         assert!(compact_read_back.contains("\"nda_path\":"));
         assert!(!compact_read_back.contains("\"steps\":"));
 
-        let workflows = call_tool_in_workspace(
-            &root,
-            "browser_list_workflows",
-            &json!({}),
-        )
-        .unwrap();
+        let workflows =
+            call_tool_in_workspace(&root, "browser_list_workflows", &json!({})).unwrap();
         assert!(workflows.contains("Login Flow"));
         assert!(workflows.contains("\"step_count\": 16"));
         assert!(workflows.contains("\"variable_count\": 1"));
@@ -2755,12 +3221,8 @@ mod tests {
         assert!(compact_replay.contains("\"run_report_path\":"));
         assert!(!compact_replay.contains("Workflow 'Login Flow' completed."));
 
-        let workflow_runs = call_tool_in_workspace(
-            &root,
-            "browser_list_workflow_runs",
-            &json!({}),
-        )
-        .unwrap();
+        let workflow_runs =
+            call_tool_in_workspace(&root, "browser_list_workflow_runs", &json!({})).unwrap();
         assert!(workflow_runs.contains("Login Flow"));
         assert!(workflow_runs.contains("replay-login-flow"));
         assert!(workflow_runs.contains("Dashboard"));
@@ -2911,12 +3373,8 @@ mod tests {
         assert!(compact_suite_read.contains("\"json_path\":"));
         assert!(!compact_suite_read.contains("\"workflows\":"));
 
-        let suites = call_tool_in_workspace(
-            &root,
-            "browser_list_workflow_suites",
-            &json!({}),
-        )
-        .unwrap();
+        let suites =
+            call_tool_in_workspace(&root, "browser_list_workflow_suites", &json!({})).unwrap();
         assert!(suites.contains("Smoke Pack"));
         assert!(suites.contains("\"workflow_count\": 2"));
         assert!(suites.contains("\"json_path\":"));
@@ -2961,12 +3419,8 @@ mod tests {
         assert!(compact_suite_run.contains("\"suite_report_path\":"));
         assert!(!compact_suite_run.contains("Workflow suite 'Smoke Pack' completed."));
 
-        let suite_runs = call_tool_in_workspace(
-            &root,
-            "browser_list_workflow_suite_runs",
-            &json!({}),
-        )
-        .unwrap();
+        let suite_runs =
+            call_tool_in_workspace(&root, "browser_list_workflow_suite_runs", &json!({})).unwrap();
         assert!(suite_runs.contains("Smoke Pack"));
         assert!(suite_runs.contains("\"passed\": 1"));
         assert!(suite_runs.contains("\"failed\": 1"));
@@ -3460,7 +3914,9 @@ mod tests {
                     Ok(read) => {
                         data.extend_from_slice(&buf[..read]);
                         if expected_total.is_none() {
-                            if let Some(header_end) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                            if let Some(header_end) =
+                                data.windows(4).position(|window| window == b"\r\n\r\n")
+                            {
                                 let header_len = header_end + 4;
                                 let header_text = String::from_utf8_lossy(&data[..header_len]);
                                 let content_length = header_text
@@ -3703,7 +4159,9 @@ mod tests {
             &json!({"sessionId": "qa-session", "url": format!("{}/blocked", url)}),
         )
         .unwrap_err();
-        assert!(blocked_navigation.to_string().contains("network policy blocked url"));
+        assert!(blocked_navigation
+            .to_string()
+            .contains("network policy blocked url"));
 
         let navigated = call_tool_in_workspace(
             &root,
@@ -3817,12 +4275,7 @@ mod tests {
         assert!(compact_session.contains("\"session_json_path\":"));
         assert!(!compact_session.contains("\"cookies\":"));
 
-        let sessions = call_tool_in_workspace(
-            &root,
-            "browser_list_sessions",
-            &json!({}),
-        )
-        .unwrap();
+        let sessions = call_tool_in_workspace(&root, "browser_list_sessions", &json!({})).unwrap();
         assert!(sessions.contains("qa-session"));
         assert!(sessions.contains("\"cookie_count\": 1"));
         assert!(sessions.contains(&url));
@@ -3843,12 +4296,8 @@ mod tests {
         assert!(filtered_sessions.contains("qa-session"));
         assert!(!filtered_sessions.contains("archive-session"));
 
-        let snapshots = call_tool_in_workspace(
-            &root,
-            "browser_list_snapshots",
-            &json!({}),
-        )
-        .unwrap();
+        let snapshots =
+            call_tool_in_workspace(&root, "browser_list_snapshots", &json!({})).unwrap();
         assert!(snapshots.contains(&url));
         assert!(snapshots.contains("Session Test"));
         assert!(snapshots.contains("\"json_path\":"));
@@ -4035,12 +4484,8 @@ mod tests {
         assert!(compact_saved_auth_profile.contains("\"name\": \"qa-profile\""));
         assert!(compact_saved_auth_profile.contains("\"profile_json_path\":"));
 
-        let auth_profiles = call_tool_in_workspace(
-            &root,
-            "browser_list_auth_profiles",
-            &json!({}),
-        )
-        .unwrap();
+        let auth_profiles =
+            call_tool_in_workspace(&root, "browser_list_auth_profiles", &json!({})).unwrap();
         assert!(auth_profiles.contains("qa-profile"));
         assert!(auth_profiles.contains("\"cookie_count\":"));
         assert!(auth_profiles.contains("\"json_path\":"));
@@ -4086,7 +4531,8 @@ mod tests {
             &json!({"profileName": "qa-profile", "targetSessionId": "profile-target"}),
         )
         .unwrap();
-        assert!(applied_auth_profile.contains("Applied browser auth profile 'qa-profile' to session 'profile-target'"));
+        assert!(applied_auth_profile
+            .contains("Applied browser auth profile 'qa-profile' to session 'profile-target'"));
         assert!(applied_auth_profile.contains("Auth diagnosis: unknown"));
 
         let compact_applied_auth_profile = call_tool_in_workspace(
@@ -4256,7 +4702,9 @@ mod tests {
                         );
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
-                    } else if first_line.starts_with("POST /api/runtime/session/rt-123/capture HTTP/1.1") {
+                    } else if first_line
+                        .starts_with("POST /api/runtime/session/rt-123/capture HTTP/1.1")
+                    {
                         let body = json!({
                             "sessionId": "rt-123",
                             "finalUrl": "https://runtime.test/captured",
@@ -4265,7 +4713,7 @@ mod tests {
                             "cookies": [{"name": "rt", "value": "cookie"}],
                             "storage": {"local": {"theme": "dark"}, "session": {"csrf": "token"}},
                             "fields": {"email": "input[name='email']"},
-                            "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "capture", "frameCount": 2, "shadowHostCount": 1},
+                            "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "capture", "frameCount": 2, "shadowHostCount": 1, "canvasCount": 2, "webglCanvasCount": 1},
                             "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["navigate"], "supportsCapture": true, "supportsSessions": true},
                             "warnings": ["capture-warning"],
                             "frames": [
@@ -4274,6 +4722,10 @@ mod tests {
                             ],
                             "shadowHosts": [
                                 {"selector": "checkout-shell", "tag": "checkout-shell", "mode": "open", "semanticNodeCount": 3, "textSample": "Pay now"}
+                            ],
+                            "canvases": [
+                                {"selector": "canvas#stage", "width": 640, "height": 480, "contextKinds": ["2d"], "textOpCount": 2, "imageOpCount": 1, "readbackCount": 1, "runtimeEvidence": true, "textSample": "Sign in"},
+                                {"selector": "canvas#webgl", "width": 1024, "height": 768, "contextKinds": ["webgl"], "webglDrawCount": 4, "likelyAnimated": true, "runtimeEvidence": true}
                             ],
                             "aom": "main form",
                             "pageText": "Runtime Captured",
@@ -4287,8 +4739,11 @@ mod tests {
                         );
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
-                    } else if first_line.starts_with("POST /api/runtime/session/rt-123/action HTTP/1.1") {
-                        let is_evaluate = request.contains("\"action\":\"evaluate\"") || request.contains("\"action\": \"evaluate\"");
+                    } else if first_line
+                        .starts_with("POST /api/runtime/session/rt-123/action HTTP/1.1")
+                    {
+                        let is_evaluate = request.contains("\"action\":\"evaluate\"")
+                            || request.contains("\"action\": \"evaluate\"");
                         let body = if is_evaluate {
                             json!({
                                 "sessionId": "rt-123",
@@ -4340,7 +4795,8 @@ mod tests {
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.write_all(&png);
                         let _ = stream.flush();
-                    } else if first_line.starts_with("DELETE /api/runtime/session/rt-123 HTTP/1.1") {
+                    } else if first_line.starts_with("DELETE /api/runtime/session/rt-123 HTTP/1.1")
+                    {
                         let body = json!({"sessionId": "rt-123", "status": "closed"}).to_string();
                         let response = format!(
                             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
@@ -4388,8 +4844,12 @@ mod tests {
         assert!(captured.contains("\"warning_count\": 1"));
         assert!(captured.contains("\"frame_count\": 2"));
         assert!(captured.contains("\"shadow_host_count\": 1"));
+        assert!(captured.contains("\"canvas_count\": 2"));
+        assert!(captured.contains("\"webgl_canvas_count\": 1"));
         assert!(captured.contains("\"iframe#checkout\""));
         assert!(captured.contains("\"checkout-shell\""));
+        assert!(captured.contains("\"canvas#stage\""));
+        assert!(captured.contains("\"canvas#webgl\""));
 
         let filled = call_tool_in_workspace(
             &root,
@@ -4444,7 +4904,11 @@ mod tests {
         .unwrap();
         assert!(closed.contains("\"session_id\": \"runtime-explicit\""));
         assert!(closed.contains("\"runtime_session_id\": \"rt-123\""));
-        assert!(!root.join(".velocity").join("runtime-browser-sessions").join("runtime-explicit.json").exists());
+        assert!(!root
+            .join(".velocity")
+            .join("runtime-browser-sessions")
+            .join("runtime-explicit.json")
+            .exists());
     }
 
     #[test]
@@ -4746,14 +5210,14 @@ static DAEMON: Lazy<Mutex<Option<SidecarDaemon>>> = Lazy::new(|| Mutex::new(None
 
 fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let exe_path = "C:\\Users\\visse\\OneDrive\\Documents\\Payment and Transaction Flow\\Velocity\\NdaMcpServer\\bin\\Debug\\net10.0\\NdaMcpServer.exe";
-    
+
     let mut daemon_guard = DAEMON.lock().map_err(|e| e.to_string())?;
-    
+
     if daemon_guard.is_none() {
         if !std::path::Path::new(exe_path).exists() {
             return execute_rust_fallback_tool(tool_name, arguments);
         }
-        
+
         let child = Command::new(exe_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -4769,9 +5233,9 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
             *daemon = SidecarDaemon { child };
         }
     }
-    
+
     let daemon = daemon_guard.as_mut().unwrap();
-    
+
     let request = json!({
         "jsonrpc": "2.0",
         "method": "tools/call",
@@ -4785,14 +5249,22 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
     let request_str = serde_json::to_string(&request)? + "\n";
 
     {
-        let stdin = daemon.child.stdin.as_mut().ok_or("Failed to open stdin of C# daemon")?;
+        let stdin = daemon
+            .child
+            .stdin
+            .as_mut()
+            .ok_or("Failed to open stdin of C# daemon")?;
         stdin.write_all(request_str.as_bytes())?;
         stdin.flush()?;
     }
 
     let response_str;
     {
-        let stdout = daemon.child.stdout.as_mut().ok_or("Failed to open stdout of C# daemon")?;
+        let stdout = daemon
+            .child
+            .stdout
+            .as_mut()
+            .ok_or("Failed to open stdout of C# daemon")?;
         let mut reader = BufReader::new(stdout);
         loop {
             let mut line = String::new();
@@ -4816,11 +5288,17 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
     let response: Value = serde_json::from_str(&response_str)?;
 
     if let Some(err) = response.get("error") {
-        return Err(format!("C# Execution Error: {}", err["message"].as_str().unwrap_or("Unknown")).into());
+        return Err(format!(
+            "C# Execution Error: {}",
+            err["message"].as_str().unwrap_or("Unknown")
+        )
+        .into());
     }
 
     let is_error = response["result"]["isError"].as_bool().unwrap_or(false);
-    let text = response["result"]["content"][0]["text"].as_str().ok_or("Failed to parse tool text output")?;
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .ok_or("Failed to parse tool text output")?;
 
     if is_error {
         Err(text.into())
@@ -4831,26 +5309,31 @@ fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String,
 
 // --- Self-contained Rust Fallback & Sandboxing Runner ---
 
-fn execute_rust_fallback_tool(tool_name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
+fn execute_rust_fallback_tool(
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<String, Box<dyn Error>> {
     match tool_name {
         "convert_to_nda" => {
-            let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+            let file_path = arguments["filePath"]
+                .as_str()
+                .ok_or("filePath is required")?;
             let output_path = arguments["outputPath"].as_str().unwrap_or("");
-            
+
             let final_output = if output_path.is_empty() {
                 format!("{}.nda", file_path)
             } else {
                 output_path.to_string()
             };
-            
+
             let content = std::fs::read(file_path)?;
-            
+
             let mut nda_bytes = Vec::new();
             nda_bytes.extend_from_slice(b"NDAV");
-            
+
             let size = content.len() as u32;
             nda_bytes.extend_from_slice(&size.to_le_bytes());
-            
+
             let file_name = std::path::Path::new(file_path)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -4858,28 +5341,32 @@ fn execute_rust_fallback_tool(tool_name: &str, arguments: &Value) -> Result<Stri
             nda_bytes.extend_from_slice(file_name.as_bytes());
             nda_bytes.push(0);
             nda_bytes.extend_from_slice(&content);
-            
+
             std::fs::write(&final_output, nda_bytes)?;
-            
-            Ok(format!("Success: File converted and signed to NDA container at: {}", final_output))
+
+            Ok(format!(
+                "Success: File converted and signed to NDA container at: {}",
+                final_output
+            ))
         }
         "read_nda" => {
             let nda_path = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
             let nda_bytes = std::fs::read(nda_path)?;
-            
+
             if nda_bytes.len() < 9 || &nda_bytes[0..4] != b"NDAV" {
                 return Err("Invalid NDA container format".into());
             }
-            
-            let size = u32::from_le_bytes([nda_bytes[4], nda_bytes[5], nda_bytes[6], nda_bytes[7]]) as usize;
-            
+
+            let size = u32::from_le_bytes([nda_bytes[4], nda_bytes[5], nda_bytes[6], nda_bytes[7]])
+                as usize;
+
             let mut name_end = 8;
             while name_end < nda_bytes.len() && nda_bytes[name_end] != 0 {
                 name_end += 1;
             }
-            
+
             let file_name = String::from_utf8_lossy(&nda_bytes[8..name_end]).to_string();
-            
+
             let report = json!({
                 "format": "NDAV-Fallback",
                 "fileName": file_name,
@@ -4890,35 +5377,35 @@ fn execute_rust_fallback_tool(tool_name: &str, arguments: &Value) -> Result<Stri
                     format!("display_text: Size: {} bytes", size)
                 ]
             });
-            
+
             Ok(serde_json::to_string_pretty(&report)?)
         }
         "execute_nda" => {
             let nda_path = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
             let nda_bytes = std::fs::read(nda_path)?;
-            
+
             if nda_bytes.len() < 9 || &nda_bytes[0..4] != b"NDAV" {
                 return Err("Invalid NDA container format".into());
             }
-            
+
             let mut name_end = 8;
             while name_end < nda_bytes.len() && nda_bytes[name_end] != 0 {
                 name_end += 1;
             }
-            
+
             let file_name = String::from_utf8_lossy(&nda_bytes[8..name_end]).to_string();
             let payload = &nda_bytes[name_end + 1..];
-            
+
             let temp_dir = std::env::temp_dir();
             let temp_file_path = temp_dir.join(&file_name);
             std::fs::write(&temp_file_path, payload)?;
-            
+
             let ext = std::path::Path::new(&file_name)
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-                
+
             let cmd_args = arguments["arguments"].as_array();
             let mut args_vec = Vec::new();
             if let Some(arr) = cmd_args {
@@ -4928,38 +5415,45 @@ fn execute_rust_fallback_tool(tool_name: &str, arguments: &Value) -> Result<Stri
                     }
                 }
             }
-            
+
             let (shell_cmd, mut final_args) = match ext.as_str() {
-                "py" => {
-                    ("python".to_string(), vec![temp_file_path.to_string_lossy().to_string()])
-                }
-                "js" => {
-                    ("node".to_string(), vec![temp_file_path.to_string_lossy().to_string()])
-                }
-                "ps1" => {
-                    ("powershell".to_string(), vec![
+                "py" => (
+                    "python".to_string(),
+                    vec![temp_file_path.to_string_lossy().to_string()],
+                ),
+                "js" => (
+                    "node".to_string(),
+                    vec![temp_file_path.to_string_lossy().to_string()],
+                ),
+                "ps1" => (
+                    "powershell".to_string(),
+                    vec![
                         "-ExecutionPolicy".to_string(),
                         "Bypass".to_string(),
                         "-File".to_string(),
-                        temp_file_path.to_string_lossy().to_string()
-                    ])
-                }
-                "sh" => {
-                    ("bash".to_string(), vec![temp_file_path.to_string_lossy().to_string()])
-                }
-                "bat" | "cmd" => {
-                    ("cmd".to_string(), vec!["/c".to_string(), temp_file_path.to_string_lossy().to_string()])
-                }
-                _ => {
-                    (temp_file_path.to_string_lossy().to_string(), Vec::new())
-                }
+                        temp_file_path.to_string_lossy().to_string(),
+                    ],
+                ),
+                "sh" => (
+                    "bash".to_string(),
+                    vec![temp_file_path.to_string_lossy().to_string()],
+                ),
+                "bat" | "cmd" => (
+                    "cmd".to_string(),
+                    vec![
+                        "/c".to_string(),
+                        temp_file_path.to_string_lossy().to_string(),
+                    ],
+                ),
+                _ => (temp_file_path.to_string_lossy().to_string(), Vec::new()),
             };
-            
+
             final_args.extend(args_vec);
-            
+
             let dll_path = "C:\\WUIAS\\wuias_shield\\wuias_shield.dll";
-            let use_sandbox = std::path::Path::new(dll_path).exists() && cfg!(target_os = "windows");
-            
+            let use_sandbox =
+                std::path::Path::new(dll_path).exists() && cfg!(target_os = "windows");
+
             let output = if use_sandbox {
                 #[cfg(target_os = "windows")]
                 {
@@ -4967,23 +5461,21 @@ fn execute_rust_fallback_tool(tool_name: &str, arguments: &Value) -> Result<Stri
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    let out = Command::new(&shell_cmd)
-                        .args(&final_args)
-                        .output()?;
-                    String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr)
+                    let out = Command::new(&shell_cmd).args(&final_args).output()?;
+                    String::from_utf8_lossy(&out.stdout).to_string()
+                        + &String::from_utf8_lossy(&out.stderr)
                 }
             } else {
-                let out = Command::new(&shell_cmd)
-                    .args(&final_args)
-                    .output()?;
-                String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr)
+                let out = Command::new(&shell_cmd).args(&final_args).output()?;
+                String::from_utf8_lossy(&out.stdout).to_string()
+                    + &String::from_utf8_lossy(&out.stderr)
             };
-            
+
             let _ = std::fs::remove_file(temp_file_path);
-            
+
             Ok(output)
         }
-        _ => Err(format!("Unknown fallback tool: {}", tool_name).into())
+        _ => Err(format!("Unknown fallback tool: {}", tool_name).into()),
     }
 }
 
@@ -5078,28 +5570,41 @@ fn to_wstring(s: &str) -> Vec<u16> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<String, Box<dyn Error>> {
-    let session_id = format!("nda_session_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs());
+fn run_in_dll_sandbox(
+    app: &str,
+    args: &[String],
+    dll_path: &str,
+) -> Result<String, Box<dyn Error>> {
+    let session_id = format!(
+        "nda_session_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs()
+    );
     let redirect_dir = format!("C:\\WUIAS\\sandbox\\redirect\\{}", session_id);
     std::fs::create_dir_all(&redirect_dir)?;
-    
+
     let w_dll_path = to_wstring(dll_path);
     let cmd_line_str = format!("\"{}\" {}", app, args.join(" "));
     let mut w_cmd_line = to_wstring(&cmd_line_str);
-    
+
     // Pre-create registry key
     let _ = Command::new("reg")
-        .args(&["add", &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id), "/f"])
+        .args(&[
+            "add",
+            &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id),
+            "/f",
+        ])
         .output();
-        
+
     unsafe {
         let mut si: STARTUPINFOW = std::mem::zeroed();
         si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
         let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
-        
+
         std::env::set_var("WUIAS_SESSION_ID", &session_id);
         std::env::set_var("WUIAS_REDIRECT_DIR", &redirect_dir);
-        
+
         let CREATE_SUSPENDED: u32 = 0x00000004;
         let success = CreateProcessW(
             std::ptr::null(),
@@ -5113,19 +5618,23 @@ fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<Stri
             &mut si,
             &mut pi,
         );
-        
+
         std::env::remove_var("WUIAS_SESSION_ID");
         std::env::remove_var("WUIAS_REDIRECT_DIR");
-        
+
         if success == 0 {
-            return Err(format!("CreateProcessW failed. Error code: {}", std::io::Error::last_os_error()).into());
+            return Err(format!(
+                "CreateProcessW failed. Error code: {}",
+                std::io::Error::last_os_error()
+            )
+            .into());
         }
-        
+
         let path_size = (dll_path.len() + 1) * 2;
         let MEM_COMMIT = 0x1000;
         let MEM_RESERVE = 0x2000;
         let PAGE_READWRITE = 0x04;
-        
+
         let remote_mem = VirtualAllocEx(
             pi.hProcess,
             std::ptr::null_mut(),
@@ -5133,18 +5642,15 @@ fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<Stri
             MEM_COMMIT | MEM_RESERVE,
             PAGE_READWRITE,
         );
-        
+
         if remote_mem.is_null() {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
             return Err("VirtualAllocEx failed in target process".into());
         }
-        
-        let dll_bytes: Vec<u8> = w_dll_path
-            .iter()
-            .flat_map(|&w| w.to_le_bytes())
-            .collect();
-            
+
+        let dll_bytes: Vec<u8> = w_dll_path.iter().flat_map(|&w| w.to_le_bytes()).collect();
+
         let mut written = 0;
         let write_ok = WriteProcessMemory(
             pi.hProcess,
@@ -5153,13 +5659,13 @@ fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<Stri
             dll_bytes.len(),
             &mut written,
         );
-        
+
         if write_ok == 0 {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
             return Err("WriteProcessMemory failed to write DLL path".into());
         }
-        
+
         let kernel32_name = to_wstring("kernel32.dll");
         let h_kernel32 = GetModuleHandleW(kernel32_name.as_ptr());
         if h_kernel32.is_null() {
@@ -5167,16 +5673,17 @@ fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<Stri
             CloseHandle(pi.hProcess);
             return Err("Failed to locate kernel32.dll in host".into());
         }
-        
+
         let load_library_addr = GetProcAddress(h_kernel32, b"LoadLibraryW\0".as_ptr());
         if load_library_addr.is_null() {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
             return Err("Failed to resolve LoadLibraryW address".into());
         }
-        
+
         let mut thread_id = 0;
-        let load_library_fn: unsafe extern "system" fn(*mut std::ffi::c_void) -> u32 = std::mem::transmute(load_library_addr);
+        let load_library_fn: unsafe extern "system" fn(*mut std::ffi::c_void) -> u32 =
+            std::mem::transmute(load_library_addr);
         let h_thread = CreateRemoteThread(
             pi.hProcess,
             std::ptr::null_mut(),
@@ -5186,25 +5693,28 @@ fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<Stri
             0,
             &mut thread_id,
         );
-        
+
         if h_thread.is_null() {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
             return Err("CreateRemoteThread failed to load DLL".into());
         }
-        
+
         WaitForSingleObject(h_thread, 5000);
         CloseHandle(h_thread);
-        
+
         ResumeThread(pi.hThread);
         CloseHandle(pi.hThread);
-        
+
         WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
         CloseHandle(pi.hProcess);
     }
-    
-    let mut run_output = format!("=== Sandboxed execution completed (Session: {}) ===\n", session_id);
-    
+
+    let mut run_output = format!(
+        "=== Sandboxed execution completed (Session: {}) ===\n",
+        session_id
+    );
+
     fn count_files_recursive(dir: &std::path::Path) -> usize {
         let mut count = 0;
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -5220,13 +5730,20 @@ fn run_in_dll_sandbox(app: &str, args: &[String], dll_path: &str) -> Result<Stri
         }
         count
     }
-    
+
     let files_count = count_files_recursive(std::path::Path::new(&redirect_dir));
-    run_output += &format!("Sandbox redirect folder: {}\nRedirected files written: {}\n", redirect_dir, files_count);
-    
+    run_output += &format!(
+        "Sandbox redirect folder: {}\nRedirected files written: {}\n",
+        redirect_dir, files_count
+    );
+
     let _ = Command::new("reg")
-        .args(&["delete", &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id), "/f"])
+        .args(&[
+            "delete",
+            &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id),
+            "/f",
+        ])
         .output();
-        
+
     Ok(run_output)
 }

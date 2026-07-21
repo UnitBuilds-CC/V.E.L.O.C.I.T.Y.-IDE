@@ -209,10 +209,84 @@ func NewManagedSession() (*Session, error) {
 					});
 					mask(navigator, 'plugins', fakePlugins);
 					mask(navigator, 'mimeTypes', [{ type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: fakePlugins[0] }]);
-					const originalGetContext = HTMLCanvasElement.prototype.getContext;
-					HTMLCanvasElement.prototype.getContext = function(type, attributes) {
-						const realCtx = originalGetContext.apply(this, arguments);
-						if (realCtx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
+					const ensureCanvasMetrics = (canvas) => {
+						if (!canvas) return null;
+						if (!Object.prototype.hasOwnProperty.call(canvas, '__velocityCanvasMetrics') || !canvas.__velocityCanvasMetrics) {
+							Object.defineProperty(canvas, '__velocityCanvasMetrics', {
+								value: {
+									contexts: [],
+									textOpCount: 0,
+									imageOpCount: 0,
+									webglDrawCount: 0,
+									readbackCount: 0,
+									likelyAnimated: false,
+									textOps: []
+								},
+								configurable: true,
+								enumerable: false,
+								writable: true
+							});
+						}
+						return canvas.__velocityCanvasMetrics;
+					};
+					const rememberCanvasContext = (metrics, type) => {
+						if (!metrics) return;
+						const kind = String(type || '').trim().toLowerCase();
+						if (!kind) return;
+						if (!Array.isArray(metrics.contexts)) metrics.contexts = [];
+						if (!metrics.contexts.includes(kind)) metrics.contexts.push(kind);
+					};
+					const wrapMethod = (obj, key, wrapperFactory) => {
+						if (!obj || typeof obj[key] !== 'function') return;
+						const original = obj[key];
+						if (original.__velocityWrapped) return;
+						const wrapped = wrapperFactory(original);
+						wrapped.__velocityWrapped = true;
+						obj[key] = wrapped;
+					};
+					const wrapCanvasContext = (canvas, type, realCtx) => {
+						const metrics = ensureCanvasMetrics(canvas);
+						rememberCanvasContext(metrics, type);
+						if (!realCtx || !metrics) return realCtx;
+						const normalizedType = String(type || '').trim().toLowerCase();
+						if (realCtx.__velocityCanvasWrapped) return realCtx;
+						Object.defineProperty(realCtx, '__velocityCanvasWrapped', { value: true, configurable: true });
+						if (normalizedType === '2d') {
+							wrapMethod(realCtx, 'fillText', (original) => function() {
+								metrics.textOpCount = Number(metrics.textOpCount || 0) + 1;
+								if (metrics.textOps.length < 8) metrics.textOps.push({ text: String(arguments[0] || '').slice(0, 80) });
+								return original.apply(this, arguments);
+							});
+							wrapMethod(realCtx, 'strokeText', (original) => function() {
+								metrics.textOpCount = Number(metrics.textOpCount || 0) + 1;
+								if (metrics.textOps.length < 8) metrics.textOps.push({ text: String(arguments[0] || '').slice(0, 80) });
+								return original.apply(this, arguments);
+							});
+							wrapMethod(realCtx, 'drawImage', (original) => function() {
+								metrics.imageOpCount = Number(metrics.imageOpCount || 0) + 1;
+								return original.apply(this, arguments);
+							});
+							wrapMethod(realCtx, 'getImageData', (original) => function() {
+								metrics.readbackCount = Number(metrics.readbackCount || 0) + 1;
+								return original.apply(this, arguments);
+							});
+							wrapMethod(realCtx, 'putImageData', (original) => function() {
+								metrics.imageOpCount = Number(metrics.imageOpCount || 0) + 1;
+								return original.apply(this, arguments);
+							});
+						} else if (normalizedType === 'webgl' || normalizedType === 'webgl2' || normalizedType === 'experimental-webgl') {
+							wrapMethod(realCtx, 'drawArrays', (original) => function() {
+								metrics.webglDrawCount = Number(metrics.webglDrawCount || 0) + 1;
+								return original.apply(this, arguments);
+							});
+							wrapMethod(realCtx, 'drawElements', (original) => function() {
+								metrics.webglDrawCount = Number(metrics.webglDrawCount || 0) + 1;
+								return original.apply(this, arguments);
+							});
+							wrapMethod(realCtx, 'readPixels', (original) => function() {
+								metrics.readbackCount = Number(metrics.readbackCount || 0) + 1;
+								return original.apply(this, arguments);
+							});
 							const origGetParam = realCtx.getParameter;
 							realCtx.getParameter = function(parameter) {
 								if (parameter === 37445) return 'Google Inc. (NVIDIA Corporation)';
@@ -222,10 +296,33 @@ func NewManagedSession() (*Session, error) {
 						}
 						return realCtx;
 					};
+					const originalGetContext = HTMLCanvasElement.prototype.getContext;
+					HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+						const metrics = ensureCanvasMetrics(this);
+						rememberCanvasContext(metrics, type);
+						const realCtx = originalGetContext.apply(this, arguments);
+						return wrapCanvasContext(this, type, realCtx);
+					};
+					const originalRequestAnimationFrame = window.requestAnimationFrame;
+					window.requestAnimationFrame = function(callback) {
+						return originalRequestAnimationFrame.call(this, function(timestamp) {
+							try {
+								for (const canvas of Array.from(document.querySelectorAll('canvas'))) {
+									const metrics = ensureCanvasMetrics(canvas);
+									if (metrics && (metrics.webglDrawCount > 0 || metrics.imageOpCount > 0 || metrics.textOpCount > 0)) {
+										metrics.likelyAnimated = true;
+									}
+								}
+							} catch (e) {}
+							return callback(timestamp);
+						});
+					};
 
 					// 5. Canvas Readout Noise (Final DataDome Kill-Switch)
 					const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
 					HTMLCanvasElement.prototype.toDataURL = function() {
+						const metrics = ensureCanvasMetrics(this);
+						if (metrics) metrics.readbackCount = Number(metrics.readbackCount || 0) + 1;
 						const context = this.getContext('2d');
 						if (context) {
 							const data = context.getImageData(0, 0, 1, 1);
@@ -514,10 +611,10 @@ func (s *Session) GetAom(cfg AomConfig) (string, error) {
 	if cfg.MaxLength == 0 {
 		cfg.MaxLength = 95000
 	}
-	
+
 	// Always use summarized version for the model response
 	cfg.Summarized = true
-	
+
 	res := SerializeAom(s.LastAom, 0, &currentLen, cfg)
 	fmt.Fprintf(os.Stderr, "      [Telemetry] Total GetAom: %v\n", time.Since(start))
 	return res, nil
@@ -846,7 +943,7 @@ func (s *Session) ExtractFields() (map[string]string, error) {
 		id := n.AttributeValue("id")
 		name := n.AttributeValue("name")
 		placeholder := n.AttributeValue("placeholder")
-		
+
 		// Determine a friendly name for the field
 		key := name
 		if key == "" {
@@ -858,7 +955,7 @@ func (s *Session) ExtractFields() (map[string]string, error) {
 		if key == "" {
 			key = n.LocalName
 		}
-		
+
 		// Build a simple CSS selector
 		selector := n.LocalName
 		if id != "" {
@@ -868,12 +965,12 @@ func (s *Session) ExtractFields() (map[string]string, error) {
 		} else if placeholder != "" {
 			selector += "[placeholder='" + placeholder + "']"
 		}
-		
+
 		// If we still don't have a unique key, use the selector itself
 		if key == n.LocalName {
 			key = selector
 		}
-		
+
 		fields[key] = selector
 	}
 	return fields, nil

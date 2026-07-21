@@ -59,17 +59,19 @@ type runtimeSessionActionRequest struct {
 }
 
 type runtimeSessionState struct {
-	SessionID       string    `json:"sessionId,omitempty"`
-	Alive           bool      `json:"alive"`
-	Mode            string    `json:"mode"`
-	DebugPort       int       `json:"debugPort,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	LastAction      string    `json:"lastAction,omitempty"`
-	ActiveTarget    string    `json:"activeTargetId,omitempty"`
-	MainTarget      string    `json:"mainTargetId,omitempty"`
-	LastAomNodes    int       `json:"lastAomNodeCount"`
-	FrameCount      int       `json:"frameCount,omitempty"`
-	ShadowHostCount int       `json:"shadowHostCount,omitempty"`
+	SessionID        string    `json:"sessionId,omitempty"`
+	Alive            bool      `json:"alive"`
+	Mode             string    `json:"mode"`
+	DebugPort        int       `json:"debugPort,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	LastAction       string    `json:"lastAction,omitempty"`
+	ActiveTarget     string    `json:"activeTargetId,omitempty"`
+	MainTarget       string    `json:"mainTargetId,omitempty"`
+	LastAomNodes     int       `json:"lastAomNodeCount"`
+	FrameCount       int       `json:"frameCount,omitempty"`
+	ShadowHostCount  int       `json:"shadowHostCount,omitempty"`
+	CanvasCount      int       `json:"canvasCount,omitempty"`
+	WebGLCanvasCount int       `json:"webglCanvasCount,omitempty"`
 }
 
 type runtimeFrameSummary struct {
@@ -89,6 +91,20 @@ type runtimeShadowHostSummary struct {
 	Mode              string `json:"mode,omitempty"`
 	SemanticNodeCount int    `json:"semanticNodeCount,omitempty"`
 	TextSample        string `json:"textSample,omitempty"`
+}
+
+type runtimeCanvasSummary struct {
+	Selector        string   `json:"selector,omitempty"`
+	Width           int      `json:"width,omitempty"`
+	Height          int      `json:"height,omitempty"`
+	ContextKinds    []string `json:"contextKinds,omitempty"`
+	TextOpCount     int      `json:"textOpCount,omitempty"`
+	ImageOpCount    int      `json:"imageOpCount,omitempty"`
+	WebGLDrawCount  int      `json:"webglDrawCount,omitempty"`
+	ReadbackCount   int      `json:"readbackCount,omitempty"`
+	LikelyAnimated  bool     `json:"likelyAnimated"`
+	RuntimeEvidence bool     `json:"runtimeEvidence"`
+	TextSample      string   `json:"textSample,omitempty"`
 }
 
 type runtimeProtocolEvidence struct {
@@ -126,6 +142,7 @@ type runtimeSessionCaptureResponse struct {
 	Fields           map[string]string          `json:"fields"`
 	Frames           []runtimeFrameSummary      `json:"frames,omitempty"`
 	ShadowHosts      []runtimeShadowHostSummary `json:"shadowHosts,omitempty"`
+	Canvases         []runtimeCanvasSummary     `json:"canvases,omitempty"`
 	RuntimeState     runtimeSessionState        `json:"runtimeState"`
 	ProtocolEvidence runtimeProtocolEvidence    `json:"protocolEvidence"`
 	Warnings         []string                   `json:"warnings,omitempty"`
@@ -187,6 +204,7 @@ type RuntimeCaptureResponse struct {
 	RuntimeState   []RuntimeCaptureState         `json:"runtime_state"`
 	ProtocolEvents []RuntimeCaptureProtocolEvent `json:"protocol_events"`
 	Requests       []RuntimeCaptureRequestRecord `json:"requests"`
+	Canvases       []runtimeCanvasSummary        `json:"canvases,omitempty"`
 	Warnings       []string                      `json:"warnings"`
 }
 
@@ -473,6 +491,12 @@ func captureRuntime(req RuntimeCaptureRequest) (*RuntimeCaptureResponse, error) 
 		finalURL = captureURL
 	}
 
+	canvases, canvasErr := captureCanvasInventory(session)
+	if canvasErr != nil {
+		warnings = append(warnings, fmt.Sprintf("canvas inventory failed: %v", canvasErr))
+		canvases = nil
+	}
+
 	runtimeState := []RuntimeCaptureState{
 		{Scope: "runtime", Key: "backend", Value: "go-chromedp"},
 		{Scope: "runtime", Key: "capture_mode", Value: "live"},
@@ -480,6 +504,8 @@ func captureRuntime(req RuntimeCaptureRequest) (*RuntimeCaptureResponse, error) 
 		{Scope: "page", Key: "page_text_chars", Value: fmt.Sprintf("%d", len(pageText))},
 		{Scope: "page", Key: "external_script_count", Value: fmt.Sprintf("%d", len(scripts))},
 		{Scope: "page", Key: "field_count", Value: fmt.Sprintf("%d", len(fields))},
+		{Scope: "runtime_canvas", Key: "count", Value: fmt.Sprintf("%d", len(canvases))},
+		{Scope: "runtime_canvas", Key: "webgl_count", Value: fmt.Sprintf("%d", countWebGLCanvases(canvases))},
 	}
 	if aomSummary != "" {
 		runtimeState = append(runtimeState, RuntimeCaptureState{Scope: "aom", Key: "summary_chars", Value: fmt.Sprintf("%d", len(aomSummary))})
@@ -508,6 +534,7 @@ func captureRuntime(req RuntimeCaptureRequest) (*RuntimeCaptureResponse, error) 
 		RuntimeState:   runtimeState,
 		ProtocolEvents: protocolEvents,
 		Requests:       []RuntimeCaptureRequestRecord{},
+		Canvases:       canvases,
 		Warnings:       warnings,
 	}, nil
 }
@@ -635,10 +662,17 @@ func captureRuntimeSession(entry *runtimeSessionEntry) (*runtimeSessionCaptureRe
 		frames = nil
 		shadowHosts = nil
 	}
+	canvases, err := captureCanvasInventory(entry.Session)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("failed to inventory canvases: %v", err))
+		canvases = nil
+	}
 
 	state := runtimeStateFromEntry(entry)
 	state.FrameCount = len(frames)
 	state.ShadowHostCount = len(shadowHosts)
+	state.CanvasCount = len(canvases)
+	state.WebGLCanvasCount = countWebGLCanvases(canvases)
 	resp := &runtimeSessionCaptureResponse{
 		SessionID:        entry.ID,
 		FinalURL:         finalURL,
@@ -649,6 +683,7 @@ func captureRuntimeSession(entry *runtimeSessionEntry) (*runtimeSessionCaptureRe
 		Fields:           fields,
 		Frames:           frames,
 		ShadowHosts:      shadowHosts,
+		Canvases:         canvases,
 		RuntimeState:     state,
 		ProtocolEvidence: protocolEvidenceFromEntry(entry),
 		Warnings:         warnings,
@@ -820,6 +855,19 @@ func runtimeStateFromEntry(entry *runtimeSessionEntry) runtimeSessionState {
 	return state
 }
 
+func countWebGLCanvases(canvases []runtimeCanvasSummary) int {
+	count := 0
+	for _, canvas := range canvases {
+		for _, kind := range canvas.ContextKinds {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "webgl") {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
 func captureFrameAndShadowInventory(session *browserpkg.Session) ([]runtimeFrameSummary, []runtimeShadowHostSummary, error) {
 	if session == nil {
 		return nil, nil, fmt.Errorf("session is nil")
@@ -896,6 +944,60 @@ func captureFrameAndShadowInventory(session *browserpkg.Session) ([]runtimeFrame
 		return nil, nil, err
 	}
 	return result.Frames, result.ShadowHosts, nil
+}
+
+func captureCanvasInventory(session *browserpkg.Session) ([]runtimeCanvasSummary, error) {
+	if session == nil {
+		return nil, fmt.Errorf("session is nil")
+	}
+	var canvases []runtimeCanvasSummary
+	const script = `(function() {
+		const escapeCss = (value) => {
+			if (typeof value !== 'string') return '';
+			if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(value);
+			return value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+		};
+		const selectorFor = (el) => {
+			if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+			const tag = (el.tagName || '').toLowerCase();
+			if (!tag) return '';
+			if (el.id) return tag + '#' + escapeCss(el.id);
+			const name = el.getAttribute && el.getAttribute('name');
+			if (name) return tag + '[name="' + String(name).replace(/"/g, '\\"') + '"]';
+			const parent = el.parentElement;
+			if (!parent) return tag;
+			const siblings = Array.from(parent.children).filter((child) => child.tagName === el.tagName);
+			if (siblings.length <= 1) return tag;
+			return tag + ':nth-of-type(' + (siblings.indexOf(el) + 1) + ')';
+		};
+		const seen = new WeakSet();
+		const textSample = (ops) => Array.from(new Set((ops || []).map((op) => String(op.text || '').trim()).filter(Boolean))).slice(0, 4).join(' | ').slice(0, 160);
+		const summaries = [];
+		for (const canvas of Array.from(document.querySelectorAll('canvas'))) {
+			if (seen.has(canvas)) continue;
+			seen.add(canvas);
+			const metrics = canvas.__velocityCanvasMetrics || {};
+			const contexts = Array.isArray(metrics.contexts) ? metrics.contexts.filter(Boolean) : [];
+			summaries.push({
+				selector: selectorFor(canvas),
+				width: Number(canvas.width || 0),
+				height: Number(canvas.height || 0),
+				contextKinds: contexts,
+				textOpCount: Number(metrics.textOpCount || 0),
+				imageOpCount: Number(metrics.imageOpCount || 0),
+				webglDrawCount: Number(metrics.webglDrawCount || 0),
+				readbackCount: Number(metrics.readbackCount || 0),
+				likelyAnimated: !!metrics.likelyAnimated,
+				runtimeEvidence: Object.keys(metrics).length > 0,
+				textSample: textSample(metrics.textOps),
+			});
+		}
+		return summaries;
+	})()`
+	if err := chromedp.Run(session.Ctx, chromedp.Evaluate(script, &canvases)); err != nil {
+		return nil, err
+	}
+	return canvases, nil
 }
 
 func protocolEvidenceFromEntry(entry *runtimeSessionEntry) runtimeProtocolEvidence {

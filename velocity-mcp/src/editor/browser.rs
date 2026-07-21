@@ -17,15 +17,23 @@ pub enum BrowserListSortDirection {
 }
 
 fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack.to_ascii_lowercase().contains(&needle.to_ascii_lowercase())
+    haystack
+        .to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
 }
 
 pub fn parse_list_sort_direction(value: Option<&str>) -> Result<BrowserListSortDirection, String> {
     match value {
         None => Ok(BrowserListSortDirection::Asc),
-        Some(direction) if direction.eq_ignore_ascii_case("asc") => Ok(BrowserListSortDirection::Asc),
-        Some(direction) if direction.eq_ignore_ascii_case("desc") => Ok(BrowserListSortDirection::Desc),
-        Some(direction) => Err(format!("invalid sort direction '{direction}', expected 'asc' or 'desc'")),
+        Some(direction) if direction.eq_ignore_ascii_case("asc") => {
+            Ok(BrowserListSortDirection::Asc)
+        }
+        Some(direction) if direction.eq_ignore_ascii_case("desc") => {
+            Ok(BrowserListSortDirection::Desc)
+        }
+        Some(direction) => Err(format!(
+            "invalid sort direction '{direction}', expected 'asc' or 'desc'"
+        )),
     }
 }
 
@@ -133,6 +141,22 @@ pub struct BrowserShadowHostInventoryEntry {
     pub role: String,
     pub mode: String,
     pub semantic_node_count: usize,
+    pub text_sample: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserCanvasInventoryEntry {
+    pub selector: String,
+    pub width: usize,
+    pub height: usize,
+    #[serde(default)]
+    pub context_kinds: Vec<String>,
+    pub text_op_count: usize,
+    pub image_op_count: usize,
+    pub webgl_draw_count: usize,
+    pub readback_count: usize,
+    pub likely_animated: bool,
+    pub runtime_evidence: bool,
     pub text_sample: String,
 }
 
@@ -651,10 +675,14 @@ pub struct BrowserRuntimeCaptureReport {
     pub protocol_event_count: usize,
     pub frame_count: usize,
     pub shadow_host_count: usize,
+    pub canvas_count: usize,
+    pub webgl_canvas_count: usize,
     #[serde(default)]
     pub frames: Vec<BrowserFrameInventoryEntry>,
     #[serde(default)]
     pub shadow_hosts: Vec<BrowserShadowHostInventoryEntry>,
+    #[serde(default)]
+    pub canvases: Vec<BrowserCanvasInventoryEntry>,
     #[serde(default)]
     pub network_summary: BrowserNetworkSummary,
     pub local_storage_count: usize,
@@ -778,7 +806,9 @@ pub struct BrowserCheckpointRestoreReport {
     pub auth_diagnostics: BrowserAuthDiagnosticsReport,
 }
 
-pub fn summarize_session_checkpoint(checkpoint: BrowserSessionCheckpoint) -> BrowserSessionCheckpointSummary {
+pub fn summarize_session_checkpoint(
+    checkpoint: BrowserSessionCheckpoint,
+) -> BrowserSessionCheckpointSummary {
     let network_summary = checkpoint
         .snapshot
         .as_ref()
@@ -789,7 +819,10 @@ pub fn summarize_session_checkpoint(checkpoint: BrowserSessionCheckpoint) -> Bro
         session_id: checkpoint.session.id,
         has_snapshot: checkpoint.snapshot.is_some(),
         current_url: checkpoint.session.current_url,
-        title: checkpoint.snapshot.as_ref().map(|snapshot| snapshot.title.clone()),
+        title: checkpoint
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.title.clone()),
         snapshot_summary: checkpoint
             .snapshot
             .as_ref()
@@ -840,10 +873,20 @@ pub fn summarize_session_checkpoint(checkpoint: BrowserSessionCheckpoint) -> Bro
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserWorkflowStep {
-    Navigate { url: String },
-    Click { role: String, name: String },
-    FillField { field: String, value: String },
-    SubmitForm { form: Option<String> },
+    Navigate {
+        url: String,
+    },
+    Click {
+        role: String,
+        name: String,
+    },
+    FillField {
+        field: String,
+        value: String,
+    },
+    SubmitForm {
+        form: Option<String>,
+    },
     WaitForText {
         text: String,
         timeout_ms: Option<u64>,
@@ -919,8 +962,12 @@ pub enum BrowserWorkflowStep {
         name: Option<String>,
         field: Option<String>,
     },
-    SaveCheckpoint { name: String },
-    RestoreCheckpoint { name: String },
+    SaveCheckpoint {
+        name: String,
+    },
+    RestoreCheckpoint {
+        name: String,
+    },
     IfTextContains {
         text: String,
         then_steps: Vec<BrowserWorkflowStep>,
@@ -932,8 +979,13 @@ pub enum BrowserWorkflowStep {
         then_steps: Vec<BrowserWorkflowStep>,
         else_steps: Vec<BrowserWorkflowStep>,
     },
-    AssertElement { role: String, name: String },
-    AssertTextContains { text: String },
+    AssertElement {
+        role: String,
+        name: String,
+    },
+    AssertTextContains {
+        text: String,
+    },
     AssertOutput {
         output: String,
         equals: Option<String>,
@@ -1259,6 +1311,7 @@ struct RuntimeCaptureApiProtocolEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
 struct RuntimeCaptureApiFrameEntry {
     #[serde(default)]
     selector: String,
@@ -1277,6 +1330,7 @@ struct RuntimeCaptureApiFrameEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
 struct RuntimeCaptureApiShadowHostEntry {
     #[serde(default)]
     selector: String,
@@ -1288,6 +1342,33 @@ struct RuntimeCaptureApiShadowHostEntry {
     mode: String,
     #[serde(default)]
     semantic_node_count: usize,
+    #[serde(default)]
+    text_sample: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeCaptureApiCanvasEntry {
+    #[serde(default)]
+    selector: String,
+    #[serde(default)]
+    width: usize,
+    #[serde(default)]
+    height: usize,
+    #[serde(default)]
+    context_kinds: Vec<String>,
+    #[serde(default)]
+    text_op_count: usize,
+    #[serde(default)]
+    image_op_count: usize,
+    #[serde(default)]
+    webgl_draw_count: usize,
+    #[serde(default)]
+    readback_count: usize,
+    #[serde(default)]
+    likely_animated: bool,
+    #[serde(default)]
+    runtime_evidence: bool,
     #[serde(default)]
     text_sample: String,
 }
@@ -1340,6 +1421,8 @@ struct RuntimeCaptureApiResponse {
     #[serde(default)]
     shadow_hosts: Vec<RuntimeCaptureApiShadowHostEntry>,
     #[serde(default)]
+    canvases: Vec<RuntimeCaptureApiCanvasEntry>,
+    #[serde(default)]
     warnings: Vec<String>,
     #[serde(default)]
     action: Option<RuntimeActionApiResult>,
@@ -1381,15 +1464,18 @@ fn render_html_fallback_line(html_fallback_path: Option<&str>) -> String {
 }
 
 fn browser_runtime_api_base() -> String {
-    ["VELOCITY_BROWSER_RUNTIME_API_BASE", "VELOCITY_BROWSER_API_BASE"]
-        .into_iter()
-        .find_map(|key| {
-            std::env::var(key)
-                .ok()
-                .map(|value| value.trim().trim_end_matches('/').to_string())
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_else(|| "http://127.0.0.1:8080".to_string())
+    [
+        "VELOCITY_BROWSER_RUNTIME_API_BASE",
+        "VELOCITY_BROWSER_API_BASE",
+    ]
+    .into_iter()
+    .find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+    })
+    .unwrap_or_else(|| "http://127.0.0.1:8080".to_string())
 }
 
 fn resolve_browser_runtime_api_base(api_base: Option<&str>) -> String {
@@ -1407,7 +1493,10 @@ fn format_runtime_api_error(err: ureq::Error) -> String {
             if body.trim().is_empty() {
                 format!("runtime api request failed with status {code}")
             } else {
-                format!("runtime api request failed with status {code}: {}", truncate_string(body.trim(), 500))
+                format!(
+                    "runtime api request failed with status {code}: {}",
+                    truncate_string(body.trim(), 500)
+                )
             }
         }
         other => format!("runtime api request failed: {other}"),
@@ -1428,7 +1517,9 @@ fn runtime_api_request(
                 Some(value) => {
                     let payload = serde_json::to_string(value)
                         .map_err(|err| format!("serialise runtime api request: {err}"))?;
-                    request.send_string(&payload).map_err(format_runtime_api_error)?
+                    request
+                        .send_string(&payload)
+                        .map_err(format_runtime_api_error)?
                 }
                 None => request.call().map_err(format_runtime_api_error)?,
             }
@@ -1445,11 +1536,16 @@ fn runtime_api_request(
     }
 }
 
-fn runtime_capture_response_from_value(value: serde_json::Value) -> Result<RuntimeCaptureApiResponse, String> {
+fn runtime_capture_response_from_value(
+    value: serde_json::Value,
+) -> Result<RuntimeCaptureApiResponse, String> {
     let candidates = [
         Some(value.clone()),
         value.get("capture").cloned(),
-        value.get("result").and_then(|result| result.get("capture")).cloned(),
+        value
+            .get("result")
+            .and_then(|result| result.get("capture"))
+            .cloned(),
     ];
     for candidate in candidates.into_iter().flatten() {
         if let Ok(response) = serde_json::from_value::<RuntimeCaptureApiResponse>(candidate) {
@@ -1500,7 +1596,9 @@ fn parse_runtime_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<RuntimeCaptureApiResponse, String> {
+fn parse_runtime_session_capture_response(
+    value: serde_json::Value,
+) -> Result<RuntimeCaptureApiResponse, String> {
     if let Ok(response) = runtime_capture_response_from_value(value.clone()) {
         return Ok(response);
     }
@@ -1574,12 +1672,24 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         .get("local_storage")
         .map(Some)
         .map(parse_runtime_string_map)
-        .unwrap_or_else(|| parse_runtime_string_map(value.get("storage").and_then(|storage| storage.get("local"))));
+        .unwrap_or_else(|| {
+            parse_runtime_string_map(
+                value
+                    .get("storage")
+                    .and_then(|storage| storage.get("local")),
+            )
+        });
     let session_storage = value
         .get("session_storage")
         .map(Some)
         .map(parse_runtime_string_map)
-        .unwrap_or_else(|| parse_runtime_string_map(value.get("storage").and_then(|storage| storage.get("session"))));
+        .unwrap_or_else(|| {
+            parse_runtime_string_map(
+                value
+                    .get("storage")
+                    .and_then(|storage| storage.get("session")),
+            )
+        });
 
     let action = value
         .get("action")
@@ -1630,7 +1740,9 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| serde_json::from_value::<RuntimeCaptureApiFrameEntry>(item.clone()).ok())
+                .filter_map(|item| {
+                    serde_json::from_value::<RuntimeCaptureApiFrameEntry>(item.clone()).ok()
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -1641,13 +1753,30 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| serde_json::from_value::<RuntimeCaptureApiShadowHostEntry>(item.clone()).ok())
+                .filter_map(|item| {
+                    serde_json::from_value::<RuntimeCaptureApiShadowHostEntry>(item.clone()).ok()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let canvases = value
+        .get("canvases")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    serde_json::from_value::<RuntimeCaptureApiCanvasEntry>(item.clone()).ok()
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
 
     let mut runtime_state = Vec::new();
-    if let Some(state) = value.get("runtimeState").and_then(serde_json::Value::as_object) {
+    if let Some(state) = value
+        .get("runtimeState")
+        .and_then(serde_json::Value::as_object)
+    {
         if let Some(session_id) = state.get("sessionId").and_then(serde_json::Value::as_str) {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_session".to_string(),
@@ -1676,14 +1805,20 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
                 value: last_action.to_string(),
             });
         }
-        if let Some(active_target) = state.get("activeTargetId").and_then(serde_json::Value::as_str) {
+        if let Some(active_target) = state
+            .get("activeTargetId")
+            .and_then(serde_json::Value::as_str)
+        {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_session".to_string(),
                 key: "active_target_id".to_string(),
                 value: active_target.to_string(),
             });
         }
-        if let Some(main_target) = state.get("mainTargetId").and_then(serde_json::Value::as_str) {
+        if let Some(main_target) = state
+            .get("mainTargetId")
+            .and_then(serde_json::Value::as_str)
+        {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_session".to_string(),
                 key: "main_target_id".to_string(),
@@ -1697,7 +1832,10 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
                 value: debug_port.to_string(),
             });
         }
-        if let Some(last_aom_nodes) = state.get("lastAomNodeCount").and_then(serde_json::Value::as_i64) {
+        if let Some(last_aom_nodes) = state
+            .get("lastAomNodeCount")
+            .and_then(serde_json::Value::as_i64)
+        {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_session".to_string(),
                 key: "last_aom_node_count".to_string(),
@@ -1718,15 +1856,38 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
                 value: frame_count.to_string(),
             });
         }
-        if let Some(shadow_host_count) = state.get("shadowHostCount").and_then(serde_json::Value::as_u64) {
+        if let Some(shadow_host_count) = state
+            .get("shadowHostCount")
+            .and_then(serde_json::Value::as_u64)
+        {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime_session".to_string(),
                 key: "shadow_host_count".to_string(),
                 value: shadow_host_count.to_string(),
             });
         }
+        if let Some(canvas_count) = state.get("canvasCount").and_then(serde_json::Value::as_u64) {
+            runtime_state.push(RuntimeCaptureApiState {
+                scope: "runtime_session".to_string(),
+                key: "canvas_count".to_string(),
+                value: canvas_count.to_string(),
+            });
+        }
+        if let Some(webgl_canvas_count) = state
+            .get("webglCanvasCount")
+            .and_then(serde_json::Value::as_u64)
+        {
+            runtime_state.push(RuntimeCaptureApiState {
+                scope: "runtime_session".to_string(),
+                key: "webgl_canvas_count".to_string(),
+                value: webgl_canvas_count.to_string(),
+            });
+        }
     }
-    if let Some(protocol) = value.get("protocolEvidence").and_then(serde_json::Value::as_object) {
+    if let Some(protocol) = value
+        .get("protocolEvidence")
+        .and_then(serde_json::Value::as_object)
+    {
         if let Some(backend) = protocol.get("backend").and_then(serde_json::Value::as_str) {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime".to_string(),
@@ -1734,21 +1895,30 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
                 value: backend.to_string(),
             });
         }
-        if let Some(transport) = protocol.get("transport").and_then(serde_json::Value::as_str) {
+        if let Some(transport) = protocol
+            .get("transport")
+            .and_then(serde_json::Value::as_str)
+        {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime".to_string(),
                 key: "transport".to_string(),
                 value: transport.to_string(),
             });
         }
-        if let Some(session_mode) = protocol.get("sessionMode").and_then(serde_json::Value::as_str) {
+        if let Some(session_mode) = protocol
+            .get("sessionMode")
+            .and_then(serde_json::Value::as_str)
+        {
             runtime_state.push(RuntimeCaptureApiState {
                 scope: "runtime".to_string(),
                 key: "session_mode".to_string(),
                 value: session_mode.to_string(),
             });
         }
-        if let Some(actions) = protocol.get("supportsActions").and_then(serde_json::Value::as_array) {
+        if let Some(actions) = protocol
+            .get("supportsActions")
+            .and_then(serde_json::Value::as_array)
+        {
             let supported_actions = actions
                 .iter()
                 .filter_map(|action| action.as_str())
@@ -1796,6 +1966,45 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
             scope: "runtime_shadow".to_string(),
             key: "semantic_node_count".to_string(),
             value: semantic_count.to_string(),
+        });
+    }
+    if !canvases.is_empty() {
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_canvas".to_string(),
+            key: "count".to_string(),
+            value: canvases.len().to_string(),
+        });
+        let webgl_count = canvases
+            .iter()
+            .filter(|canvas| {
+                canvas
+                    .context_kinds
+                    .iter()
+                    .any(|kind| kind.starts_with("webgl"))
+            })
+            .count();
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_canvas".to_string(),
+            key: "webgl_count".to_string(),
+            value: webgl_count.to_string(),
+        });
+        let evidence_count = canvases
+            .iter()
+            .filter(|canvas| canvas.runtime_evidence)
+            .count();
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_canvas".to_string(),
+            key: "runtime_evidence_count".to_string(),
+            value: evidence_count.to_string(),
+        });
+        let animated_count = canvases
+            .iter()
+            .filter(|canvas| canvas.likely_animated)
+            .count();
+        runtime_state.push(RuntimeCaptureApiState {
+            scope: "runtime_canvas".to_string(),
+            key: "animated_count".to_string(),
+            value: animated_count.to_string(),
         });
     }
     if let Some(action_result) = &action {
@@ -1863,6 +2072,7 @@ fn parse_runtime_session_capture_response(value: serde_json::Value) -> Result<Ru
         requests: Vec::new(),
         frames,
         shadow_hosts,
+        canvases,
         warnings,
         action,
     })
@@ -1900,7 +2110,10 @@ fn normalize_network_config(config: &mut BrowserSessionNetworkConfig) {
         .collect();
 }
 
-fn network_policy_allows_url(config: &BrowserSessionNetworkConfig, url: &str) -> Result<(), String> {
+fn network_policy_allows_url(
+    config: &BrowserSessionNetworkConfig,
+    url: &str,
+) -> Result<(), String> {
     if config
         .blocked_url_prefixes
         .iter()
@@ -2112,15 +2325,19 @@ fn runtime_session_file_path(workspace_root: &Path, session_id: &str) -> PathBuf
 }
 
 fn browser_runtime_visual_dir(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".velocity").join("browser-runtime-visuals")
+    workspace_root
+        .join(".velocity")
+        .join("browser-runtime-visuals")
 }
 
 fn browser_runtime_visual_png_path(workspace_root: &Path, artifact_id: &str) -> PathBuf {
-    browser_runtime_visual_dir(workspace_root).join(format!("{}.png", sanitize_file_stem(artifact_id)))
+    browser_runtime_visual_dir(workspace_root)
+        .join(format!("{}.png", sanitize_file_stem(artifact_id)))
 }
 
 fn browser_runtime_visual_metadata_path(workspace_root: &Path, artifact_id: &str) -> PathBuf {
-    browser_runtime_visual_dir(workspace_root).join(format!("{}.json", sanitize_file_stem(artifact_id)))
+    browser_runtime_visual_dir(workspace_root)
+        .join(format!("{}.json", sanitize_file_stem(artifact_id)))
 }
 
 fn runtime_visual_artifact_id(url: &str) -> String {
@@ -2162,7 +2379,10 @@ fn browser_workflow_json_path(workspace_root: &Path, workflow_name: &str) -> Pat
     workspace_root
         .join(".velocity")
         .join("browser-workflows")
-        .join(format!("{}.browser.json", sanitize_file_stem(workflow_name)))
+        .join(format!(
+            "{}.browser.json",
+            sanitize_file_stem(workflow_name)
+        ))
 }
 
 fn browser_workflow_nda_path(workspace_root: &Path, workflow_name: &str) -> PathBuf {
@@ -2172,7 +2392,11 @@ fn browser_workflow_nda_path(workspace_root: &Path, workflow_name: &str) -> Path
         .join(format!("{}.browser.nda", sanitize_file_stem(workflow_name)))
 }
 
-fn browser_workflow_run_path(workspace_root: &Path, workflow_name: &str, session_id: &str) -> PathBuf {
+fn browser_workflow_run_path(
+    workspace_root: &Path,
+    workflow_name: &str,
+    session_id: &str,
+) -> PathBuf {
     workspace_root
         .join(".velocity")
         .join("browser-runs")
@@ -2206,7 +2430,10 @@ fn browser_session_checkpoint_path(
         .join(".velocity")
         .join("browser-session-checkpoints")
         .join(sanitize_file_stem(session_id))
-        .join(format!("{}.checkpoint.json", sanitize_file_stem(checkpoint_name)))
+        .join(format!(
+            "{}.checkpoint.json",
+            sanitize_file_stem(checkpoint_name)
+        ))
 }
 
 fn browser_auth_profile_json_path(workspace_root: &Path, profile_name: &str) -> PathBuf {
@@ -2274,7 +2501,12 @@ fn parse_list_header(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn request_records_from_headers(method: &str, url: &str, status_code: u16, raw: Option<&str>) -> Vec<BrowserRequestRecord> {
+fn request_records_from_headers(
+    method: &str,
+    url: &str,
+    status_code: u16,
+    raw: Option<&str>,
+) -> Vec<BrowserRequestRecord> {
     let mut records = raw
         .map(|value| {
             value
@@ -2289,9 +2521,17 @@ fn request_records_from_headers(method: &str, url: &str, status_code: u16, raw: 
                     let request_url = parts.next().unwrap_or(url).trim();
                     Some(BrowserRequestRecord {
                         method: method.to_ascii_uppercase(),
-                        url: if request_url.is_empty() { url.to_string() } else { request_url.to_string() },
+                        url: if request_url.is_empty() {
+                            url.to_string()
+                        } else {
+                            request_url.to_string()
+                        },
                         status_code,
-                        resource: if resource.is_empty() { "document".to_string() } else { resource.to_string() },
+                        resource: if resource.is_empty() {
+                            "document".to_string()
+                        } else {
+                            resource.to_string()
+                        },
                     })
                 })
                 .collect::<Vec<_>>()
@@ -2338,12 +2578,19 @@ fn request_record_matches(
     true
 }
 
-fn storage_entry_matches(snapshot: &BrowserPageSnapshot, scope: &str, key: &str, value: Option<&str>) -> bool {
+fn storage_entry_matches(
+    snapshot: &BrowserPageSnapshot,
+    scope: &str,
+    key: &str,
+    value: Option<&str>,
+) -> bool {
     snapshot.storage.iter().any(|bucket| {
         bucket.scope.eq_ignore_ascii_case(scope)
             && bucket.entries.iter().any(|(entry_key, entry_value)| {
                 entry_key.eq_ignore_ascii_case(key)
-                    && value.map(|needle| entry_value.contains(needle)).unwrap_or(true)
+                    && value
+                        .map(|needle| entry_value.contains(needle))
+                        .unwrap_or(true)
             })
     })
 }
@@ -2417,7 +2664,12 @@ fn parse_settle_signal_parts(signal: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn settle_signal_matches(signal: &str, label: Option<&str>, scope: Option<&str>, state: Option<&str>) -> bool {
+fn settle_signal_matches(
+    signal: &str,
+    label: Option<&str>,
+    scope: Option<&str>,
+    state: Option<&str>,
+) -> bool {
     if let Some(wait_label) = label {
         return signal
             .to_ascii_lowercase()
@@ -2475,7 +2727,10 @@ fn runtime_state_from_headers(raw: Option<&str>) -> Vec<BrowserRuntimeState> {
 }
 
 fn protocol_event_signature(event: &BrowserProtocolEvent) -> String {
-    format!("{}:{}:{}:{}", event.kind, event.phase, event.target, event.detail)
+    format!(
+        "{}:{}:{}:{}",
+        event.kind, event.phase, event.target, event.detail
+    )
 }
 
 fn protocol_events_from_headers(raw: Option<&str>) -> Vec<BrowserProtocolEvent> {
@@ -2493,7 +2748,8 @@ fn protocol_events_from_headers(raw: Option<&str>) -> Vec<BrowserProtocolEvent> 
                     let phase = parts.next()?;
                     let target = parts.next()?;
                     let detail = parts.next()?;
-                    if kind.is_empty() || phase.is_empty() || target.is_empty() || detail.is_empty() {
+                    if kind.is_empty() || phase.is_empty() || target.is_empty() || detail.is_empty()
+                    {
                         return None;
                     }
                     Some(BrowserProtocolEvent {
@@ -2506,7 +2762,9 @@ fn protocol_events_from_headers(raw: Option<&str>) -> Vec<BrowserProtocolEvent> 
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    events.sort_by(|left, right| protocol_event_signature(left).cmp(&protocol_event_signature(right)));
+    events.sort_by(|left, right| {
+        protocol_event_signature(left).cmp(&protocol_event_signature(right))
+    });
     events.dedup();
     events
 }
@@ -2651,9 +2909,13 @@ fn fetch_with_session(
         };
     }
     let agent = agent_builder.build();
-    let mut request = agent
-        .request(method, url)
-        .set("User-Agent", network.user_agent.as_deref().unwrap_or(default_browser_user_agent()));
+    let mut request = agent.request(method, url).set(
+        "User-Agent",
+        network
+            .user_agent
+            .as_deref()
+            .unwrap_or(default_browser_user_agent()),
+    );
     for (key, value) in &network.headers {
         request = request.set(key, value);
     }
@@ -2691,10 +2953,17 @@ fn fetch_with_session(
         .header("X-Velocity-Mutations")
         .map(parse_list_header)
         .unwrap_or_default();
-    let requests = request_records_from_headers(method, url, status_code, response.header("X-Velocity-Requests"));
-    let settle_signals = settle_signals_from_headers(method, status_code, response.header("X-Velocity-Settle"));
+    let requests = request_records_from_headers(
+        method,
+        url,
+        status_code,
+        response.header("X-Velocity-Requests"),
+    );
+    let settle_signals =
+        settle_signals_from_headers(method, status_code, response.header("X-Velocity-Settle"));
     let runtime_state = runtime_state_from_headers(response.header("X-Velocity-Runtime-State"));
-    let mut protocol_events = protocol_events_from_headers(response.header("X-Velocity-Protocol-Events"));
+    let mut protocol_events =
+        protocol_events_from_headers(response.header("X-Velocity-Protocol-Events"));
     let final_url = response.get_url().to_string();
     if final_url != url {
         protocol_events.push(BrowserProtocolEvent {
@@ -2703,7 +2972,9 @@ fn fetch_with_session(
             target: final_url.clone(),
             detail: url.to_string(),
         });
-        protocol_events.sort_by(|left, right| protocol_event_signature(left).cmp(&protocol_event_signature(right)));
+        protocol_events.sort_by(|left, right| {
+            protocol_event_signature(left).cmp(&protocol_event_signature(right))
+        });
         protocol_events.dedup();
     }
 
@@ -2751,12 +3022,16 @@ fn parse_forms(url: &str, html: &str) -> Vec<BrowserForm> {
     while let Some(form_start_rel) = lower_html[search_from..].find("<form") {
         let form_start = search_from + form_start_rel;
         let tag_end_rel = lower_html[form_start..].find('>');
-        let Some(tag_end_rel) = tag_end_rel else { break; };
+        let Some(tag_end_rel) = tag_end_rel else {
+            break;
+        };
         let tag_end = form_start + tag_end_rel;
         let form_tag = &html[form_start + 1..tag_end];
         let body_start = tag_end + 1;
         let close_rel = lower_html[body_start..].find("</form>");
-        let Some(close_rel) = close_rel else { break; };
+        let Some(close_rel) = close_rel else {
+            break;
+        };
         let body_end = body_start + close_rel;
         let form_body = &html[body_start..body_end];
 
@@ -2776,7 +3051,8 @@ fn parse_forms(url: &str, html: &str) -> Vec<BrowserForm> {
             let trimmed = raw_tag.trim();
             let lower = trimmed.to_ascii_lowercase();
             if lower.starts_with("input") {
-                let input_type = extract_attr(trimmed, "type").unwrap_or_else(|| "text".to_string());
+                let input_type =
+                    extract_attr(trimmed, "type").unwrap_or_else(|| "text".to_string());
                 let name = extract_attr(trimmed, "name")
                     .or_else(|| extract_attr(trimmed, "id"))
                     .unwrap_or_else(|| format!("field-{}", fields.len()));
@@ -2897,7 +3173,11 @@ fn parse_html_to_snapshot_with_runtime_state(
                     let absolute_href = resolve_relative_url(url, &href_value);
                     elements.push(AomElement {
                         role: "link".to_string(),
-                        name: if clean_text.is_empty() { absolute_href.clone() } else { clean_text },
+                        name: if clean_text.is_empty() {
+                            absolute_href.clone()
+                        } else {
+                            clean_text
+                        },
                         value: absolute_href.clone(),
                         target_url: Some(absolute_href),
                         supported_actions: vec!["open".to_string(), "click".to_string()],
@@ -2924,7 +3204,8 @@ fn parse_html_to_snapshot_with_runtime_state(
                     });
                 }
             } else if lower.starts_with("input") {
-                let input_type = extract_attr(trimmed, "type").unwrap_or_else(|| "text".to_string());
+                let input_type =
+                    extract_attr(trimmed, "type").unwrap_or_else(|| "text".to_string());
                 let placeholder = extract_attr(trimmed, "placeholder").unwrap_or_default();
                 let aria_label = extract_attr(trimmed, "aria-label").unwrap_or_default();
                 let name_attr = extract_attr(trimmed, "name").unwrap_or_default();
@@ -2977,17 +3258,30 @@ fn parse_html_to_snapshot_with_runtime_state(
             }
             elements.push(AomElement {
                 role: "textbox".to_string(),
-                name: if field.label.is_empty() { field.name.clone() } else { field.label.clone() },
+                name: if field.label.is_empty() {
+                    field.name.clone()
+                } else {
+                    field.label.clone()
+                },
                 value: field.value.clone(),
                 target_url: None,
                 supported_actions: vec!["focus".to_string(), "type".to_string()],
                 provenance: "native-static-repaired".to_string(),
-                actionability: if field.input_type.eq_ignore_ascii_case("hidden") { 0 } else { role_actionability("textbox") },
+                actionability: if field.input_type.eq_ignore_ascii_case("hidden") {
+                    0
+                } else {
+                    role_actionability("textbox")
+                },
             });
         }
-        if let Some(label) = form.submit_label.as_ref().filter(|label| !label.trim().is_empty()) {
+        if let Some(label) = form
+            .submit_label
+            .as_ref()
+            .filter(|label| !label.trim().is_empty())
+        {
             if !elements.iter().any(|element| {
-                element.role.eq_ignore_ascii_case("button") && element.name.eq_ignore_ascii_case(label)
+                element.role.eq_ignore_ascii_case("button")
+                    && element.name.eq_ignore_ascii_case(label)
             }) {
                 elements.push(AomElement {
                     role: "button".to_string(),
@@ -3018,25 +3312,35 @@ fn parse_html_to_snapshot_with_runtime_state(
     }
 }
 
-fn write_snapshot_json(snapshot: &BrowserPageSnapshot, sitemap_path: &Path) -> Result<PathBuf, String> {
+fn write_snapshot_json(
+    snapshot: &BrowserPageSnapshot,
+    sitemap_path: &Path,
+) -> Result<PathBuf, String> {
     let snapshot_path = browser_snapshot_path(&snapshot.url, sitemap_path);
     if let Some(parent) = snapshot_path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create browser snapshot dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(snapshot).map_err(|err| format!("serialise browser snapshot: {err}"))?;
+    let json = serde_json::to_vec_pretty(snapshot)
+        .map_err(|err| format!("serialise browser snapshot: {err}"))?;
     fs::write(&snapshot_path, json).map_err(|err| format!("write browser snapshot: {err}"))?;
     Ok(snapshot_path)
 }
 
-fn write_html_fallback(url: &str, html: &str, sitemap_path: &Path) -> Result<Option<PathBuf>, String> {
+fn write_html_fallback(
+    url: &str,
+    html: &str,
+    sitemap_path: &Path,
+) -> Result<Option<PathBuf>, String> {
     if html.trim().is_empty() {
         return Ok(None);
     }
     let path = browser_html_fallback_path(url, sitemap_path);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create browser html fallback dir: {err}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create browser html fallback dir: {err}"))?;
     }
-    fs::write(&path, html.as_bytes()).map_err(|err| format!("write browser html fallback: {err}"))?;
+    fs::write(&path, html.as_bytes())
+        .map_err(|err| format!("write browser html fallback: {err}"))?;
     Ok(Some(path))
 }
 
@@ -3055,7 +3359,10 @@ pub fn read_snapshot(url: &str, sitemap_path: &Path) -> Result<BrowserPageSnapsh
     load_snapshot_json(url, sitemap_path)
 }
 
-pub fn read_visual_fallback_report(url: &str, sitemap_path: &Path) -> Result<BrowserVisualFallbackReadReport, String> {
+pub fn read_visual_fallback_report(
+    url: &str,
+    sitemap_path: &Path,
+) -> Result<BrowserVisualFallbackReadReport, String> {
     let html = load_html_fallback(url, sitemap_path)?;
     let path = browser_html_fallback_path(url, sitemap_path);
     Ok(BrowserVisualFallbackReadReport {
@@ -3069,13 +3376,20 @@ pub fn read_visual_fallback(url: &str, sitemap_path: &Path) -> Result<String, St
     load_html_fallback(url, sitemap_path)
 }
 
-pub fn read_snapshot_report(url: &str, sitemap_path: &Path) -> Result<BrowserSnapshotReadReport, String> {
+pub fn read_snapshot_report(
+    url: &str,
+    sitemap_path: &Path,
+) -> Result<BrowserSnapshotReadReport, String> {
     let snapshot = read_snapshot(url, sitemap_path)?;
     let html_fallback_path = browser_html_fallback_path(url, sitemap_path);
     Ok(BrowserSnapshotReadReport {
         snapshot: summarize_snapshot(snapshot),
-        json_path: browser_snapshot_path(url, sitemap_path).display().to_string(),
-        html_fallback_path: html_fallback_path.exists().then(|| html_fallback_path.display().to_string()),
+        json_path: browser_snapshot_path(url, sitemap_path)
+            .display()
+            .to_string(),
+        html_fallback_path: html_fallback_path
+            .exists()
+            .then(|| html_fallback_path.display().to_string()),
     })
 }
 
@@ -3117,8 +3431,12 @@ pub fn read_snapshot_diff_report(
     let report = diff_saved_snapshots(before_url, after_url, sitemap_path)?;
     Ok(BrowserSnapshotDiffReadReport {
         diff: summarize_snapshot_diff_report(report),
-        before_json_path: browser_snapshot_path(before_url, sitemap_path).display().to_string(),
-        after_json_path: browser_snapshot_path(after_url, sitemap_path).display().to_string(),
+        before_json_path: browser_snapshot_path(before_url, sitemap_path)
+            .display()
+            .to_string(),
+        after_json_path: browser_snapshot_path(after_url, sitemap_path)
+            .display()
+            .to_string(),
     })
 }
 
@@ -3175,7 +3493,9 @@ pub fn list_snapshots(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.url.cmp(&right.url));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.url.cmp(&right.url)
+    });
     Ok(items)
 }
 
@@ -3199,7 +3519,10 @@ fn write_crawl_facts(
         fs::create_dir_all(parent).map_err(|err| format!("create browser capture dir: {err}"))?;
     }
 
-    let storage_entry_count = storage.iter().map(|bucket| bucket.entries.len()).sum::<usize>();
+    let storage_entry_count = storage
+        .iter()
+        .map(|bucket| bucket.entries.len())
+        .sum::<usize>();
     let mut facts = vec![
         "browser-capture version 9".to_string(),
         "field_count 10".to_string(),
@@ -3221,9 +3544,21 @@ fn write_crawl_facts(
 
     for (idx, element) in elements.iter().enumerate() {
         facts.push(format!("element\t{}", idx));
-        facts.push(format!("element_field\t{}\trole\t{}", idx, encode_nda_text(&element.role)));
-        facts.push(format!("element_field\t{}\tname\t{}", idx, encode_nda_text(&element.name)));
-        facts.push(format!("element_field\t{}\tvalue\t{}", idx, encode_nda_text(&element.value)));
+        facts.push(format!(
+            "element_field\t{}\trole\t{}",
+            idx,
+            encode_nda_text(&element.role)
+        ));
+        facts.push(format!(
+            "element_field\t{}\tname\t{}",
+            idx,
+            encode_nda_text(&element.name)
+        ));
+        facts.push(format!(
+            "element_field\t{}\tvalue\t{}",
+            idx,
+            encode_nda_text(&element.value)
+        ));
         facts.push(format!(
             "element_field\t{}\ttarget_url\t{}",
             idx,
@@ -3233,11 +3568,27 @@ fn write_crawl_facts(
 
     for (form_idx, form) in forms.iter().enumerate() {
         facts.push(format!("form\t{}", form_idx));
-        facts.push(format!("form_field\t{}\tid\t{}", form_idx, encode_nda_text(&form.id)));
-        facts.push(format!("form_field\t{}\taction\t{}", form_idx, encode_nda_text(&form.action)));
-        facts.push(format!("form_field\t{}\tmethod\t{}", form_idx, encode_nda_text(&form.method)));
+        facts.push(format!(
+            "form_field\t{}\tid\t{}",
+            form_idx,
+            encode_nda_text(&form.id)
+        ));
+        facts.push(format!(
+            "form_field\t{}\taction\t{}",
+            form_idx,
+            encode_nda_text(&form.action)
+        ));
+        facts.push(format!(
+            "form_field\t{}\tmethod\t{}",
+            form_idx,
+            encode_nda_text(&form.method)
+        ));
         if let Some(submit_label) = &form.submit_label {
-            facts.push(format!("form_field\t{}\tsubmit_label\t{}", form_idx, encode_nda_text(submit_label)));
+            facts.push(format!(
+                "form_field\t{}\tsubmit_label\t{}",
+                form_idx,
+                encode_nda_text(submit_label)
+            ));
         }
         for (field_idx, field) in form.fields.iter().enumerate() {
             facts.push(format!("form_input\t{}\t{}", form_idx, field_idx));
@@ -3264,13 +3615,25 @@ fn write_crawl_facts(
 
     for (idx, cookie) in cookies.iter().enumerate() {
         facts.push(format!("cookie\t{}", idx));
-        facts.push(format!("cookie_field\t{}\tname\t{}", idx, encode_nda_text(&cookie.name)));
-        facts.push(format!("cookie_field\t{}\tvalue\t{}", idx, encode_nda_text(&cookie.value)));
+        facts.push(format!(
+            "cookie_field\t{}\tname\t{}",
+            idx,
+            encode_nda_text(&cookie.name)
+        ));
+        facts.push(format!(
+            "cookie_field\t{}\tvalue\t{}",
+            idx,
+            encode_nda_text(&cookie.value)
+        ));
     }
 
     for (bucket_idx, bucket) in storage.iter().enumerate() {
         facts.push(format!("storage\t{}", bucket_idx));
-        facts.push(format!("storage_field\t{}\tscope\t{}", bucket_idx, encode_nda_text(&bucket.scope)));
+        facts.push(format!(
+            "storage_field\t{}\tscope\t{}",
+            bucket_idx,
+            encode_nda_text(&bucket.scope)
+        ));
         for (entry_idx, (key, value)) in bucket.entries.iter().enumerate() {
             facts.push(format!("storage_entry\t{}\t{}", bucket_idx, entry_idx));
             facts.push(format!(
@@ -3290,35 +3653,86 @@ fn write_crawl_facts(
 
     for (idx, mutation) in mutations.iter().enumerate() {
         facts.push(format!("mutation\t{}", idx));
-        facts.push(format!("mutation_field\t{}\tlabel\t{}", idx, encode_nda_text(mutation)));
+        facts.push(format!(
+            "mutation_field\t{}\tlabel\t{}",
+            idx,
+            encode_nda_text(mutation)
+        ));
     }
 
     for (idx, request) in requests.iter().enumerate() {
         facts.push(format!("request\t{}", idx));
-        facts.push(format!("request_field\t{}\tmethod\t{}", idx, encode_nda_text(&request.method)));
-        facts.push(format!("request_field\t{}\turl\t{}", idx, encode_nda_text(&request.url)));
-        facts.push(format!("request_field\t{}\tstatus_code\t{}", idx, request.status_code));
-        facts.push(format!("request_field\t{}\tresource\t{}", idx, encode_nda_text(&request.resource)));
+        facts.push(format!(
+            "request_field\t{}\tmethod\t{}",
+            idx,
+            encode_nda_text(&request.method)
+        ));
+        facts.push(format!(
+            "request_field\t{}\turl\t{}",
+            idx,
+            encode_nda_text(&request.url)
+        ));
+        facts.push(format!(
+            "request_field\t{}\tstatus_code\t{}",
+            idx, request.status_code
+        ));
+        facts.push(format!(
+            "request_field\t{}\tresource\t{}",
+            idx,
+            encode_nda_text(&request.resource)
+        ));
     }
 
     for (idx, settle) in settle_signals.iter().enumerate() {
         facts.push(format!("settle_signal\t{}", idx));
-        facts.push(format!("settle_signal_field\t{}\tlabel\t{}", idx, encode_nda_text(settle)));
+        facts.push(format!(
+            "settle_signal_field\t{}\tlabel\t{}",
+            idx,
+            encode_nda_text(settle)
+        ));
     }
 
     for (idx, entry) in runtime_state.iter().enumerate() {
         facts.push(format!("runtime_state\t{}", idx));
-        facts.push(format!("runtime_state_field\t{}\tscope\t{}", idx, encode_nda_text(&entry.scope)));
-        facts.push(format!("runtime_state_field\t{}\tkey\t{}", idx, encode_nda_text(&entry.key)));
-        facts.push(format!("runtime_state_field\t{}\tvalue\t{}", idx, encode_nda_text(&entry.value)));
+        facts.push(format!(
+            "runtime_state_field\t{}\tscope\t{}",
+            idx,
+            encode_nda_text(&entry.scope)
+        ));
+        facts.push(format!(
+            "runtime_state_field\t{}\tkey\t{}",
+            idx,
+            encode_nda_text(&entry.key)
+        ));
+        facts.push(format!(
+            "runtime_state_field\t{}\tvalue\t{}",
+            idx,
+            encode_nda_text(&entry.value)
+        ));
     }
 
     for (idx, event) in protocol_events.iter().enumerate() {
         facts.push(format!("protocol_event\t{}", idx));
-        facts.push(format!("protocol_event_field\t{}\tkind\t{}", idx, encode_nda_text(&event.kind)));
-        facts.push(format!("protocol_event_field\t{}\tphase\t{}", idx, encode_nda_text(&event.phase)));
-        facts.push(format!("protocol_event_field\t{}\ttarget\t{}", idx, encode_nda_text(&event.target)));
-        facts.push(format!("protocol_event_field\t{}\tdetail\t{}", idx, encode_nda_text(&event.detail)));
+        facts.push(format!(
+            "protocol_event_field\t{}\tkind\t{}",
+            idx,
+            encode_nda_text(&event.kind)
+        ));
+        facts.push(format!(
+            "protocol_event_field\t{}\tphase\t{}",
+            idx,
+            encode_nda_text(&event.phase)
+        ));
+        facts.push(format!(
+            "protocol_event_field\t{}\ttarget\t{}",
+            idx,
+            encode_nda_text(&event.target)
+        ));
+        facts.push(format!(
+            "protocol_event_field\t{}\tdetail\t{}",
+            idx,
+            encode_nda_text(&event.detail)
+        ));
     }
 
     fs::write(&facts_path, facts.join("\n") + "\n")
@@ -3326,16 +3740,38 @@ fn write_crawl_facts(
     Ok(facts_path)
 }
 
-fn persist_snapshot_to_sitemap(snapshot: &BrowserPageSnapshot, sitemap_path: &Path) -> Result<(), String> {
-    let mut sm = SiteMap::open(sitemap_path, 0).map_err(|e| format!("Failed to open SiteMap: {:?}", e))?;
-    let page_hash = sm.register_string(&snapshot.url).map_err(|e| e.to_string())?;
-    let title_hash = sm.register_string(&snapshot.title).map_err(|e| e.to_string())?;
-    let summary_hash = sm.register_string(&snapshot.summary).map_err(|e| e.to_string())?;
+fn persist_snapshot_to_sitemap(
+    snapshot: &BrowserPageSnapshot,
+    sitemap_path: &Path,
+) -> Result<(), String> {
+    let mut sm =
+        SiteMap::open(sitemap_path, 0).map_err(|e| format!("Failed to open SiteMap: {:?}", e))?;
+    let page_hash = sm
+        .register_string(&snapshot.url)
+        .map_err(|e| e.to_string())?;
+    let title_hash = sm
+        .register_string(&snapshot.title)
+        .map_err(|e| e.to_string())?;
+    let summary_hash = sm
+        .register_string(&snapshot.summary)
+        .map_err(|e| e.to_string())?;
 
     let mut live_triples = vec![
-        VcTriple { subject_hash: page_hash, predicate_id: 10, object_hash: page_hash },
-        VcTriple { subject_hash: page_hash, predicate_id: 11, object_hash: title_hash },
-        VcTriple { subject_hash: page_hash, predicate_id: 12, object_hash: summary_hash },
+        VcTriple {
+            subject_hash: page_hash,
+            predicate_id: 10,
+            object_hash: page_hash,
+        },
+        VcTriple {
+            subject_hash: page_hash,
+            predicate_id: 11,
+            object_hash: title_hash,
+        },
+        VcTriple {
+            subject_hash: page_hash,
+            predicate_id: 12,
+            object_hash: summary_hash,
+        },
     ];
 
     for triple in &live_triples {
@@ -3361,9 +3797,21 @@ fn persist_snapshot_to_sitemap(snapshot: &BrowserPageSnapshot, sitemap_path: &Pa
         let el_hash = u64::from_le_bytes(digest[0..8].try_into().unwrap());
 
         for triple in [
-            VcTriple { subject_hash: el_hash, predicate_id: 16, object_hash: el_role_hash },
-            VcTriple { subject_hash: el_hash, predicate_id: 17, object_hash: el_name_hash },
-            VcTriple { subject_hash: el_hash, predicate_id: 18, object_hash: el_val_hash },
+            VcTriple {
+                subject_hash: el_hash,
+                predicate_id: 16,
+                object_hash: el_role_hash,
+            },
+            VcTriple {
+                subject_hash: el_hash,
+                predicate_id: 17,
+                object_hash: el_name_hash,
+            },
+            VcTriple {
+                subject_hash: el_hash,
+                predicate_id: 18,
+                object_hash: el_val_hash,
+            },
         ] {
             sm.put_node(&NdaNode::Triple {
                 subject_hash: triple.subject_hash,
@@ -3376,7 +3824,11 @@ fn persist_snapshot_to_sitemap(snapshot: &BrowserPageSnapshot, sitemap_path: &Pa
 
         if let Some(target) = &el.target_url {
             let target_hash = sm.register_string(target).map_err(|e| e.to_string())?;
-            let triple = VcTriple { subject_hash: page_hash, predicate_id: 1, object_hash: target_hash };
+            let triple = VcTriple {
+                subject_hash: page_hash,
+                predicate_id: 1,
+                object_hash: target_hash,
+            };
             sm.put_node(&NdaNode::Triple {
                 subject_hash: triple.subject_hash,
                 predicate_id: triple.predicate_id,
@@ -3391,10 +3843,18 @@ fn persist_snapshot_to_sitemap(snapshot: &BrowserPageSnapshot, sitemap_path: &Pa
 
     if !aom_node_hashes.is_empty() {
         let aom_root_node = NdaNode::Scope {
-            children: aom_node_hashes.iter().copied().map(|target| NdaNode::Call { target }).collect(),
+            children: aom_node_hashes
+                .iter()
+                .copied()
+                .map(|target| NdaNode::Call { target })
+                .collect(),
         };
         let root_hash = sm.put_node(&aom_root_node).map_err(|e| e.to_string())?;
-        let triple = VcTriple { subject_hash: page_hash, predicate_id: 6, object_hash: root_hash };
+        let triple = VcTriple {
+            subject_hash: page_hash,
+            predicate_id: 6,
+            object_hash: root_hash,
+        };
         sm.put_node(&NdaNode::Triple {
             subject_hash: triple.subject_hash,
             predicate_id: triple.predicate_id,
@@ -3412,8 +3872,7 @@ fn persist_snapshot_to_sitemap(snapshot: &BrowserPageSnapshot, sitemap_path: &Pa
 pub fn render_session_create_report(report: &BrowserSessionCreateReport) -> String {
     format!(
         "Created browser session '{}'\nSession JSON: {}",
-        report.session.id,
-        report.session_json_path,
+        report.session.id, report.session_json_path,
     )
 }
 
@@ -3445,7 +3904,10 @@ pub fn render_session_network_update_report(report: &BrowserSessionNetworkUpdate
     )
 }
 
-pub fn create_session_report(workspace_root: &Path, session_id: &str) -> Result<BrowserSessionCreateReport, String> {
+pub fn create_session_report(
+    workspace_root: &Path,
+    session_id: &str,
+) -> Result<BrowserSessionCreateReport, String> {
     let session = empty_browser_session_state(session_id);
     let path = save_session_state(workspace_root, &session)?;
     Ok(BrowserSessionCreateReport {
@@ -3459,8 +3921,11 @@ pub fn create_session(workspace_root: &Path, session_id: &str) -> Result<PathBuf
     Ok(PathBuf::from(report.session_json_path))
 }
 
-pub fn runtime_session_state_to_json(session: &RuntimeBrowserSessionState) -> Result<String, String> {
-    serde_json::to_string_pretty(session).map_err(|err| format!("serialise runtime browser session: {err}"))
+pub fn runtime_session_state_to_json(
+    session: &RuntimeBrowserSessionState,
+) -> Result<String, String> {
+    serde_json::to_string_pretty(session)
+        .map_err(|err| format!("serialise runtime browser session: {err}"))
 }
 
 pub fn save_runtime_session_state(
@@ -3486,23 +3951,33 @@ pub fn load_runtime_session_state(
     serde_json::from_slice(&raw).map_err(|err| format!("parse runtime browser session: {err}"))
 }
 
-pub fn save_session_state(workspace_root: &Path, session: &BrowserSessionState) -> Result<PathBuf, String> {
+pub fn save_session_state(
+    workspace_root: &Path,
+    session: &BrowserSessionState,
+) -> Result<PathBuf, String> {
     let path = session_file_path(workspace_root, &session.id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create session dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(session).map_err(|err| format!("serialise browser session: {err}"))?;
+    let json = serde_json::to_vec_pretty(session)
+        .map_err(|err| format!("serialise browser session: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write browser session: {err}"))?;
     Ok(path)
 }
 
-pub fn load_session_state(workspace_root: &Path, session_id: &str) -> Result<BrowserSessionState, String> {
+pub fn load_session_state(
+    workspace_root: &Path,
+    session_id: &str,
+) -> Result<BrowserSessionState, String> {
     let path = session_file_path(workspace_root, session_id);
     let raw = fs::read(&path).map_err(|err| format!("read browser session: {err}"))?;
     serde_json::from_slice(&raw).map_err(|err| format!("parse browser session: {err}"))
 }
 
-pub fn read_session_report(workspace_root: &Path, session_id: &str) -> Result<BrowserSessionReadReport, String> {
+pub fn read_session_report(
+    workspace_root: &Path,
+    session_id: &str,
+) -> Result<BrowserSessionReadReport, String> {
     let session = load_session_state(workspace_root, session_id)?;
     Ok(BrowserSessionReadReport {
         session: summarize_session(session),
@@ -3538,7 +4013,8 @@ fn save_session_transcript_entries(
 ) -> Result<PathBuf, String> {
     let path = browser_session_transcript_path(workspace_root, session_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create browser session transcript dir: {err}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create browser session transcript dir: {err}"))?;
     }
     let json = serde_json::to_vec_pretty(entries)
         .map_err(|err| format!("serialise browser session transcript: {err}"))?;
@@ -3604,7 +4080,10 @@ fn recent_failed_session_transcript_entries(
         .collect::<Vec<_>>();
     entries.sort_by(|left, right| right.sequence.cmp(&left.sequence));
     entries.truncate(limit);
-    Ok(entries.into_iter().map(summarize_session_transcript_entry).collect())
+    Ok(entries
+        .into_iter()
+        .map(summarize_session_transcript_entry)
+        .collect())
 }
 
 pub fn read_session_transcript_report(
@@ -3641,7 +4120,12 @@ pub fn read_session_transcript_entry(
     load_session_transcript_entries(workspace_root, session_id)?
         .into_iter()
         .find(|entry| entry.sequence == sequence)
-        .ok_or_else(|| format!("browser session transcript entry {} not found for '{}'", sequence, session_id))
+        .ok_or_else(|| {
+            format!(
+                "browser session transcript entry {} not found for '{}'",
+                sequence, session_id
+            )
+        })
 }
 
 pub fn read_session_network_report(
@@ -3757,30 +4241,28 @@ pub fn list_sessions(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.id.cmp(&right.id));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.id.cmp(&right.id)
+    });
     Ok(items)
 }
 
 pub fn session_state_to_json(session: &BrowserSessionState) -> Result<String, String> {
-    serde_json::to_string_pretty(session).map_err(|err| format!("serialise browser session state: {err}"))
+    serde_json::to_string_pretty(session)
+        .map_err(|err| format!("serialise browser session state: {err}"))
 }
 
 pub fn render_storage_read_report(report: &BrowserStorageReadReport) -> String {
     format!(
         "Read browser storage for session '{}' scope '{}'\nEntries: {}\nSession JSON: {}",
-        report.session.id,
-        report.scope,
-        report.entry_count,
-        report.session_json_path,
+        report.session.id, report.scope, report.entry_count, report.session_json_path,
     )
 }
 
 pub fn render_storage_update_report(report: &BrowserStorageUpdateReport) -> String {
     format!(
         "Updated browser storage for session '{}' scope '{}'\nSession JSON: {}",
-        report.session.id,
-        report.scope,
-        report.session_json_path,
+        report.session.id, report.scope, report.session_json_path,
     )
 }
 
@@ -3833,14 +4315,22 @@ fn filter_csrf_storage(entries: &HashMap<String, String>) -> HashMap<String, Str
 
 fn snapshot_has_login_form(snapshot: &BrowserPageSnapshot) -> bool {
     contains_any_case_insensitive(&snapshot.title, &["login", "sign in", "signin", "reauth"])
-        || contains_any_case_insensitive(&snapshot.summary, &["login", "sign in", "signin", "reauth"])
+        || contains_any_case_insensitive(
+            &snapshot.summary,
+            &["login", "sign in", "signin", "reauth"],
+        )
         || snapshot.forms.iter().any(|form| {
             contains_any_case_insensitive(&form.id, &["login", "signin", "auth"])
                 || contains_any_case_insensitive(&form.action, &["login", "signin", "auth"])
                 || form
                     .submit_label
                     .as_deref()
-                    .map(|label| contains_any_case_insensitive(label, &["login", "sign in", "signin", "continue"]))
+                    .map(|label| {
+                        contains_any_case_insensitive(
+                            label,
+                            &["login", "sign in", "signin", "continue"],
+                        )
+                    })
                     .unwrap_or(false)
         })
         || snapshot.elements.iter().any(|element| {
@@ -3849,7 +4339,14 @@ fn snapshot_has_login_form(snapshot: &BrowserPageSnapshot) -> bool {
 }
 
 fn snapshot_has_expired_marker(snapshot: &BrowserPageSnapshot) -> bool {
-    let expired_needles = ["expired", "reauth", "login_required", "unauthorized", "forbidden", "signed out"];
+    let expired_needles = [
+        "expired",
+        "reauth",
+        "login_required",
+        "unauthorized",
+        "forbidden",
+        "signed out",
+    ];
     contains_any_case_insensitive(&snapshot.title, &expired_needles)
         || contains_any_case_insensitive(&snapshot.summary, &expired_needles)
         || snapshot
@@ -3919,7 +4416,9 @@ fn snapshot_router_name(snapshot: &BrowserPageSnapshot) -> Option<String> {
     snapshot
         .runtime_state
         .iter()
-        .find(|entry| entry.scope.eq_ignore_ascii_case("router") && entry.key.eq_ignore_ascii_case("name"))
+        .find(|entry| {
+            entry.scope.eq_ignore_ascii_case("router") && entry.key.eq_ignore_ascii_case("name")
+        })
         .map(|entry| entry.value.clone())
 }
 
@@ -3933,7 +4432,11 @@ fn collect_auth_signals(
     router_name: Option<&str>,
 ) -> Vec<String> {
     let mut signals = Vec::new();
-    for cookie in session.cookies.iter().filter(|cookie| is_auth_cookie_name(&cookie.name)) {
+    for cookie in session
+        .cookies
+        .iter()
+        .filter(|cookie| is_auth_cookie_name(&cookie.name))
+    {
         signals.push(format!("cookie:{}", cookie.name));
     }
     if has_csrf_token {
@@ -3949,18 +4452,25 @@ fn collect_auth_signals(
         signals.push(format!("router:{}", value));
     }
     if let Some(snapshot) = snapshot {
-        for signal in snapshot
-            .settle_signals
-            .iter()
-            .filter(|signal| contains_any_case_insensitive(signal, &["auth", "login", "session", "csrf", "expired"]))
-        {
+        for signal in snapshot.settle_signals.iter().filter(|signal| {
+            contains_any_case_insensitive(signal, &["auth", "login", "session", "csrf", "expired"])
+        }) {
             signals.push(format!("settle:{}", signal));
         }
         for event in snapshot.protocol_events.iter().filter(|event| {
-            contains_any_case_insensitive(&event.kind, &["auth", "login", "session", "csrf", "expired"])
-                || contains_any_case_insensitive(&event.phase, &["auth", "login", "session", "csrf", "expired"])
-                || contains_any_case_insensitive(&event.target, &["auth", "login", "session", "csrf", "expired"])
-                || contains_any_case_insensitive(&event.detail, &["auth", "login", "session", "csrf", "expired"])
+            contains_any_case_insensitive(
+                &event.kind,
+                &["auth", "login", "session", "csrf", "expired"],
+            ) || contains_any_case_insensitive(
+                &event.phase,
+                &["auth", "login", "session", "csrf", "expired"],
+            ) || contains_any_case_insensitive(
+                &event.target,
+                &["auth", "login", "session", "csrf", "expired"],
+            ) || contains_any_case_insensitive(
+                &event.detail,
+                &["auth", "login", "session", "csrf", "expired"],
+            )
         }) {
             signals.push(format!("protocol:{}:{}", event.kind, event.phase));
         }
@@ -3976,9 +4486,7 @@ fn collect_auth_signals(
 pub fn render_cookie_read_report(report: &BrowserCookieReadReport) -> String {
     format!(
         "Read browser cookies for session '{}'\nCookies: {}\nSession JSON: {}",
-        report.session.id,
-        report.cookie_count,
-        report.session_json_path,
+        report.session.id, report.cookie_count, report.session_json_path,
     )
 }
 
@@ -3994,27 +4502,48 @@ pub fn render_cookie_update_report(report: &BrowserCookieUpdateReport) -> String
 
 pub fn render_auth_reseed_report(report: &BrowserAuthReseedReport) -> String {
     let mut details = vec![
-        format!("Reseeded auth state into session '{}'", report.target_session.id),
+        format!(
+            "Reseeded auth state into session '{}'",
+            report.target_session.id
+        ),
         format!("Source kind: {}", report.source_kind),
         format!("Source session: {}", report.source_session_id),
         format!("Copied auth cookies: {}", report.copied_cookie_count),
-        format!("Copied local storage entries: {}", report.copied_local_storage_count),
-        format!("Copied session storage entries: {}", report.copied_session_storage_count),
+        format!(
+            "Copied local storage entries: {}",
+            report.copied_local_storage_count
+        ),
+        format!(
+            "Copied session storage entries: {}",
+            report.copied_session_storage_count
+        ),
         format!("Session JSON: {}", report.session_json_path),
         format!("Auth diagnosis: {}", report.auth_diagnostics.diagnosis),
-        format!("Auth recommendation: {}", report.auth_diagnostics.recommended_action),
+        format!(
+            "Auth recommendation: {}",
+            report.auth_diagnostics.recommended_action
+        ),
     ];
     if let Some(checkpoint_name) = report.source_checkpoint_name.as_deref() {
         details.push(format!("Source checkpoint: {}", checkpoint_name));
     }
     if !report.copied_cookie_names.is_empty() {
-        details.push(format!("Cookie names: {}", report.copied_cookie_names.join(", ")));
+        details.push(format!(
+            "Cookie names: {}",
+            report.copied_cookie_names.join(", ")
+        ));
     }
     if !report.copied_local_storage_keys.is_empty() {
-        details.push(format!("Local storage keys: {}", report.copied_local_storage_keys.join(", ")));
+        details.push(format!(
+            "Local storage keys: {}",
+            report.copied_local_storage_keys.join(", ")
+        ));
     }
     if !report.copied_session_storage_keys.is_empty() {
-        details.push(format!("Session storage keys: {}", report.copied_session_storage_keys.join(", ")));
+        details.push(format!(
+            "Session storage keys: {}",
+            report.copied_session_storage_keys.join(", ")
+        ));
     }
     details.join("\n")
 }
@@ -4025,8 +4554,14 @@ pub fn render_auth_profile_save_report(report: &BrowserAuthProfileSaveReport) ->
         format!("Source kind: {}", report.profile.source_kind),
         format!("Source session: {}", report.profile.source_session_id),
         format!("Auth cookies: {}", report.profile.cookie_count),
-        format!("Local storage entries: {}", report.profile.local_storage_count),
-        format!("Session storage entries: {}", report.profile.session_storage_count),
+        format!(
+            "Local storage entries: {}",
+            report.profile.local_storage_count
+        ),
+        format!(
+            "Session storage entries: {}",
+            report.profile.session_storage_count
+        ),
         format!("Profile JSON: {}", report.profile_json_path),
         format!("Auth diagnosis: {}", report.profile.diagnosis),
         format!("Auth recommendation: {}", report.profile.recommended_action),
@@ -4039,23 +4574,44 @@ pub fn render_auth_profile_save_report(report: &BrowserAuthProfileSaveReport) ->
 
 pub fn render_auth_profile_apply_report(report: &BrowserAuthProfileApplyReport) -> String {
     let mut details = vec![
-        format!("Applied browser auth profile '{}' to session '{}'", report.profile_name, report.target_session.id),
+        format!(
+            "Applied browser auth profile '{}' to session '{}'",
+            report.profile_name, report.target_session.id
+        ),
         format!("Copied auth cookies: {}", report.copied_cookie_count),
-        format!("Copied local storage entries: {}", report.copied_local_storage_count),
-        format!("Copied session storage entries: {}", report.copied_session_storage_count),
+        format!(
+            "Copied local storage entries: {}",
+            report.copied_local_storage_count
+        ),
+        format!(
+            "Copied session storage entries: {}",
+            report.copied_session_storage_count
+        ),
         format!("Session JSON: {}", report.session_json_path),
         format!("Profile JSON: {}", report.profile_json_path),
         format!("Auth diagnosis: {}", report.auth_diagnostics.diagnosis),
-        format!("Auth recommendation: {}", report.auth_diagnostics.recommended_action),
+        format!(
+            "Auth recommendation: {}",
+            report.auth_diagnostics.recommended_action
+        ),
     ];
     if !report.copied_cookie_names.is_empty() {
-        details.push(format!("Cookie names: {}", report.copied_cookie_names.join(", ")));
+        details.push(format!(
+            "Cookie names: {}",
+            report.copied_cookie_names.join(", ")
+        ));
     }
     if !report.copied_local_storage_keys.is_empty() {
-        details.push(format!("Local storage keys: {}", report.copied_local_storage_keys.join(", ")));
+        details.push(format!(
+            "Local storage keys: {}",
+            report.copied_local_storage_keys.join(", ")
+        ));
     }
     if !report.copied_session_storage_keys.is_empty() {
-        details.push(format!("Session storage keys: {}", report.copied_session_storage_keys.join(", ")));
+        details.push(format!(
+            "Session storage keys: {}",
+            report.copied_session_storage_keys.join(", ")
+        ));
     }
     details.join("\n")
 }
@@ -4094,13 +4650,32 @@ pub fn render_session_health_report(report: &BrowserSessionHealthReport) -> Stri
         format!("Compatibility: {}", report.compatibility.level),
         format!("Compatibility cause: {}", report.compatibility.cause),
         format!("Compatibility summary: {}", report.compatibility.summary),
-        format!("Compatibility action: {}", report.compatibility.recommended_action),
+        format!(
+            "Compatibility action: {}",
+            report.compatibility.recommended_action
+        ),
         format!("Checkpoint count: {}", report.checkpoint_count),
-        format!("Recent transcript failures: {}", report.recent_failure_count),
-        format!("User-Agent: {}", report.network.user_agent.as_deref().unwrap_or(default_browser_user_agent())),
+        format!(
+            "Recent transcript failures: {}",
+            report.recent_failure_count
+        ),
+        format!(
+            "User-Agent: {}",
+            report
+                .network
+                .user_agent
+                .as_deref()
+                .unwrap_or(default_browser_user_agent())
+        ),
         format!("Network headers: {}", report.network.headers.len()),
-        format!("Allow prefixes: {}", report.network.allowed_url_prefixes.len()),
-        format!("Block prefixes: {}", report.network.blocked_url_prefixes.len()),
+        format!(
+            "Allow prefixes: {}",
+            report.network.allowed_url_prefixes.len()
+        ),
+        format!(
+            "Block prefixes: {}",
+            report.network.blocked_url_prefixes.len()
+        ),
         format!("Session JSON: {}", report.session_json_path),
     ];
     if let Some(snapshot) = report.snapshot.as_ref() {
@@ -4119,11 +4694,17 @@ pub fn render_session_health_report(report: &BrowserSessionHealthReport) -> Stri
         }
     }
     if let Some(latest_failure) = report.latest_failure.as_ref() {
-        details.push(format!("Latest failure: #{} [{}] {}", latest_failure.sequence, latest_failure.event_kind, latest_failure.summary));
+        details.push(format!(
+            "Latest failure: #{} [{}] {}",
+            latest_failure.sequence, latest_failure.event_kind, latest_failure.summary
+        ));
     }
     if !report.recent_failures.is_empty() {
         for failure in &report.recent_failures {
-            details.push(format!("Recent failure #{} [{}] {}", failure.sequence, failure.event_kind, failure.summary));
+            details.push(format!(
+                "Recent failure #{} [{}] {}",
+                failure.sequence, failure.event_kind, failure.summary
+            ));
         }
     }
     if !report.evidence_signals.is_empty() {
@@ -4258,14 +4839,23 @@ fn build_auth_diagnostics_report(
     snapshot_json_path: Option<String>,
 ) -> BrowserAuthDiagnosticsReport {
     let session_id = session.id.clone();
-    let has_login_form = snapshot.as_ref().map(snapshot_has_login_form).unwrap_or(false);
-    let has_auth_cookie = session.cookies.iter().any(|cookie| is_auth_cookie_name(&cookie.name));
+    let has_login_form = snapshot
+        .as_ref()
+        .map(snapshot_has_login_form)
+        .unwrap_or(false);
+    let has_auth_cookie = session
+        .cookies
+        .iter()
+        .any(|cookie| is_auth_cookie_name(&cookie.name));
     let has_csrf_token = session
         .local_storage
         .keys()
         .chain(session.session_storage.keys())
         .any(|key| is_csrf_key(key))
-        || session.cookies.iter().any(|cookie| is_csrf_key(&cookie.name));
+        || session
+            .cookies
+            .iter()
+            .any(|cookie| is_csrf_key(&cookie.name));
     let auth_state = snapshot.as_ref().and_then(snapshot_auth_state);
     let router_name = snapshot.as_ref().and_then(snapshot_router_name);
     let auth_ready = snapshot
@@ -4341,9 +4931,11 @@ pub fn auth_diagnostics_report(
         Some(url) => load_snapshot_json(url, sitemap_path).ok(),
         None => None,
     };
-    let snapshot_json_path = snapshot
-        .as_ref()
-        .map(|snapshot| browser_snapshot_path(&snapshot.url, sitemap_path).display().to_string());
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
     Ok(build_auth_diagnostics_report(
         workspace_root,
         session,
@@ -4361,8 +4953,19 @@ fn build_access_diagnostics_report(
     let session_id = session.id.clone();
     let router_name = snapshot.as_ref().and_then(snapshot_router_name);
     let captcha_needles = ["captcha", "recaptcha", "hcaptcha", "turnstile"];
-    let challenge_needles = ["challenge", "verify you are human", "bot check", "cloudflare", "attention required"];
-    let rate_limit_needles = ["rate limit", "too many requests", "retry later", "slow down"];
+    let challenge_needles = [
+        "challenge",
+        "verify you are human",
+        "bot check",
+        "cloudflare",
+        "attention required",
+    ];
+    let rate_limit_needles = [
+        "rate limit",
+        "too many requests",
+        "retry later",
+        "slow down",
+    ];
     let block_needles = ["access denied", "request blocked", "blocked", "forbidden"];
 
     let diagnosis = if snapshot
@@ -4403,18 +5006,66 @@ fn build_access_diagnostics_report(
 
     let mut challenge_signals = Vec::new();
     if let Some(snapshot) = snapshot.as_ref() {
-        for signal in snapshot
-            .settle_signals
-            .iter()
-            .filter(|signal| contains_any_case_insensitive(signal, &["captcha", "challenge", "blocked", "forbidden", "rate limit", "too many requests", "cloudflare", "human"]))
-        {
+        for signal in snapshot.settle_signals.iter().filter(|signal| {
+            contains_any_case_insensitive(
+                signal,
+                &[
+                    "captcha",
+                    "challenge",
+                    "blocked",
+                    "forbidden",
+                    "rate limit",
+                    "too many requests",
+                    "cloudflare",
+                    "human",
+                ],
+            )
+        }) {
             challenge_signals.push(format!("settle:{}", signal));
         }
         for event in snapshot.protocol_events.iter().filter(|event| {
-            contains_any_case_insensitive(&event.kind, &["captcha", "challenge", "blocked", "forbidden", "rate", "cloudflare"])
-                || contains_any_case_insensitive(&event.phase, &["captcha", "challenge", "blocked", "forbidden", "rate", "cloudflare"])
-                || contains_any_case_insensitive(&event.target, &["captcha", "challenge", "blocked", "forbidden", "rate", "cloudflare"])
-                || contains_any_case_insensitive(&event.detail, &["captcha", "challenge", "blocked", "forbidden", "rate", "cloudflare", "human"])
+            contains_any_case_insensitive(
+                &event.kind,
+                &[
+                    "captcha",
+                    "challenge",
+                    "blocked",
+                    "forbidden",
+                    "rate",
+                    "cloudflare",
+                ],
+            ) || contains_any_case_insensitive(
+                &event.phase,
+                &[
+                    "captcha",
+                    "challenge",
+                    "blocked",
+                    "forbidden",
+                    "rate",
+                    "cloudflare",
+                ],
+            ) || contains_any_case_insensitive(
+                &event.target,
+                &[
+                    "captcha",
+                    "challenge",
+                    "blocked",
+                    "forbidden",
+                    "rate",
+                    "cloudflare",
+                ],
+            ) || contains_any_case_insensitive(
+                &event.detail,
+                &[
+                    "captcha",
+                    "challenge",
+                    "blocked",
+                    "forbidden",
+                    "rate",
+                    "cloudflare",
+                    "human",
+                ],
+            )
         }) {
             challenge_signals.push(format!("protocol:{}:{}", event.kind, event.phase));
         }
@@ -4462,9 +5113,11 @@ pub fn access_diagnostics_report(
         Some(url) => load_snapshot_json(url, sitemap_path).ok(),
         None => None,
     };
-    let snapshot_json_path = snapshot
-        .as_ref()
-        .map(|snapshot| browser_snapshot_path(&snapshot.url, sitemap_path).display().to_string());
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
     Ok(build_access_diagnostics_report(
         workspace_root,
         session,
@@ -4478,7 +5131,9 @@ fn html_contains_compatibility_marker(html: &str, needles: &[&str]) -> bool {
 }
 
 fn html_count_case_insensitive(html: &str, needle: &str) -> usize {
-    html.to_ascii_lowercase().matches(&needle.to_ascii_lowercase()).count()
+    html.to_ascii_lowercase()
+        .matches(&needle.to_ascii_lowercase())
+        .count()
 }
 
 fn build_compatibility_report(
@@ -4492,10 +5147,24 @@ fn build_compatibility_report(
     let mut spa_shell = false;
     let mut hydration_markers = false;
     let html_mentions_webgl = html_fallback
-        .map(|html| contains_any_case_insensitive(html, &["webgl", "webgpu", "three.js", "babylon", "pixi"]))
+        .map(|html| {
+            contains_any_case_insensitive(html, &["webgl", "webgpu", "three.js", "babylon", "pixi"])
+        })
         .unwrap_or(false);
     let html_mentions_device_features = html_fallback
-        .map(|html| contains_any_case_insensitive(html, &["navigator.webdriver", "deviceorientation", "pointerlock", "getusermedia", "webauthn", "passkey"]))
+        .map(|html| {
+            contains_any_case_insensitive(
+                html,
+                &[
+                    "navigator.webdriver",
+                    "deviceorientation",
+                    "pointerlock",
+                    "getusermedia",
+                    "webauthn",
+                    "passkey",
+                ],
+            )
+        })
         .unwrap_or(false);
 
     if let Some(html) = html_fallback {
@@ -4547,7 +5216,10 @@ fn build_compatibility_report(
     }
 
     let challenge_blocked = access_diagnostics.diagnosis != "clear";
-    let anti_bot_limited = matches!(access_diagnostics.diagnosis.as_str(), "captcha_required" | "anti_bot_challenge" | "rate_limited" | "access_blocked");
+    let anti_bot_limited = matches!(
+        access_diagnostics.diagnosis.as_str(),
+        "captcha_required" | "anti_bot_challenge" | "rate_limited" | "access_blocked"
+    );
 
     let (level, cause, summary, recommended_action) = match snapshot {
         Some(snapshot) => {
@@ -4558,13 +5230,25 @@ fn build_compatibility_report(
                 .count();
             let semantic_element_count = snapshot.elements.len();
             let form_count = snapshot.forms.len();
-            let field_count = snapshot.forms.iter().map(|form| form.fields.len()).sum::<usize>();
+            let field_count = snapshot
+                .forms
+                .iter()
+                .map(|form| form.fields.len())
+                .sum::<usize>();
             let runtime_state_count = snapshot.runtime_state.len();
             let network_summary = summarize_network_activity(&snapshot.protocol_events);
-            let live_runtime_count = network_summary.event_stream_count + network_summary.websocket_count;
-            let runtime_heavy = script_count >= 6 || spa_shell || hydration_markers || runtime_state_count >= 4 || live_runtime_count > 0;
-            let canvas_only = (canvas_count > 0 || html_mentions_webgl) && semantic_element_count == 0 && form_count == 0;
-            let semantic_surface_missing = semantic_element_count == 0 && form_count == 0 && field_count == 0;
+            let live_runtime_count =
+                network_summary.event_stream_count + network_summary.websocket_count;
+            let runtime_heavy = script_count >= 6
+                || spa_shell
+                || hydration_markers
+                || runtime_state_count >= 4
+                || live_runtime_count > 0;
+            let canvas_only = (canvas_count > 0 || html_mentions_webgl)
+                && semantic_element_count == 0
+                && form_count == 0;
+            let semantic_surface_missing =
+                semantic_element_count == 0 && form_count == 0 && field_count == 0;
             let device_or_identity_limited = html_mentions_device_features || anti_bot_limited;
 
             signals.push(format!("snapshot:elements={semantic_element_count}"));
@@ -4589,6 +5273,39 @@ fn build_compatibility_report(
                 .find(|entry| entry.scope == "runtime_session" && entry.key == "shadow_host_count")
                 .and_then(|entry| entry.value.parse::<usize>().ok())
                 .unwrap_or(0);
+            let runtime_canvas_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| entry.scope == "runtime_session" && entry.key == "canvas_count")
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or(0);
+            let runtime_webgl_canvas_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| entry.scope == "runtime_session" && entry.key == "webgl_canvas_count")
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or_else(|| {
+                    snapshot
+                        .runtime_state
+                        .iter()
+                        .find(|entry| entry.scope == "runtime_canvas" && entry.key == "webgl_count")
+                        .and_then(|entry| entry.value.parse::<usize>().ok())
+                        .unwrap_or(0)
+                });
+            let runtime_canvas_evidence_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| {
+                    entry.scope == "runtime_canvas" && entry.key == "runtime_evidence_count"
+                })
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or(0);
+            let runtime_canvas_animated_count = snapshot
+                .runtime_state
+                .iter()
+                .find(|entry| entry.scope == "runtime_canvas" && entry.key == "animated_count")
+                .and_then(|entry| entry.value.parse::<usize>().ok())
+                .unwrap_or(0);
             let accessible_frame_count = snapshot
                 .runtime_state
                 .iter()
@@ -4597,11 +5314,34 @@ fn build_compatibility_report(
                 .unwrap_or(0);
             if frame_count > 0 {
                 signals.push(format!("runtime:frames={frame_count}"));
-                signals.push(format!("runtime:accessible_frames={accessible_frame_count}"));
+                signals.push(format!(
+                    "runtime:accessible_frames={accessible_frame_count}"
+                ));
             }
             if shadow_host_count > 0 {
                 signals.push(format!("runtime:shadow_hosts={shadow_host_count}"));
             }
+            if runtime_canvas_count > 0 {
+                signals.push(format!("runtime:canvases={runtime_canvas_count}"));
+                signals.push(format!(
+                    "runtime:webgl_canvases={runtime_webgl_canvas_count}"
+                ));
+                if runtime_canvas_evidence_count > 0 {
+                    signals.push(format!(
+                        "runtime:canvas_evidence={runtime_canvas_evidence_count}"
+                    ));
+                }
+                if runtime_canvas_animated_count > 0 {
+                    signals.push(format!(
+                        "runtime:animated_canvases={runtime_canvas_animated_count}"
+                    ));
+                }
+            }
+            let runtime_canvas_only = runtime_canvas_count > 0 && semantic_surface_missing;
+            let runtime_canvas_heavy = runtime_canvas_count > 0
+                && (runtime_webgl_canvas_count > 0
+                    || runtime_canvas_evidence_count > 0
+                    || runtime_canvas_animated_count > 0);
 
             if challenge_blocked {
                 (
@@ -4613,12 +5353,19 @@ fn build_compatibility_report(
                     ),
                     access_diagnostics.recommended_action.clone(),
                 )
-            } else if canvas_only {
+            } else if canvas_only || runtime_canvas_only {
                 (
                     "unsupported".to_string(),
                     "canvas_or_webgl_surface".to_string(),
                     "The page appears canvas- or WebGL-driven without a usable semantic surface, which the current static browser engine cannot operate reliably.".to_string(),
                     "Escalate to a richer browser/runtime with canvas or WebGL understanding, or use a site path that exposes ordinary semantic controls instead of a drawn surface.".to_string(),
+                )
+            } else if runtime_canvas_heavy {
+                (
+                    "runtime_limited".to_string(),
+                    "canvas_runtime_surface".to_string(),
+                    "Runtime capture found active canvas or WebGL surfaces, but the current semantic snapshot still may not expose the underlying controls reliably.".to_string(),
+                    "Prefer runtime-backed capture and verification for the needed flow, and treat canvas or WebGL evidence as a sign to verify each interaction outcome instead of assuming the rendered surface is fully represented semantically.".to_string(),
                 )
             } else if semantic_surface_missing && runtime_heavy {
                 (
@@ -4682,7 +5429,12 @@ fn build_compatibility_report(
                     ),
                     access_diagnostics.recommended_action.clone(),
                 )
-            } else if script_count >= 3 || canvas_count > 0 || spa_shell || hydration_markers || html_mentions_webgl {
+            } else if script_count >= 3
+                || canvas_count > 0
+                || spa_shell
+                || hydration_markers
+                || html_mentions_webgl
+            {
                 (
                     "unsupported".to_string(),
                     "html_only_runtime_surface".to_string(),
@@ -4741,20 +5493,27 @@ fn latest_session_checkpoint_summary(
         }
         checkpoint_count += 1;
         let raw = fs::read(&path).map_err(|err| format!("read browser checkpoint: {err}"))?;
-        let checkpoint: BrowserSessionCheckpoint =
-            serde_json::from_slice(&raw).map_err(|err| format!("parse browser checkpoint: {err}"))?;
+        let checkpoint: BrowserSessionCheckpoint = serde_json::from_slice(&raw)
+            .map_err(|err| format!("parse browser checkpoint: {err}"))?;
         let mut summary = summarize_session_checkpoint(checkpoint);
         let path_string = path.display().to_string();
         summary.checkpoint_json_path = Some(path_string.clone());
-        let modified = entry.metadata().ok().and_then(|metadata| metadata.modified().ok());
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
         let replace = match latest.as_ref() {
             None => true,
-            Some((best_modified, best_path, _)) => match (modified.as_ref(), best_modified.as_ref()) {
-                (Some(current), Some(best)) => current > best || (current == best && path_string > *best_path),
-                (Some(_), None) => true,
-                (None, Some(_)) => false,
-                (None, None) => path_string > *best_path,
-            },
+            Some((best_modified, best_path, _)) => {
+                match (modified.as_ref(), best_modified.as_ref()) {
+                    (Some(current), Some(best)) => {
+                        current > best || (current == best && path_string > *best_path)
+                    }
+                    (Some(_), None) => true,
+                    (None, Some(_)) => false,
+                    (None, None) => path_string > *best_path,
+                }
+            }
         };
         if replace {
             latest = Some((modified, path_string, summary));
@@ -4775,9 +5534,11 @@ pub fn session_health_report(
         Some(url) => load_snapshot_json(url, sitemap_path).ok(),
         None => None,
     };
-    let snapshot_json_path = snapshot
-        .as_ref()
-        .map(|snapshot| browser_snapshot_path(&snapshot.url, sitemap_path).display().to_string());
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
     let auth_diagnostics = build_auth_diagnostics_report(
         workspace_root,
         session.clone(),
@@ -4803,8 +5564,13 @@ pub fn session_health_report(
         .current_url
         .as_deref()
         .and_then(|url| load_html_fallback(url, sitemap_path).ok());
-    let compatibility = build_compatibility_report(snapshot.as_ref(), html_fallback.as_deref(), &access_diagnostics);
-    let (checkpoint_count, latest_checkpoint) = latest_session_checkpoint_summary(workspace_root, session_id)?;
+    let compatibility = build_compatibility_report(
+        snapshot.as_ref(),
+        html_fallback.as_deref(),
+        &access_diagnostics,
+    );
+    let (checkpoint_count, latest_checkpoint) =
+        latest_session_checkpoint_summary(workspace_root, session_id)?;
     let session_json_path = session_file_path(workspace_root, session_id)
         .display()
         .to_string();
@@ -4835,16 +5601,28 @@ pub fn session_health_report(
     });
 
     let (recovery_posture, recommended_action) = if access_diagnostics.diagnosis != "clear" {
-        ("blocked".to_string(), access_diagnostics.recommended_action.clone())
-    } else if matches!(auth_diagnostics.diagnosis.as_str(), "session_expired" | "csrf_missing" | "login_required") {
-        ("recover_auth".to_string(), auth_diagnostics.recommended_action.clone())
+        (
+            "blocked".to_string(),
+            access_diagnostics.recommended_action.clone(),
+        )
+    } else if matches!(
+        auth_diagnostics.diagnosis.as_str(),
+        "session_expired" | "csrf_missing" | "login_required"
+    ) {
+        (
+            "recover_auth".to_string(),
+            auth_diagnostics.recommended_action.clone(),
+        )
     } else if session.current_url.is_none() {
         (
             "seed_session".to_string(),
             "Navigate the session to the target page or apply a saved auth profile before continuing.".to_string(),
         )
     } else if compatibility.level == "unsupported" {
-        ("unsupported_site".to_string(), compatibility.recommended_action.clone())
+        (
+            "unsupported_site".to_string(),
+            compatibility.recommended_action.clone(),
+        )
     } else if snapshot_summary.is_none() && session.current_url.is_some() {
         (
             "recover_snapshot".to_string(),
@@ -4853,11 +5631,20 @@ pub fn session_health_report(
     } else if let Some((posture, action)) = failure_recovery {
         (posture, action)
     } else if compatibility.level == "runtime_limited" {
-        ("runtime_limited".to_string(), compatibility.recommended_action.clone())
+        (
+            "runtime_limited".to_string(),
+            compatibility.recommended_action.clone(),
+        )
     } else if auth_diagnostics.diagnosis == "auth_ready" {
-        ("ready".to_string(), auth_diagnostics.recommended_action.clone())
+        (
+            "ready".to_string(),
+            auth_diagnostics.recommended_action.clone(),
+        )
     } else {
-        ("investigate".to_string(), auth_diagnostics.recommended_action.clone())
+        (
+            "investigate".to_string(),
+            auth_diagnostics.recommended_action.clone(),
+        )
     };
 
     let mut evidence_signals = vec![
@@ -4885,7 +5672,9 @@ pub fn session_health_report(
     if !session.network.headers.is_empty() {
         evidence_signals.push(format!("network:headers={}", session.network.headers.len()));
     }
-    if !session.network.allowed_url_prefixes.is_empty() || !session.network.blocked_url_prefixes.is_empty() {
+    if !session.network.allowed_url_prefixes.is_empty()
+        || !session.network.blocked_url_prefixes.is_empty()
+    {
         evidence_signals.push("network:policy".to_string());
     }
     if let Some(checkpoint) = latest_checkpoint.as_ref() {
@@ -4895,7 +5684,10 @@ pub fn session_health_report(
         evidence_signals.push(format!("transcript:failures={}", recent_failure_count));
     }
     if let Some(latest_failure) = latest_failure.as_ref() {
-        evidence_signals.push(format!("transcript:latest_failure_kind={}", latest_failure.event_kind));
+        evidence_signals.push(format!(
+            "transcript:latest_failure_kind={}",
+            latest_failure.event_kind
+        ));
     }
     evidence_signals.extend(compatibility.signals.iter().cloned());
     evidence_signals.sort();
@@ -4934,7 +5726,8 @@ fn resolve_auth_profile_source(
         "session".to_string()
     };
     let source = if let Some(checkpoint_name) = source_checkpoint_name {
-        let checkpoint = read_session_checkpoint(workspace_root, source_session_id, checkpoint_name)?;
+        let checkpoint =
+            read_session_checkpoint(workspace_root, source_session_id, checkpoint_name)?;
         checkpoint.session
     } else {
         load_session_state(workspace_root, source_session_id)?
@@ -4958,15 +5751,13 @@ fn build_auth_profile_from_source(
         Some(url) => load_snapshot_json(url, sitemap_path).ok(),
         None => None,
     };
-    let snapshot_json_path = snapshot
-        .as_ref()
-        .map(|snapshot| browser_snapshot_path(&snapshot.url, sitemap_path).display().to_string());
-    let auth_diagnostics = build_auth_diagnostics_report(
-        workspace_root,
-        source.clone(),
-        snapshot,
-        snapshot_json_path,
-    );
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
+    let auth_diagnostics =
+        build_auth_diagnostics_report(workspace_root, source.clone(), snapshot, snapshot_json_path);
     BrowserAuthProfile {
         name: profile_name.to_string(),
         source_kind: source_kind.to_string(),
@@ -4980,17 +5771,24 @@ fn build_auth_profile_from_source(
     }
 }
 
-fn write_auth_profile(workspace_root: &Path, profile: &BrowserAuthProfile) -> Result<PathBuf, String> {
+fn write_auth_profile(
+    workspace_root: &Path,
+    profile: &BrowserAuthProfile,
+) -> Result<PathBuf, String> {
     let path = browser_auth_profile_json_path(workspace_root, &profile.name);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create auth profile dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(profile).map_err(|err| format!("serialise auth profile: {err}"))?;
+    let json = serde_json::to_vec_pretty(profile)
+        .map_err(|err| format!("serialise auth profile: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write auth profile: {err}"))?;
     Ok(path)
 }
 
-pub fn load_auth_profile(workspace_root: &Path, profile_name: &str) -> Result<BrowserAuthProfile, String> {
+pub fn load_auth_profile(
+    workspace_root: &Path,
+    profile_name: &str,
+) -> Result<BrowserAuthProfile, String> {
     let path = browser_auth_profile_json_path(workspace_root, profile_name);
     let raw = fs::read(&path).map_err(|err| format!("read auth profile: {err}"))?;
     serde_json::from_slice(&raw).map_err(|err| format!("parse auth profile: {err}"))
@@ -5003,7 +5801,8 @@ pub fn save_auth_profile_report(
     source_checkpoint_name: Option<&str>,
     sitemap_path: &Path,
 ) -> Result<BrowserAuthProfileSaveReport, String> {
-    let (source_kind, source) = resolve_auth_profile_source(workspace_root, source_session_id, source_checkpoint_name)?;
+    let (source_kind, source) =
+        resolve_auth_profile_source(workspace_root, source_session_id, source_checkpoint_name)?;
     let profile = build_auth_profile_from_source(
         workspace_root,
         &source_kind,
@@ -5042,7 +5841,9 @@ pub fn list_auth_profiles(
     limit: Option<usize>,
     sort_direction: BrowserListSortDirection,
 ) -> Result<Vec<BrowserAuthProfileSummary>, String> {
-    let dir = workspace_root.join(".velocity").join("browser-auth-profiles");
+    let dir = workspace_root
+        .join(".velocity")
+        .join("browser-auth-profiles");
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -5077,7 +5878,9 @@ pub fn list_auth_profiles(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.name.cmp(&right.name));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.name.cmp(&right.name)
+    });
     Ok(items)
 }
 
@@ -5104,15 +5907,13 @@ pub fn apply_auth_profile_report(
         Some(url) => load_snapshot_json(url, sitemap_path).ok(),
         None => None,
     };
-    let snapshot_json_path = snapshot
-        .as_ref()
-        .map(|snapshot| browser_snapshot_path(&snapshot.url, sitemap_path).display().to_string());
-    let auth_diagnostics = build_auth_diagnostics_report(
-        workspace_root,
-        target.clone(),
-        snapshot,
-        snapshot_json_path,
-    );
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
+    let auth_diagnostics =
+        build_auth_diagnostics_report(workspace_root, target.clone(), snapshot, snapshot_json_path);
 
     Ok(BrowserAuthProfileApplyReport {
         profile_name: profile.name,
@@ -5136,7 +5937,8 @@ pub fn reseed_auth_state_report(
     source_checkpoint_name: Option<&str>,
     sitemap_path: &Path,
 ) -> Result<BrowserAuthReseedReport, String> {
-    let (source_kind, source) = resolve_auth_profile_source(workspace_root, source_session_id, source_checkpoint_name)?;
+    let (source_kind, source) =
+        resolve_auth_profile_source(workspace_root, source_session_id, source_checkpoint_name)?;
     let copied_cookies = filter_auth_cookies(&source.cookies);
     let copied_local_storage = filter_csrf_storage(&source.local_storage);
     let copied_session_storage = filter_csrf_storage(&source.session_storage);
@@ -5153,15 +5955,13 @@ pub fn reseed_auth_state_report(
         Some(url) => load_snapshot_json(url, sitemap_path).ok(),
         None => None,
     };
-    let snapshot_json_path = snapshot
-        .as_ref()
-        .map(|snapshot| browser_snapshot_path(&snapshot.url, sitemap_path).display().to_string());
-    let auth_diagnostics = build_auth_diagnostics_report(
-        workspace_root,
-        target.clone(),
-        snapshot,
-        snapshot_json_path,
-    );
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
+    let auth_diagnostics =
+        build_auth_diagnostics_report(workspace_root, target.clone(), snapshot, snapshot_json_path);
 
     Ok(BrowserAuthReseedReport {
         target_session: summarize_session(target),
@@ -5183,7 +5983,8 @@ fn write_session_checkpoint(
     workspace_root: &Path,
     checkpoint: &BrowserSessionCheckpoint,
 ) -> Result<PathBuf, String> {
-    let path = browser_session_checkpoint_path(workspace_root, &checkpoint.session.id, &checkpoint.name);
+    let path =
+        browser_session_checkpoint_path(workspace_root, &checkpoint.session.id, &checkpoint.name);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create checkpoint dir: {err}"))?;
     }
@@ -5228,9 +6029,7 @@ pub fn render_session_transcript_report(report: &BrowserSessionTranscriptReadRep
 pub fn render_checkpoint_save_report(report: &BrowserCheckpointSaveReport) -> String {
     format!(
         "Saved browser checkpoint '{}' for session '{}'\nCheckpoint JSON: {}",
-        report.checkpoint.name,
-        report.checkpoint.session_id,
-        report.checkpoint_json_path,
+        report.checkpoint.name, report.checkpoint.session_id, report.checkpoint_json_path,
     )
 }
 
@@ -5274,26 +6073,24 @@ pub fn save_session_checkpoint_report(
             runtime_state_count: report.checkpoint.runtime_state_count,
             protocol_event_count: report.checkpoint.protocol_event_count,
             network_summary: report.checkpoint.network_summary.clone(),
-            session_json_path: session_file_path(workspace_root, session_id).display().to_string(),
-            snapshot_json_path: report
-                .checkpoint
-                .current_url
-                .as_deref()
-                .map(|url| browser_snapshot_path(url, sitemap_path).display().to_string()),
+            session_json_path: session_file_path(workspace_root, session_id)
+                .display()
+                .to_string(),
+            snapshot_json_path: report.checkpoint.current_url.as_deref().map(|url| {
+                browser_snapshot_path(url, sitemap_path)
+                    .display()
+                    .to_string()
+            }),
             checkpoint_json_path: Some(report.checkpoint_json_path.clone()),
             nda_facts_path: report
                 .checkpoint
                 .current_url
                 .as_deref()
                 .map(|url| crawl_facts_path(url, sitemap_path).display().to_string()),
-            html_fallback_path: report
-                .checkpoint
-                .current_url
-                .as_deref()
-                .and_then(|url| {
-                    let path = browser_html_fallback_path(url, sitemap_path);
-                    path.exists().then(|| path.display().to_string())
-                }),
+            html_fallback_path: report.checkpoint.current_url.as_deref().and_then(|url| {
+                let path = browser_html_fallback_path(url, sitemap_path);
+                path.exists().then(|| path.display().to_string())
+            }),
         },
     )?;
     Ok(report)
@@ -5305,7 +6102,8 @@ pub fn save_session_checkpoint(
     checkpoint_name: &str,
     sitemap_path: &Path,
 ) -> Result<PathBuf, String> {
-    match save_session_checkpoint_report(workspace_root, session_id, checkpoint_name, sitemap_path) {
+    match save_session_checkpoint_report(workspace_root, session_id, checkpoint_name, sitemap_path)
+    {
         Ok(report) => Ok(PathBuf::from(report.checkpoint_json_path)),
         Err(err) => {
             append_session_failure_transcript_entry(
@@ -5314,7 +6112,9 @@ pub fn save_session_checkpoint(
                 "save_checkpoint",
                 Some(checkpoint_name.to_string()),
                 format!("Failed to save checkpoint '{}': {}", checkpoint_name, err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -5339,9 +6139,13 @@ pub fn read_session_checkpoint_report(
     let checkpoint = read_session_checkpoint(workspace_root, session_id, checkpoint_name)?;
     Ok(BrowserCheckpointReadReport {
         checkpoint: summarize_session_checkpoint(checkpoint),
-        checkpoint_json_path: browser_session_checkpoint_path(workspace_root, session_id, checkpoint_name)
-            .display()
-            .to_string(),
+        checkpoint_json_path: browser_session_checkpoint_path(
+            workspace_root,
+            session_id,
+            checkpoint_name,
+        )
+        .display()
+        .to_string(),
     })
 }
 
@@ -5353,12 +6157,18 @@ pub fn diff_session_checkpoints(
 ) -> Result<BrowserSnapshotDiffReport, String> {
     let before = read_session_checkpoint(workspace_root, session_id, before_checkpoint_name)?;
     let after = read_session_checkpoint(workspace_root, session_id, after_checkpoint_name)?;
-    let before_snapshot = before
-        .snapshot
-        .ok_or_else(|| format!("checkpoint '{}' does not include a snapshot", before_checkpoint_name))?;
-    let after_snapshot = after
-        .snapshot
-        .ok_or_else(|| format!("checkpoint '{}' does not include a snapshot", after_checkpoint_name))?;
+    let before_snapshot = before.snapshot.ok_or_else(|| {
+        format!(
+            "checkpoint '{}' does not include a snapshot",
+            before_checkpoint_name
+        )
+    })?;
+    let after_snapshot = after.snapshot.ok_or_else(|| {
+        format!(
+            "checkpoint '{}' does not include a snapshot",
+            after_checkpoint_name
+        )
+    })?;
     let diff = diff_snapshots(&before_snapshot, &after_snapshot);
     Ok(BrowserSnapshotDiffReport {
         before_url: before_snapshot.url,
@@ -5382,12 +6192,20 @@ pub fn read_checkpoint_diff_report(
     )?;
     Ok(BrowserSnapshotDiffReadReport {
         diff: summarize_snapshot_diff_report(report),
-        before_json_path: browser_session_checkpoint_path(workspace_root, session_id, before_checkpoint_name)
-            .display()
-            .to_string(),
-        after_json_path: browser_session_checkpoint_path(workspace_root, session_id, after_checkpoint_name)
-            .display()
-            .to_string(),
+        before_json_path: browser_session_checkpoint_path(
+            workspace_root,
+            session_id,
+            before_checkpoint_name,
+        )
+        .display()
+        .to_string(),
+        after_json_path: browser_session_checkpoint_path(
+            workspace_root,
+            session_id,
+            after_checkpoint_name,
+        )
+        .display()
+        .to_string(),
     })
 }
 
@@ -5415,8 +6233,8 @@ pub fn list_session_checkpoints(
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser checkpoint: {err}"))?;
-        let checkpoint: BrowserSessionCheckpoint =
-            serde_json::from_slice(&raw).map_err(|err| format!("parse browser checkpoint: {err}"))?;
+        let checkpoint: BrowserSessionCheckpoint = serde_json::from_slice(&raw)
+            .map_err(|err| format!("parse browser checkpoint: {err}"))?;
         let mut summary = summarize_session_checkpoint(checkpoint);
         summary.checkpoint_json_path = Some(path.display().to_string());
         if checkpoint_name_contains
@@ -5435,26 +6253,32 @@ pub fn list_session_checkpoints(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.name.cmp(&right.name));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.name.cmp(&right.name)
+    });
     Ok(items)
 }
 
 pub fn render_visual_fallback_report(report: &BrowserVisualFallbackReadReport) -> String {
     format!(
         "Browser HTML fallback available.\nURL: {}\nBytes: {}\nHTML path: {}",
-        report.url,
-        report.byte_count,
-        report.html_path,
+        report.url, report.byte_count, report.html_path,
     )
 }
 
 pub fn render_checkpoint_restore_report(report: &BrowserCheckpointRestoreReport) -> String {
     let mut details = vec![
-        format!("Restored browser session checkpoint '{}'", report.checkpoint_name),
+        format!(
+            "Restored browser session checkpoint '{}'",
+            report.checkpoint_name
+        ),
         format!("Session: {}", report.session_id),
         format!("Session JSON: {}", report.session_json_path),
         format!("Auth diagnosis: {}", report.auth_diagnostics.diagnosis),
-        format!("Auth recommendation: {}", report.auth_diagnostics.recommended_action),
+        format!(
+            "Auth recommendation: {}",
+            report.auth_diagnostics.recommended_action
+        ),
     ];
 
     if let Some(url) = report.url.as_deref() {
@@ -5467,9 +6291,18 @@ pub fn render_checkpoint_restore_report(report: &BrowserCheckpointRestoreReport)
     details.push(format!("Settle signals: {}", report.settle_signal_count));
     details.push(format!("Runtime state: {}", report.runtime_state_count));
     details.push(format!("Protocol events: {}", report.protocol_event_count));
-    details.push(format!("Has login form: {}", report.auth_diagnostics.has_login_form));
-    details.push(format!("Has auth cookie: {}", report.auth_diagnostics.has_auth_cookie));
-    details.push(format!("Has CSRF token: {}", report.auth_diagnostics.has_csrf_token));
+    details.push(format!(
+        "Has login form: {}",
+        report.auth_diagnostics.has_login_form
+    ));
+    details.push(format!(
+        "Has auth cookie: {}",
+        report.auth_diagnostics.has_auth_cookie
+    ));
+    details.push(format!(
+        "Has CSRF token: {}",
+        report.auth_diagnostics.has_csrf_token
+    ));
     if let Some(auth_state) = report.auth_diagnostics.auth_state.as_deref() {
         details.push(format!("Auth state: {}", auth_state));
     }
@@ -5480,7 +6313,10 @@ pub fn render_checkpoint_restore_report(report: &BrowserCheckpointRestoreReport)
         details.push(format!("Network summary: {}", network));
     }
     if !report.auth_diagnostics.auth_signals.is_empty() {
-        details.push(format!("Auth signals: {}", report.auth_diagnostics.auth_signals.join(", ")));
+        details.push(format!(
+            "Auth signals: {}",
+            report.auth_diagnostics.auth_signals.join(", ")
+        ));
     }
     if let Some(snapshot_json_path) = report.snapshot_json_path.as_deref() {
         details.push(format!("Snapshot JSON: {}", snapshot_json_path));
@@ -5512,43 +6348,68 @@ pub fn restore_session_checkpoint_report(
     let session_id = checkpoint.session.id.clone();
     let checkpoint_name = checkpoint.name.clone();
 
-    let (url, title, request_count, settle_signal_count, runtime_state_count, protocol_event_count, network_summary, restored_snapshot, snapshot_json_path, nda_facts_path, html_fallback_path) =
-        if let Some(snapshot) = checkpoint.snapshot {
-            let network_summary = summarize_network_activity(&snapshot.protocol_events);
-            persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
-            let facts_path = write_crawl_facts(
-                &snapshot.url,
-                &snapshot.title,
-                &snapshot.summary,
-                &snapshot.elements,
-                &snapshot.forms,
-                &snapshot.cookies,
-                &snapshot.storage,
-                &snapshot.mutations,
-                &snapshot.requests,
-                &snapshot.settle_signals,
-                &snapshot.runtime_state,
-                &snapshot.protocol_events,
-                sitemap_path,
-            )?;
-            let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
-            let html_fallback_path = browser_html_fallback_path(&snapshot.url, sitemap_path);
-            (
-                Some(snapshot.url.clone()),
-                Some(snapshot.title.clone()),
-                snapshot.requests.len(),
-                snapshot.settle_signals.len(),
-                snapshot.runtime_state.len(),
-                snapshot.protocol_events.len(),
-                network_summary,
-                Some(snapshot),
-                Some(snapshot_path.display().to_string()),
-                Some(facts_path.display().to_string()),
-                html_fallback_path.exists().then(|| html_fallback_path.display().to_string()),
-            )
-        } else {
-            (None, None, 0, 0, 0, 0, BrowserNetworkSummary::default(), None, None, None, None)
-        };
+    let (
+        url,
+        title,
+        request_count,
+        settle_signal_count,
+        runtime_state_count,
+        protocol_event_count,
+        network_summary,
+        restored_snapshot,
+        snapshot_json_path,
+        nda_facts_path,
+        html_fallback_path,
+    ) = if let Some(snapshot) = checkpoint.snapshot {
+        let network_summary = summarize_network_activity(&snapshot.protocol_events);
+        persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
+        let facts_path = write_crawl_facts(
+            &snapshot.url,
+            &snapshot.title,
+            &snapshot.summary,
+            &snapshot.elements,
+            &snapshot.forms,
+            &snapshot.cookies,
+            &snapshot.storage,
+            &snapshot.mutations,
+            &snapshot.requests,
+            &snapshot.settle_signals,
+            &snapshot.runtime_state,
+            &snapshot.protocol_events,
+            sitemap_path,
+        )?;
+        let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
+        let html_fallback_path = browser_html_fallback_path(&snapshot.url, sitemap_path);
+        (
+            Some(snapshot.url.clone()),
+            Some(snapshot.title.clone()),
+            snapshot.requests.len(),
+            snapshot.settle_signals.len(),
+            snapshot.runtime_state.len(),
+            snapshot.protocol_events.len(),
+            network_summary,
+            Some(snapshot),
+            Some(snapshot_path.display().to_string()),
+            Some(facts_path.display().to_string()),
+            html_fallback_path
+                .exists()
+                .then(|| html_fallback_path.display().to_string()),
+        )
+    } else {
+        (
+            None,
+            None,
+            0,
+            0,
+            0,
+            0,
+            BrowserNetworkSummary::default(),
+            None,
+            None,
+            None,
+            None,
+        )
+    };
     let auth_diagnostics = build_auth_diagnostics_report(
         workspace_root,
         checkpoint.session.clone(),
@@ -5595,7 +6456,15 @@ pub fn restore_session_checkpoint_report(
             network_summary: report.network_summary.clone(),
             session_json_path: report.session_json_path.clone(),
             snapshot_json_path: report.snapshot_json_path.clone(),
-            checkpoint_json_path: Some(browser_session_checkpoint_path(workspace_root, session_id.as_str(), report.checkpoint_name.as_str()).display().to_string()),
+            checkpoint_json_path: Some(
+                browser_session_checkpoint_path(
+                    workspace_root,
+                    session_id.as_str(),
+                    report.checkpoint_name.as_str(),
+                )
+                .display()
+                .to_string(),
+            ),
             nda_facts_path: report.nda_facts_path.clone(),
             html_fallback_path: report.html_fallback_path.clone(),
         },
@@ -5624,7 +6493,10 @@ pub fn restore_session_checkpoint(
                 target_session_id.unwrap_or(session_id),
                 "restore_checkpoint",
                 Some(checkpoint_name.to_string()),
-                format!("Failed to restore checkpoint '{}': {}", checkpoint_name, err),
+                format!(
+                    "Failed to restore checkpoint '{}': {}",
+                    checkpoint_name, err
+                ),
                 session_file_path(workspace_root, target_session_id.unwrap_or(session_id))
                     .display()
                     .to_string(),
@@ -5638,7 +6510,10 @@ fn describe_url_resolution(requested_url: &str, resolved_url: &str) -> String {
     if requested_url == resolved_url {
         format!("URL: {}", resolved_url)
     } else {
-        format!("Requested URL: {}\nResolved URL: {}", requested_url, resolved_url)
+        format!(
+            "Requested URL: {}\nResolved URL: {}",
+            requested_url, resolved_url
+        )
     }
 }
 
@@ -5677,7 +6552,10 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
         .action
         .as_ref()
         .map(|action| {
-            let mut parts = vec![format!("{} (wait {}ms)", action.action, action.wait_applied_ms)];
+            let mut parts = vec![format!(
+                "{} (wait {}ms)",
+                action.action, action.wait_applied_ms
+            )];
             if let Some(target) = &action.target {
                 parts.push(format!("target={target}"));
             }
@@ -5699,9 +6577,20 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
     let frame_summary = if report.frame_count == 0 {
         String::new()
     } else {
-        let accessible = report.frames.iter().filter(|frame| frame.accessible).count();
-        let same_origin = report.frames.iter().filter(|frame| frame.same_origin).count();
-        format!("\nFrames: {} (accessible {}, same-origin {})", report.frame_count, accessible, same_origin)
+        let accessible = report
+            .frames
+            .iter()
+            .filter(|frame| frame.accessible)
+            .count();
+        let same_origin = report
+            .frames
+            .iter()
+            .filter(|frame| frame.same_origin)
+            .count();
+        format!(
+            "\nFrames: {} (accessible {}, same-origin {})",
+            report.frame_count, accessible, same_origin
+        )
     };
     let shadow_summary = if report.shadow_host_count == 0 {
         String::new()
@@ -5711,15 +6600,40 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
             .iter()
             .map(|host| host.semantic_node_count)
             .sum::<usize>();
-        format!("\nShadow hosts: {} (semantic nodes {})", report.shadow_host_count, semantic_nodes)
+        format!(
+            "\nShadow hosts: {} (semantic nodes {})",
+            report.shadow_host_count, semantic_nodes
+        )
+    };
+    let canvas_summary = if report.canvas_count == 0 {
+        String::new()
+    } else {
+        let runtime_evidence = report
+            .canvases
+            .iter()
+            .filter(|canvas| canvas.runtime_evidence)
+            .count();
+        let animated = report
+            .canvases
+            .iter()
+            .filter(|canvas| canvas.likely_animated)
+            .count();
+        format!(
+            "\nCanvases: {} (webgl {}, runtime evidence {}, likely animated {})",
+            report.canvas_count, report.webgl_canvas_count, runtime_evidence, animated
+        )
     };
     let warnings = if report.warnings.is_empty() {
         String::new()
     } else {
-        format!("\nWarnings ({}): {}", report.warning_count, report.warnings.join(" | "))
+        format!(
+            "\nWarnings ({}): {}",
+            report.warning_count,
+            report.warnings.join(" | ")
+        )
     };
     format!(
-        "Runtime capture complete.\nSession: {}\nURL: {}\nTitle: {}\nBackend: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}{}{}\nLocal storage: {}\nSession storage: {}\nAOM summary chars: {}{}{}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
+        "Runtime capture complete.\nSession: {}\nURL: {}\nTitle: {}\nBackend: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}{}{}{}\nLocal storage: {}\nSession storage: {}\nAOM summary chars: {}{}{}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
         report.session_id,
         report.url,
         report.title,
@@ -5733,6 +6647,7 @@ pub fn render_runtime_capture_report(report: &BrowserRuntimeCaptureReport) -> St
         network_summary,
         frame_summary,
         shadow_summary,
+        canvas_summary,
         report.local_storage_count,
         report.session_storage_count,
         report.aom_summary_chars,
@@ -5753,7 +6668,18 @@ pub fn render_session_action_report(report: &BrowserSessionActionReport) -> Stri
     let target_actionability = report
         .target_actionability
         .as_ref()
-        .map(|target| format!("\nTarget actionability: {} (score {}) - {}", if target.actionable { "actionable" } else { "not actionable" }, target.score, target.reason))
+        .map(|target| {
+            format!(
+                "\nTarget actionability: {} (score {}) - {}",
+                if target.actionable {
+                    "actionable"
+                } else {
+                    "not actionable"
+                },
+                target.score,
+                target.reason
+            )
+        })
         .unwrap_or_default();
     format!(
         "Session action complete.\nAction: {}\nTarget: {}{}\nSession: {}\nURL: {}\nTitle: {}\nDiff: {}\nForms: {}\nCookies: {}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
@@ -5885,6 +6811,24 @@ fn persist_runtime_capture_artifacts(
         })
         .collect::<Vec<_>>();
 
+    let canvases = captured
+        .canvases
+        .iter()
+        .map(|canvas| BrowserCanvasInventoryEntry {
+            selector: canvas.selector.clone(),
+            width: canvas.width,
+            height: canvas.height,
+            context_kinds: canvas.context_kinds.clone(),
+            text_op_count: canvas.text_op_count,
+            image_op_count: canvas.image_op_count,
+            webgl_draw_count: canvas.webgl_draw_count,
+            readback_count: canvas.readback_count,
+            likely_animated: canvas.likely_animated,
+            runtime_evidence: canvas.runtime_evidence,
+            text_sample: canvas.text_sample.clone(),
+        })
+        .collect::<Vec<_>>();
+
     let mut snapshot = parse_html_to_snapshot_with_runtime_state(
         &captured.final_url,
         &captured.html,
@@ -5916,7 +6860,10 @@ fn persist_runtime_capture_artifacts(
             .forms
             .iter()
             .flat_map(|form| form.fields.iter())
-            .any(|field| field.name.eq_ignore_ascii_case(field_name) || field.label.eq_ignore_ascii_case(field_name));
+            .any(|field| {
+                field.name.eq_ignore_ascii_case(field_name)
+                    || field.label.eq_ignore_ascii_case(field_name)
+            });
         if !already_present {
             snapshot.elements.push(AomElement {
                 role: "textbox".to_string(),
@@ -5962,8 +6909,19 @@ fn persist_runtime_capture_artifacts(
         protocol_event_count: snapshot.protocol_events.len(),
         frame_count: frames.len(),
         shadow_host_count: shadow_hosts.len(),
+        canvas_count: canvases.len(),
+        webgl_canvas_count: canvases
+            .iter()
+            .filter(|canvas| {
+                canvas
+                    .context_kinds
+                    .iter()
+                    .any(|kind| kind.starts_with("webgl"))
+            })
+            .count(),
         frames,
         shadow_hosts,
+        canvases,
         network_summary: summarize_network_activity(&snapshot.protocol_events),
         local_storage_count: session.local_storage.len(),
         session_storage_count: session.session_storage.len(),
@@ -5993,7 +6951,10 @@ fn browser_runtime_capture_report_internal(
 ) -> Result<BrowserRuntimeCaptureReport, String> {
     let mut session = load_session_state(workspace_root, session_id)
         .unwrap_or_else(|_| empty_browser_session_state(session_id));
-    let endpoint = format!("{}/api/runtime/capture", resolve_browser_runtime_api_base(api_base));
+    let endpoint = format!(
+        "{}/api/runtime/capture",
+        resolve_browser_runtime_api_base(api_base)
+    );
     let request_body = serde_json::to_string(&RuntimeCaptureApiRequest { url, timeout_ms })
         .map_err(|err| format!("serialise runtime capture request: {err}"))?;
     let response = ureq::post(&endpoint)
@@ -6001,15 +6962,19 @@ fn browser_runtime_capture_report_internal(
         .send_string(&request_body)
         .map_err(|err| format!("runtime capture request failed: {err}"))?;
     if response.status() >= 400 {
-        return Err(format!("runtime capture request failed with status {}", response.status()));
+        return Err(format!(
+            "runtime capture request failed with status {}",
+            response.status()
+        ));
     }
     let raw = response
         .into_string()
         .map_err(|err| format!("read runtime capture response: {err}"))?;
-    let captured: RuntimeCaptureApiResponse =
-        serde_json::from_str(&raw).map_err(|err| format!("parse runtime capture response: {err}"))?;
+    let captured: RuntimeCaptureApiResponse = serde_json::from_str(&raw)
+        .map_err(|err| format!("parse runtime capture response: {err}"))?;
 
-    let report = persist_runtime_capture_artifacts(workspace_root, &mut session, &captured, sitemap_path)?;
+    let report =
+        persist_runtime_capture_artifacts(workspace_root, &mut session, &captured, sitemap_path)?;
     append_session_transcript_entry(
         workspace_root,
         &report.session_id,
@@ -6047,7 +7012,14 @@ pub fn runtime_capture_report(
     api_base: Option<&str>,
     sitemap_path: &Path,
 ) -> Result<BrowserRuntimeCaptureReport, String> {
-    browser_runtime_capture_report_internal(workspace_root, session_id, url, timeout_ms, api_base, sitemap_path)
+    browser_runtime_capture_report_internal(
+        workspace_root,
+        session_id,
+        url,
+        timeout_ms,
+        api_base,
+        sitemap_path,
+    )
 }
 
 pub fn runtime_capture(
@@ -6058,7 +7030,14 @@ pub fn runtime_capture(
     api_base: Option<&str>,
     sitemap_path: &Path,
 ) -> Result<String, String> {
-    match browser_runtime_capture_report_internal(workspace_root, session_id, url, timeout_ms, api_base, sitemap_path) {
+    match browser_runtime_capture_report_internal(
+        workspace_root,
+        session_id,
+        url,
+        timeout_ms,
+        api_base,
+        sitemap_path,
+    ) {
         Ok(report) => Ok(render_runtime_capture_report(&report)),
         Err(err) => {
             append_session_failure_transcript_entry(
@@ -6067,7 +7046,9 @@ pub fn runtime_capture(
                 "runtime_capture",
                 Some(url.to_string()),
                 format!("Failed runtime capture for '{}': {}", url, err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -6098,7 +7079,8 @@ fn sync_runtime_capture_session(
 ) -> Result<BrowserRuntimeCaptureReport, String> {
     let mut session = load_session_state(workspace_root, &runtime_session.id)
         .unwrap_or_else(|_| empty_browser_session_state(&runtime_session.id));
-    let report = persist_runtime_capture_artifacts(workspace_root, &mut session, captured, sitemap_path)?;
+    let report =
+        persist_runtime_capture_artifacts(workspace_root, &mut session, captured, sitemap_path)?;
     runtime_session.current_url = Some(report.url.clone());
     runtime_session.last_title = Some(report.title.clone());
     runtime_session.cookies = session.cookies.clone();
@@ -6145,7 +7127,11 @@ pub fn create_runtime_session(
         "startUrl": start_url,
         "waitTimeoutMs": wait_timeout_ms.unwrap_or(2_000),
     });
-    let value = runtime_api_request("POST", &format!("{}/api/runtime/session", api_base_resolved), Some(&body))?;
+    let value = runtime_api_request(
+        "POST",
+        &format!("{}/api/runtime/session", api_base_resolved),
+        Some(&body),
+    )?;
     let runtime_session_id = value
         .get("sessionId")
         .and_then(serde_json::Value::as_str)
@@ -6181,7 +7167,11 @@ pub fn create_runtime_session(
             lines.push(format!("Start URL: {}", url));
         }
         if !warnings.is_empty() {
-            lines.push(format!("Warnings ({}): {}", warnings.len(), warnings.join(" | ")));
+            lines.push(format!(
+                "Warnings ({}): {}",
+                warnings.len(),
+                warnings.join(" | ")
+            ));
         }
         Ok(lines.join("\n"))
     }
@@ -6217,7 +7207,10 @@ pub fn close_runtime_session(
     let session = load_runtime_session_state(workspace_root, session_id)?;
     runtime_api_request(
         "DELETE",
-        &format!("{}/api/runtime/session/{}", session.api_base, session.runtime_session_id),
+        &format!(
+            "{}/api/runtime/session/{}",
+            session.api_base, session.runtime_session_id
+        ),
         None,
     )?;
     let path = runtime_session_file_path(workspace_root, session_id);
@@ -6251,7 +7244,10 @@ pub fn capture_runtime_session(
     let mut session = load_runtime_session_state(workspace_root, session_id)?;
     let value = runtime_api_request(
         "POST",
-        &format!("{}/api/runtime/session/{}/capture", session.api_base, session.runtime_session_id),
+        &format!(
+            "{}/api/runtime/session/{}/capture",
+            session.api_base, session.runtime_session_id
+        ),
         Some(&serde_json::json!({})),
     )?;
     let captured = parse_runtime_session_capture_response(value)?;
@@ -6303,7 +7299,10 @@ fn runtime_session_action(
     });
     let value = runtime_api_request(
         "POST",
-        &format!("{}/api/runtime/session/{}/action", session.api_base, session.runtime_session_id),
+        &format!(
+            "{}/api/runtime/session/{}/action",
+            session.api_base, session.runtime_session_id
+        ),
         Some(&body),
     )?;
     let captured = parse_runtime_session_capture_response(value)?;
@@ -6546,7 +7545,8 @@ pub fn browser_runtime_visual_capture(
     let png_path = browser_runtime_visual_png_path(workspace_root, &artifact_id);
     let metadata_path = browser_runtime_visual_metadata_path(workspace_root, &artifact_id);
     if let Some(parent) = png_path.parent() {
-        fs::create_dir_all(parent).map_err(|err| format!("create runtime visual artifact dir: {err}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create runtime visual artifact dir: {err}"))?;
     }
     fs::write(&png_path, &png).map_err(|err| format!("write runtime visual png: {err}"))?;
     let artifact = BrowserRuntimeVisualArtifact {
@@ -6593,7 +7593,8 @@ fn build_session_action_report(
     state: &BrowserReplayState,
 ) -> Result<BrowserSessionActionReport, String> {
     let diff = diff_snapshots(before, &state.snapshot);
-    let (snapshot_path, session_path, facts_path, html_fallback_path) = persist_replay_state(workspace_root, state, sitemap_path)?;
+    let (snapshot_path, session_path, facts_path, html_fallback_path) =
+        persist_replay_state(workspace_root, state, sitemap_path)?;
     let report = BrowserSessionActionReport {
         action: action.to_string(),
         target: target.to_string(),
@@ -6654,15 +7655,18 @@ pub fn session_click_report(
 ) -> Result<BrowserSessionActionReport, String> {
     let mut state = load_session_replay_state(workspace_root, session_id, sitemap_path)?;
     let before = state.snapshot.clone();
-    let target = find_element(&state.snapshot, role, name)
-        .ok_or_else(|| format!("session click target not found: role='{}' name='{}'", role, name))?;
+    let target = find_element(&state.snapshot, role, name).ok_or_else(|| {
+        format!(
+            "session click target not found: role='{}' name='{}'",
+            role, name
+        )
+    })?;
     let target_actionability = describe_element_actionability(target);
     let matched_name = target.name.clone();
     let target_url = target.target_url.clone().ok_or_else(|| {
         format!(
             "session click target '{}' is not actionable: {}",
-            matched_name,
-            target_actionability.reason
+            matched_name, target_actionability.reason
         )
     })?;
     state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &target_url)?;
@@ -6693,7 +7697,9 @@ pub fn session_click(
                 "click",
                 Some(format!("{}:{}", role, name)),
                 format!("Failed to click {}:{}: {}", role, name, err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -6742,7 +7748,9 @@ pub fn session_fill(
                 "fill_field",
                 Some(field.to_string()),
                 format!("Failed to fill field '{}': {}", field, err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -6757,11 +7765,10 @@ pub fn session_submit_report(
 ) -> Result<BrowserSessionActionReport, String> {
     let mut state = load_session_replay_state(workspace_root, session_id, sitemap_path)?;
     let before = state.snapshot.clone();
-    let form = find_form(&state.snapshot, form_id)
-        .ok_or_else(|| match form_id {
-            Some(id) => format!("session submit target form not found: '{}'", id),
-            None => "session submit target form not found".to_string(),
-        })?;
+    let form = find_form(&state.snapshot, form_id).ok_or_else(|| match form_id {
+        Some(id) => format!("session submit target form not found: '{}'", id),
+        None => "session submit target form not found".to_string(),
+    })?;
     let target = if form.id.is_empty() {
         form_id.unwrap_or("default").to_string()
     } else {
@@ -6794,8 +7801,14 @@ pub fn session_submit(
                 session_id,
                 "submit_form",
                 Some(form_id.unwrap_or("default").to_string()),
-                format!("Failed to submit form '{}': {}", form_id.unwrap_or("default"), err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                format!(
+                    "Failed to submit form '{}': {}",
+                    form_id.unwrap_or("default"),
+                    err
+                ),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -6828,7 +7841,11 @@ pub fn navigate_session_report(
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
-    let html_fallback_path = write_html_fallback(&snapshot.url, session.last_html.as_deref().unwrap_or_default(), sitemap_path)?;
+    let html_fallback_path = write_html_fallback(
+        &snapshot.url,
+        session.last_html.as_deref().unwrap_or_default(),
+        sitemap_path,
+    )?;
     let session_path = save_session_state(workspace_root, &session)?;
 
     let report = BrowserSessionNavigationReport {
@@ -6894,7 +7911,9 @@ pub fn navigate_session(
                 "navigate",
                 Some(url.to_string()),
                 format!("Failed to navigate to '{}': {}", url, err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -6923,7 +7942,10 @@ pub fn crawl_page_snapshot_with_session(
         merge_cookie(&mut session.cookies, cookie);
     }
     apply_storage_updates(&mut session.local_storage, &response.local_storage_updates);
-    apply_storage_updates(&mut session.session_storage, &response.session_storage_updates);
+    apply_storage_updates(
+        &mut session.session_storage,
+        &response.session_storage_updates,
+    );
     session.current_url = Some(url.to_string());
     let storage = storage_buckets(session);
     session.current_url = Some(response.final_url.clone());
@@ -6945,7 +7967,9 @@ fn url_encode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for byte in input.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
             b' ' => out.push('+'),
             _ => out.push_str(&format!("%{:02X}", byte)),
         }
@@ -7004,7 +8028,8 @@ fn role_actionability(role: &str) -> u8 {
 }
 
 fn element_actionability_score(element: &AomElement) -> i32 {
-    let mut score = i32::from(role_actionability(&element.role)).max(i32::from(element.actionability));
+    let mut score =
+        i32::from(role_actionability(&element.role)).max(i32::from(element.actionability));
     if element.target_url.is_some() {
         score += 30;
     }
@@ -7051,7 +8076,11 @@ fn describe_form_field_actionability(field: &BrowserFormField) -> BrowserTargetA
     BrowserTargetActionability {
         kind: "form_field".to_string(),
         role: field.input_type.clone(),
-        name: if field.label.is_empty() { field.name.clone() } else { field.label.clone() },
+        name: if field.label.is_empty() {
+            field.name.clone()
+        } else {
+            field.label.clone()
+        },
         score: if hidden { 0 } else { 80 },
         actionable: !hidden,
         reason: if hidden {
@@ -7070,7 +8099,11 @@ fn describe_form_actionability(form: &BrowserForm) -> BrowserTargetActionability
     BrowserTargetActionability {
         kind: "form".to_string(),
         role: form.method.clone(),
-        name: if form.id.is_empty() { "default".to_string() } else { form.id.clone() },
+        name: if form.id.is_empty() {
+            "default".to_string()
+        } else {
+            form.id.clone()
+        },
         score: if actionable { 75 } else { 35 },
         actionable,
         reason: if actionable {
@@ -7080,7 +8113,11 @@ fn describe_form_actionability(form: &BrowserForm) -> BrowserTargetActionability
         },
         supported_actions: vec!["submit".to_string()],
         provenance: "native".to_string(),
-        target_url: if actionable { Some(form.action.clone()) } else { None },
+        target_url: if actionable {
+            Some(form.action.clone())
+        } else {
+            None
+        },
     }
 }
 
@@ -7117,14 +8154,26 @@ fn form_field_match_score(field: &BrowserFormField, field_name: &str) -> Option<
     let name_score = string_match_score(&field.name, field_name);
     let value_score = string_match_score(&field.value, field_name);
     let best = label_score.max(name_score).max(value_score)?;
-    Some(best + if field.input_type.eq_ignore_ascii_case("hidden") { 0 } else { 25 })
+    Some(
+        best + if field.input_type.eq_ignore_ascii_case("hidden") {
+            0
+        } else {
+            25
+        },
+    )
 }
 
-fn find_element<'a>(snapshot: &'a BrowserPageSnapshot, role: &str, name: &str) -> Option<&'a AomElement> {
+fn find_element<'a>(
+    snapshot: &'a BrowserPageSnapshot,
+    role: &str,
+    name: &str,
+) -> Option<&'a AomElement> {
     snapshot
         .elements
         .iter()
-        .filter_map(|element| element_match_score(element, role, name).map(|score| (score, element)))
+        .filter_map(|element| {
+            element_match_score(element, role, name).map(|score| (score, element))
+        })
         .max_by(|(left_score, left_element), (right_score, right_element)| {
             left_score
                 .cmp(right_score)
@@ -7133,14 +8182,23 @@ fn find_element<'a>(snapshot: &'a BrowserPageSnapshot, role: &str, name: &str) -
         .map(|(_, element)| element)
 }
 
-fn find_form<'a>(snapshot: &'a BrowserPageSnapshot, form_id: Option<&str>) -> Option<&'a BrowserForm> {
+fn find_form<'a>(
+    snapshot: &'a BrowserPageSnapshot,
+    form_id: Option<&str>,
+) -> Option<&'a BrowserForm> {
     match form_id {
-        Some(id) => snapshot.forms.iter().find(|form| form.id.eq_ignore_ascii_case(id)),
+        Some(id) => snapshot
+            .forms
+            .iter()
+            .find(|form| form.id.eq_ignore_ascii_case(id)),
         None => snapshot.forms.first(),
     }
 }
 
-fn find_form_field<'a>(snapshot: &'a BrowserPageSnapshot, field_name: &str) -> Option<&'a BrowserFormField> {
+fn find_form_field<'a>(
+    snapshot: &'a BrowserPageSnapshot,
+    field_name: &str,
+) -> Option<&'a BrowserFormField> {
     snapshot
         .forms
         .iter()
@@ -7154,12 +8212,17 @@ fn find_form_field<'a>(snapshot: &'a BrowserPageSnapshot, field_name: &str) -> O
         .map(|(_, field)| field)
 }
 
-fn find_textbox_element<'a>(snapshot: &'a BrowserPageSnapshot, field_name: &str) -> Option<&'a AomElement> {
+fn find_textbox_element<'a>(
+    snapshot: &'a BrowserPageSnapshot,
+    field_name: &str,
+) -> Option<&'a AomElement> {
     snapshot
         .elements
         .iter()
         .filter(|element| element.role.eq_ignore_ascii_case("textbox"))
-        .filter_map(|element| string_match_score(&element.name, field_name).map(|score| (score, element)))
+        .filter_map(|element| {
+            string_match_score(&element.name, field_name).map(|score| (score, element))
+        })
         .max_by(|(left_score, left_element), (right_score, right_element)| {
             left_score
                 .cmp(right_score)
@@ -7229,15 +8292,26 @@ fn snapshot_mutation_signatures(snapshot: &BrowserPageSnapshot) -> HashSet<Strin
 }
 
 fn request_signature(request: &BrowserRequestRecord) -> String {
-    format!("{}:{}:{}:{}", request.method, request.url, request.status_code, request.resource)
+    format!(
+        "{}:{}:{}:{}",
+        request.method, request.url, request.status_code, request.resource
+    )
 }
 
 fn snapshot_request_signatures(snapshot: &BrowserPageSnapshot) -> HashSet<String> {
-    snapshot.requests.iter().map(request_signature).collect::<HashSet<_>>()
+    snapshot
+        .requests
+        .iter()
+        .map(request_signature)
+        .collect::<HashSet<_>>()
 }
 
 fn snapshot_settle_signatures(snapshot: &BrowserPageSnapshot) -> HashSet<String> {
-    snapshot.settle_signals.iter().cloned().collect::<HashSet<_>>()
+    snapshot
+        .settle_signals
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>()
 }
 
 fn runtime_state_signature(entry: &BrowserRuntimeState) -> String {
@@ -7260,7 +8334,10 @@ fn snapshot_protocol_event_signatures(snapshot: &BrowserPageSnapshot) -> HashSet
         .collect::<HashSet<_>>()
 }
 
-pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot) -> BrowserSnapshotDiff {
+pub fn diff_snapshots(
+    before: &BrowserPageSnapshot,
+    after: &BrowserPageSnapshot,
+) -> BrowserSnapshotDiff {
     let before_elements = before
         .elements
         .iter()
@@ -7271,8 +8348,16 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
         .iter()
         .map(element_signature)
         .collect::<HashSet<_>>();
-    let before_forms = before.forms.iter().map(form_signature).collect::<HashSet<_>>();
-    let after_forms = after.forms.iter().map(form_signature).collect::<HashSet<_>>();
+    let before_forms = before
+        .forms
+        .iter()
+        .map(form_signature)
+        .collect::<HashSet<_>>();
+    let after_forms = after
+        .forms
+        .iter()
+        .map(form_signature)
+        .collect::<HashSet<_>>();
     let before_cookies = before
         .cookies
         .iter()
@@ -7296,18 +8381,54 @@ pub fn diff_snapshots(before: &BrowserPageSnapshot, after: &BrowserPageSnapshot)
     let before_protocol_events = snapshot_protocol_event_signatures(before);
     let after_protocol_events = snapshot_protocol_event_signatures(after);
 
-    let mut added_elements = after_elements.difference(&before_elements).cloned().collect::<Vec<_>>();
-    let mut removed_elements = before_elements.difference(&after_elements).cloned().collect::<Vec<_>>();
-    let mut added_forms = after_forms.difference(&before_forms).cloned().collect::<Vec<_>>();
-    let mut removed_forms = before_forms.difference(&after_forms).cloned().collect::<Vec<_>>();
-    let mut added_cookies = after_cookies.difference(&before_cookies).cloned().collect::<Vec<_>>();
-    let mut removed_cookies = before_cookies.difference(&after_cookies).cloned().collect::<Vec<_>>();
-    let mut added_storage = after_storage.difference(&before_storage).cloned().collect::<Vec<_>>();
-    let mut removed_storage = before_storage.difference(&after_storage).cloned().collect::<Vec<_>>();
-    let mut added_mutations = after_mutations.difference(&before_mutations).cloned().collect::<Vec<_>>();
-    let mut removed_mutations = before_mutations.difference(&after_mutations).cloned().collect::<Vec<_>>();
-    let mut added_requests = after_requests.difference(&before_requests).cloned().collect::<Vec<_>>();
-    let mut removed_requests = before_requests.difference(&after_requests).cloned().collect::<Vec<_>>();
+    let mut added_elements = after_elements
+        .difference(&before_elements)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut removed_elements = before_elements
+        .difference(&after_elements)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut added_forms = after_forms
+        .difference(&before_forms)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut removed_forms = before_forms
+        .difference(&after_forms)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut added_cookies = after_cookies
+        .difference(&before_cookies)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut removed_cookies = before_cookies
+        .difference(&after_cookies)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut added_storage = after_storage
+        .difference(&before_storage)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut removed_storage = before_storage
+        .difference(&after_storage)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut added_mutations = after_mutations
+        .difference(&before_mutations)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut removed_mutations = before_mutations
+        .difference(&after_mutations)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut added_requests = after_requests
+        .difference(&before_requests)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut removed_requests = before_requests
+        .difference(&after_requests)
+        .cloned()
+        .collect::<Vec<_>>();
     let mut added_settle_signals = after_settle_signals
         .difference(&before_settle_signals)
         .cloned()
@@ -7490,7 +8611,10 @@ where
 
     loop {
         if started.elapsed() >= timeout {
-            return Err(format!("wait condition not satisfied within {}ms", timeout.as_millis()));
+            return Err(format!(
+                "wait condition not satisfied within {}ms",
+                timeout.as_millis()
+            ));
         }
         thread::sleep(interval);
         let url = session
@@ -7523,7 +8647,10 @@ fn wait_for_stable_snapshot(
 
     loop {
         if started.elapsed() >= timeout {
-            return Err(format!("wait for stable snapshot not satisfied within {}ms", timeout.as_millis()));
+            return Err(format!(
+                "wait for stable snapshot not satisfied within {}ms",
+                timeout.as_millis()
+            ));
         }
         thread::sleep(interval);
         let url = session
@@ -7554,7 +8681,18 @@ pub fn render_session_wait_report(report: &BrowserSessionWaitReport) -> String {
     let matched_target_actionability = report
         .matched_target_actionability
         .as_ref()
-        .map(|target| format!("\nMatched target actionability: {} (score {}) - {}", if target.actionable { "actionable" } else { "not actionable" }, target.score, target.reason))
+        .map(|target| {
+            format!(
+                "\nMatched target actionability: {} (score {}) - {}",
+                if target.actionable {
+                    "actionable"
+                } else {
+                    "not actionable"
+                },
+                target.score,
+                target.reason
+            )
+        })
         .unwrap_or_default();
     format!(
         "Session wait complete.\nSession: {}\n{}\nTitle: {}\nDiff: {}{}\nRequests: {}\nSettle signals: {}\nRuntime state: {}\nProtocol events: {}{}\nLocal storage: {}\nSession storage: {}\nSnapshot JSON: {}\nSession JSON: {}{}\nNDA Facts: {}",
@@ -7618,21 +8756,24 @@ pub fn wait_for_session_report(
         .current_url
         .clone()
         .ok_or_else(|| format!("browser session '{}' has no current URL", session_id))?;
-    let mut snapshot = load_snapshot_json(&current_url, sitemap_path)
-        .unwrap_or_else(|_| crawl_page_snapshot_with_session(&mut session, &current_url).unwrap_or(BrowserPageSnapshot {
-            url: current_url.clone(),
-            title: "Untitled Page".to_string(),
-            summary: String::new(),
-            elements: Vec::new(),
-            forms: Vec::new(),
-            cookies: session.cookies.clone(),
-            storage: storage_buckets(&session),
-            mutations: Vec::new(),
-            requests: Vec::new(),
-            settle_signals: Vec::new(),
-            runtime_state: Vec::new(),
-            protocol_events: Vec::new(),
-        }));
+    let mut snapshot = load_snapshot_json(&current_url, sitemap_path).unwrap_or_else(|_| {
+        crawl_page_snapshot_with_session(&mut session, &current_url).unwrap_or(
+            BrowserPageSnapshot {
+                url: current_url.clone(),
+                title: "Untitled Page".to_string(),
+                summary: String::new(),
+                elements: Vec::new(),
+                forms: Vec::new(),
+                cookies: session.cookies.clone(),
+                storage: storage_buckets(&session),
+                mutations: Vec::new(),
+                requests: Vec::new(),
+                settle_signals: Vec::new(),
+                runtime_state: Vec::new(),
+                protocol_events: Vec::new(),
+            },
+        )
+    });
     if session.last_html.is_none() {
         session.last_html = browser_html_fallback_path(&snapshot.url, sitemap_path)
             .exists()
@@ -7640,127 +8781,223 @@ pub fn wait_for_session_report(
             .flatten();
     }
     let diff = if let Some(wait_text) = text {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            snapshot_contains_text(candidate, wait_text)
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| snapshot_contains_text(candidate, wait_text),
+        )?
     } else if let Some(wait_title) = title {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate.title.to_ascii_lowercase().contains(&wait_title.to_ascii_lowercase())
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate
+                    .title
+                    .to_ascii_lowercase()
+                    .contains(&wait_title.to_ascii_lowercase())
+            },
+        )?
     } else if let Some(wait_fragment) = url_contains {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate.url.contains(wait_fragment)
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| candidate.url.contains(wait_fragment),
+        )?
     } else if let Some(wait_mutation) = mutation {
         let lowered = wait_mutation.to_ascii_lowercase();
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate
-                .mutations
-                .iter()
-                .any(|entry| entry.to_ascii_lowercase().contains(&lowered))
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate
+                    .mutations
+                    .iter()
+                    .any(|entry| entry.to_ascii_lowercase().contains(&lowered))
+            },
+        )?
     } else if request_method.is_some()
         || request_url_contains.is_some()
         || request_status.is_some()
         || request_resource.is_some()
     {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate.requests.iter().any(|entry| {
-                request_record_matches(
-                    entry,
-                    request_method,
-                    request_url_contains,
-                    request_status,
-                    request_resource,
-                )
-            })
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate.requests.iter().any(|entry| {
+                    request_record_matches(
+                        entry,
+                        request_method,
+                        request_url_contains,
+                        request_status,
+                        request_resource,
+                    )
+                })
+            },
+        )?
     } else if let (Some(wait_scope), Some(wait_key)) = (storage_scope, storage_key) {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            storage_entry_matches(candidate, wait_scope, wait_key, storage_value)
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| storage_entry_matches(candidate, wait_scope, wait_key, storage_value),
+        )?
     } else if settle.is_some() || settle_scope.is_some() {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate
-                .settle_signals
-                .iter()
-                .any(|entry| settle_signal_matches(entry, settle, settle_scope, settle_state))
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate
+                    .settle_signals
+                    .iter()
+                    .any(|entry| settle_signal_matches(entry, settle, settle_scope, settle_state))
+            },
+        )?
     } else if let (Some(wait_scope), Some(wait_key)) = (runtime_scope, runtime_key) {
         let lowered_scope = wait_scope.to_ascii_lowercase();
         let lowered_key = wait_key.to_ascii_lowercase();
         let lowered_value = runtime_value.map(|value| value.to_ascii_lowercase());
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate.runtime_state.iter().any(|entry| {
-                entry.scope.eq_ignore_ascii_case(&lowered_scope)
-                    && entry.key.eq_ignore_ascii_case(&lowered_key)
-                    && lowered_value
-                        .as_ref()
-                        .map(|value| entry.value.to_ascii_lowercase().contains(value))
-                        .unwrap_or(true)
-            })
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate.runtime_state.iter().any(|entry| {
+                    entry.scope.eq_ignore_ascii_case(&lowered_scope)
+                        && entry.key.eq_ignore_ascii_case(&lowered_key)
+                        && lowered_value
+                            .as_ref()
+                            .map(|value| entry.value.to_ascii_lowercase().contains(value))
+                            .unwrap_or(true)
+                })
+            },
+        )?
     } else if protocol_kind.is_some()
         || protocol_phase.is_some()
         || protocol_target.is_some()
         || protocol_detail.is_some()
     {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate.protocol_events.iter().any(|entry| {
-                protocol_event_matches(
-                    entry,
-                    protocol_kind,
-                    protocol_phase,
-                    protocol_target,
-                    protocol_detail,
-                )
-            })
-        })?
-    } else if network_idle {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate
-                .settle_signals
-                .iter()
-                .any(|entry| settle_signal_matches(entry, None, Some("network"), Some("settled")))
-        })?
-    } else if app_ready {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate
-                .settle_signals
-                .iter()
-                .any(|entry| settle_signal_matches(entry, None, Some("navigation"), Some("settled")))
-                && candidate.runtime_state.iter().any(|entry| {
-                    (entry.scope.eq_ignore_ascii_case("router") && entry.key.eq_ignore_ascii_case("name") && !entry.value.trim().is_empty())
-                        || (entry.scope.eq_ignore_ascii_case("store") && contains_case_insensitive(&entry.value, "ready"))
-                        || (entry.scope.eq_ignore_ascii_case("app") && contains_case_insensitive(&entry.value, "ready"))
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate.protocol_events.iter().any(|entry| {
+                    protocol_event_matches(
+                        entry,
+                        protocol_kind,
+                        protocol_phase,
+                        protocol_target,
+                        protocol_detail,
+                    )
                 })
-        })?
+            },
+        )?
+    } else if network_idle {
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate.settle_signals.iter().any(|entry| {
+                    settle_signal_matches(entry, None, Some("network"), Some("settled"))
+                })
+            },
+        )?
+    } else if app_ready {
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate.settle_signals.iter().any(|entry| {
+                    settle_signal_matches(entry, None, Some("navigation"), Some("settled"))
+                }) && candidate.runtime_state.iter().any(|entry| {
+                    (entry.scope.eq_ignore_ascii_case("router")
+                        && entry.key.eq_ignore_ascii_case("name")
+                        && !entry.value.trim().is_empty())
+                        || (entry.scope.eq_ignore_ascii_case("store")
+                            && contains_case_insensitive(&entry.value, "ready"))
+                        || (entry.scope.eq_ignore_ascii_case("app")
+                            && contains_case_insensitive(&entry.value, "ready"))
+                })
+            },
+        )?
     } else if mutation_settled {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate
-                .settle_signals
-                .iter()
-                .any(|entry| settle_signal_matches(entry, Some("settled"), None, None))
-                && candidate.mutations.iter().any(|entry| contains_case_insensitive(entry, "hydration") || contains_case_insensitive(entry, "settled") || contains_case_insensitive(entry, "complete"))
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate
+                    .settle_signals
+                    .iter()
+                    .any(|entry| settle_signal_matches(entry, Some("settled"), None, None))
+                    && candidate.mutations.iter().any(|entry| {
+                        contains_case_insensitive(entry, "hydration")
+                            || contains_case_insensitive(entry, "settled")
+                            || contains_case_insensitive(entry, "complete")
+                    })
+            },
+        )?
     } else if stream_complete {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            candidate.protocol_events.iter().any(|entry| {
-                (entry.kind.eq_ignore_ascii_case("stream") || entry.kind.eq_ignore_ascii_case("event_stream") || entry.kind.eq_ignore_ascii_case("websocket"))
-                    && (entry.phase.eq_ignore_ascii_case("complete")
-                        || entry.phase.eq_ignore_ascii_case("closed")
-                        || contains_case_insensitive(&entry.detail, "complete")
-                        || contains_case_insensitive(&entry.detail, "closed"))
-            })
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                candidate.protocol_events.iter().any(|entry| {
+                    (entry.kind.eq_ignore_ascii_case("stream")
+                        || entry.kind.eq_ignore_ascii_case("event_stream")
+                        || entry.kind.eq_ignore_ascii_case("websocket"))
+                        && (entry.phase.eq_ignore_ascii_case("complete")
+                            || entry.phase.eq_ignore_ascii_case("closed")
+                            || contains_case_insensitive(&entry.detail, "complete")
+                            || contains_case_insensitive(&entry.detail, "closed"))
+                })
+            },
+        )?
     } else if let (Some(wait_role), Some(wait_name)) = (role, name) {
-        wait_for_condition(&mut session, &mut snapshot, timeout_ms, interval_ms, |candidate| {
-            find_element(candidate, wait_role, wait_name)
-                .map(|element| !require_actionable || describe_element_actionability(element).actionable)
-                .unwrap_or(false)
-        })?
+        wait_for_condition(
+            &mut session,
+            &mut snapshot,
+            timeout_ms,
+            interval_ms,
+            |candidate| {
+                find_element(candidate, wait_role, wait_name)
+                    .map(|element| {
+                        !require_actionable || describe_element_actionability(element).actionable
+                    })
+                    .unwrap_or(false)
+            },
+        )?
     } else if stable_polls.is_some() {
-        wait_for_stable_snapshot(&mut session, &mut snapshot, stable_polls, timeout_ms, interval_ms)?
+        wait_for_stable_snapshot(
+            &mut session,
+            &mut snapshot,
+            stable_polls,
+            timeout_ms,
+            interval_ms,
+        )?
     } else {
         return Err("browser_session_wait requires text, title, urlContains, mutation, requestMethod/requestUrlContains/requestStatus/requestResource, storageScope+storageKey, settle/settleScope, runtimeScope+runtimeKey, protocolKind/protocolPhase/protocolTarget/protocolDetail, networkIdle, appReady, mutationSettled, streamComplete, stablePolls, or both role and name".to_string());
     };
@@ -7782,7 +9019,11 @@ pub fn wait_for_session_report(
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
-    let html_fallback_path = write_html_fallback(&snapshot.url, session.last_html.as_deref().unwrap_or_default(), sitemap_path)?;
+    let html_fallback_path = write_html_fallback(
+        &snapshot.url,
+        session.last_html.as_deref().unwrap_or_default(),
+        sitemap_path,
+    )?;
     let session_path = save_session_state(workspace_root, &session)?;
 
     let matched_target_actionability = if let (Some(wait_role), Some(wait_name)) = (role, name) {
@@ -7918,7 +9159,9 @@ pub fn wait_for_session(
                 "wait",
                 None,
                 format!("Failed to satisfy wait condition: {}", err),
-                session_file_path(workspace_root, session_id).display().to_string(),
+                session_file_path(workspace_root, session_id)
+                    .display()
+                    .to_string(),
             );
             Err(err)
         }
@@ -7939,16 +9182,23 @@ fn extract_snapshot_value(
         return Ok(snapshot.summary.clone());
     }
     if source.eq_ignore_ascii_case("field_value") {
-        let field_name = field.ok_or_else(|| "extract_text field is required for source=field_value".to_string())?;
+        let field_name = field
+            .ok_or_else(|| "extract_text field is required for source=field_value".to_string())?;
         let matched = find_form_field(snapshot, field_name)
             .ok_or_else(|| format!("workflow extract field not found: '{}'", field_name))?;
         return Ok(matched.value.clone());
     }
 
-    let role = role.ok_or_else(|| format!("extract_text role is required for source='{}'", source))?;
-    let name = name.ok_or_else(|| format!("extract_text name is required for source='{}'", source))?;
-    let matched = find_element(snapshot, role, name)
-        .ok_or_else(|| format!("workflow extract target not found: role='{}' name='{}'", role, name))?;
+    let role =
+        role.ok_or_else(|| format!("extract_text role is required for source='{}'", source))?;
+    let name =
+        name.ok_or_else(|| format!("extract_text name is required for source='{}'", source))?;
+    let matched = find_element(snapshot, role, name).ok_or_else(|| {
+        format!(
+            "workflow extract target not found: role='{}' name='{}'",
+            role, name
+        )
+    })?;
     if source.eq_ignore_ascii_case("element_name") {
         Ok(matched.name.clone())
     } else if source.eq_ignore_ascii_case("element_value") {
@@ -7960,23 +9210,33 @@ fn extract_snapshot_value(
     }
 }
 
-fn apply_fill_field(state: &mut BrowserReplayState, field_name: &str, value: &str) -> Result<(), String> {
+fn apply_fill_field(
+    state: &mut BrowserReplayState,
+    field_name: &str,
+    value: &str,
+) -> Result<(), String> {
     let best_field = find_form_field(&state.snapshot, field_name);
     if let Some(field) = best_field {
         let field_actionability = describe_form_field_actionability(field);
         if !field_actionability.actionable {
-            return Err(format!("workflow fill target '{}' is not actionable: {}", field_name, field_actionability.reason));
+            return Err(format!(
+                "workflow fill target '{}' is not actionable: {}",
+                field_name, field_actionability.reason
+            ));
         }
     }
     let best_field_name = best_field.map(|field| field.name.clone());
-    let best_element_name = find_textbox_element(&state.snapshot, field_name).map(|element| element.name.clone());
+    let best_element_name =
+        find_textbox_element(&state.snapshot, field_name).map(|element| element.name.clone());
 
     let mut matched = false;
     for form in &mut state.snapshot.forms {
         for field in &mut form.fields {
             if best_field_name.as_deref() == Some(field.name.as_str()) {
                 field.value = value.to_string();
-                state.filled_fields.insert(field.name.clone(), value.to_string());
+                state
+                    .filled_fields
+                    .insert(field.name.clone(), value.to_string());
                 matched = true;
             }
         }
@@ -7996,7 +9256,10 @@ fn apply_fill_field(state: &mut BrowserReplayState, field_name: &str, value: &st
     }
 }
 
-fn submit_current_form(state: &mut BrowserReplayState, form_id: Option<&str>) -> Result<(), String> {
+fn submit_current_form(
+    state: &mut BrowserReplayState,
+    form_id: Option<&str>,
+) -> Result<(), String> {
     let form = find_form(&state.snapshot, form_id)
         .cloned()
         .ok_or_else(|| match form_id {
@@ -8011,7 +9274,11 @@ fn submit_current_form(state: &mut BrowserReplayState, form_id: Option<&str>) ->
             .get(&field.name)
             .cloned()
             .unwrap_or_else(|| field.value.clone());
-        encoded_pairs.push(format!("{}={}", url_encode(&field.name), url_encode(&value)));
+        encoded_pairs.push(format!(
+            "{}={}",
+            url_encode(&field.name),
+            url_encode(&value)
+        ));
     }
     let payload = encoded_pairs.join("&");
     let target_url = if form.method.eq_ignore_ascii_case("GET") && !payload.is_empty() {
@@ -8025,16 +9292,34 @@ fn submit_current_form(state: &mut BrowserReplayState, form_id: Option<&str>) ->
     };
 
     let response = if form.method.eq_ignore_ascii_case("POST") {
-        fetch_with_session(&target_url, "POST", Some(&payload), &state.session.cookies, &state.session.network)?
+        fetch_with_session(
+            &target_url,
+            "POST",
+            Some(&payload),
+            &state.session.cookies,
+            &state.session.network,
+        )?
     } else {
-        fetch_with_session(&target_url, "GET", None, &state.session.cookies, &state.session.network)?
+        fetch_with_session(
+            &target_url,
+            "GET",
+            None,
+            &state.session.cookies,
+            &state.session.network,
+        )?
     };
 
     for cookie in response.cookies.iter().cloned() {
         merge_cookie(&mut state.session.cookies, cookie);
     }
-    apply_storage_updates(&mut state.session.local_storage, &response.local_storage_updates);
-    apply_storage_updates(&mut state.session.session_storage, &response.session_storage_updates);
+    apply_storage_updates(
+        &mut state.session.local_storage,
+        &response.local_storage_updates,
+    );
+    apply_storage_updates(
+        &mut state.session.session_storage,
+        &response.session_storage_updates,
+    );
     state.session.current_url = Some(response.final_url.clone());
     state.session.last_html = Some(response.html.clone());
     let storage = storage_buckets(&state.session);
@@ -8077,7 +9362,10 @@ pub fn render_web_navigate_report(report: &BrowserWebNavigateReport) -> String {
     )
 }
 
-pub fn crawl_and_sync_sitemap_report(url: &str, sitemap_path: &Path) -> Result<BrowserWebNavigateReport, String> {
+pub fn crawl_and_sync_sitemap_report(
+    url: &str,
+    sitemap_path: &Path,
+) -> Result<BrowserWebNavigateReport, String> {
     let mut session = BrowserSessionState {
         id: "ephemeral".to_string(),
         current_url: Some(url.to_string()),
@@ -8105,7 +9393,11 @@ pub fn crawl_and_sync_sitemap_report(url: &str, sitemap_path: &Path) -> Result<B
         sitemap_path,
     )?;
     let snapshot_path = write_snapshot_json(&snapshot, sitemap_path)?;
-    let html_fallback_path = write_html_fallback(&snapshot.url, session.last_html.as_deref().unwrap_or_default(), sitemap_path)?;
+    let html_fallback_path = write_html_fallback(
+        &snapshot.url,
+        session.last_html.as_deref().unwrap_or_default(),
+        sitemap_path,
+    )?;
     let snapshot_summary = snapshot.summary.clone();
     let summary = summarize_snapshot(snapshot);
 
@@ -8131,24 +9423,24 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
         }
         BrowserWorkflowStep::Click { role, name } => {
             lines.push(format!(
-                "{}\tclick\trole={}\tname={}"
-                ,prefix,
+                "{}\tclick\trole={}\tname={}",
+                prefix,
                 encode_nda_text(role),
                 encode_nda_text(name)
             ));
         }
         BrowserWorkflowStep::FillField { field, value } => {
             lines.push(format!(
-                "{}\tfill_field\tfield={}\tvalue={}"
-                ,prefix,
+                "{}\tfill_field\tfield={}\tvalue={}",
+                prefix,
                 encode_nda_text(field),
                 encode_nda_text(value)
             ));
         }
         BrowserWorkflowStep::SubmitForm { form } => {
             lines.push(format!(
-                "{}\tsubmit_form\tform={}"
-                ,prefix,
+                "{}\tsubmit_form\tform={}",
+                prefix,
                 encode_nda_text(form.as_deref().unwrap_or("default"))
             ));
         }
@@ -8158,8 +9450,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_text\ttext={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_text\ttext={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(text),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
                 interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
@@ -8172,8 +9464,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_element\trole={}\tname={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_element\trole={}\tname={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(role),
                 encode_nda_text(name),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
@@ -8186,8 +9478,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_title\ttitle={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_title\ttitle={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(title),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
                 interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
@@ -8199,8 +9491,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_url_contains\tfragment={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_url_contains\tfragment={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(fragment),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
                 interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
@@ -8212,8 +9504,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_mutation\tlabel={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_mutation\tlabel={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(label),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
                 interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
@@ -8246,8 +9538,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_storage\tscope={}\tkey={}\tvalue={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_storage\tscope={}\tkey={}\tvalue={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(scope),
                 encode_nda_text(key),
                 encode_nda_text(value.as_deref().unwrap_or_default()),
@@ -8263,8 +9555,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_settle\tlabel={}\tscope={}\tstate={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_settle\tlabel={}\tscope={}\tstate={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 encode_nda_text(label.as_deref().unwrap_or_default()),
                 encode_nda_text(scope.as_deref().unwrap_or_default()),
                 encode_nda_text(state.as_deref().unwrap_or_default()),
@@ -8314,8 +9606,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             interval_ms,
         } => {
             lines.push(format!(
-                "{}\twait_for_stable\tstable_polls={}\ttimeout_ms={}\tinterval_ms={}"
-                ,prefix,
+                "{}\twait_for_stable\tstable_polls={}\ttimeout_ms={}\tinterval_ms={}",
+                prefix,
                 stable_polls.unwrap_or(DEFAULT_STABLE_POLLS),
                 timeout_ms.unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
                 interval_ms.unwrap_or(DEFAULT_WAIT_INTERVAL_MS)
@@ -8329,8 +9621,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             field,
         } => {
             lines.push(format!(
-                "{}\textract_text\toutput={}\tsource={}\trole={}\tname={}\tfield={}"
-                ,prefix,
+                "{}\textract_text\toutput={}\tsource={}\trole={}\tname={}\tfield={}",
+                prefix,
                 encode_nda_text(output),
                 encode_nda_text(source),
                 encode_nda_text(role.as_deref().unwrap_or_default()),
@@ -8339,17 +9631,29 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             ));
         }
         BrowserWorkflowStep::SaveCheckpoint { name } => {
-            lines.push(format!("{}\tsave_checkpoint\tname={}", prefix, encode_nda_text(name)));
+            lines.push(format!(
+                "{}\tsave_checkpoint\tname={}",
+                prefix,
+                encode_nda_text(name)
+            ));
         }
         BrowserWorkflowStep::RestoreCheckpoint { name } => {
-            lines.push(format!("{}\trestore_checkpoint\tname={}", prefix, encode_nda_text(name)));
+            lines.push(format!(
+                "{}\trestore_checkpoint\tname={}",
+                prefix,
+                encode_nda_text(name)
+            ));
         }
         BrowserWorkflowStep::IfTextContains {
             text,
             then_steps,
             else_steps,
         } => {
-            lines.push(format!("{}\tif_text_contains\ttext={}", prefix, encode_nda_text(text)));
+            lines.push(format!(
+                "{}\tif_text_contains\ttext={}",
+                prefix,
+                encode_nda_text(text)
+            ));
             for (idx, nested) in then_steps.iter().enumerate() {
                 render_workflow_step_lines(lines, nested, &format!("{}:then:{}", prefix, idx));
             }
@@ -8364,8 +9668,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             else_steps,
         } => {
             lines.push(format!(
-                "{}\tif_output_equals\toutput={}\tequals={}"
-                ,prefix,
+                "{}\tif_output_equals\toutput={}\tequals={}",
+                prefix,
                 encode_nda_text(output),
                 encode_nda_text(equals)
             ));
@@ -8378,14 +9682,18 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
         }
         BrowserWorkflowStep::AssertElement { role, name } => {
             lines.push(format!(
-                "{}\tassert_element\trole={}\tname={}"
-                ,prefix,
+                "{}\tassert_element\trole={}\tname={}",
+                prefix,
                 encode_nda_text(role),
                 encode_nda_text(name)
             ));
         }
         BrowserWorkflowStep::AssertTextContains { text } => {
-            lines.push(format!("{}\tassert_text\t{}", prefix, encode_nda_text(text)));
+            lines.push(format!(
+                "{}\tassert_text\t{}",
+                prefix,
+                encode_nda_text(text)
+            ));
         }
         BrowserWorkflowStep::AssertOutput {
             output,
@@ -8393,8 +9701,8 @@ fn render_workflow_step_lines(lines: &mut Vec<String>, step: &BrowserWorkflowSte
             contains,
         } => {
             lines.push(format!(
-                "{}\tassert_output\toutput={}\tequals={}\tcontains={}"
-                ,prefix,
+                "{}\tassert_output\toutput={}\tequals={}\tcontains={}",
+                prefix,
                 encode_nda_text(output),
                 encode_nda_text(equals.as_deref().unwrap_or_default()),
                 encode_nda_text(contains.as_deref().unwrap_or_default())
@@ -8421,21 +9729,24 @@ pub fn render_workflow_dsl(workflow: &BrowserWorkflow) -> String {
 pub fn render_workflow_save_report(report: &BrowserWorkflowSaveReport) -> String {
     format!(
         "Saved browser workflow '{}'\nJSON: {}\nNDA: {}",
-        report.workflow.name,
-        report.json_path,
-        report.nda_path,
+        report.workflow.name, report.json_path, report.nda_path,
     )
 }
 
-pub fn save_workflow_report(workspace_root: &Path, workflow: &BrowserWorkflow) -> Result<BrowserWorkflowSaveReport, String> {
+pub fn save_workflow_report(
+    workspace_root: &Path,
+    workflow: &BrowserWorkflow,
+) -> Result<BrowserWorkflowSaveReport, String> {
     let json_path = browser_workflow_json_path(workspace_root, &workflow.name);
     let nda_path = browser_workflow_nda_path(workspace_root, &workflow.name);
     if let Some(parent) = json_path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create workflow dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(workflow).map_err(|err| format!("serialise workflow: {err}"))?;
+    let json =
+        serde_json::to_vec_pretty(workflow).map_err(|err| format!("serialise workflow: {err}"))?;
     fs::write(&json_path, json).map_err(|err| format!("write workflow json: {err}"))?;
-    fs::write(&nda_path, render_workflow_dsl(workflow)).map_err(|err| format!("write workflow nda: {err}"))?;
+    fs::write(&nda_path, render_workflow_dsl(workflow))
+        .map_err(|err| format!("write workflow nda: {err}"))?;
     Ok(BrowserWorkflowSaveReport {
         workflow: summarize_workflow(workflow.clone()),
         json_path: json_path.display().to_string(),
@@ -8443,9 +9754,15 @@ pub fn save_workflow_report(workspace_root: &Path, workflow: &BrowserWorkflow) -
     })
 }
 
-pub fn save_workflow(workspace_root: &Path, workflow: &BrowserWorkflow) -> Result<(PathBuf, PathBuf), String> {
+pub fn save_workflow(
+    workspace_root: &Path,
+    workflow: &BrowserWorkflow,
+) -> Result<(PathBuf, PathBuf), String> {
     let report = save_workflow_report(workspace_root, workflow)?;
-    Ok((PathBuf::from(report.json_path), PathBuf::from(report.nda_path)))
+    Ok((
+        PathBuf::from(report.json_path),
+        PathBuf::from(report.nda_path),
+    ))
 }
 
 pub fn load_workflow(path: &Path) -> Result<BrowserWorkflow, String> {
@@ -8489,7 +9806,12 @@ pub fn list_workflows(
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        if path.file_name().and_then(|name| name.to_str()).map(|name| !name.ends_with(".browser.json")).unwrap_or(true) {
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| !name.ends_with(".browser.json"))
+            .unwrap_or(true)
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read workflow: {err}"))?;
@@ -8512,15 +9834,16 @@ pub fn list_workflows(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.name.cmp(&right.name));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.name.cmp(&right.name)
+    });
     Ok(items)
 }
 
 pub fn render_workflow_suite_save_report(report: &BrowserWorkflowSuiteSaveReport) -> String {
     format!(
         "Saved browser workflow suite '{}'\nJSON: {}",
-        report.suite.name,
-        report.json_path,
+        report.suite.name, report.json_path,
     )
 }
 
@@ -8532,7 +9855,8 @@ pub fn save_workflow_suite_report(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create workflow suite dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(suite).map_err(|err| format!("serialise workflow suite: {err}"))?;
+    let json = serde_json::to_vec_pretty(suite)
+        .map_err(|err| format!("serialise workflow suite: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write workflow suite: {err}"))?;
     Ok(BrowserWorkflowSuiteSaveReport {
         suite: summarize_workflow_suite(suite.clone()),
@@ -8540,7 +9864,10 @@ pub fn save_workflow_suite_report(
     })
 }
 
-pub fn save_workflow_suite(workspace_root: &Path, suite: &BrowserWorkflowSuite) -> Result<PathBuf, String> {
+pub fn save_workflow_suite(
+    workspace_root: &Path,
+    suite: &BrowserWorkflowSuite,
+) -> Result<PathBuf, String> {
     let report = save_workflow_suite_report(workspace_root, suite)?;
     Ok(PathBuf::from(report.json_path))
 }
@@ -8576,7 +9903,12 @@ pub fn list_workflow_suites(
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        if path.file_name().and_then(|name| name.to_str()).map(|name| !name.ends_with(".suite.json")).unwrap_or(true) {
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| !name.ends_with(".suite.json"))
+            .unwrap_or(true)
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read workflow suite: {err}"))?;
@@ -8591,7 +9923,9 @@ pub fn list_workflow_suites(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.name.cmp(&right.name));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.name.cmp(&right.name)
+    });
     Ok(items)
 }
 
@@ -8640,8 +9974,8 @@ pub fn list_workflow_runs(
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser run report: {err}"))?;
-        let report: BrowserWorkflowRunReport =
-            serde_json::from_slice(&raw).map_err(|err| format!("parse browser run report: {err}"))?;
+        let report: BrowserWorkflowRunReport = serde_json::from_slice(&raw)
+            .map_err(|err| format!("parse browser run report: {err}"))?;
         let mut summary = summarize_workflow_run(report);
         summary.run_report_path = Some(path.display().to_string());
         if workflow_name_contains
@@ -8717,7 +10051,9 @@ pub fn list_workflow_suite_runs(
             items.push(summary);
         }
     }
-    finalize_list(&mut items, sort_direction, limit, |left, right| left.suite_name.cmp(&right.suite_name));
+    finalize_list(&mut items, sort_direction, limit, |left, right| {
+        left.suite_name.cmp(&right.suite_name)
+    });
     Ok(items)
 }
 
@@ -8732,14 +10068,23 @@ fn execute_workflow_steps(
         match step {
             BrowserWorkflowStep::Navigate { url } => {
                 let resolved_url = resolve_template(url, state);
-                state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &resolved_url)?;
-                log.push(format!("navigate {} -> {}", resolved_url, state.snapshot.title));
+                state.snapshot =
+                    crawl_page_snapshot_with_session(&mut state.session, &resolved_url)?;
+                log.push(format!(
+                    "navigate {} -> {}",
+                    resolved_url, state.snapshot.title
+                ));
             }
             BrowserWorkflowStep::Click { role, name } => {
                 let resolved_role = resolve_template(role, state);
                 let resolved_name = resolve_template(name, state);
                 let target = find_element(&state.snapshot, &resolved_role, &resolved_name)
-                    .ok_or_else(|| format!("workflow click target not found: role='{}' name='{}'", resolved_role, resolved_name))?;
+                    .ok_or_else(|| {
+                        format!(
+                            "workflow click target not found: role='{}' name='{}'",
+                            resolved_role, resolved_name
+                        )
+                    })?;
                 let target_url = target.target_url.clone().ok_or_else(|| {
                     format!(
                         "workflow click target '{}' is not a navigable link in the current static browser engine",
@@ -8747,7 +10092,10 @@ fn execute_workflow_steps(
                     )
                 })?;
                 state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &target_url)?;
-                log.push(format!("click {}:{} -> {}", resolved_role, resolved_name, state.snapshot.title));
+                log.push(format!(
+                    "click {}:{} -> {}",
+                    resolved_role, resolved_name, state.snapshot.title
+                ));
             }
             BrowserWorkflowStep::FillField { field, value } => {
                 let resolved_field = resolve_template(field, state);
@@ -8777,7 +10125,11 @@ fn execute_workflow_steps(
                     *interval_ms,
                     |candidate| snapshot_contains_text(candidate, &resolved_text),
                 )?;
-                log.push(format!("wait_for_text '{}' -> {}", resolved_text, render_snapshot_diff(&diff)));
+                log.push(format!(
+                    "wait_for_text '{}' -> {}",
+                    resolved_text,
+                    render_snapshot_diff(&diff)
+                ));
             }
             BrowserWorkflowStep::WaitForElement {
                 role,
@@ -8815,7 +10167,11 @@ fn execute_workflow_steps(
                     *interval_ms,
                     |candidate| candidate.title.to_ascii_lowercase().contains(&lowered),
                 )?;
-                log.push(format!("wait_for_title '{}' -> {}", resolved_title, render_snapshot_diff(&diff)));
+                log.push(format!(
+                    "wait_for_title '{}' -> {}",
+                    resolved_title,
+                    render_snapshot_diff(&diff)
+                ));
             }
             BrowserWorkflowStep::WaitForUrlContains {
                 fragment,
@@ -8855,7 +10211,11 @@ fn execute_workflow_steps(
                             .any(|entry| entry.to_ascii_lowercase().contains(&lowered))
                     },
                 )?;
-                log.push(format!("wait_for_mutation '{}' -> {}", resolved_label, render_snapshot_diff(&diff)));
+                log.push(format!(
+                    "wait_for_mutation '{}' -> {}",
+                    resolved_label,
+                    render_snapshot_diff(&diff)
+                ));
             }
             BrowserWorkflowStep::WaitForRequest {
                 method,
@@ -8866,8 +10226,12 @@ fn execute_workflow_steps(
                 interval_ms,
             } => {
                 let resolved_method = method.as_ref().map(|value| resolve_template(value, state));
-                let resolved_url_contains = url_contains.as_ref().map(|value| resolve_template(value, state));
-                let resolved_resource = resource.as_ref().map(|value| resolve_template(value, state));
+                let resolved_url_contains = url_contains
+                    .as_ref()
+                    .map(|value| resolve_template(value, state));
+                let resolved_resource = resource
+                    .as_ref()
+                    .map(|value| resolve_template(value, state));
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
@@ -8889,7 +10253,9 @@ fn execute_workflow_steps(
                     "wait_for_request method={} url_contains={} status={} resource={} -> {}",
                     resolved_method.as_deref().unwrap_or("*"),
                     resolved_url_contains.as_deref().unwrap_or("*"),
-                    status.map(|value| value.to_string()).unwrap_or_else(|| "*".to_string()),
+                    status
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "*".to_string()),
                     resolved_resource.as_deref().unwrap_or("*"),
                     render_snapshot_diff(&diff)
                 ));
@@ -8909,7 +10275,14 @@ fn execute_workflow_steps(
                     &mut state.snapshot,
                     *timeout_ms,
                     *interval_ms,
-                    |candidate| storage_entry_matches(candidate, &resolved_scope, &resolved_key, resolved_value.as_deref()),
+                    |candidate| {
+                        storage_entry_matches(
+                            candidate,
+                            &resolved_scope,
+                            &resolved_key,
+                            resolved_value.as_deref(),
+                        )
+                    },
                 )?;
                 log.push(format!(
                     "wait_for_storage {}:{}={} -> {}",
@@ -8928,24 +10301,32 @@ fn execute_workflow_steps(
             } => {
                 let resolved_label = label.as_ref().map(|value| resolve_template(value, state));
                 let resolved_scope = scope.as_ref().map(|value| resolve_template(value, state));
-                let resolved_state = settle_state.as_ref().map(|value| resolve_template(value, state));
+                let resolved_state = settle_state
+                    .as_ref()
+                    .map(|value| resolve_template(value, state));
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
                     *timeout_ms,
                     *interval_ms,
                     |candidate| {
-                        candidate
-                            .settle_signals
-                            .iter()
-                            .any(|entry| settle_signal_matches(entry, resolved_label.as_deref(), resolved_scope.as_deref(), resolved_state.as_deref()))
+                        candidate.settle_signals.iter().any(|entry| {
+                            settle_signal_matches(
+                                entry,
+                                resolved_label.as_deref(),
+                                resolved_scope.as_deref(),
+                                resolved_state.as_deref(),
+                            )
+                        })
                     },
                 )?;
                 log.push(format!(
                     "wait_for_settle {} -> {}",
-                    resolved_label
-                        .clone()
-                        .unwrap_or_else(|| format!("{}:{}", resolved_scope.as_deref().unwrap_or("*"), resolved_state.as_deref().unwrap_or("*"))),
+                    resolved_label.clone().unwrap_or_else(|| format!(
+                        "{}:{}",
+                        resolved_scope.as_deref().unwrap_or("*"),
+                        resolved_state.as_deref().unwrap_or("*")
+                    )),
                     render_snapshot_diff(&diff)
                 ));
             }
@@ -8961,7 +10342,9 @@ fn execute_workflow_steps(
                 let resolved_value = value.as_ref().map(|value| resolve_template(value, state));
                 let lowered_scope = resolved_scope.to_ascii_lowercase();
                 let lowered_key = resolved_key.to_ascii_lowercase();
-                let lowered_value = resolved_value.as_ref().map(|value| value.to_ascii_lowercase());
+                let lowered_value = resolved_value
+                    .as_ref()
+                    .map(|value| value.to_ascii_lowercase());
                 let diff = wait_for_condition(
                     &mut state.session,
                     &mut state.snapshot,
@@ -8994,7 +10377,9 @@ fn execute_workflow_steps(
                 timeout_ms,
                 interval_ms,
             } => {
-                let resolved_kind = event_kind.as_ref().map(|value| resolve_template(value, state));
+                let resolved_kind = event_kind
+                    .as_ref()
+                    .map(|value| resolve_template(value, state));
                 let resolved_phase = phase.as_ref().map(|value| resolve_template(value, state));
                 let resolved_target = target.as_ref().map(|value| resolve_template(value, state));
                 let resolved_detail = detail.as_ref().map(|value| resolve_template(value, state));
@@ -9061,26 +10446,36 @@ fn execute_workflow_steps(
                     resolved_field.as_deref(),
                 )?;
                 state.outputs.insert(output.clone(), extracted.clone());
-                log.push(format!("extract_text {}='{}'", output, truncate_string(&extracted, 80)));
+                log.push(format!(
+                    "extract_text {}='{}'",
+                    output,
+                    truncate_string(&extracted, 80)
+                ));
             }
             BrowserWorkflowStep::SaveCheckpoint { name } => {
                 let resolved_name = resolve_template(name, state);
                 checkpoints.insert(resolved_name.clone(), state.clone());
                 if let Some(root) = workspace_root {
                     let path = persist_checkpoint_from_replay_state(root, state, &resolved_name)?;
-                    log.push(format!("save_checkpoint {} -> {}", resolved_name, path.display()));
+                    log.push(format!(
+                        "save_checkpoint {} -> {}",
+                        resolved_name,
+                        path.display()
+                    ));
                 } else {
                     log.push(format!("save_checkpoint {} ok", resolved_name));
                 }
             }
             BrowserWorkflowStep::RestoreCheckpoint { name } => {
                 let resolved_name = resolve_template(name, state);
-                let restored = checkpoints
-                    .get(&resolved_name)
-                    .cloned()
-                    .ok_or_else(|| format!("workflow restore checkpoint not found: '{}'", resolved_name))?;
+                let restored = checkpoints.get(&resolved_name).cloned().ok_or_else(|| {
+                    format!("workflow restore checkpoint not found: '{}'", resolved_name)
+                })?;
                 *state = restored;
-                log.push(format!("restore_checkpoint {} -> {}", resolved_name, state.snapshot.title));
+                log.push(format!(
+                    "restore_checkpoint {} -> {}",
+                    resolved_name, state.snapshot.title
+                ));
             }
             BrowserWorkflowStep::IfTextContains {
                 text,
@@ -9089,7 +10484,11 @@ fn execute_workflow_steps(
             } => {
                 let resolved_text = resolve_template(text, state);
                 let matched = snapshot_contains_text(&state.snapshot, &resolved_text);
-                log.push(format!("if_text_contains '{}' -> {}", resolved_text, if matched { "then" } else { "else" }));
+                log.push(format!(
+                    "if_text_contains '{}' -> {}",
+                    resolved_text,
+                    if matched { "then" } else { "else" }
+                ));
                 let branch = if matched { then_steps } else { else_steps };
                 execute_workflow_steps(branch, state, log, checkpoints, workspace_root)?;
             }
@@ -9102,7 +10501,12 @@ fn execute_workflow_steps(
                 let actual = state.outputs.get(output).cloned().unwrap_or_default();
                 let resolved_expected = resolve_template(equals, state);
                 let matched = actual == resolved_expected;
-                log.push(format!("if_output_equals {}='{}' -> {}", output, truncate_string(&actual, 80), if matched { "then" } else { "else" }));
+                log.push(format!(
+                    "if_output_equals {}='{}' -> {}",
+                    output,
+                    truncate_string(&actual, 80),
+                    if matched { "then" } else { "else" }
+                ));
                 let branch = if matched { then_steps } else { else_steps };
                 execute_workflow_steps(branch, state, log, checkpoints, workspace_root)?;
             }
@@ -9110,14 +10514,23 @@ fn execute_workflow_steps(
                 let resolved_role = resolve_template(role, state);
                 let resolved_name = resolve_template(name, state);
                 find_element(&state.snapshot, &resolved_role, &resolved_name).ok_or_else(|| {
-                    format!("workflow assertion failed: missing element role='{}' name='{}'", resolved_role, resolved_name)
+                    format!(
+                        "workflow assertion failed: missing element role='{}' name='{}'",
+                        resolved_role, resolved_name
+                    )
                 })?;
-                log.push(format!("assert_element {}:{} ok", resolved_role, resolved_name));
+                log.push(format!(
+                    "assert_element {}:{} ok",
+                    resolved_role, resolved_name
+                ));
             }
             BrowserWorkflowStep::AssertTextContains { text } => {
                 let resolved_text = resolve_template(text, state);
                 if !snapshot_contains_text(&state.snapshot, &resolved_text) {
-                    return Err(format!("workflow assertion failed: text '{}' not present", resolved_text));
+                    return Err(format!(
+                        "workflow assertion failed: text '{}' not present",
+                        resolved_text
+                    ));
                 }
                 log.push(format!("assert_text '{}' ok", resolved_text));
             }
@@ -9126,21 +10539,25 @@ fn execute_workflow_steps(
                 equals,
                 contains,
             } => {
-                let actual = state
-                    .outputs
-                    .get(output)
-                    .cloned()
-                    .ok_or_else(|| format!("workflow assertion failed: output '{}' not present", output))?;
+                let actual = state.outputs.get(output).cloned().ok_or_else(|| {
+                    format!("workflow assertion failed: output '{}' not present", output)
+                })?;
                 if let Some(expected) = equals {
                     let resolved_expected = resolve_template(expected, state);
                     if actual != resolved_expected {
-                        return Err(format!("workflow assertion failed: output '{}' expected '{}' but was '{}'", output, resolved_expected, actual));
+                        return Err(format!(
+                            "workflow assertion failed: output '{}' expected '{}' but was '{}'",
+                            output, resolved_expected, actual
+                        ));
                     }
                 }
                 if let Some(expected_fragment) = contains {
                     let resolved_fragment = resolve_template(expected_fragment, state);
                     if !actual.contains(&resolved_fragment) {
-                        return Err(format!("workflow assertion failed: output '{}' does not contain '{}'", output, resolved_fragment));
+                        return Err(format!(
+                            "workflow assertion failed: output '{}' does not contain '{}'",
+                            output, resolved_fragment
+                        ));
                     }
                 }
                 log.push(format!("assert_output {} ok", output));
@@ -9172,7 +10589,11 @@ pub fn render_workflow_replay_result(
     )
 }
 
-pub fn render_workflow_suite_execution_report(suite_name: &str, summary: &BrowserWorkflowSuiteRunSummary, report_path: &Path) -> String {
+pub fn render_workflow_suite_execution_report(
+    suite_name: &str,
+    summary: &BrowserWorkflowSuiteRunSummary,
+    report_path: &Path,
+) -> String {
     format!(
         "Workflow suite '{}' completed.\nTotal: {}\nPassed: {}\nFailed: {}\nSuite Report: {}",
         suite_name,
@@ -9188,9 +10609,18 @@ fn replay_workflow_with_state(
     mut state: BrowserReplayState,
     workspace_root: Option<&Path>,
 ) -> Result<(String, BrowserReplayState, BrowserWorkflowRunReport), String> {
-    let mut log = vec![format!("start {} -> {}", state.snapshot.url, state.snapshot.title)];
+    let mut log = vec![format!(
+        "start {} -> {}",
+        state.snapshot.url, state.snapshot.title
+    )];
     let mut checkpoints = HashMap::new();
-    execute_workflow_steps(&workflow.steps, &mut state, &mut log, &mut checkpoints, workspace_root)?;
+    execute_workflow_steps(
+        &workflow.steps,
+        &mut state,
+        &mut log,
+        &mut checkpoints,
+        workspace_root,
+    )?;
 
     let network_summary = summarize_network_activity(&state.snapshot.protocol_events);
     let report = BrowserWorkflowRunReport {
@@ -9275,7 +10705,8 @@ fn persist_run_report(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create browser run dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(report).map_err(|err| format!("serialise browser run report: {err}"))?;
+    let json = serde_json::to_vec_pretty(report)
+        .map_err(|err| format!("serialise browser run report: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write browser run report: {err}"))?;
     Ok(path)
 }
@@ -9288,7 +10719,8 @@ fn persist_suite_run_report(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create browser suite run dir: {err}"))?;
     }
-    let json = serde_json::to_vec_pretty(report).map_err(|err| format!("serialise browser suite run report: {err}"))?;
+    let json = serde_json::to_vec_pretty(report)
+        .map_err(|err| format!("serialise browser suite run report: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write browser suite run report: {err}"))?;
     Ok(path)
 }
@@ -9337,7 +10769,8 @@ pub fn replay_workflow_with_artifacts_report(
         variables: workflow.variables.clone(),
         outputs: HashMap::new(),
     };
-    let (result, final_state, report) = replay_workflow_with_state(workflow, state, Some(workspace_root))?;
+    let (result, final_state, report) =
+        replay_workflow_with_state(workflow, state, Some(workspace_root))?;
     let (snapshot_path, session_path, facts_path, html_fallback_path) =
         persist_replay_state(workspace_root, &final_state, sitemap_path)?;
     let report_path = persist_run_report(workspace_root, &report)?;
@@ -9400,26 +10833,28 @@ pub fn run_workflow_suite_report(
     for workflow_path in &suite.workflows {
         let full_path = workspace_root.join(workflow_path);
         match load_workflow(&full_path) {
-            Ok(workflow) => match replay_workflow_with_artifacts(workspace_root, &workflow, sitemap_path) {
-                Ok(summary) => {
-                    passed += 1;
-                    items.push(BrowserWorkflowSuiteRunItem {
-                        workflow_path: workflow_path.clone(),
-                        workflow_name: workflow.name,
-                        status: "passed".to_string(),
-                        summary: truncate_string(&summary, 400),
-                    });
+            Ok(workflow) => {
+                match replay_workflow_with_artifacts(workspace_root, &workflow, sitemap_path) {
+                    Ok(summary) => {
+                        passed += 1;
+                        items.push(BrowserWorkflowSuiteRunItem {
+                            workflow_path: workflow_path.clone(),
+                            workflow_name: workflow.name,
+                            status: "passed".to_string(),
+                            summary: truncate_string(&summary, 400),
+                        });
+                    }
+                    Err(err) => {
+                        failed += 1;
+                        items.push(BrowserWorkflowSuiteRunItem {
+                            workflow_path: workflow_path.clone(),
+                            workflow_name: workflow.name,
+                            status: "failed".to_string(),
+                            summary: err,
+                        });
+                    }
                 }
-                Err(err) => {
-                    failed += 1;
-                    items.push(BrowserWorkflowSuiteRunItem {
-                        workflow_path: workflow_path.clone(),
-                        workflow_name: workflow.name,
-                        status: "failed".to_string(),
-                        summary: err,
-                    });
-                }
-            },
+            }
             Err(err) => {
                 failed += 1;
                 items.push(BrowserWorkflowSuiteRunItem {
@@ -9480,7 +10915,8 @@ pub fn replay_workflow_in_session_report(
         variables: workflow.variables.clone(),
         outputs: HashMap::new(),
     };
-    let (_result, final_state, report) = replay_workflow_with_state(workflow, state, Some(workspace_root))?;
+    let (_result, final_state, report) =
+        replay_workflow_with_state(workflow, state, Some(workspace_root))?;
     let (snapshot_path, session_path, facts_path, html_fallback_path) =
         persist_replay_state(workspace_root, &final_state, sitemap_path)?;
     let report_path = persist_run_report(workspace_root, &report)?;
@@ -9501,7 +10937,8 @@ pub fn replay_workflow_in_session(
     workflow: &BrowserWorkflow,
     sitemap_path: &Path,
 ) -> Result<String, String> {
-    let report = replay_workflow_in_session_report(workspace_root, session_id, workflow, sitemap_path)?;
+    let report =
+        replay_workflow_in_session_report(workspace_root, session_id, workflow, sitemap_path)?;
     let network_summary = render_network_summary(&report.workflow.network_summary)
         .map(|value| format!("\nNetwork summary: {}", value))
         .unwrap_or_default();
@@ -9534,24 +10971,31 @@ pub fn replay_workflow_in_session(
 #[cfg(test)]
 mod tests {
     use super::{
-        access_diagnostics_report, apply_auth_profile_report, auth_diagnostics_report, crawl_and_sync_sitemap_report, crawl_facts_path,
-        create_session, describe_url_resolution, diff_saved_snapshots, diff_session_checkpoints, diff_snapshots,
-        get_session_cookies_report, persist_snapshot_to_sitemap, render_session_health_report, session_click, session_health_report,
-        get_session_storage_entries_report, is_semantically_stable, list_auth_profiles, load_auth_profile, load_session_state,
-        load_snapshot_json, load_workflow, load_workflow_suite, navigate_session, navigate_session_report,
-        parse_html_to_snapshot, read_auth_profile_report, render_access_diagnostics_report, render_auth_profile_apply_report,
-        read_session_transcript_entry, read_session_transcript_report, render_auth_profile_save_report,
+        access_diagnostics_report, apply_auth_profile_report, auth_diagnostics_report,
+        crawl_and_sync_sitemap_report, crawl_facts_path, create_session, describe_url_resolution,
+        diff_saved_snapshots, diff_session_checkpoints, diff_snapshots, get_session_cookies_report,
+        get_session_storage_entries_report, is_semantically_stable, list_auth_profiles,
+        load_auth_profile, load_session_state, load_snapshot_json, load_workflow,
+        load_workflow_suite, navigate_session, navigate_session_report, parse_html_to_snapshot,
+        persist_snapshot_to_sitemap, read_auth_profile_report, read_session_transcript_entry,
+        read_session_transcript_report, render_access_diagnostics_report,
+        render_auth_profile_apply_report, render_auth_profile_save_report,
         render_auth_reseed_report, render_checkpoint_restore_report, render_cookie_read_report,
-        render_runtime_capture_report, render_session_action_report, render_session_navigation_report, render_session_transcript_report,
-        render_session_wait_report, render_storage_read_report, render_web_navigate_report, render_workflow_dsl,
-        replay_workflow, replay_workflow_in_session, reseed_auth_state_report, restore_session_checkpoint,
-        restore_session_checkpoint_report, run_workflow_suite, save_auth_profile_report, save_session_checkpoint,
-        save_session_state, save_workflow, save_workflow_suite, session_click_report,
-        session_fill_report, session_submit_report, set_session_cookies, set_session_storage_entries, summarize_snapshot_diff,
-        wait_for_session, wait_for_session_report, write_crawl_facts, write_snapshot_json, AomElement, BrowserCookie,
-        BrowserForm, BrowserFormField, BrowserFrameInventoryEntry, BrowserListSortDirection,
-        BrowserPageSnapshot, BrowserProtocolEvent, BrowserRuntimeCaptureReport, BrowserRuntimeState, BrowserShadowHostInventoryEntry, BrowserStorageBucket,
-        BrowserWorkflow, BrowserWorkflowStep, BrowserWorkflowSuite,
+        render_runtime_capture_report, render_session_action_report, render_session_health_report,
+        render_session_navigation_report, render_session_transcript_report,
+        render_session_wait_report, render_storage_read_report, render_web_navigate_report,
+        render_workflow_dsl, replay_workflow, replay_workflow_in_session, reseed_auth_state_report,
+        restore_session_checkpoint, restore_session_checkpoint_report, run_workflow_suite,
+        save_auth_profile_report, save_session_checkpoint, save_session_state, save_workflow,
+        save_workflow_suite, session_click, session_click_report, session_fill_report,
+        session_health_report, session_submit_report, set_session_cookies,
+        set_session_storage_entries, summarize_snapshot_diff, wait_for_session,
+        wait_for_session_report, write_crawl_facts, write_snapshot_json, AomElement,
+        BrowserCanvasInventoryEntry, BrowserCookie, BrowserForm, BrowserFormField,
+        BrowserFrameInventoryEntry, BrowserListSortDirection, BrowserPageSnapshot,
+        BrowserProtocolEvent, BrowserRuntimeCaptureReport, BrowserRuntimeState,
+        BrowserShadowHostInventoryEntry, BrowserStorageBucket, BrowserWorkflow,
+        BrowserWorkflowStep, BrowserWorkflowSuite,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -9572,7 +11016,9 @@ mod tests {
                 Ok(read) => {
                     data.extend_from_slice(&buf[..read]);
                     if expected_total.is_none() {
-                        if let Some(header_end) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                        if let Some(header_end) =
+                            data.windows(4).position(|window| window == b"\r\n\r\n")
+                        {
                             let headers_end = header_end + 4;
                             let headers = String::from_utf8_lossy(&data[..headers_end]);
                             let content_length = headers
@@ -9629,7 +11075,10 @@ mod tests {
                 },
             ],
             &[],
-            &[BrowserCookie { name: "sid".to_string(), value: "123".to_string() }],
+            &[BrowserCookie {
+                name: "sid".to_string(),
+                value: "123".to_string(),
+            }],
             &[super::BrowserStorageBucket {
                 scope: "local".to_string(),
                 entries: HashMap::from([("theme".to_string(), "dark".to_string())]),
@@ -9641,7 +11090,10 @@ mod tests {
                 status_code: 200,
                 resource: "document".to_string(),
             }],
-            &["response_complete".to_string(), "navigation_settled".to_string()],
+            &[
+                "response_complete".to_string(),
+                "navigation_settled".to_string(),
+            ],
             &[super::BrowserRuntimeState {
                 scope: "router".to_string(),
                 key: "name".to_string(),
@@ -9657,7 +11109,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(facts_path, crawl_facts_path("https://example.com/docs", &sitemap_path));
+        assert_eq!(
+            facts_path,
+            crawl_facts_path("https://example.com/docs", &sitemap_path)
+        );
         let facts = fs::read_to_string(facts_path).unwrap();
         assert!(facts.starts_with("browser-capture version 9\n"));
         assert!(facts.contains("field_count 10\n"));
@@ -9697,8 +11152,14 @@ mod tests {
         assert_eq!(snapshot.forms[0].id, "login");
         assert_eq!(snapshot.forms[0].fields.len(), 2);
         assert_eq!(snapshot.forms[0].submit_label.as_deref(), Some("Sign in"));
-        assert!(snapshot.elements.iter().any(|element| element.role == "textbox" && element.name == "Email"));
-        assert!(snapshot.elements.iter().any(|element| element.role == "button" && element.name == "Sign in"));
+        assert!(snapshot
+            .elements
+            .iter()
+            .any(|element| element.role == "textbox" && element.name == "Email"));
+        assert!(snapshot
+            .elements
+            .iter()
+            .any(|element| element.role == "button" && element.name == "Sign in"));
     }
 
     #[test]
@@ -9715,7 +11176,10 @@ mod tests {
 
         let link = super::find_element(&snapshot, "link", "reports").unwrap();
         assert_eq!(link.name, "Open Reports");
-        assert_eq!(link.target_url.as_deref(), Some("https://example.com/reports"));
+        assert_eq!(
+            link.target_url.as_deref(),
+            Some("https://example.com/reports")
+        );
 
         let button = super::find_element(&snapshot, "button", "save changes").unwrap();
         assert_eq!(button.name, "Save Changes");
@@ -9735,7 +11199,10 @@ mod tests {
             start_url: "https://example.com".to_string(),
             variables: HashMap::new(),
             steps: vec![
-                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "a@example.com".to_string() },
+                BrowserWorkflowStep::FillField {
+                    field: "email".to_string(),
+                    value: "a@example.com".to_string(),
+                },
                 BrowserWorkflowStep::WaitForText {
                     text: "Confirm".to_string(),
                     timeout_ms: Some(1500),
@@ -9771,7 +11238,9 @@ mod tests {
                     name: None,
                     field: None,
                 },
-                BrowserWorkflowStep::SaveCheckpoint { name: "initial".to_string() },
+                BrowserWorkflowStep::SaveCheckpoint {
+                    name: "initial".to_string(),
+                },
                 BrowserWorkflowStep::IfOutputEquals {
                     output: "page_title".to_string(),
                     equals: "Checkout".to_string(),
@@ -9779,13 +11248,21 @@ mod tests {
                         field: "email".to_string(),
                         value: "branch@example.com".to_string(),
                     }],
-                    else_steps: vec![BrowserWorkflowStep::AssertTextContains { text: "Never".to_string() }],
+                    else_steps: vec![BrowserWorkflowStep::AssertTextContains {
+                        text: "Never".to_string(),
+                    }],
                 },
-                BrowserWorkflowStep::RestoreCheckpoint { name: "initial".to_string() },
+                BrowserWorkflowStep::RestoreCheckpoint {
+                    name: "initial".to_string(),
+                },
                 BrowserWorkflowStep::IfTextContains {
                     text: "Checkout".to_string(),
-                    then_steps: vec![BrowserWorkflowStep::AssertTextContains { text: "Checkout".to_string() }],
-                    else_steps: vec![BrowserWorkflowStep::AssertTextContains { text: "Never".to_string() }],
+                    then_steps: vec![BrowserWorkflowStep::AssertTextContains {
+                        text: "Checkout".to_string(),
+                    }],
+                    else_steps: vec![BrowserWorkflowStep::AssertTextContains {
+                        text: "Never".to_string(),
+                    }],
                 },
             ],
         };
@@ -9814,13 +11291,26 @@ mod tests {
             outputs: HashMap::new(),
         };
 
-        let (summary, final_state, report) = super::replay_workflow_with_state(&workflow, state, None).unwrap();
+        let (summary, final_state, report) =
+            super::replay_workflow_with_state(&workflow, state, None).unwrap();
         assert!(summary.contains("Workflow 'Branching Flow' completed."));
         assert!(summary.contains("Outputs: 1"));
-        assert_eq!(final_state.outputs.get("page_title").map(String::as_str), Some("Checkout"));
-        assert!(report.log.iter().any(|entry| entry.contains("if_output_equals page_title='Checkout' -> then")));
-        assert!(report.log.iter().any(|entry| entry.contains("restore_checkpoint initial -> Checkout")));
-        assert!(report.log.iter().any(|entry| entry.contains("if_text_contains 'Checkout' -> then")));
+        assert_eq!(
+            final_state.outputs.get("page_title").map(String::as_str),
+            Some("Checkout")
+        );
+        assert!(report
+            .log
+            .iter()
+            .any(|entry| entry.contains("if_output_equals page_title='Checkout' -> then")));
+        assert!(report
+            .log
+            .iter()
+            .any(|entry| entry.contains("restore_checkpoint initial -> Checkout")));
+        assert!(report
+            .log
+            .iter()
+            .any(|entry| entry.contains("if_text_contains 'Checkout' -> then")));
     }
 
     #[test]
@@ -9857,16 +11347,27 @@ mod tests {
             start_url: base_url,
             variables: HashMap::new(),
             steps: vec![
-                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "rust@example.com".to_string() },
-                BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },
-                BrowserWorkflowStep::AssertTextContains { text: "Welcome back".to_string() },
+                BrowserWorkflowStep::FillField {
+                    field: "email".to_string(),
+                    value: "rust@example.com".to_string(),
+                },
+                BrowserWorkflowStep::SubmitForm {
+                    form: Some("login".to_string()),
+                },
+                BrowserWorkflowStep::AssertTextContains {
+                    text: "Welcome back".to_string(),
+                },
             ],
         };
         let (workflow_path, _) = save_workflow(root, &workflow).unwrap();
         let suite = BrowserWorkflowSuite {
             name: "Smoke Pack".to_string(),
             workflows: vec![
-                workflow_path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"),
+                workflow_path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
                 ".velocity/browser-workflows/missing.browser.json".to_string(),
             ],
         };
@@ -9897,8 +11398,14 @@ mod tests {
 
         let matched_link = super::find_element(&snapshot, "link", "billing").unwrap();
         assert_eq!(matched_link.name, "Billing Settings");
-        assert_eq!(matched_link.target_url.as_deref(), Some("https://example.com/settings/billing"));
-        assert!(matched_link.supported_actions.iter().any(|action| action == "open"));
+        assert_eq!(
+            matched_link.target_url.as_deref(),
+            Some("https://example.com/settings/billing")
+        );
+        assert!(matched_link
+            .supported_actions
+            .iter()
+            .any(|action| action == "open"));
         assert_eq!(matched_link.provenance, "native-static");
         assert!(matched_link.actionability >= 80);
 
@@ -9918,8 +11425,17 @@ mod tests {
             &[],
         );
         let title = super::extract_snapshot_value(&snapshot, "title", None, None, None).unwrap();
-        let link_name = super::extract_snapshot_value(&snapshot, "element_name", Some("link"), Some("API"), None).unwrap();
-        let field_value = super::extract_snapshot_value(&snapshot, "field_value", None, None, Some("email")).unwrap();
+        let link_name = super::extract_snapshot_value(
+            &snapshot,
+            "element_name",
+            Some("link"),
+            Some("API"),
+            None,
+        )
+        .unwrap();
+        let field_value =
+            super::extract_snapshot_value(&snapshot, "field_value", None, None, Some("email"))
+                .unwrap();
         assert_eq!(title, "Docs");
         assert_eq!(link_name, "API");
         assert_eq!(field_value, "saved@example.com");
@@ -9959,8 +11475,13 @@ mod tests {
             start_url: base_url,
             variables,
             steps: vec![
-                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "{{email}}".to_string() },
-                BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },
+                BrowserWorkflowStep::FillField {
+                    field: "email".to_string(),
+                    value: "{{email}}".to_string(),
+                },
+                BrowserWorkflowStep::SubmitForm {
+                    form: Some("login".to_string()),
+                },
                 BrowserWorkflowStep::ExtractText {
                     output: "page_title".to_string(),
                     source: "title".to_string(),
@@ -9973,7 +11494,9 @@ mod tests {
                     equals: Some("Dashboard".to_string()),
                     contains: None,
                 },
-                BrowserWorkflowStep::AssertTextContains { text: "Welcome back".to_string() },
+                BrowserWorkflowStep::AssertTextContains {
+                    text: "Welcome back".to_string(),
+                },
             ],
         };
 
@@ -10016,10 +11539,22 @@ mod tests {
 
         let diff = diff_snapshots(&before, &after);
         assert!(diff.title_changed);
-        assert!(diff.added_elements.iter().any(|entry| entry.contains("link:Reports")));
-        assert!(diff.removed_forms.iter().any(|entry| entry.contains("login:POST")));
-        assert!(diff.added_cookies.iter().any(|entry| entry == "session=abc123"));
-        assert!(diff.added_storage.iter().any(|entry| entry == "local:token=abc123"));
+        assert!(diff
+            .added_elements
+            .iter()
+            .any(|entry| entry.contains("link:Reports")));
+        assert!(diff
+            .removed_forms
+            .iter()
+            .any(|entry| entry.contains("login:POST")));
+        assert!(diff
+            .added_cookies
+            .iter()
+            .any(|entry| entry == "session=abc123"));
+        assert!(diff
+            .added_storage
+            .iter()
+            .any(|entry| entry == "local:token=abc123"));
     }
 
     #[test]
@@ -10038,14 +11573,23 @@ mod tests {
             "<html><head><title>Loading</title></head><body><p>Preparing</p></body></html>",
             &[],
             &[],
-            &["hydration:complete".to_string(), "route:dashboard".to_string()],
+            &[
+                "hydration:complete".to_string(),
+                "route:dashboard".to_string(),
+            ],
             &[],
             &[],
         );
 
         let diff = diff_snapshots(&before, &after);
-        assert!(diff.added_mutations.iter().any(|entry| entry == "hydration:complete"));
-        assert!(diff.added_mutations.iter().any(|entry| entry == "route:dashboard"));
+        assert!(diff
+            .added_mutations
+            .iter()
+            .any(|entry| entry == "hydration:complete"));
+        assert!(diff
+            .added_mutations
+            .iter()
+            .any(|entry| entry == "route:dashboard"));
         assert!(!is_semantically_stable(&diff));
     }
 
@@ -10072,7 +11616,10 @@ mod tests {
                 status_code: 200,
                 resource: "xhr".to_string(),
             }],
-            &["response_complete".to_string(), "network_settled".to_string()],
+            &[
+                "response_complete".to_string(),
+                "network_settled".to_string(),
+            ],
         );
 
         let diff = diff_snapshots(&before, &after);
@@ -10080,13 +11627,17 @@ mod tests {
             .added_requests
             .iter()
             .any(|entry| entry == "GET:https://example.com/api/data:200:xhr"));
-        assert!(diff.added_settle_signals.iter().any(|entry| entry == "network_settled"));
+        assert!(diff
+            .added_settle_signals
+            .iter()
+            .any(|entry| entry == "network_settled"));
         assert!(!is_semantically_stable(&diff));
     }
 
     #[test]
     fn parses_runtime_state_and_diff_signatures() {
-        let parsed = super::runtime_state_from_headers(Some("router:name=dashboard;store:cart=ready"));
+        let parsed =
+            super::runtime_state_from_headers(Some("router:name=dashboard;store:cart=ready"));
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].scope, "router");
         assert_eq!(parsed[0].key, "name");
@@ -10141,8 +11692,14 @@ mod tests {
         );
 
         let diff = diff_snapshots(&before, &after);
-        assert!(diff.added_runtime_state.iter().any(|entry| entry == "router:name=dashboard"));
-        assert!(diff.added_runtime_state.iter().any(|entry| entry == "store:cart=ready"));
+        assert!(diff
+            .added_runtime_state
+            .iter()
+            .any(|entry| entry == "router:name=dashboard"));
+        assert!(diff
+            .added_runtime_state
+            .iter()
+            .any(|entry| entry == "store:cart=ready"));
         assert_eq!(super::render_snapshot_diff(&diff), "runtime+2");
         assert!(!is_semantically_stable(&diff));
     }
@@ -10179,7 +11736,11 @@ mod tests {
         assert!(report.diff.title_changed);
         assert!(report.summary.contains("title"));
         assert!(report.summary.contains("elements+1"));
-        assert!(report.diff.added_mutations.iter().any(|entry| entry == "hydration:complete"));
+        assert!(report
+            .diff
+            .added_mutations
+            .iter()
+            .any(|entry| entry == "hydration:complete"));
         assert_eq!(summarize_snapshot_diff(&report.diff), report.summary);
     }
 
@@ -10226,7 +11787,8 @@ mod tests {
             }
         });
 
-        let navigation = navigate_session_report(root, "auth-session", &base_url, &sitemap_path).unwrap();
+        let navigation =
+            navigate_session_report(root, "auth-session", &base_url, &sitemap_path).unwrap();
         assert_eq!(navigation.session_id, "auth-session");
         assert_eq!(navigation.url, format!("{}/", base_url));
         assert_eq!(navigation.title, "Login");
@@ -10254,19 +11816,24 @@ mod tests {
         assert!(rendered_crawl.contains("Title: Login"));
         assert!(rendered_crawl.contains("Snapshot JSON:"));
 
-        let storage_report = get_session_storage_entries_report(root, "auth-session", "local").unwrap();
+        let storage_report =
+            get_session_storage_entries_report(root, "auth-session", "local").unwrap();
         assert_eq!(storage_report.scope, "local");
         assert_eq!(storage_report.entry_count, 0);
         assert_eq!(storage_report.session.id, "auth-session");
-        assert!(storage_report.session_json_path.contains("browser-sessions"));
+        assert!(storage_report
+            .session_json_path
+            .contains("browser-sessions"));
         let rendered_storage = render_storage_read_report(&storage_report);
-        assert!(rendered_storage.contains("Read browser storage for session 'auth-session' scope 'local'"));
+        assert!(rendered_storage
+            .contains("Read browser storage for session 'auth-session' scope 'local'"));
         assert!(rendered_storage.contains("Entries: 0"));
 
         let click_session_path = create_session(root, "click-session").unwrap();
         assert!(click_session_path.exists());
         navigate_session(root, "click-session", &base_url, &sitemap_path).unwrap();
-        let click_report = session_click_report(root, "click-session", "link", "details", &sitemap_path).unwrap();
+        let click_report =
+            session_click_report(root, "click-session", "link", "details", &sitemap_path).unwrap();
         assert_eq!(click_report.action, "click");
         assert_eq!(click_report.target, "link:Open details");
         assert_eq!(click_report.title, "Details");
@@ -10276,11 +11843,30 @@ mod tests {
         assert!(rendered_click.contains("Session action complete."));
         assert!(rendered_click.contains("Action: click"));
         assert!(rendered_click.contains("Target: link:Open details"));
-        assert_eq!(click_report.target_actionability.as_ref().map(|target| target.actionable), Some(true));
-        assert_eq!(click_report.target_actionability.as_ref().map(|target| target.role.as_str()), Some("link"));
+        assert_eq!(
+            click_report
+                .target_actionability
+                .as_ref()
+                .map(|target| target.actionable),
+            Some(true)
+        );
+        assert_eq!(
+            click_report
+                .target_actionability
+                .as_ref()
+                .map(|target| target.role.as_str()),
+            Some("link")
+        );
         assert!(rendered_click.contains("Target actionability: actionable"));
 
-        let fill_report = session_fill_report(root, "auth-session", "email", "agent@example.com", &sitemap_path).unwrap();
+        let fill_report = session_fill_report(
+            root,
+            "auth-session",
+            "email",
+            "agent@example.com",
+            &sitemap_path,
+        )
+        .unwrap();
         assert_eq!(fill_report.action, "fill_field");
         assert_eq!(fill_report.target, "email");
         assert_eq!(fill_report.title, "Login");
@@ -10289,10 +11875,12 @@ mod tests {
         assert!(rendered_fill.contains("Action: fill_field"));
         assert!(rendered_fill.contains("Target: email"));
 
-        let checkpoint_path = save_session_checkpoint(root, "auth-session", "before-submit", &sitemap_path).unwrap();
+        let checkpoint_path =
+            save_session_checkpoint(root, "auth-session", "before-submit", &sitemap_path).unwrap();
         assert!(checkpoint_path.exists());
 
-        let submit_report = session_submit_report(root, "auth-session", Some("login"), &sitemap_path).unwrap();
+        let submit_report =
+            session_submit_report(root, "auth-session", Some("login"), &sitemap_path).unwrap();
         assert_eq!(submit_report.action, "submit_form");
         assert_eq!(submit_report.target, "login");
         assert_eq!(submit_report.title, "Dashboard");
@@ -10342,9 +11930,12 @@ mod tests {
         button_session.current_url = Some(format!("{}/buttons", base_url));
         save_session_state(root, &button_session).unwrap();
 
-        let button_err = session_click_report(root, "button-session", "button", "Continue", &sitemap_path).unwrap_err();
+        let button_err =
+            session_click_report(root, "button-session", "button", "Continue", &sitemap_path)
+                .unwrap_err();
         assert!(button_err.contains("not actionable"));
-        assert!(button_err.contains("use browser_session_submit for forms or a richer runtime for JS buttons"));
+        assert!(button_err
+            .contains("use browser_session_submit for forms or a richer runtime for JS buttons"));
 
         let restored = restore_session_checkpoint_report(
             root,
@@ -10364,7 +11955,11 @@ mod tests {
         assert!(restored.auth_diagnostics.has_login_form);
         assert!(restored.auth_diagnostics.has_auth_cookie);
         assert!(!restored.auth_diagnostics.has_csrf_token);
-        assert!(restored.snapshot_json_path.as_deref().unwrap().contains("browser-snapshots"));
+        assert!(restored
+            .snapshot_json_path
+            .as_deref()
+            .unwrap()
+            .contains("browser-snapshots"));
         assert!(restored.nda_facts_path.as_deref().unwrap().contains(".nda"));
         let rendered_restore = render_checkpoint_restore_report(&restored);
         assert!(rendered_restore.contains("Restored browser session checkpoint 'before-submit'"));
@@ -10372,19 +11967,46 @@ mod tests {
         assert!(rendered_restore.contains("Title: Login"));
         assert!(rendered_restore.contains("Auth diagnosis: csrf_missing"));
 
-        let transcript = read_session_transcript_report(root, "auth-session", None, BrowserListSortDirection::Asc).unwrap();
+        let transcript = read_session_transcript_report(
+            root,
+            "auth-session",
+            None,
+            BrowserListSortDirection::Asc,
+        )
+        .unwrap();
         assert!(transcript.entry_count >= 4);
-        assert!(transcript.transcript_json_path.contains("browser-session-transcripts"));
-        assert!(transcript.entries.iter().any(|entry| entry.event_kind == "navigate"));
-        assert!(transcript.entries.iter().any(|entry| entry.event_kind == "click"));
-        assert!(transcript.entries.iter().any(|entry| entry.event_kind == "fill_field"));
-        assert!(transcript.entries.iter().any(|entry| entry.event_kind == "submit_form"));
-        assert!(transcript.entries.iter().any(|entry| entry.event_kind == "save_checkpoint"));
+        assert!(transcript
+            .transcript_json_path
+            .contains("browser-session-transcripts"));
+        assert!(transcript
+            .entries
+            .iter()
+            .any(|entry| entry.event_kind == "navigate"));
+        assert!(transcript
+            .entries
+            .iter()
+            .any(|entry| entry.event_kind == "click"));
+        assert!(transcript
+            .entries
+            .iter()
+            .any(|entry| entry.event_kind == "fill_field"));
+        assert!(transcript
+            .entries
+            .iter()
+            .any(|entry| entry.event_kind == "submit_form"));
+        assert!(transcript
+            .entries
+            .iter()
+            .any(|entry| entry.event_kind == "save_checkpoint"));
 
         let transcript_entry = read_session_transcript_entry(root, "auth-session", 1).unwrap();
         assert_eq!(transcript_entry.event_kind, "navigate");
         assert_eq!(transcript_entry.outcome, "ok");
-        assert!(transcript_entry.snapshot_json_path.as_deref().unwrap().contains("browser-snapshots"));
+        assert!(transcript_entry
+            .snapshot_json_path
+            .as_deref()
+            .unwrap()
+            .contains("browser-snapshots"));
     }
 
     #[test]
@@ -11001,8 +12623,15 @@ mod tests {
             &sitemap_path,
         )
         .unwrap();
-        assert_eq!(present_report.matched_target_actionability.as_ref().map(|target| target.actionable), Some(false));
-        assert!(render_session_wait_report(&present_report).contains("Matched target actionability: not actionable"));
+        assert_eq!(
+            present_report
+                .matched_target_actionability
+                .as_ref()
+                .map(|target| target.actionable),
+            Some(false)
+        );
+        assert!(render_session_wait_report(&present_report)
+            .contains("Matched target actionability: not actionable"));
 
         let actionable_err = wait_for_session(
             root,
@@ -11094,7 +12723,14 @@ mod tests {
         session.current_url = Some(url.to_string());
         save_session_state(root, &session).unwrap();
 
-        let err = session_fill_report(root, "hidden-fill-session", "csrf_token", "token123", &sitemap_path).unwrap_err();
+        let err = session_fill_report(
+            root,
+            "hidden-fill-session",
+            "csrf_token",
+            "token123",
+            &sitemap_path,
+        )
+        .unwrap_err();
         assert!(err.contains("not actionable"));
         assert!(err.contains("hidden and not actionable for browser_session_fill"));
     }
@@ -11363,7 +12999,8 @@ mod tests {
             outputs: HashMap::new(),
         };
 
-        let (summary, _, report) = super::replay_workflow_with_state(&workflow, state, None).unwrap();
+        let (summary, _, report) =
+            super::replay_workflow_with_state(&workflow, state, None).unwrap();
         assert!(summary.contains("Workflow 'Static Wait Flow' completed."));
         assert!(summary.contains("Requests: 2"));
         assert!(summary.contains("Settle signals: 3"));
@@ -11379,16 +13016,27 @@ mod tests {
         assert_eq!(report.network_summary.stream_count, 2);
         assert_eq!(report.network_summary.event_stream_count, 1);
         assert_eq!(report.network_summary.websocket_count, 1);
-        assert_eq!(report.network_summary.last_event_stream_target.as_deref(), Some("https://example.test/start/events"));
-        assert_eq!(report.network_summary.last_websocket_target.as_deref(), Some("wss://example.test/socket"));
+        assert_eq!(
+            report.network_summary.last_event_stream_target.as_deref(),
+            Some("https://example.test/start/events")
+        );
+        assert_eq!(
+            report.network_summary.last_websocket_target.as_deref(),
+            Some("wss://example.test/socket")
+        );
         assert_eq!(report.local_storage_count, 1);
         assert_eq!(report.session_storage_count, 1);
-        assert!(report.log.iter().any(|entry| entry.contains("wait_for_title 'Dashboard'")));
-        assert!(report.log.iter().any(|entry| entry.contains("wait_for_url_contains '/start'")));
         assert!(report
             .log
             .iter()
-            .any(|entry| entry.contains("wait_for_mutation 'hydration' -> storage+2,mutations+1,requests+2,settle+3,runtime+2")));
+            .any(|entry| entry.contains("wait_for_title 'Dashboard'")));
+        assert!(report
+            .log
+            .iter()
+            .any(|entry| entry.contains("wait_for_url_contains '/start'")));
+        assert!(report.log.iter().any(|entry| entry.contains(
+            "wait_for_mutation 'hydration' -> storage+2,mutations+1,requests+2,settle+3,runtime+2"
+        )));
         assert!(report
             .log
             .iter()
@@ -11397,15 +13045,16 @@ mod tests {
             .log
             .iter()
             .any(|entry| entry.contains("wait_for_settle network:settled -> no_semantic_change")));
-        assert!(report
-            .log
-            .iter()
-            .any(|entry| entry.contains("wait_for_runtime_state router:name=dashboard -> no_semantic_change")));
+        assert!(report.log.iter().any(|entry| entry
+            .contains("wait_for_runtime_state router:name=dashboard -> no_semantic_change")));
         assert!(report
             .log
             .iter()
             .any(|entry| entry.contains("wait_for_protocol_event kind=redirect phase=commit target=/start detail=ready -> no_semantic_change")));
-        assert!(report.log.iter().any(|entry| entry.contains("wait_for_stable polls=1 -> no_semantic_change")));
+        assert!(report
+            .log
+            .iter()
+            .any(|entry| entry.contains("wait_for_stable polls=1 -> no_semantic_change")));
     }
 
     #[test]
@@ -11430,8 +13079,16 @@ mod tests {
 
         let snapshot = super::crawl_page_snapshot(&url).unwrap();
         assert_eq!(snapshot.runtime_state.len(), 2);
-        assert!(snapshot.runtime_state.iter().any(|entry| entry.scope == "router" && entry.key == "name" && entry.value == "dashboard"));
-        assert!(snapshot.runtime_state.iter().any(|entry| entry.scope == "store" && entry.key == "cart" && entry.value == "ready"));
+        assert!(snapshot
+            .runtime_state
+            .iter()
+            .any(|entry| entry.scope == "router"
+                && entry.key == "name"
+                && entry.value == "dashboard"));
+        assert!(snapshot
+            .runtime_state
+            .iter()
+            .any(|entry| entry.scope == "store" && entry.key == "cart" && entry.value == "ready"));
     }
 
     #[test]
@@ -11571,7 +13228,8 @@ mod tests {
         session.current_url = Some("https://example.test/login".to_string());
         save_session_state(root, &session).unwrap();
 
-        let login_required = auth_diagnostics_report(root, "login-required", &sitemap_path).unwrap();
+        let login_required =
+            auth_diagnostics_report(root, "login-required", &sitemap_path).unwrap();
         assert_eq!(login_required.diagnosis, "csrf_missing");
         assert!(login_required.has_login_form);
         assert!(login_required.has_auth_cookie);
@@ -11707,7 +13365,10 @@ mod tests {
         assert_eq!(expired.diagnosis, "session_expired");
         assert!(expired.has_login_form);
         assert!(expired.has_auth_cookie);
-        assert!(expired.auth_signals.iter().any(|signal| signal.contains("expired")));
+        assert!(expired
+            .auth_signals
+            .iter()
+            .any(|signal| signal.contains("expired")));
     }
 
     #[test]
@@ -11852,7 +13513,10 @@ mod tests {
             root,
             "health-session",
             Some("VelocityHealth/1.0"),
-            Some(HashMap::from([(String::from("X-Health"), String::from("ok"))])),
+            Some(HashMap::from([(
+                String::from("X-Health"),
+                String::from("ok"),
+            )])),
             Some(2500),
             false,
             Some(false),
@@ -11900,7 +13564,10 @@ mod tests {
                 storage: vec![
                     BrowserStorageBucket {
                         scope: "local".to_string(),
-                        entries: HashMap::from([(String::from("csrf_token"), String::from("csrf-ready"))]),
+                        entries: HashMap::from([(
+                            String::from("csrf_token"),
+                            String::from("csrf-ready"),
+                        )]),
                     },
                     BrowserStorageBucket {
                         scope: "session".to_string(),
@@ -11932,8 +13599,12 @@ mod tests {
             &sitemap_path,
         )
         .unwrap();
-        super::write_html_fallback(url, "<html><head><title>Dashboard</title></head><body>Welcome back</body></html>", &sitemap_path)
-            .unwrap();
+        super::write_html_fallback(
+            url,
+            "<html><head><title>Dashboard</title></head><body>Welcome back</body></html>",
+            &sitemap_path,
+        )
+        .unwrap();
         let mut session = load_session_state(root, "health-session").unwrap();
         session.current_url = Some(url.to_string());
         save_session_state(root, &session).unwrap();
@@ -11944,25 +13615,61 @@ mod tests {
         assert_eq!(report.auth_diagnostics.diagnosis, "auth_ready");
         assert_eq!(report.access_diagnostics.diagnosis, "clear");
         assert_eq!(report.checkpoint_count, 1);
-        assert_eq!(report.latest_checkpoint.as_ref().map(|checkpoint| checkpoint.name.as_str()), Some("after-login"));
-        assert_eq!(report.network.user_agent.as_deref(), Some("VelocityHealth/1.0"));
-        assert_eq!(report.network.headers.get("X-Health").map(String::as_str), Some("ok"));
-        assert!(report.snapshot.as_ref().and_then(|snapshot| snapshot.json_path.as_deref()).is_some());
-        assert!(report.html_fallback_path.as_deref().map(|path| path.contains("browser-html-fallbacks")).unwrap_or(false));
+        assert_eq!(
+            report
+                .latest_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.name.as_str()),
+            Some("after-login")
+        );
+        assert_eq!(
+            report.network.user_agent.as_deref(),
+            Some("VelocityHealth/1.0")
+        );
+        assert_eq!(
+            report.network.headers.get("X-Health").map(String::as_str),
+            Some("ok")
+        );
+        assert!(report
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.json_path.as_deref())
+            .is_some());
+        assert!(report
+            .html_fallback_path
+            .as_deref()
+            .map(|path| path.contains("browser-html-fallbacks"))
+            .unwrap_or(false));
         assert_eq!(report.recent_failure_count, 0);
         assert!(report.recent_failures.is_empty());
         assert!(report.latest_failure.is_none());
-        assert!(report.evidence_signals.iter().any(|signal| signal == "auth:auth_ready"));
-        assert!(report.evidence_signals.iter().any(|signal| signal == "access:clear"));
-        assert!(report.evidence_signals.iter().any(|signal| signal == "checkpoint:latest=after-login"));
+        assert!(report
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "auth:auth_ready"));
+        assert!(report
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "access:clear"));
+        assert!(report
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "checkpoint:latest=after-login"));
         assert_eq!(report.evidence_signal_count, report.evidence_signals.len());
 
         let rendered = render_session_health_report(&report);
         assert!(rendered.contains("Browser session health for 'health-session'"));
         assert_eq!(report.compatibility.level, "supported");
         assert_eq!(report.compatibility.cause, "semantic_static_surface");
-        assert!(report.compatibility.signals.iter().any(|signal| signal == "snapshot:elements=1"));
-        assert!(report.evidence_signals.iter().any(|signal| signal == "compatibility:supported"));
+        assert!(report
+            .compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "snapshot:elements=1"));
+        assert!(report
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "compatibility:supported"));
 
         let rendered = render_session_health_report(&report);
         assert!(rendered.contains("Browser session health for 'health-session'"));
@@ -12004,10 +13711,26 @@ mod tests {
                 mutations: Vec::new(),
                 settle_signals: vec!["navigation:settled".to_string()],
                 runtime_state: vec![
-                    BrowserRuntimeState { scope: "router".to_string(), key: "name".to_string(), value: "app".to_string() },
-                    BrowserRuntimeState { scope: "store".to_string(), key: "view".to_string(), value: "dashboard".to_string() },
-                    BrowserRuntimeState { scope: "store".to_string(), key: "user".to_string(), value: "ready".to_string() },
-                    BrowserRuntimeState { scope: "store".to_string(), key: "filters".to_string(), value: "active".to_string() },
+                    BrowserRuntimeState {
+                        scope: "router".to_string(),
+                        key: "name".to_string(),
+                        value: "app".to_string(),
+                    },
+                    BrowserRuntimeState {
+                        scope: "store".to_string(),
+                        key: "view".to_string(),
+                        value: "dashboard".to_string(),
+                    },
+                    BrowserRuntimeState {
+                        scope: "store".to_string(),
+                        key: "user".to_string(),
+                        value: "ready".to_string(),
+                    },
+                    BrowserRuntimeState {
+                        scope: "store".to_string(),
+                        key: "filters".to_string(),
+                        value: "active".to_string(),
+                    },
                 ],
                 protocol_events: vec![BrowserProtocolEvent {
                     kind: "websocket".to_string(),
@@ -12034,10 +13757,24 @@ mod tests {
         assert_eq!(report.compatibility.cause, "spa_or_live_runtime");
         assert_eq!(report.recovery_posture, "runtime_limited");
         assert!(report.compatibility.summary.contains("partial support"));
-        assert!(report.compatibility.recommended_action.contains("Proceed only with currently visible semantic controls"));
-        assert!(report.compatibility.signals.iter().any(|signal| signal == "html:spa_shell"));
-        assert!(report.compatibility.signals.iter().any(|signal| signal == "runtime:live_channels=1"));
-        assert!(report.evidence_signals.iter().any(|signal| signal == "compatibility:runtime_limited"));
+        assert!(report
+            .compatibility
+            .recommended_action
+            .contains("Proceed only with currently visible semantic controls"));
+        assert!(report
+            .compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "html:spa_shell"));
+        assert!(report
+            .compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "runtime:live_channels=1"));
+        assert!(report
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "compatibility:runtime_limited"));
     }
 
     #[test]
@@ -12080,10 +13817,23 @@ mod tests {
         assert_eq!(report.compatibility.level, "unsupported");
         assert_eq!(report.compatibility.cause, "canvas_or_webgl_surface");
         assert_eq!(report.recovery_posture, "unsupported_site");
-        assert!(report.compatibility.summary.contains("canvas- or WebGL-driven"));
-        assert!(report.compatibility.recommended_action.contains("canvas or WebGL understanding"));
-        assert!(report.compatibility.signals.iter().any(|signal| signal == "html:canvas_tags=1"));
-        assert!(report.evidence_signals.iter().any(|signal| signal == "compatibility:unsupported"));
+        assert!(report
+            .compatibility
+            .summary
+            .contains("canvas- or WebGL-driven"));
+        assert!(report
+            .compatibility
+            .recommended_action
+            .contains("canvas or WebGL understanding"));
+        assert!(report
+            .compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "html:canvas_tags=1"));
+        assert!(report
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "compatibility:unsupported"));
 
         let rendered = render_session_health_report(&report);
         assert!(rendered.contains("Compatibility: unsupported"));
@@ -12091,7 +13841,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_runtime_capture_report_with_frame_and_shadow_inventory() {
+    fn renders_runtime_capture_report_with_frame_shadow_and_canvas_inventory() {
         let report = BrowserRuntimeCaptureReport {
             session_id: "runtime-explicit".to_string(),
             url: "https://runtime.test/captured".to_string(),
@@ -12100,10 +13850,12 @@ mod tests {
             cookie_count: 1,
             request_count: 0,
             settle_signal_count: 0,
-            runtime_state_count: 6,
+            runtime_state_count: 10,
             protocol_event_count: 0,
             frame_count: 2,
             shadow_host_count: 1,
+            canvas_count: 2,
+            webgl_canvas_count: 1,
             frames: vec![
                 BrowserFrameInventoryEntry {
                     selector: "iframe#checkout".to_string(),
@@ -12132,6 +13884,34 @@ mod tests {
                 semantic_node_count: 3,
                 text_sample: "Pay now".to_string(),
             }],
+            canvases: vec![
+                BrowserCanvasInventoryEntry {
+                    selector: "canvas#stage".to_string(),
+                    width: 640,
+                    height: 480,
+                    context_kinds: vec!["2d".to_string()],
+                    text_op_count: 2,
+                    image_op_count: 1,
+                    webgl_draw_count: 0,
+                    readback_count: 1,
+                    likely_animated: false,
+                    runtime_evidence: true,
+                    text_sample: "Sign in".to_string(),
+                },
+                BrowserCanvasInventoryEntry {
+                    selector: "canvas#webgl".to_string(),
+                    width: 1024,
+                    height: 768,
+                    context_kinds: vec!["webgl".to_string()],
+                    text_op_count: 0,
+                    image_op_count: 0,
+                    webgl_draw_count: 4,
+                    readback_count: 0,
+                    likely_animated: true,
+                    runtime_evidence: true,
+                    text_sample: String::new(),
+                },
+            ],
             network_summary: Default::default(),
             local_storage_count: 1,
             session_storage_count: 1,
@@ -12149,11 +13929,12 @@ mod tests {
         let rendered = render_runtime_capture_report(&report);
         assert!(rendered.contains("Frames: 2 (accessible 1, same-origin 1)"));
         assert!(rendered.contains("Shadow hosts: 1 (semantic nodes 3)"));
+        assert!(rendered.contains("Canvases: 2 (webgl 1, runtime evidence 2, likely animated 1)"));
         assert!(rendered.contains("Warnings (1): capture-warning"));
     }
 
     #[test]
-    fn compatibility_reports_cross_origin_embeds_and_shadow_surface_limits() {
+    fn compatibility_reports_cross_origin_embeds_shadow_and_canvas_surface_limits() {
         let snapshot = BrowserPageSnapshot {
             url: "https://example.test/app".to_string(),
             title: "Embedded App".to_string(),
@@ -12174,8 +13955,16 @@ mod tests {
             requests: Vec::new(),
             settle_signals: Vec::new(),
             runtime_state: vec![
-                BrowserRuntimeState { scope: "runtime_session".to_string(), key: "frame_count".to_string(), value: "2".to_string() },
-                BrowserRuntimeState { scope: "runtime_frames".to_string(), key: "accessible_count".to_string(), value: "1".to_string() },
+                BrowserRuntimeState {
+                    scope: "runtime_session".to_string(),
+                    key: "frame_count".to_string(),
+                    value: "2".to_string(),
+                },
+                BrowserRuntimeState {
+                    scope: "runtime_frames".to_string(),
+                    key: "accessible_count".to_string(),
+                    value: "1".to_string(),
+                },
             ],
             protocol_events: Vec::new(),
         };
@@ -12198,11 +13987,21 @@ mod tests {
             session_json_path: "session.json".to_string(),
             snapshot_json_path: Some("snapshot.json".to_string()),
         };
-        let compatibility = super::build_compatibility_report(Some(&snapshot), Some("<html><body><iframe></iframe></body></html>"), &access);
+        let compatibility = super::build_compatibility_report(
+            Some(&snapshot),
+            Some("<html><body><iframe></iframe></body></html>"),
+            &access,
+        );
         assert_eq!(compatibility.level, "runtime_limited");
         assert_eq!(compatibility.cause, "cross_origin_embeds");
-        assert!(compatibility.signals.iter().any(|signal| signal == "runtime:frames=2"));
-        assert!(compatibility.signals.iter().any(|signal| signal == "runtime:accessible_frames=1"));
+        assert!(compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "runtime:frames=2"));
+        assert!(compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "runtime:accessible_frames=1"));
 
         let shadow_snapshot = BrowserPageSnapshot {
             url: "https://example.test/shadow".to_string(),
@@ -12215,15 +14014,83 @@ mod tests {
             mutations: Vec::new(),
             requests: Vec::new(),
             settle_signals: Vec::new(),
+            runtime_state: vec![BrowserRuntimeState {
+                scope: "runtime_session".to_string(),
+                key: "shadow_host_count".to_string(),
+                value: "1".to_string(),
+            }],
+            protocol_events: Vec::new(),
+        };
+        let shadow_compatibility = super::build_compatibility_report(
+            Some(&shadow_snapshot),
+            Some("<html><body><checkout-shell></checkout-shell></body></html>"),
+            &access,
+        );
+        assert_eq!(shadow_compatibility.level, "runtime_limited");
+        assert_eq!(shadow_compatibility.cause, "shadow_dom_surface");
+        assert!(shadow_compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "runtime:shadow_hosts=1"));
+
+        let canvas_snapshot = BrowserPageSnapshot {
+            url: "https://example.test/canvas".to_string(),
+            title: "Canvas App".to_string(),
+            summary: "Canvas-heavy page".to_string(),
+            elements: vec![AomElement {
+                role: "button".to_string(),
+                name: "Visible fallback".to_string(),
+                value: String::new(),
+                target_url: None,
+                supported_actions: vec!["click".to_string()],
+                provenance: "native".to_string(),
+                actionability: 100,
+            }],
+            forms: Vec::new(),
+            cookies: Vec::new(),
+            storage: Vec::new(),
+            mutations: Vec::new(),
+            requests: Vec::new(),
+            settle_signals: Vec::new(),
             runtime_state: vec![
-                BrowserRuntimeState { scope: "runtime_session".to_string(), key: "shadow_host_count".to_string(), value: "1".to_string() },
+                BrowserRuntimeState {
+                    scope: "runtime_session".to_string(),
+                    key: "canvas_count".to_string(),
+                    value: "2".to_string(),
+                },
+                BrowserRuntimeState {
+                    scope: "runtime_session".to_string(),
+                    key: "webgl_canvas_count".to_string(),
+                    value: "1".to_string(),
+                },
+                BrowserRuntimeState {
+                    scope: "runtime_canvas".to_string(),
+                    key: "runtime_evidence_count".to_string(),
+                    value: "2".to_string(),
+                },
+                BrowserRuntimeState {
+                    scope: "runtime_canvas".to_string(),
+                    key: "animated_count".to_string(),
+                    value: "1".to_string(),
+                },
             ],
             protocol_events: Vec::new(),
         };
-        let shadow_compatibility = super::build_compatibility_report(Some(&shadow_snapshot), Some("<html><body><checkout-shell></checkout-shell></body></html>"), &access);
-        assert_eq!(shadow_compatibility.level, "runtime_limited");
-        assert_eq!(shadow_compatibility.cause, "shadow_dom_surface");
-        assert!(shadow_compatibility.signals.iter().any(|signal| signal == "runtime:shadow_hosts=1"));
+        let canvas_compatibility = super::build_compatibility_report(
+            Some(&canvas_snapshot),
+            Some("<html><body><canvas id='stage'></canvas></body></html>"),
+            &access,
+        );
+        assert_eq!(canvas_compatibility.level, "runtime_limited");
+        assert_eq!(canvas_compatibility.cause, "canvas_runtime_surface");
+        assert!(canvas_compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "runtime:canvases=2"));
+        assert!(canvas_compatibility
+            .signals
+            .iter()
+            .any(|signal| signal == "runtime:webgl_canvases=1"));
     }
 
     #[test]
@@ -12264,10 +14131,17 @@ mod tests {
         session.current_url = Some(url.to_string());
         save_session_state(root, &session).unwrap();
 
-        let err = session_click(root, "failing-session", "link", "Missing", &sitemap_path).unwrap_err();
+        let err =
+            session_click(root, "failing-session", "link", "Missing", &sitemap_path).unwrap_err();
         assert!(err.contains("session click target not found"));
 
-        let transcript = read_session_transcript_report(root, "failing-session", None, BrowserListSortDirection::Asc).unwrap();
+        let transcript = read_session_transcript_report(
+            root,
+            "failing-session",
+            None,
+            BrowserListSortDirection::Asc,
+        )
+        .unwrap();
         let failure = transcript.entries.last().unwrap();
         assert_eq!(failure.event_kind, "click");
         assert_eq!(failure.outcome, "error");
@@ -12279,12 +14153,26 @@ mod tests {
         assert_eq!(health.recent_failures.len(), 1);
         assert_eq!(health.recent_failures[0].event_kind, "click");
         assert_eq!(health.recent_failures[0].outcome, "error");
-        assert_eq!(health.latest_failure.as_ref().map(|failure| failure.event_kind.as_str()), Some("click"));
+        assert_eq!(
+            health
+                .latest_failure
+                .as_ref()
+                .map(|failure| failure.event_kind.as_str()),
+            Some("click")
+        );
         assert_eq!(health.recovery_posture, "recover_interaction");
         assert_eq!(health.compatibility.cause, "semantic_static_surface");
-        assert!(health.recommended_action.contains("Inspect the current snapshot or HTML fallback"));
-        assert!(health.evidence_signals.iter().any(|signal| signal == "transcript:failures=1"));
-        assert!(health.evidence_signals.iter().any(|signal| signal == "transcript:latest_failure_kind=click"));
+        assert!(health
+            .recommended_action
+            .contains("Inspect the current snapshot or HTML fallback"));
+        assert!(health
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "transcript:failures=1"));
+        assert!(health
+            .evidence_signals
+            .iter()
+            .any(|signal| signal == "transcript:latest_failure_kind=click"));
 
         let rendered = render_session_health_report(&health);
         assert!(rendered.contains("Recent transcript failures: 1"));
@@ -12394,11 +14282,24 @@ mod tests {
         target_session.current_url = Some("https://example.test/login".to_string());
         save_session_state(root, &target_session).unwrap();
 
-        let reseeded = reseed_auth_state_report(root, "target-session", "source-session", None, &sitemap_path).unwrap();
+        let reseeded = reseed_auth_state_report(
+            root,
+            "target-session",
+            "source-session",
+            None,
+            &sitemap_path,
+        )
+        .unwrap();
         assert_eq!(reseeded.source_kind, "session");
         assert_eq!(reseeded.copied_cookie_count, 2);
-        assert!(reseeded.copied_cookie_names.iter().any(|name| name == "session"));
-        assert!(reseeded.copied_cookie_names.iter().any(|name| name == "csrf_cookie"));
+        assert!(reseeded
+            .copied_cookie_names
+            .iter()
+            .any(|name| name == "session"));
+        assert!(reseeded
+            .copied_cookie_names
+            .iter()
+            .any(|name| name == "csrf_cookie"));
         assert_eq!(reseeded.copied_local_storage_count, 1);
         assert_eq!(reseeded.copied_session_storage_count, 1);
         assert_eq!(reseeded.auth_diagnostics.diagnosis, "login_required");
@@ -12409,22 +14310,51 @@ mod tests {
         assert!(rendered.contains("Auth diagnosis: login_required"));
 
         let target_after = load_session_state(root, "target-session").unwrap();
-        assert_eq!(target_after.local_storage.get("csrf_token").map(String::as_str), Some("local-seed"));
-        assert_eq!(target_after.session_storage.get("xsrf_nonce").map(String::as_str), Some("session-seed"));
-        assert!(target_after.cookies.iter().any(|cookie| cookie.name == "session"));
-        assert!(!target_after.cookies.iter().any(|cookie| cookie.name == "theme"));
+        assert_eq!(
+            target_after
+                .local_storage
+                .get("csrf_token")
+                .map(String::as_str),
+            Some("local-seed")
+        );
+        assert_eq!(
+            target_after
+                .session_storage
+                .get("xsrf_nonce")
+                .map(String::as_str),
+            Some("session-seed")
+        );
+        assert!(target_after
+            .cookies
+            .iter()
+            .any(|cookie| cookie.name == "session"));
+        assert!(!target_after
+            .cookies
+            .iter()
+            .any(|cookie| cookie.name == "theme"));
 
         create_session(root, "target-from-checkpoint").unwrap();
         let mut target_checkpoint = load_session_state(root, "target-from-checkpoint").unwrap();
         target_checkpoint.current_url = Some("https://example.test/login".to_string());
         save_session_state(root, &target_checkpoint).unwrap();
 
-        let reseeded_checkpoint =
-            reseed_auth_state_report(root, "target-from-checkpoint", "source-session", Some("auth-seed"), &sitemap_path)
-                .unwrap();
+        let reseeded_checkpoint = reseed_auth_state_report(
+            root,
+            "target-from-checkpoint",
+            "source-session",
+            Some("auth-seed"),
+            &sitemap_path,
+        )
+        .unwrap();
         assert_eq!(reseeded_checkpoint.source_kind, "checkpoint");
-        assert_eq!(reseeded_checkpoint.source_checkpoint_name.as_deref(), Some("auth-seed"));
-        assert_eq!(reseeded_checkpoint.auth_diagnostics.diagnosis, "login_required");
+        assert_eq!(
+            reseeded_checkpoint.source_checkpoint_name.as_deref(),
+            Some("auth-seed")
+        );
+        assert_eq!(
+            reseeded_checkpoint.auth_diagnostics.diagnosis,
+            "login_required"
+        );
         assert!(reseeded_checkpoint.auth_diagnostics.has_csrf_token);
     }
 
@@ -12525,7 +14455,14 @@ mod tests {
         save_session_state(root, &source_session).unwrap();
         save_session_checkpoint(root, "source-session", "auth-seed", &sitemap_path).unwrap();
 
-        let saved = save_auth_profile_report(root, "primary-auth", "source-session", Some("auth-seed"), &sitemap_path).unwrap();
+        let saved = save_auth_profile_report(
+            root,
+            "primary-auth",
+            "source-session",
+            Some("auth-seed"),
+            &sitemap_path,
+        )
+        .unwrap();
         assert_eq!(saved.profile.name, "primary-auth");
         assert_eq!(saved.profile.source_kind, "checkpoint");
         assert_eq!(saved.profile.cookie_count, 2);
@@ -12550,35 +14487,72 @@ mod tests {
 
         let raw_profile = load_auth_profile(root, "primary-auth").unwrap();
         assert_eq!(raw_profile.cookies.len(), 2);
-        assert!(raw_profile.cookies.iter().any(|cookie| cookie.name == "session"));
-        assert!(!raw_profile.cookies.iter().any(|cookie| cookie.name == "theme"));
-        assert_eq!(raw_profile.local_storage.get("csrf_token").map(String::as_str), Some("local-seed"));
-        assert_eq!(raw_profile.session_storage.get("xsrf_nonce").map(String::as_str), Some("session-seed"));
+        assert!(raw_profile
+            .cookies
+            .iter()
+            .any(|cookie| cookie.name == "session"));
+        assert!(!raw_profile
+            .cookies
+            .iter()
+            .any(|cookie| cookie.name == "theme"));
+        assert_eq!(
+            raw_profile
+                .local_storage
+                .get("csrf_token")
+                .map(String::as_str),
+            Some("local-seed")
+        );
+        assert_eq!(
+            raw_profile
+                .session_storage
+                .get("xsrf_nonce")
+                .map(String::as_str),
+            Some("session-seed")
+        );
 
         let read_report = read_auth_profile_report(root, "primary-auth").unwrap();
         assert_eq!(read_report.profile.name, "primary-auth");
         assert_eq!(read_report.profile.cookie_count, 2);
-        assert!(read_report.profile_json_path.ends_with("primary-auth.auth.json"));
+        assert!(read_report
+            .profile_json_path
+            .ends_with("primary-auth.auth.json"));
 
         create_session(root, "apply-target").unwrap();
         let mut apply_target = load_session_state(root, "apply-target").unwrap();
         apply_target.current_url = Some("https://example.test/login".to_string());
         save_session_state(root, &apply_target).unwrap();
 
-        let applied = apply_auth_profile_report(root, "primary-auth", "apply-target", &sitemap_path).unwrap();
+        let applied =
+            apply_auth_profile_report(root, "primary-auth", "apply-target", &sitemap_path).unwrap();
         assert_eq!(applied.profile_name, "primary-auth");
         assert_eq!(applied.copied_cookie_count, 2);
         assert_eq!(applied.copied_local_storage_count, 1);
         assert_eq!(applied.copied_session_storage_count, 1);
         assert_eq!(applied.auth_diagnostics.diagnosis, "login_required");
         let rendered_apply = render_auth_profile_apply_report(&applied);
-        assert!(rendered_apply.contains("Applied browser auth profile 'primary-auth' to session 'apply-target'"));
+        assert!(rendered_apply
+            .contains("Applied browser auth profile 'primary-auth' to session 'apply-target'"));
         assert!(rendered_apply.contains("Auth diagnosis: login_required"));
 
         let applied_session = load_session_state(root, "apply-target").unwrap();
-        assert!(applied_session.cookies.iter().any(|cookie| cookie.name == "session"));
-        assert_eq!(applied_session.local_storage.get("csrf_token").map(String::as_str), Some("local-seed"));
-        assert_eq!(applied_session.session_storage.get("xsrf_nonce").map(String::as_str), Some("session-seed"));
+        assert!(applied_session
+            .cookies
+            .iter()
+            .any(|cookie| cookie.name == "session"));
+        assert_eq!(
+            applied_session
+                .local_storage
+                .get("csrf_token")
+                .map(String::as_str),
+            Some("local-seed")
+        );
+        assert_eq!(
+            applied_session
+                .session_storage
+                .get("xsrf_nonce")
+                .map(String::as_str),
+            Some("session-seed")
+        );
     }
 
     #[test]
@@ -12612,8 +14586,14 @@ mod tests {
             root,
             "recover-session",
             &[
-                BrowserCookie { name: "token".to_string(), value: "seeded-token".to_string() },
-                BrowserCookie { name: "refresh".to_string(), value: "seeded-refresh".to_string() },
+                BrowserCookie {
+                    name: "token".to_string(),
+                    value: "seeded-token".to_string(),
+                },
+                BrowserCookie {
+                    name: "refresh".to_string(),
+                    value: "seeded-refresh".to_string(),
+                },
             ],
         )
         .unwrap();
@@ -12671,7 +14651,8 @@ mod tests {
         let sitemap_path = root.join("site_map");
         create_session(root, "auth-session").unwrap();
         navigate_session(root, "auth-session", &base_url, &sitemap_path).unwrap();
-        let checkpoint_path = save_session_checkpoint(root, "auth-session", "before-submit", &sitemap_path).unwrap();
+        let checkpoint_path =
+            save_session_checkpoint(root, "auth-session", "before-submit", &sitemap_path).unwrap();
         assert!(checkpoint_path.exists());
 
         let listed = super::list_session_checkpoints(
@@ -12694,13 +14675,23 @@ mod tests {
         assert_eq!(listed[0].settle_signal_count, 3);
         assert_eq!(listed[0].runtime_state_count, 2);
 
-        let checkpoint = super::read_session_checkpoint(root, "auth-session", "before-submit").unwrap();
+        let checkpoint =
+            super::read_session_checkpoint(root, "auth-session", "before-submit").unwrap();
         assert_eq!(checkpoint.name, "before-submit");
         assert_eq!(checkpoint.session.id, "auth-session");
-        assert_eq!(checkpoint.snapshot.as_ref().map(|snapshot| snapshot.title.as_str()), Some("Login"));
+        assert_eq!(
+            checkpoint
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.title.as_str()),
+            Some("Login")
+        );
         assert_eq!(
             listed[0].snapshot_summary.as_deref(),
-            checkpoint.snapshot.as_ref().map(|snapshot| snapshot.summary.as_str())
+            checkpoint
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.summary.as_str())
         );
 
         let workflow = BrowserWorkflow {
@@ -12708,13 +14699,21 @@ mod tests {
             start_url: base_url.clone(),
             variables: HashMap::new(),
             steps: vec![
-                BrowserWorkflowStep::FillField { field: "email".to_string(), value: "rust@example.com".to_string() },
-                BrowserWorkflowStep::SubmitForm { form: Some("login".to_string()) },
-                BrowserWorkflowStep::AssertTextContains { text: "Welcome back".to_string() },
+                BrowserWorkflowStep::FillField {
+                    field: "email".to_string(),
+                    value: "rust@example.com".to_string(),
+                },
+                BrowserWorkflowStep::SubmitForm {
+                    form: Some("login".to_string()),
+                },
+                BrowserWorkflowStep::AssertTextContains {
+                    text: "Welcome back".to_string(),
+                },
             ],
         };
 
-        let replay = replay_workflow_in_session(root, "auth-session", &workflow, &sitemap_path).unwrap();
+        let replay =
+            replay_workflow_in_session(root, "auth-session", &workflow, &sitemap_path).unwrap();
         assert!(replay.contains("Workflow 'Resume Login' completed."));
         assert!(replay.contains("Final title: Dashboard"));
         assert!(replay.contains("Session: auth-session"));
@@ -12726,20 +14725,40 @@ mod tests {
         assert!(replay.contains("Session storage: 1"));
         let session = load_session_state(root, "auth-session").unwrap();
         let expected_login_url = format!("{}/login", base_url);
-        assert_eq!(session.current_url.as_deref(), Some(expected_login_url.as_str()));
+        assert_eq!(
+            session.current_url.as_deref(),
+            Some(expected_login_url.as_str())
+        );
         assert_eq!(session.cookies.len(), 1);
-        assert_eq!(session.local_storage.get("theme").map(String::as_str), Some("dark"));
-        assert_eq!(session.session_storage.get("csrf").map(String::as_str), Some("token123"));
+        assert_eq!(
+            session.local_storage.get("theme").map(String::as_str),
+            Some("dark")
+        );
+        assert_eq!(
+            session.session_storage.get("csrf").map(String::as_str),
+            Some("token123")
+        );
 
-        let second_checkpoint_path = save_session_checkpoint(root, "auth-session", "after-submit", &sitemap_path).unwrap();
+        let second_checkpoint_path =
+            save_session_checkpoint(root, "auth-session", "after-submit", &sitemap_path).unwrap();
         assert!(second_checkpoint_path.exists());
 
-        let checkpoint_diff = diff_session_checkpoints(root, "auth-session", "before-submit", "after-submit").unwrap();
+        let checkpoint_diff =
+            diff_session_checkpoints(root, "auth-session", "before-submit", "after-submit")
+                .unwrap();
         assert!(checkpoint_diff.summary.contains("title"));
         assert!(checkpoint_diff.summary.contains("forms-1"));
         assert!(checkpoint_diff.summary.contains("mutations+1"));
-        assert!(checkpoint_diff.diff.added_runtime_state.iter().any(|entry| entry == "router:name=dashboard"));
-        assert!(checkpoint_diff.diff.removed_runtime_state.iter().any(|entry| entry == "router:name=login"));
+        assert!(checkpoint_diff
+            .diff
+            .added_runtime_state
+            .iter()
+            .any(|entry| entry == "router:name=dashboard"));
+        assert!(checkpoint_diff
+            .diff
+            .removed_runtime_state
+            .iter()
+            .any(|entry| entry == "router:name=login"));
 
         let restored = restore_session_checkpoint(
             root,
@@ -12755,27 +14774,74 @@ mod tests {
         let restored_session = load_session_state(root, "forked-session").unwrap();
         let restored_url = restored_session.current_url.clone().unwrap();
         let restored_snapshot = load_snapshot_json(&restored_url, &sitemap_path).unwrap();
-        assert_eq!(restored_session.current_url.as_deref(), Some(restored_snapshot.url.as_str()));
-        assert_eq!(restored_session.local_storage.get("theme").map(String::as_str), Some("dark"));
-        assert_eq!(restored_session.session_storage.get("csrf").map(String::as_str), Some("token123"));
+        assert_eq!(
+            restored_session.current_url.as_deref(),
+            Some(restored_snapshot.url.as_str())
+        );
+        assert_eq!(
+            restored_session
+                .local_storage
+                .get("theme")
+                .map(String::as_str),
+            Some("dark")
+        );
+        assert_eq!(
+            restored_session
+                .session_storage
+                .get("csrf")
+                .map(String::as_str),
+            Some("token123")
+        );
 
         assert_eq!(restored_snapshot.requests.len(), 2);
         assert_eq!(restored_snapshot.settle_signals.len(), 3);
         assert_eq!(restored_snapshot.runtime_state.len(), 2);
-        assert!(restored_snapshot.mutations.iter().any(|entry| entry == "hydration:complete"));
-        assert!(restored_snapshot.runtime_state.iter().any(|entry| entry.scope == "router" && entry.key == "name" && entry.value == "login"));
-        assert!(restored_snapshot.runtime_state.iter().any(|entry| entry.scope == "store" && entry.key == "auth" && entry.value == "pending"));
-        assert!(restored_snapshot.storage.iter().any(|bucket| bucket.scope == "local" && bucket.entries.get("theme").map(String::as_str) == Some("dark")));
-        assert!(restored_snapshot.storage.iter().any(|bucket| bucket.scope == "session" && bucket.entries.get("csrf").map(String::as_str) == Some("token123")));
+        assert!(restored_snapshot
+            .mutations
+            .iter()
+            .any(|entry| entry == "hydration:complete"));
+        assert!(restored_snapshot
+            .runtime_state
+            .iter()
+            .any(|entry| entry.scope == "router" && entry.key == "name" && entry.value == "login"));
+        assert!(restored_snapshot
+            .runtime_state
+            .iter()
+            .any(|entry| entry.scope == "store"
+                && entry.key == "auth"
+                && entry.value == "pending"));
+        assert!(restored_snapshot
+            .storage
+            .iter()
+            .any(|bucket| bucket.scope == "local"
+                && bucket.entries.get("theme").map(String::as_str) == Some("dark")));
+        assert!(restored_snapshot
+            .storage
+            .iter()
+            .any(|bucket| bucket.scope == "session"
+                && bucket.entries.get("csrf").map(String::as_str) == Some("token123")));
 
-        let restored_facts = fs::read_to_string(crawl_facts_path(&restored_url, &sitemap_path)).unwrap();
+        let restored_facts =
+            fs::read_to_string(crawl_facts_path(&restored_url, &sitemap_path)).unwrap();
         assert!(restored_facts.starts_with("browser-capture version 9\n"));
         assert!(restored_facts.contains("field\trequest_count\t2\n"));
         assert!(restored_facts.contains("field\tsettle_signal_count\t3\n"));
         assert!(restored_facts.contains("field\truntime_state_count\t2\n"));
-        assert!(restored_facts.contains("storage_field\t0\tscope\tlocal") || restored_facts.contains("storage_field\t1\tscope\tlocal"));
-        assert!(restored_facts.contains("storage_field\t0\tscope\tsession") || restored_facts.contains("storage_field\t1\tscope\tsession"));
-        assert!(restored_facts.contains("runtime_state_field\t0\tscope\trouter") || restored_facts.contains("runtime_state_field\t1\tscope\trouter"));
-        assert!(restored_facts.contains("runtime_state_field\t0\tscope\tstore") || restored_facts.contains("runtime_state_field\t1\tscope\tstore"));
+        assert!(
+            restored_facts.contains("storage_field\t0\tscope\tlocal")
+                || restored_facts.contains("storage_field\t1\tscope\tlocal")
+        );
+        assert!(
+            restored_facts.contains("storage_field\t0\tscope\tsession")
+                || restored_facts.contains("storage_field\t1\tscope\tsession")
+        );
+        assert!(
+            restored_facts.contains("runtime_state_field\t0\tscope\trouter")
+                || restored_facts.contains("runtime_state_field\t1\tscope\trouter")
+        );
+        assert!(
+            restored_facts.contains("runtime_state_field\t0\tscope\tstore")
+                || restored_facts.contains("runtime_state_field\t1\tscope\tstore")
+        );
     }
 }

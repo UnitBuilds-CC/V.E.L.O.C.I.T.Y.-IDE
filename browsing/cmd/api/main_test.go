@@ -299,7 +299,7 @@ func TestRuntimeSessionActionEndpointReturnsCaptureWithAction(t *testing.T) {
 	}
 }
 
-func TestRuntimeSessionCaptureEndpointReturnsFrameAndShadowInventory(t *testing.T) {
+func TestRuntimeSessionCaptureEndpointReturnsFrameShadowAndCanvasInventory(t *testing.T) {
 	originalOpen := openRuntimeSessionFn
 	originalCapture := captureRuntimeSessionFn
 	defer func() {
@@ -316,9 +316,11 @@ func TestRuntimeSessionCaptureEndpointReturnsFrameAndShadowInventory(t *testing.
 		state := runtimeStateFromEntry(got)
 		state.FrameCount = 2
 		state.ShadowHostCount = 1
+		state.CanvasCount = 2
+		state.WebGLCanvasCount = 1
 		return &runtimeSessionCaptureResponse{
-			SessionID: got.ID,
-			FinalURL:  "https://example.com/capture",
+			SessionID:    got.ID,
+			FinalURL:     "https://example.com/capture",
 			RuntimeState: state,
 			Frames: []runtimeFrameSummary{
 				{Selector: "iframe#checkout", Source: "https://payments.example/frame", Accessible: false, SameOrigin: false},
@@ -326,6 +328,10 @@ func TestRuntimeSessionCaptureEndpointReturnsFrameAndShadowInventory(t *testing.
 			},
 			ShadowHosts: []runtimeShadowHostSummary{
 				{Selector: "checkout-shell", Tag: "checkout-shell", Mode: "open", SemanticNodeCount: 3, TextSample: "Pay now"},
+			},
+			Canvases: []runtimeCanvasSummary{
+				{Selector: "canvas#stage", Width: 640, Height: 480, ContextKinds: []string{"2d"}, TextOpCount: 2, RuntimeEvidence: true, TextSample: "Sign in"},
+				{Selector: "canvas#webgl", Width: 1024, Height: 768, ContextKinds: []string{"webgl"}, WebGLDrawCount: 4, LikelyAnimated: true, RuntimeEvidence: true},
 			},
 		}, nil
 	}
@@ -348,13 +354,19 @@ func TestRuntimeSessionCaptureEndpointReturnsFrameAndShadowInventory(t *testing.
 		t.Fatalf("unmarshal capture response: %v", err)
 	}
 	if captureResp.RuntimeState.FrameCount != 2 || captureResp.RuntimeState.ShadowHostCount != 1 {
-		t.Fatalf("unexpected runtime inventory counts: %+v", captureResp.RuntimeState)
+		t.Fatalf("unexpected frame/shadow inventory counts: %+v", captureResp.RuntimeState)
+	}
+	if captureResp.RuntimeState.CanvasCount != 2 || captureResp.RuntimeState.WebGLCanvasCount != 1 {
+		t.Fatalf("unexpected canvas inventory counts: %+v", captureResp.RuntimeState)
 	}
 	if len(captureResp.Frames) != 2 || captureResp.Frames[1].SemanticNodeCount != 4 {
 		t.Fatalf("unexpected frame inventory payload: %+v", captureResp.Frames)
 	}
 	if len(captureResp.ShadowHosts) != 1 || captureResp.ShadowHosts[0].Mode != "open" {
 		t.Fatalf("unexpected shadow host payload: %+v", captureResp.ShadowHosts)
+	}
+	if len(captureResp.Canvases) != 2 || captureResp.Canvases[1].WebGLDrawCount != 4 || !captureResp.Canvases[1].LikelyAnimated {
+		t.Fatalf("unexpected canvas payload: %+v", captureResp.Canvases)
 	}
 }
 
