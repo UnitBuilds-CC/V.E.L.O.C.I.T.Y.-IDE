@@ -332,6 +332,21 @@ pub fn get_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "runtime_reseed_auth".to_string(),
+            description: "Copy auth cookies plus CSRF-relevant storage from a source browser session or checkpoint into a target explicit runtime session, then report the resulting runtime auth diagnosis.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "targetSessionId": { "type": "string", "description": "Persisted runtime session identifier to update with recovered auth state." },
+                    "sourceSessionId": { "type": "string", "description": "Source browser session identifier to copy auth state from." },
+                    "sourceCheckpointName": { "type": "string", "description": "Optional checkpoint name on the source session; when provided, copy from that checkpoint instead of the live source session." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-apply wait timeout in milliseconds for the Go runtime state-apply endpoint." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime auth reseed report instead of verbose multiline text." }
+                },
+                "required": ["targetSessionId", "sourceSessionId"]
+            }),
+        },
+        Tool {
             name: "browser_get_session".to_string(),
             description: "Read the current persisted browser session state, including current URL, cookies, and storage state.".to_string(),
             input_schema: json!({
@@ -1461,6 +1476,34 @@ pub fn call_tool_in_workspace(
                 arguments["compact"].as_bool().unwrap_or(false),
             )
             .map_err(|e| e.into())
+        }
+        "runtime_reseed_auth" => {
+            let target_session_id = arguments["targetSessionId"]
+                .as_str()
+                .ok_or("targetSessionId is required")?;
+            let source_session_id = arguments["sourceSessionId"]
+                .as_str()
+                .ok_or("sourceSessionId is required")?;
+            let source_checkpoint_name = arguments["sourceCheckpointName"].as_str();
+            let sitemap_path = root.join(".velocity").join("site_map");
+            let report = crate::editor::browser::reseed_runtime_auth_state_report(
+                &root,
+                target_session_id,
+                source_session_id,
+                source_checkpoint_name,
+                &sitemap_path,
+                arguments["waitTimeoutMs"].as_u64(),
+            )
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            if arguments["compact"].as_bool().unwrap_or(false) {
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    format!("serialise runtime auth reseed report: {err}").into()
+                })
+            } else {
+                Ok(crate::editor::browser::render_runtime_auth_reseed_report(
+                    &report,
+                ))
+            }
         }
         "browser_get_session" => {
             let session_id = arguments["sessionId"]
@@ -4670,7 +4713,7 @@ mod tests {
 
         std::thread::spawn(move || {
             let png = [0x89u8, b'P', b'N', b'G'];
-            for _ in 0..9 {
+            for _ in 0..10 {
                 if let Ok((mut stream, _)) = listener.accept() {
                     let request = read_http_request(&mut stream);
                     let first_line = request.lines().next().unwrap_or_default().to_string();
@@ -4787,6 +4830,29 @@ mod tests {
                         );
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
+                    } else if first_line
+                        .starts_with("POST /api/runtime/session/rt-123/state HTTP/1.1")
+                    {
+                        let body = json!({
+                            "sessionId": "rt-123",
+                            "appliedCookieCount": 2,
+                            "appliedCookieNames": ["csrf_cookie", "session"],
+                            "appliedLocalStorageCount": 1,
+                            "appliedLocalStorageKeys": ["csrf_token"],
+                            "appliedSessionStorageCount": 1,
+                            "appliedSessionStorageKeys": ["xsrf_nonce"],
+                            "runtimeState": {"sessionId": "rt-123", "alive": true, "mode": "managed", "lastAction": "apply_state"},
+                            "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["navigate", "fill"], "supportsCapture": true, "supportsSessions": true},
+                            "warnings": ["post-state-apply wait did not settle cleanly"]
+                        })
+                        .to_string();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.flush();
                     } else if first_line.starts_with("POST /api/runtime/visual-artifact HTTP/1.1") {
                         let response = format!(
                             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: image/png\r\nX-Runtime-Artifact-Kind: runtime_screenshot\r\nX-Runtime-Page-Url: https://runtime.test/final-shot\r\nConnection: close\r\n\r\n",
@@ -4805,6 +4871,15 @@ mod tests {
                         );
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
+                    } else {
+                        let body = json!({"error": "unexpected runtime request", "firstLine": first_line}).to_string();
+                        let response = format!(
+                            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.flush();
                     }
                 }
             }
@@ -4813,6 +4888,46 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         fs::create_dir_all(&root).unwrap();
+
+        call_tool_in_workspace(&root, "browser_create_session", &json!({"sessionId": "browser-seed"}))
+            .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_set_cookies",
+            &json!({
+                "sessionId": "browser-seed",
+                "cookies": [
+                    {"name": "session", "value": "seed-token"},
+                    {"name": "csrf_cookie", "value": "csrf-cookie"},
+                    {"name": "theme", "value": "dark"}
+                ]
+            }),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_set_storage",
+            &json!({"sessionId": "browser-seed", "scope": "local", "entries": {"csrf_token": "local-seed", "theme": "dark"}, "replace": true}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_set_storage",
+            &json!({"sessionId": "browser-seed", "scope": "session", "entries": {"xsrf_nonce": "session-seed", "theme": "dark"}, "replace": true}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_session_navigate",
+            &json!({"sessionId": "browser-seed", "url": "https://runtime.test/login", "compact": true}),
+        )
+        .unwrap();
+        call_tool_in_workspace(
+            &root,
+            "browser_save_checkpoint",
+            &json!({"sessionId": "browser-seed", "checkpointName": "auth-seed", "compact": true}),
+        )
+        .unwrap();
 
         let created = call_tool_in_workspace(
             &root,
@@ -4876,6 +4991,18 @@ mod tests {
         assert!(evaluated.contains("\"script\": \"({ answer: 42 })\""));
         assert!(evaluated.contains("\\\"answer\\\":42"));
 
+        let reseeded = call_tool_in_workspace(
+            &root,
+            "runtime_reseed_auth",
+            &json!({"targetSessionId": "runtime-explicit", "sourceSessionId": "browser-seed", "waitTimeoutMs": 900, "compact": true}),
+        )
+        .unwrap();
+        assert!(reseeded.contains("\"source_kind\": \"session\""));
+        assert!(reseeded.contains("\"copied_cookie_count\": 2"));
+        assert!(reseeded.contains("\"warning_count\": 1"));
+        assert!(reseeded.contains("post-state-apply wait did not settle cleanly"));
+        assert!(reseeded.contains("\"runtime_session_id\": \"rt-123\""));
+
         let visual = call_tool_in_workspace(
             &root,
             "browser_runtime_visual_capture",
@@ -4885,6 +5012,26 @@ mod tests {
         assert!(visual.contains("\"artifact_kind\": \"runtime_screenshot\""));
         assert!(visual.contains("\"captured_url\": \"https://runtime.test/final-shot\""));
         assert!(visual.contains("\"mime_type\": \"image/png\""));
+
+        let reseeded_text = call_tool_in_workspace(
+            &root,
+            "runtime_reseed_auth",
+            &json!({"targetSessionId": "runtime-explicit", "sourceSessionId": "browser-seed", "sourceCheckpointName": "auth-seed"}),
+        )
+        .unwrap();
+        assert!(reseeded_text.contains("Reseeded auth state into runtime session 'runtime-explicit'"));
+        assert!(reseeded_text.contains("Source checkpoint: auth-seed"));
+        assert!(reseeded_text.contains("Warnings (1): post-state-apply wait did not settle cleanly"));
+
+        let runtime_session_path = root
+            .join(".velocity")
+            .join("runtime-browser-sessions")
+            .join("runtime-explicit.json");
+        let runtime_session_json = fs::read_to_string(&runtime_session_path).unwrap();
+        assert!(runtime_session_json.contains("\"session\""));
+        assert!(runtime_session_json.contains("\"csrf_cookie\""));
+        assert!(runtime_session_json.contains("\"csrf_token\": \"local-seed\""));
+        assert!(runtime_session_json.contains("\"xsrf_nonce\": \"session-seed\""));
 
         let evaluated_text = call_tool_in_workspace(
             &root,

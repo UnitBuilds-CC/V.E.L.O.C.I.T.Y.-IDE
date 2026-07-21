@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	goRuntime "runtime"
@@ -815,6 +816,66 @@ func (s *Session) CurrentURL() (string, error) {
 		return "", err
 	}
 	return currentURL, nil
+}
+
+// SetCookieValues applies name/value cookies to the current origin using document.cookie.
+func (s *Session) SetCookieValues(cookies map[string]string) error {
+	payload, err := json.Marshal(cookies)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(s.Ctx, 10*time.Second)
+	defer cancel()
+	var applied bool
+	script := fmt.Sprintf(`(function() {
+		const cookies = %s;
+		for (const [name, value] of Object.entries(cookies)) {
+			document.cookie = encodeURIComponent(name) + "=" + encodeURIComponent(String(value)) + "; path=/";
+		}
+		return true;
+	})()`, string(payload))
+	if err := chromedp.Run(ctx, chromedp.Evaluate(script, &applied)); err != nil {
+		return err
+	}
+	if !applied {
+		return fmt.Errorf("cookie application was not acknowledged")
+	}
+	return nil
+}
+
+// ApplyStorage writes localStorage and sessionStorage entries for the current origin.
+func (s *Session) ApplyStorage(localStorage map[string]string, sessionStorage map[string]string) error {
+	payload, err := json.Marshal(map[string]map[string]string{
+		"local":   localStorage,
+		"session": sessionStorage,
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(s.Ctx, 10*time.Second)
+	defer cancel()
+	var applied bool
+	script := fmt.Sprintf(`(function() {
+		const payload = %s;
+		const apply = (store, entries) => {
+			if (!entries) {
+				return;
+			}
+			for (const [key, value] of Object.entries(entries)) {
+				store.setItem(key, String(value));
+			}
+		};
+		apply(window.localStorage, payload.local);
+		apply(window.sessionStorage, payload.session);
+		return true;
+	})()`, string(payload))
+	if err := chromedp.Run(ctx, chromedp.Evaluate(script, &applied)); err != nil {
+		return err
+	}
+	if !applied {
+		return fmt.Errorf("storage application was not acknowledged")
+	}
+	return nil
 }
 
 // TakeScreenshot captures a PNG of the current viewport.

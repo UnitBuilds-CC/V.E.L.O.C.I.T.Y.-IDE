@@ -299,6 +299,100 @@ func TestRuntimeSessionActionEndpointReturnsCaptureWithAction(t *testing.T) {
 	}
 }
 
+func TestRuntimeSessionApplyStateEndpointForwardsRequest(t *testing.T) {
+	originalOpen := openRuntimeSessionFn
+	originalApply := applyRuntimeSessionStateFn
+	defer func() {
+		openRuntimeSessionFn = originalOpen
+		applyRuntimeSessionStateFn = originalApply
+	}()
+
+	stubSession := &browserpkg.Session{Ctx: context.Background()}
+	entry := &runtimeSessionEntry{ID: "rt-state", Mode: "managed", CreatedAt: time.Unix(1700000005, 0).UTC(), Session: stubSession}
+	openRuntimeSessionFn = func(req runtimeOpenSessionRequest) (*runtimeSessionEntry, []string, error) {
+		return entry, nil, nil
+	}
+
+	var appliedReq runtimeSessionApplyStateRequest
+	applyRuntimeSessionStateFn = func(got *runtimeSessionEntry, req runtimeSessionApplyStateRequest) (*runtimeSessionApplyStateResponse, error) {
+		if got != entry {
+			t.Fatalf("apply state received wrong session entry: %+v", got)
+		}
+		appliedReq = req
+		state := runtimeStateFromEntry(got)
+		state.LastAction = "apply_state"
+		return &runtimeSessionApplyStateResponse{
+			SessionID:                  got.ID,
+			AppliedCookieCount:         len(req.Cookies),
+			AppliedCookieNames:         []string{"session", "csrf_token"},
+			AppliedLocalStorageCount:   len(req.LocalStorage),
+			AppliedLocalStorageKeys:    []string{"csrf_token"},
+			AppliedSessionStorageCount: len(req.SessionStorage),
+			AppliedSessionStorageKeys:  []string{"xsrf_nonce"},
+			RuntimeState:               state,
+			ProtocolEvidence:           protocolEvidenceFromEntry(got),
+			Warnings:                   []string{"storage applied after navigation"},
+		}, nil
+	}
+
+	router := buildRouter(func() (runtimeBrowser, error) { return &stubRuntimeBrowser{}, nil })
+	openReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session", bytes.NewReader([]byte(`{}`)))
+	openReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), openReq)
+
+	applyBody := []byte(`{"url":"https://example.com/login","cookies":[{"name":"session","value":"abc"},{"name":"csrf_token","value":"seed"}],"localStorage":{"csrf_token":"local-seed"},"sessionStorage":{"xsrf_nonce":"session-seed"},"waitTimeoutMs":1200}`)
+	applyReqHTTP := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-state/state", bytes.NewReader(applyBody))
+	applyReqHTTP.Header.Set("Content-Type", "application/json")
+	applyRecorder := httptest.NewRecorder()
+
+	router.ServeHTTP(applyRecorder, applyReqHTTP)
+
+	if applyRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 apply state, got %d with body %s", applyRecorder.Code, applyRecorder.Body.String())
+	}
+	if appliedReq.URL != "https://example.com/login" || appliedReq.WaitTimeoutMs != 1200 {
+		t.Fatalf("unexpected apply state request captured: %+v", appliedReq)
+	}
+	if len(appliedReq.Cookies) != 2 || appliedReq.Cookies[1].Name != "csrf_token" {
+		t.Fatalf("unexpected applied cookies payload: %+v", appliedReq.Cookies)
+	}
+	if got := appliedReq.LocalStorage["csrf_token"]; got != "local-seed" {
+		t.Fatalf("unexpected local storage payload: %+v", appliedReq.LocalStorage)
+	}
+	if got := appliedReq.SessionStorage["xsrf_nonce"]; got != "session-seed" {
+		t.Fatalf("unexpected session storage payload: %+v", appliedReq.SessionStorage)
+	}
+	var applyResp runtimeSessionApplyStateResponse
+	if err := json.Unmarshal(applyRecorder.Body.Bytes(), &applyResp); err != nil {
+		t.Fatalf("unmarshal apply state response: %v", err)
+	}
+	if applyResp.SessionID != "rt-state" || applyResp.AppliedCookieCount != 2 || applyResp.AppliedLocalStorageCount != 1 || applyResp.AppliedSessionStorageCount != 1 {
+		t.Fatalf("unexpected apply state response payload: %+v", applyResp)
+	}
+	if len(applyResp.Warnings) != 1 || applyResp.Warnings[0] != "storage applied after navigation" {
+		t.Fatalf("unexpected apply warnings: %+v", applyResp.Warnings)
+	}
+	if applyResp.RuntimeState.LastAction != "apply_state" {
+		t.Fatalf("expected apply_state last action, got %+v", applyResp.RuntimeState)
+	}
+
+	missingReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session/missing/state", bytes.NewReader([]byte(`{}`)))
+	missingReq.Header.Set("Content-Type", "application/json")
+	missingRecorder := httptest.NewRecorder()
+	router.ServeHTTP(missingRecorder, missingReq)
+	if missingRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing apply-state session, got %d", missingRecorder.Code)
+	}
+
+	badJSONReq := httptest.NewRequest(http.MethodPost, "/api/runtime/session/rt-state/state", bytes.NewReader([]byte(`{"cookies":`)))
+	badJSONReq.Header.Set("Content-Type", "application/json")
+	badJSONRecorder := httptest.NewRecorder()
+	router.ServeHTTP(badJSONRecorder, badJSONReq)
+	if badJSONRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed apply-state JSON, got %d", badJSONRecorder.Code)
+	}
+}
+
 func TestRuntimeSessionCaptureEndpointReturnsFrameShadowAndCanvasInventory(t *testing.T) {
 	originalOpen := openRuntimeSessionFn
 	originalCapture := captureRuntimeSessionFn

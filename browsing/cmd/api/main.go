@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,6 +57,27 @@ type runtimeSessionActionRequest struct {
 	Natural       bool   `json:"natural"`
 	Clear         bool   `json:"clear"`
 	WaitTimeoutMs int    `json:"waitTimeoutMs"`
+}
+
+type runtimeSessionApplyStateRequest struct {
+	URL            string                 `json:"url"`
+	Cookies        []RuntimeCaptureCookie `json:"cookies"`
+	LocalStorage   map[string]string      `json:"localStorage"`
+	SessionStorage map[string]string      `json:"sessionStorage"`
+	WaitTimeoutMs  int                    `json:"waitTimeoutMs"`
+}
+
+type runtimeSessionApplyStateResponse struct {
+	SessionID                  string                  `json:"sessionId"`
+	AppliedCookieCount         int                     `json:"appliedCookieCount"`
+	AppliedCookieNames         []string                `json:"appliedCookieNames,omitempty"`
+	AppliedLocalStorageCount   int                     `json:"appliedLocalStorageCount"`
+	AppliedLocalStorageKeys    []string                `json:"appliedLocalStorageKeys,omitempty"`
+	AppliedSessionStorageCount int                     `json:"appliedSessionStorageCount"`
+	AppliedSessionStorageKeys  []string                `json:"appliedSessionStorageKeys,omitempty"`
+	RuntimeState               runtimeSessionState     `json:"runtimeState"`
+	ProtocolEvidence           runtimeProtocolEvidence `json:"protocolEvidence"`
+	Warnings                   []string                `json:"warnings,omitempty"`
 }
 
 type runtimeSessionState struct {
@@ -137,7 +159,7 @@ type runtimeSessionCaptureResponse struct {
 	FinalURL         string                     `json:"finalUrl"`
 	Title            string                     `json:"title"`
 	HTML             string                     `json:"html"`
-	Cookies          []string                   `json:"cookies"`
+	Cookies          []RuntimeCaptureCookie     `json:"cookies"`
 	Storage          runtimeStorageSnapshot     `json:"storage"`
 	Fields           map[string]string          `json:"fields"`
 	Frames           []runtimeFrameSummary      `json:"frames,omitempty"`
@@ -225,9 +247,10 @@ type runtimeBrowserFactory func() (runtimeBrowser, error)
 var runtimeSessionSeq uint64
 
 var (
-	openRuntimeSessionFn    = openRuntimeSession
-	captureRuntimeSessionFn = captureRuntimeSession
-	performRuntimeActionFn  = performRuntimeAction
+	openRuntimeSessionFn      = openRuntimeSession
+	captureRuntimeSessionFn   = captureRuntimeSession
+	performRuntimeActionFn    = performRuntimeAction
+	applyRuntimeSessionStateFn = applyRuntimeSessionState
 )
 
 func main() {
@@ -384,6 +407,28 @@ func buildRouter(newRuntimeBrowser runtimeBrowserFactory) *gin.Engine {
 			return
 		}
 		resp.Action = actionResult
+		c.JSON(http.StatusOK, resp)
+	})
+
+	r.POST("/api/runtime/session/:sessionId/state", func(c *gin.Context) {
+		sessionID := strings.TrimSpace(c.Param("sessionId"))
+		entry, ok := runtimeSessions.get(sessionID)
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "runtime session not found"})
+			return
+		}
+
+		var req runtimeSessionApplyStateRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		resp, err := applyRuntimeSessionStateFn(entry, req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, resp)
 	})
 
@@ -673,12 +718,18 @@ func captureRuntimeSession(entry *runtimeSessionEntry) (*runtimeSessionCaptureRe
 	state.ShadowHostCount = len(shadowHosts)
 	state.CanvasCount = len(canvases)
 	state.WebGLCanvasCount = countWebGLCanvases(canvases)
+	rawCookies, err := readRuntimeCookies(entry.Session)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("failed to capture cookies: %v", err))
+		rawCookies = []RuntimeCaptureCookie{}
+	}
+
 	resp := &runtimeSessionCaptureResponse{
 		SessionID:        entry.ID,
 		FinalURL:         finalURL,
 		Title:            title,
 		HTML:             truncateWithWarning("html", html, 100000, &warnings),
-		Cookies:          entry.Session.GetCookies(),
+		Cookies:          rawCookies,
 		Storage:          storage,
 		Fields:           fields,
 		Frames:           frames,
@@ -714,6 +765,85 @@ func fetchStorage(session *browserpkg.Session) (runtimeStorageSnapshot, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+func applyRuntimeSessionState(entry *runtimeSessionEntry, req runtimeSessionApplyStateRequest) (*runtimeSessionApplyStateResponse, error) {
+	if entry == nil || entry.Session == nil {
+		return nil, fmt.Errorf("runtime session is not available")
+	}
+	if !entry.Session.IsAlive() {
+		return nil, fmt.Errorf("runtime session is no longer alive")
+	}
+	if req.WaitTimeoutMs < 0 {
+		return nil, fmt.Errorf("waitTimeoutMs must be non-negative")
+	}
+
+	warnings := make([]string, 0, 4)
+	if trimmedURL := strings.TrimSpace(req.URL); trimmedURL != "" {
+		if err := validateAbsoluteURL(trimmedURL); err != nil {
+			return nil, err
+		}
+		if err := entry.Session.Navigate(trimmedURL); err != nil {
+			return nil, fmt.Errorf("navigate runtime session before state apply: %w", err)
+		}
+	}
+
+	cookieMap := make(map[string]string, len(req.Cookies))
+	appliedCookieNames := make([]string, 0, len(req.Cookies))
+	for _, cookie := range req.Cookies {
+		name := strings.TrimSpace(cookie.Name)
+		if name == "" {
+			continue
+		}
+		cookieMap[name] = cookie.Value
+		appliedCookieNames = append(appliedCookieNames, name)
+	}
+	if len(cookieMap) > 0 {
+		if err := entry.Session.SetCookieValues(cookieMap); err != nil {
+			return nil, fmt.Errorf("apply runtime cookies: %w", err)
+		}
+	}
+
+	localStorage := req.LocalStorage
+	if localStorage == nil {
+		localStorage = map[string]string{}
+	}
+	sessionStorage := req.SessionStorage
+	if sessionStorage == nil {
+		sessionStorage = map[string]string{}
+	}
+	if len(localStorage) > 0 || len(sessionStorage) > 0 {
+		if err := entry.Session.ApplyStorage(localStorage, sessionStorage); err != nil {
+			return nil, fmt.Errorf("apply runtime storage: %w", err)
+		}
+	}
+
+	entry.LastAction = "apply_state"
+	waitMs := normalizeWait(req.WaitTimeoutMs, 1000)
+	if err := entry.Session.QuickWait(time.Duration(waitMs) * time.Millisecond); err != nil {
+		warnings = append(warnings, fmt.Sprintf("post-state-apply wait did not settle cleanly: %v", err))
+	}
+	return &runtimeSessionApplyStateResponse{
+		SessionID:                  entry.ID,
+		AppliedCookieCount:         len(appliedCookieNames),
+		AppliedCookieNames:         appliedCookieNames,
+		AppliedLocalStorageCount:   len(localStorage),
+		AppliedLocalStorageKeys:    mapKeysSorted(localStorage),
+		AppliedSessionStorageCount: len(sessionStorage),
+		AppliedSessionStorageKeys:  mapKeysSorted(sessionStorage),
+		RuntimeState:               runtimeStateFromEntry(entry),
+		ProtocolEvidence:           protocolEvidenceFromEntry(entry),
+		Warnings:                   warnings,
+	}, nil
+}
+
+func mapKeysSorted(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func performRuntimeAction(entry *runtimeSessionEntry, req runtimeSessionActionRequest) (*runtimeActionResult, error) {

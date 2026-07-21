@@ -462,6 +462,26 @@ pub struct BrowserAuthReseedReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeAuthReseedReport {
+    pub target_runtime_session: RuntimeBrowserSessionState,
+    pub source_kind: String,
+    pub source_session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_checkpoint_name: Option<String>,
+    pub copied_cookie_count: usize,
+    pub copied_cookie_names: Vec<String>,
+    pub copied_local_storage_count: usize,
+    pub copied_local_storage_keys: Vec<String>,
+    pub copied_session_storage_count: usize,
+    pub copied_session_storage_keys: Vec<String>,
+    pub session_json_path: String,
+    pub auth_diagnostics: BrowserAuthDiagnosticsReport,
+    pub warning_count: usize,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserAuthProfile {
     pub name: String,
     pub source_kind: String,
@@ -1442,6 +1462,10 @@ pub struct RuntimeBrowserSessionState {
     pub current_url: Option<String>,
     pub last_title: Option<String>,
     pub cookies: Vec<BrowserCookie>,
+    #[serde(default)]
+    pub local_storage: HashMap<String, String>,
+    #[serde(default)]
+    pub session_storage: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -3951,6 +3975,44 @@ pub fn load_runtime_session_state(
     serde_json::from_slice(&raw).map_err(|err| format!("parse runtime browser session: {err}"))
 }
 
+fn runtime_session_as_browser_session(runtime_session: &RuntimeBrowserSessionState) -> BrowserSessionState {
+    BrowserSessionState {
+        id: runtime_session.id.clone(),
+        current_url: runtime_session.current_url.clone(),
+        cookies: runtime_session.cookies.clone(),
+        local_storage: runtime_session.local_storage.clone(),
+        session_storage: runtime_session.session_storage.clone(),
+        network: BrowserSessionNetworkConfig::default(),
+        last_html: None,
+    }
+}
+
+fn build_runtime_auth_diagnostics_report(
+    workspace_root: &Path,
+    session: &RuntimeBrowserSessionState,
+    sitemap_path: &Path,
+) -> BrowserAuthDiagnosticsReport {
+    let snapshot = match session.current_url.as_deref() {
+        Some(url) => load_snapshot_json(url, sitemap_path).ok(),
+        None => None,
+    };
+    let snapshot_json_path = snapshot.as_ref().map(|snapshot| {
+        browser_snapshot_path(&snapshot.url, sitemap_path)
+            .display()
+            .to_string()
+    });
+    let mut report = build_auth_diagnostics_report(
+        workspace_root,
+        runtime_session_as_browser_session(session),
+        snapshot,
+        snapshot_json_path,
+    );
+    report.session_json_path = runtime_session_file_path(workspace_root, &session.id)
+        .display()
+        .to_string();
+    report
+}
+
 pub fn save_session_state(
     workspace_root: &Path,
     session: &BrowserSessionState,
@@ -4543,6 +4605,65 @@ pub fn render_auth_reseed_report(report: &BrowserAuthReseedReport) -> String {
         details.push(format!(
             "Session storage keys: {}",
             report.copied_session_storage_keys.join(", ")
+        ));
+    }
+    details.join("\n")
+}
+
+pub fn render_runtime_auth_reseed_report(report: &RuntimeAuthReseedReport) -> String {
+    let mut details = vec![
+        format!(
+            "Reseeded auth state into runtime session '{}'",
+            report.target_runtime_session.id
+        ),
+        format!(
+            "Runtime session id: {}",
+            report.target_runtime_session.runtime_session_id
+        ),
+        format!("Source kind: {}", report.source_kind),
+        format!("Source session: {}", report.source_session_id),
+        format!("Copied auth cookies: {}", report.copied_cookie_count),
+        format!(
+            "Copied local storage entries: {}",
+            report.copied_local_storage_count
+        ),
+        format!(
+            "Copied session storage entries: {}",
+            report.copied_session_storage_count
+        ),
+        format!("Session JSON: {}", report.session_json_path),
+        format!("Auth diagnosis: {}", report.auth_diagnostics.diagnosis),
+        format!(
+            "Auth recommendation: {}",
+            report.auth_diagnostics.recommended_action
+        ),
+    ];
+    if let Some(checkpoint_name) = report.source_checkpoint_name.as_deref() {
+        details.push(format!("Source checkpoint: {}", checkpoint_name));
+    }
+    if !report.copied_cookie_names.is_empty() {
+        details.push(format!(
+            "Cookie names: {}",
+            report.copied_cookie_names.join(", ")
+        ));
+    }
+    if !report.copied_local_storage_keys.is_empty() {
+        details.push(format!(
+            "Local storage keys: {}",
+            report.copied_local_storage_keys.join(", ")
+        ));
+    }
+    if !report.copied_session_storage_keys.is_empty() {
+        details.push(format!(
+            "Session storage keys: {}",
+            report.copied_session_storage_keys.join(", ")
+        ));
+    }
+    if !report.warnings.is_empty() {
+        details.push(format!(
+            "Warnings ({}): {}",
+            report.warning_count,
+            report.warnings.join(" | ")
         ));
     }
     details.join("\n")
@@ -5979,6 +6100,67 @@ pub fn reseed_auth_state_report(
     })
 }
 
+pub fn reseed_runtime_auth_state_report(
+    workspace_root: &Path,
+    target_session_id: &str,
+    source_session_id: &str,
+    source_checkpoint_name: Option<&str>,
+    sitemap_path: &Path,
+    wait_timeout_ms: Option<u64>,
+) -> Result<RuntimeAuthReseedReport, String> {
+    let (source_kind, source) =
+        resolve_auth_profile_source(workspace_root, source_session_id, source_checkpoint_name)?;
+    let copied_cookies = filter_auth_cookies(&source.cookies);
+    let copied_local_storage = filter_csrf_storage(&source.local_storage);
+    let copied_session_storage = filter_csrf_storage(&source.session_storage);
+    let mut target = load_runtime_session_state(workspace_root, target_session_id)?;
+    let request_body = serde_json::json!({
+        "url": target.current_url,
+        "cookies": copied_cookies
+            .iter()
+            .map(|cookie| serde_json::json!({"name": cookie.name, "value": cookie.value}))
+            .collect::<Vec<_>>(),
+        "localStorage": copied_local_storage,
+        "sessionStorage": copied_session_storage,
+        "waitTimeoutMs": wait_timeout_ms.unwrap_or(1_000),
+    });
+    let value = runtime_api_request(
+        "POST",
+        &format!(
+            "{}/api/runtime/session/{}/state",
+            target.api_base, target.runtime_session_id
+        ),
+        Some(&request_body),
+    )?;
+    let warnings = parse_runtime_string_list(value.get("warnings"));
+
+    for cookie in copied_cookies.iter().cloned() {
+        merge_cookie(&mut target.cookies, cookie);
+    }
+    apply_storage_updates(&mut target.local_storage, &copied_local_storage);
+    apply_storage_updates(&mut target.session_storage, &copied_session_storage);
+
+    let session_path = save_runtime_session_state(workspace_root, &target)?;
+    let auth_diagnostics = build_runtime_auth_diagnostics_report(workspace_root, &target, sitemap_path);
+
+    Ok(RuntimeAuthReseedReport {
+        target_runtime_session: target,
+        source_kind,
+        source_session_id: source_session_id.to_string(),
+        source_checkpoint_name: source_checkpoint_name.map(str::to_string),
+        copied_cookie_count: copied_cookies.len(),
+        copied_cookie_names: summarize_cookie_names(&copied_cookies),
+        copied_local_storage_count: copied_local_storage.len(),
+        copied_local_storage_keys: summarize_sorted_keys(&copied_local_storage),
+        copied_session_storage_count: copied_session_storage.len(),
+        copied_session_storage_keys: summarize_sorted_keys(&copied_session_storage),
+        session_json_path: session_path.display().to_string(),
+        auth_diagnostics,
+        warning_count: warnings.len(),
+        warnings,
+    })
+}
+
 fn write_session_checkpoint(
     workspace_root: &Path,
     checkpoint: &BrowserSessionCheckpoint,
@@ -7084,6 +7266,8 @@ fn sync_runtime_capture_session(
     runtime_session.current_url = Some(report.url.clone());
     runtime_session.last_title = Some(report.title.clone());
     runtime_session.cookies = session.cookies.clone();
+    runtime_session.local_storage = session.local_storage.clone();
+    runtime_session.session_storage = session.session_storage.clone();
     save_runtime_session_state(workspace_root, runtime_session)?;
     append_session_transcript_entry(
         workspace_root,
@@ -7145,6 +7329,8 @@ pub fn create_runtime_session(
         current_url: start_url.map(|value| value.to_string()),
         last_title: None,
         cookies: Vec::new(),
+        local_storage: HashMap::new(),
+        session_storage: HashMap::new(),
     };
     let session_path = save_runtime_session_state(workspace_root, &session)?;
     if compact {
@@ -14356,6 +14542,217 @@ mod tests {
             "login_required"
         );
         assert!(reseeded_checkpoint.auth_diagnostics.has_csrf_token);
+    }
+
+    #[test]
+    fn reseeds_runtime_auth_state_from_session_and_checkpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let api_base = format!("http://127.0.0.1:{}", port);
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_requests = observed.clone();
+
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_http_request(&mut stream);
+                    observed_requests.lock().unwrap().push(request.clone());
+                    let body = serde_json::json!({
+                        "sessionId": "rt-auth",
+                        "appliedCookieCount": 2,
+                        "appliedCookieNames": ["csrf_cookie", "session"],
+                        "appliedLocalStorageCount": 1,
+                        "appliedLocalStorageKeys": ["csrf_token"],
+                        "appliedSessionStorageCount": 1,
+                        "appliedSessionStorageKeys": ["xsrf_nonce"],
+                        "runtimeState": {"sessionId": "rt-auth", "alive": true, "mode": "managed", "lastAction": "apply_state"},
+                        "protocolEvidence": {"backend": "go-chromedp", "transport": "http-json", "sessionMode": "managed", "supportsActions": ["fill"], "supportsCapture": true, "supportsSessions": true},
+                        "warnings": ["post-state-apply wait did not settle cleanly"]
+                    })
+                    .to_string();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let sitemap_path = root.join("site_map");
+        let login_url = "https://example.test/login";
+        super::write_snapshot_json(
+            &BrowserPageSnapshot {
+                url: login_url.to_string(),
+                title: "Login".to_string(),
+                summary: "Login form".to_string(),
+                elements: vec![AomElement {
+                    role: "button".to_string(),
+                    name: "Sign in".to_string(),
+                    value: String::new(),
+                    target_url: None,
+                    supported_actions: vec!["click".to_string()],
+                    provenance: "native".to_string(),
+                    actionability: 100,
+                }],
+                forms: vec![BrowserForm {
+                    id: "login".to_string(),
+                    action: "/login".to_string(),
+                    method: "post".to_string(),
+                    fields: vec![BrowserFormField {
+                        input_type: "email".to_string(),
+                        name: "email".to_string(),
+                        label: "Email".to_string(),
+                        value: String::new(),
+                    }],
+                    submit_label: Some("Sign in".to_string()),
+                }],
+                cookies: Vec::new(),
+                storage: vec![
+                    BrowserStorageBucket {
+                        scope: "local".to_string(),
+                        entries: HashMap::new(),
+                    },
+                    BrowserStorageBucket {
+                        scope: "session".to_string(),
+                        entries: HashMap::new(),
+                    },
+                ],
+                requests: Vec::new(),
+                mutations: Vec::new(),
+                settle_signals: Vec::new(),
+                runtime_state: Vec::new(),
+                protocol_events: Vec::new(),
+            },
+            &sitemap_path,
+        )
+        .unwrap();
+
+        create_session(root, "source-session").unwrap();
+        set_session_cookies(
+            root,
+            "source-session",
+            &[
+                BrowserCookie {
+                    name: "session".to_string(),
+                    value: "source-session-token".to_string(),
+                },
+                BrowserCookie {
+                    name: "csrf_cookie".to_string(),
+                    value: "cookie-token".to_string(),
+                },
+                BrowserCookie {
+                    name: "theme".to_string(),
+                    value: "dark".to_string(),
+                },
+            ],
+        )
+        .unwrap();
+        set_session_storage_entries(
+            root,
+            "source-session",
+            "local",
+            &HashMap::from([
+                (String::from("csrf_token"), String::from("local-seed")),
+                (String::from("theme"), String::from("dark")),
+            ]),
+        )
+        .unwrap();
+        set_session_storage_entries(
+            root,
+            "source-session",
+            "session",
+            &HashMap::from([
+                (String::from("xsrf_nonce"), String::from("session-seed")),
+                (String::from("theme"), String::from("dark")),
+            ]),
+        )
+        .unwrap();
+        let mut source_session = load_session_state(root, "source-session").unwrap();
+        source_session.current_url = Some(login_url.to_string());
+        save_session_state(root, &source_session).unwrap();
+        save_session_checkpoint(root, "source-session", "auth-seed", &sitemap_path).unwrap();
+
+        super::save_runtime_session_state(
+            root,
+            &super::RuntimeBrowserSessionState {
+                id: "runtime-target".to_string(),
+                runtime_session_id: "rt-auth".to_string(),
+                api_base: api_base.clone(),
+                current_url: Some(login_url.to_string()),
+                last_title: Some("Login".to_string()),
+                cookies: vec![BrowserCookie {
+                    name: "existing".to_string(),
+                    value: "keep".to_string(),
+                }],
+                local_storage: HashMap::new(),
+                session_storage: HashMap::new(),
+            },
+        )
+        .unwrap();
+
+        let reseeded = super::reseed_runtime_auth_state_report(
+            root,
+            "runtime-target",
+            "source-session",
+            None,
+            &sitemap_path,
+            Some(900),
+        )
+        .unwrap();
+        assert_eq!(reseeded.source_kind, "session");
+        assert_eq!(reseeded.copied_cookie_count, 2);
+        assert_eq!(reseeded.copied_local_storage_count, 1);
+        assert_eq!(reseeded.copied_session_storage_count, 1);
+        assert_eq!(reseeded.warning_count, 1);
+        assert_eq!(reseeded.auth_diagnostics.diagnosis, "login_required");
+        assert!(reseeded.auth_diagnostics.session_json_path.contains("runtime-browser-sessions"));
+        let rendered = super::render_runtime_auth_reseed_report(&reseeded);
+        assert!(rendered.contains("Reseeded auth state into runtime session 'runtime-target'"));
+        assert!(rendered.contains("Warnings (1): post-state-apply wait did not settle cleanly"));
+
+        let target_after = super::load_runtime_session_state(root, "runtime-target").unwrap();
+        assert!(target_after.cookies.iter().any(|cookie| cookie.name == "session"));
+        assert!(target_after.cookies.iter().any(|cookie| cookie.name == "existing"));
+        assert_eq!(
+            target_after.local_storage.get("csrf_token").map(String::as_str),
+            Some("local-seed")
+        );
+        assert_eq!(
+            target_after.session_storage.get("xsrf_nonce").map(String::as_str),
+            Some("session-seed")
+        );
+
+        let requests = observed.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("POST /api/runtime/session/rt-auth/state HTTP/1.1"));
+        assert!(requests[0].contains("\"waitTimeoutMs\":900"));
+        assert!(requests[0].contains("\"name\":\"session\""));
+        assert!(requests[0].contains("\"localStorage\":{\"csrf_token\":\"local-seed\"}"));
+        assert!(!requests[0].contains("\"theme\""));
+
+        let reseeded_checkpoint = super::reseed_runtime_auth_state_report(
+            root,
+            "runtime-target",
+            "source-session",
+            Some("auth-seed"),
+            &sitemap_path,
+            None,
+        )
+        .unwrap();
+        assert_eq!(reseeded_checkpoint.source_kind, "checkpoint");
+        assert_eq!(
+            reseeded_checkpoint.source_checkpoint_name.as_deref(),
+            Some("auth-seed")
+        );
+
+        let requests = observed.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].contains("\"waitTimeoutMs\":1000"));
     }
 
     #[test]
