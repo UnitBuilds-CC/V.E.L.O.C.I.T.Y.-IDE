@@ -1,4 +1,4 @@
-use crate::agentic::{AgenticAomTree, NdaEncoder, VelocityOcrEngine, ZeroAllocNdaWriter};
+use crate::agentic::{ActionPredictorEngine, AgenticAomTree, NdaEncoder, PredictedActionTarget, VelocityOcrEngine, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
     AudioContextNode, BezierPoint, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
@@ -6,12 +6,13 @@ use crate::engine::{
     GpuTileCompositor, InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor,
     PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
     StealthHumanBehavior, SvgVectorEngine, TabSandbox, TraceCollector, VelocityCodecsEngine, WebAudioEngine, WebCryptoEngine, WebGLContext,
+    WebGpuComputeEngine,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WasmSimdPipeline, WebWorkerPool};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D, ParallelLayoutEngine};
 use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport, WebRtcTransport};
 use crate::nda::NdaTriple;
-use crate::parser::{CssMatcher, FastCssParser, HtmlParser, Html5Tokenizer};
+use crate::parser::{CssMatcher, FastCssParser, HtmlParser, Html5Tokenizer, StreamJitTokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
 use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 use crate::session_history::{HistoryItem, HistoryStack};
@@ -41,6 +42,7 @@ pub struct BrowserSession {
     pub tab_sandbox: TabSandbox,
     pub history_stack: HistoryStack,
     pub webgl_context: WebGLContext,
+    pub webgpu_context: WebGpuComputeEngine,
     pub push_notifications: PushNotificationManager,
     pub worker_pool: WebWorkerPool,
     pub storage_quota: StorageQuotaManager,
@@ -92,6 +94,7 @@ impl BrowserSession {
             tab_sandbox: TabSandbox::new(&session_id, SandboxCapabilities::strict_isolation()),
             history_stack: HistoryStack::new("about:blank"),
             webgl_context: WebGLContext::new(800, 600),
+            webgpu_context: WebGpuComputeEngine::new(),
             push_notifications: PushNotificationManager::new(),
             worker_pool: WebWorkerPool::new(),
             storage_quota: StorageQuotaManager::new(50 * 1024 * 1024),
@@ -133,6 +136,14 @@ impl BrowserSession {
         }
     }
 
+    /// Predict next optimal action target using local feature vectors
+    pub fn predict_action(&self) -> Option<PredictedActionTarget> {
+        if let Some(tree) = &self.dom_tree {
+            return ActionPredictorEngine::predict_next_action(tree);
+        }
+        None
+    }
+
     /// Execute OCR extraction on active software pixel buffer
     pub fn perform_ocr_scan(&self) -> Vec<crate::agentic::OcrTextBoundingBox> {
         let pix = SoftwareRasterizer::render_blank(800, 600);
@@ -168,6 +179,7 @@ impl BrowserSession {
         self.current_url = url.to_string();
         self.history_stack.push_state(url, "{}", "");
         let _tokens = Html5Tokenizer::new(html).tokenize();
+        let _stream_tokens = StreamJitTokenizer::tokenize_stream_chunk(html.as_bytes());
         let _fast_rules = FastCssParser::parse_rules_fast(html);
         let nodes = HtmlParser::parse(html);
         let tree = DomTree::new(nodes);

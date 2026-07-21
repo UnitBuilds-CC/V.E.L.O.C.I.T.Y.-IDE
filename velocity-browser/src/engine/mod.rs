@@ -21,6 +21,7 @@ pub mod svg;
 pub mod trace;
 pub mod webcodecs;
 pub mod webgl;
+pub mod webgpu;
 
 pub use audio::{AudioContextNode, WebAudioEngine};
 pub use canvas::{CanvasElement, CanvasExtractor};
@@ -45,3 +46,4 @@ pub use svg::{SvgPathCommand, SvgVectorEngine};
 pub use trace::{ConsoleTraceRecord, DomMutationTraceRecord, TraceCollector};
 pub use webcodecs::{VelocityCodecsEngine, VelocityFrameRingBuffer, VelocityRemotePacketStreamer, VideoFrame};
 pub use webgl::{Matrix4x4, WebGLContext};
+pub use webgpu::{WebGpuComputeBuffer, WebGpuComputeEngine};
