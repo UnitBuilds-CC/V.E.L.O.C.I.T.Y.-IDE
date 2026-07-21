@@ -22,7 +22,7 @@ pub use dom::{CustomElementDefinition, CustomElementRegistry, DomTree, FormDataS
 pub use engine::*;
 pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, PointerEvent, ScheduledTask, SyntheticEventDispatcher, TaskKind, WasmInterpreter, WasmValue, WebWorkerPool, WorkerMessage, WorkerThread};
 pub use layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
-pub use net::{HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, TlsState, WebRtcTransport, WsFrame};
+pub use net::{BluetoothDevice, HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, TlsState, WebBluetoothTransport, WebRtcTransport, WsFrame};
 pub use nda::NdaTriple;
 pub use parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 pub use session::BrowserSession;

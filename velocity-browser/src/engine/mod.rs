@@ -1,9 +1,12 @@
+pub mod audio;
 pub mod canvas;
 pub mod canvas_context;
 pub mod crypto;
 pub mod files;
+pub mod geolocation;
 pub mod interstitial;
 pub mod network;
+pub mod payment;
 pub mod profile;
 pub mod push_notifications;
 pub mod rasterizer;
@@ -14,12 +17,15 @@ pub mod svg;
 pub mod trace;
 pub mod webgl;
 
+pub use audio::{AudioContextNode, WebAudioEngine};
 pub use canvas::{CanvasElement, CanvasExtractor};
 pub use canvas_context::Canvas2DContext;
 pub use crypto::WebCryptoEngine;
 pub use files::{DownloadStreamArtifact, FileChooserEvent, FileManager};
+pub use geolocation::{Geocoordinates, GeolocationProvider};
 pub use interstitial::{InterstitialClassifier, InterstitialKind};
 pub use network::{NetworkRequest, NetworkTracker};
+pub use payment::{PaymentItem, PaymentRequestEngine};
 pub use profile::DeviceProfile;
 pub use push_notifications::{PushNotificationManager, PushSubscription};
 pub use rasterizer::{PixelBuffer, SoftwareRasterizer};

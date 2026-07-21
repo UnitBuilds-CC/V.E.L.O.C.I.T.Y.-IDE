@@ -1,14 +1,15 @@
 use crate::agentic::{AgenticAomTree, NdaEncoder, ZeroAllocNdaWriter};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
 use crate::engine::{
-    Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact, FileChooserEvent,
-    FileManager, FrameTarget, InterstitialClassifier, InterstitialKind, NetworkTracker, PixelBuffer, PushNotificationManager,
-    SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TabSandbox,
-    TraceCollector, WebCryptoEngine, WebGLContext,
+    AudioContextNode, Canvas2DContext, CanvasElement, CanvasExtractor, ConsoleTraceRecord, DeviceProfile, DownloadStreamArtifact,
+    FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider, InterstitialClassifier, InterstitialKind,
+    NetworkTracker, PaymentItem, PaymentRequestEngine, PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager,
+    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, SvgVectorEngine, TabSandbox, TraceCollector, WebAudioEngine, WebCryptoEngine,
+    WebGLContext,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WebWorkerPool};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
-use crate::net::{HttpClient, InspectorServer, NativeWsClient, ProxyResolver, WebRtcTransport};
+use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, WebBluetoothTransport, WebRtcTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, HtmlParser, Html5Tokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -44,6 +45,10 @@ pub struct BrowserSession {
     pub worker_pool: WebWorkerPool,
     pub storage_quota: StorageQuotaManager,
     pub custom_elements: CustomElementRegistry,
+    pub payment_engine: PaymentRequestEngine,
+    pub geolocation_provider: GeolocationProvider,
+    pub bluetooth_transport: WebBluetoothTransport,
+    pub audio_engine: WebAudioEngine,
     pub http_client: HttpClient,
     pub network_tracker: NetworkTracker,
     pub file_manager: FileManager,
@@ -81,8 +86,12 @@ impl BrowserSession {
             webgl_context: WebGLContext::new(800, 600),
             push_notifications: PushNotificationManager::new(),
             worker_pool: WebWorkerPool::new(),
-            storage_quota: StorageQuotaManager::new(50 * 1024 * 1024), // 50MB quota
+            storage_quota: StorageQuotaManager::new(50 * 1024 * 1024),
             custom_elements: CustomElementRegistry::new(),
+            payment_engine: PaymentRequestEngine::new("Default Merchant"),
+            geolocation_provider: GeolocationProvider::mock_sf(),
+            bluetooth_transport: WebBluetoothTransport::new(),
+            audio_engine: WebAudioEngine::new(44100),
             http_client: HttpClient::new(),
             network_tracker: NetworkTracker::new(),
             file_manager: FileManager::new(),
@@ -254,7 +263,7 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add device profile, file, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push notifications, inspector, and trace triples
+        // Add profile, file, trace, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push, payment, geolocation, inspector triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
@@ -266,6 +275,8 @@ impl BrowserSession {
         encoder.triples.extend(WebCryptoEngine::export_crypto_nda(&self.session_id, "ready"));
         encoder.triples.extend(self.tab_sandbox.export_sandbox_nda());
         encoder.triples.extend(self.push_notifications.export_push_nda(&self.session_id));
+        encoder.triples.extend(self.payment_engine.export_payment_nda(&self.session_id));
+        encoder.triples.extend(self.geolocation_provider.export_geolocation_nda(&self.session_id));
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
 
         // Add unmanaged slab node triples
