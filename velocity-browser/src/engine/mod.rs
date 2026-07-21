@@ -41,5 +41,5 @@ pub use service_worker::{CacheStorageEngine, CachedResponse, ServiceWorkerManage
 pub use shadow_dom::{FrameTarget, ShadowFrameExtractor, ShadowHost};
 pub use svg::{SvgPathCommand, SvgVectorEngine};
 pub use trace::{ConsoleTraceRecord, DomMutationTraceRecord, TraceCollector};
-pub use webcodecs::{VideoFrame, WebCodecsDecoder};
+pub use webcodecs::{VelocityCodecsEngine, VelocityFrameRingBuffer, VelocityRemotePacketStreamer, VideoFrame};
 pub use webgl::{Matrix4x4, WebGLContext};

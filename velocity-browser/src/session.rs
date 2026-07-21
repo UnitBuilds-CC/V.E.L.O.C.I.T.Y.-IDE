@@ -5,7 +5,7 @@ use crate::engine::{
     DeviceProfile, DownloadStreamArtifact, FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider,
     GpuTileCompositor, InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor,
     PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
-    SvgVectorEngine, TabSandbox, TraceCollector, WebAudioEngine, WebCodecsDecoder, WebCryptoEngine, WebGLContext,
+    SvgVectorEngine, TabSandbox, TraceCollector, VelocityCodecsEngine, WebAudioEngine, WebCryptoEngine, WebGLContext,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WebWorkerPool};
 use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D};
@@ -52,7 +52,7 @@ pub struct BrowserSession {
     pub tls_rotator: TlsFingerprintRotator,
     pub ocr_engine: VelocityOcrEngine,
     pub quic_transport: Option<QuicConnection>,
-    pub webcodecs_decoder: WebCodecsDecoder,
+    pub codecs_engine: VelocityCodecsEngine,
     pub font_shaper: FontShaperEngine,
     pub gpu_compositor: GpuTileCompositor,
     pub http_client: HttpClient,
@@ -101,7 +101,7 @@ impl BrowserSession {
             tls_rotator: TlsFingerprintRotator::chrome_desktop(),
             ocr_engine: VelocityOcrEngine::new(),
             quic_transport: None,
-            webcodecs_decoder: WebCodecsDecoder::new("h264"),
+            codecs_engine: VelocityCodecsEngine::new("h264_opus"),
             font_shaper: FontShaperEngine::new("Roboto"),
             gpu_compositor: GpuTileCompositor::new(),
             http_client: HttpClient::new(),
@@ -294,7 +294,7 @@ impl BrowserSession {
             encoder.encode_fact(k, 103, v);
         }
 
-        // Add profile, file, trace, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push, payment, geolocation, captcha, OCR, inspector triples
+        // Add profile, file, trace, mutation, storage event, indexeddb, cookiestore, history, crypto, sandbox, push, payment, geolocation, captcha, OCR, codecs, inspector triples
         encoder.triples.extend(self.device_profile.export_profile_nda(&self.session_id));
         encoder.triples.extend(self.file_manager.export_files_nda());
         encoder.triples.extend(self.trace_collector.export_traces_nda());
@@ -308,6 +308,7 @@ impl BrowserSession {
         encoder.triples.extend(self.push_notifications.export_push_nda(&self.session_id));
         encoder.triples.extend(self.payment_engine.export_payment_nda(&self.session_id));
         encoder.triples.extend(self.geolocation_provider.export_geolocation_nda(&self.session_id));
+        encoder.triples.extend(self.codecs_engine.export_codecs_nda(&self.session_id));
         encoder.triples.extend(self.inspector_server.handle_agent_inspection(&self.session_id));
 
         if let Some(tree) = &self.dom_tree {
