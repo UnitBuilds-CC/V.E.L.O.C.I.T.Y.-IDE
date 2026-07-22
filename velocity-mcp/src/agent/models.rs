@@ -130,6 +130,8 @@ pub enum ApiStyle {
 pub enum AiProvider {
     CloudflareWorkersAi,
     OpenRouter,
+    AzureOpenAi,
+    LocalOllama,
 }
 
 impl AiProvider {
@@ -137,6 +139,8 @@ impl AiProvider {
         match self {
             AiProvider::CloudflareWorkersAi => "Cloudflare Workers AI",
             AiProvider::OpenRouter => "OpenRouter",
+            AiProvider::AzureOpenAi => "Azure OpenAI",
+            AiProvider::LocalOllama => "Local Ollama",
         }
     }
 }

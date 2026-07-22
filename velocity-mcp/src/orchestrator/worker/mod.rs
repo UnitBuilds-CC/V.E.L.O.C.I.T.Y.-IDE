@@ -2,6 +2,7 @@ pub mod artifacts;
 pub mod runner;
 pub mod scope;
 pub mod types;
+pub mod worktree;
 
 pub use runner::*;
 pub use types::*;

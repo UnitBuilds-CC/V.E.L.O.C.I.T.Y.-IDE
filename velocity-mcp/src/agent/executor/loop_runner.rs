@@ -7,7 +7,7 @@ use super::utils::{
     sanitize_chat_token, send_usage_update,
 };
 use crate::registry;
-use crate::usage::{CloudflareAccount, OpenRouterAccount, UsageTracker};
+use crate::usage::{AzureOpenAiAccount, CloudflareAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{json, Value};
 use std::io::BufRead;
@@ -18,6 +18,7 @@ pub fn run_agent_reasoning_loop(
     workspace_root: &PathBuf,
     accounts: &[CloudflareAccount],
     or_accounts: &[OpenRouterAccount],
+    azure_accounts: &[AzureOpenAiAccount],
     model: &str,
     profile: &ModelInfo,
     provider: AiProvider,
@@ -92,229 +93,32 @@ pub fn run_agent_reasoning_loop(
         let mut used_or_account: Option<&OpenRouterAccount> = None;
         let ureq_response = match current_provider {
             AiProvider::OpenRouter => {
-                let start_idx = usage_tracker
-                    .pick_or_account(or_accounts)
-                    .and_then(|picked| or_accounts.iter().position(|a| a.n == picked.n))
-                    .unwrap_or(0);
-
-                let mut final_res = None;
-                let loop_limit = or_accounts.len().max(1);
-
-                for idx in 0..loop_limit {
-                    let mut active_acct = None;
-                    let current_key = if or_accounts.is_empty() {
-                        openrouter_api_key()
-                    } else {
-                        let acct = &or_accounts[(start_idx + idx) % or_accounts.len()];
-                        if usage_tracker.is_or_exhausted(acct.n) {
-                            continue;
-                        }
-                        active_acct = Some(acct);
-                        acct.token.clone()
-                    };
-
-                    let mut attempt = 0;
-                    let max_attempts = 3;
-                    let mut account_exhausted = false;
-
-                    while attempt < max_attempts {
-                        attempt += 1;
-                        match ureq::post("https://openrouter.ai/api/v1/chat/completions")
-                            .timeout(std::time::Duration::from_secs(60))
-                            .set("Authorization", &format!("Bearer {}", current_key))
-                            .set("HTTP-Referer", "https://velocity-ide.local")
-                            .set("X-Title", "Velocity Cognitive IDE")
-                            .set("Content-Type", "application/json")
-                            .send_json(&request_body)
-                        {
-                            Ok(res) => {
-                                used_or_account = active_acct;
-                                final_res = Some(res);
-                                break;
-                            }
-                            Err(ureq::Error::Status(429, resp)) => {
-                                let body = resp.into_string().unwrap_or_default();
-                                let body_lower = body.to_lowercase();
-                                if body_lower.contains("free-models-per-day")
-                                    || body_lower.contains("quota")
-                                    || body_lower.contains("credit")
-                                    || body_lower.contains("limit exceeded")
-                                {
-                                    if let Some(acct) = active_acct {
-                                        usage_tracker.mark_or_exhausted(
-                                            acct.n,
-                                            &acct.label,
-                                            &acct.tier,
-                                        );
-                                        send_usage_update(
-                                            usage_tracker,
-                                            accounts,
-                                            or_accounts,
-                                            ui_tx,
-                                        );
-                                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                            "OpenRouter account '{}' quota exhausted — trying next…",
-                                            acct.label
-                                        ))).ok();
-                                    }
-                                    account_exhausted = true;
-                                    break;
-                                } else {
-                                    if attempt < max_attempts {
-                                        let wait_secs = attempt * 2;
-                                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                            "OpenRouter rate limit (429) on '{}'. Retrying in {}s (Attempt {}/{})…",
-                                            active_acct.map(|a| a.label.as_str()).unwrap_or("default"),
-                                            wait_secs, attempt, max_attempts
-                                        ))).ok();
-                                        std::thread::sleep(std::time::Duration::from_secs(
-                                            wait_secs as u64,
-                                        ));
-                                    } else {
-                                        ui_tx
-                                            .send(AgentToUiMessage::StatusUpdate(format!(
-                                                "OpenRouter rate limit (429) on key after max attempts. Trying next key..."
-                                            )))
-                                            .ok();
-                                    }
-                                }
-                            }
-                            Err(ureq::Error::Status(code, resp)) => {
-                                let body = resp.into_string().unwrap_or_default();
-                                if code >= 500 && attempt < max_attempts {
-                                    let wait_secs = attempt;
-                                    ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                        "OpenRouter server error ({code}) on '{}'. Retrying in {}s…",
-                                        active_acct.map(|a| a.label.as_str()).unwrap_or("default"),
-                                        wait_secs
-                                    ))).ok();
-                                    std::thread::sleep(std::time::Duration::from_secs(wait_secs as u64));
-                                } else {
-                                    ui_tx
-                                        .send(AgentToUiMessage::StatusUpdate(format!(
-                                            "OpenRouter HTTP {code} error on '{}'. Trying next key...",
-                                            active_acct.map(|a| a.label.as_str()).unwrap_or("default")
-                                        )))
-                                        .ok();
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                if attempt < max_attempts {
-                                    let wait_secs = attempt;
-                                    ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                        "OpenRouter network connection error: {:?}. Retrying in {}s…",
-                                        e, wait_secs
-                                    ))).ok();
-                                    std::thread::sleep(std::time::Duration::from_secs(wait_secs as u64));
-                                } else {
-                                    ui_tx
-                                        .send(AgentToUiMessage::StatusUpdate(format!(
-                                            "OpenRouter network connection failed on key. Trying next key..."
-                                        )))
-                                        .ok();
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if final_res.is_some() {
-                        break;
-                    }
-                    if !account_exhausted {
-                        ui_tx
-                            .send(AgentToUiMessage::StatusUpdate(
-                                "OpenRouter request failed, trying next account key…".to_string(),
-                            ))
-                            .ok();
-                    }
-                }
-                final_res
+                let (res, acct) = super::dispatch::execute_openrouter_request(
+                    or_accounts,
+                    accounts,
+                    usage_tracker,
+                    &request_body,
+                    ui_tx,
+                );
+                used_or_account = acct;
+                res
             }
             AiProvider::CloudflareWorkersAi => {
-                if accounts.is_empty() {
-                    ui_tx
-                        .send(AgentToUiMessage::StatusUpdate(
-                            "No Cloudflare accounts configured.".to_string(),
-                        ))
-                        .ok();
-                    None
-                } else {
-                    let start_idx = usage_tracker
-                        .pick_account(accounts)
-                        .and_then(|picked| accounts.iter().position(|a| a.n == picked.n))
-                        .unwrap_or(0);
-                    let mut cf_response = None;
-                    for i in 0..accounts.len() {
-                        let account = &accounts[(start_idx + i) % accounts.len()];
-                        if usage_tracker.is_exhausted(account.n) {
-                            continue;
-                        }
-                        let api_url = format!(
-                            "https://api.cloudflare.com/client/v4/accounts/{}/ai/v1/chat/completions",
-                            account.id
-                        );
-                        let mut attempt = 0;
-                        let max_attempts = 2;
-                        while attempt < max_attempts {
-                            attempt += 1;
-                            match ureq::post(&api_url)
-                                .timeout(std::time::Duration::from_secs(60))
-                                .set("Authorization", &format!("Bearer {}", account.token))
-                                .set("Content-Type", "application/json")
-                                .send_json(&request_body)
-                            {
-                                Ok(res) => {
-                                    used_account = Some(account);
-                                    cf_response = Some(res);
-                                    break;
-                                }
-                                Err(ureq::Error::Status(_code, resp)) => {
-                                    let body = resp.into_string().unwrap_or_default();
-                                    if is_quota_exhausted_error(&body) {
-                                        usage_tracker.mark_exhausted(
-                                            account.n,
-                                            &account.label,
-                                            &account.tier,
-                                        );
-                                        send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
-                                        ui_tx
-                                            .send(AgentToUiMessage::StatusUpdate(format!(
-                                                "Account '{}' quota exhausted — trying next…",
-                                                account.label
-                                            )))
-                                            .ok();
-                                        break;
-                                    } else if attempt < max_attempts {
-                                        std::thread::sleep(std::time::Duration::from_secs(1));
-                                    } else {
-                                        ui_tx
-                                            .send(AgentToUiMessage::StatusUpdate(format!(
-                                                "CF account {} error: {}", account.label, body
-                                            )))
-                                            .ok();
-                                    }
-                                }
-                                Err(e) => {
-                                    if attempt < max_attempts {
-                                        std::thread::sleep(std::time::Duration::from_secs(1));
-                                    } else {
-                                        ui_tx
-                                            .send(AgentToUiMessage::StatusUpdate(format!(
-                                                "CF account {} connection error: {:?}", account.label, e
-                                            )))
-                                            .ok();
-                                    }
-                                }
-                            }
-                        }
-                        if cf_response.is_some() {
-                            break;
-                        }
-                    }
-                    cf_response
-                }
+                let (res, acct) = super::dispatch::execute_cloudflare_request(
+                    accounts,
+                    or_accounts,
+                    usage_tracker,
+                    &request_body,
+                    ui_tx,
+                );
+                used_account = acct;
+                res
+            }
+            AiProvider::AzureOpenAi => {
+                super::dispatch::execute_azure_request(azure_accounts, &request_body, ui_tx)
+            }
+            AiProvider::LocalOllama => {
+                super::dispatch::execute_ollama_request(&request_body, ui_tx)
             }
         };
 
@@ -325,6 +129,8 @@ pub fn run_agent_reasoning_loop(
                 let fallback_available = match fallback {
                     AiProvider::OpenRouter => !or_accounts.is_empty() || !openrouter_api_key().is_empty(),
                     AiProvider::CloudflareWorkersAi => !accounts.is_empty(),
+                    AiProvider::AzureOpenAi => !azure_accounts.is_empty(),
+                    AiProvider::LocalOllama => true,
                 };
 
                 if !provider_switched && fallback_available {
@@ -337,6 +143,8 @@ pub fn run_agent_reasoning_loop(
                         AiProvider::CloudflareWorkersAi => {
                             enrich_model_profile(accounts, &default_model_info(&current_model))
                         }
+                        AiProvider::AzureOpenAi => default_model_info(&current_model),
+                        AiProvider::LocalOllama => default_model_info(&current_model),
                     };
                     current_thinking = thinking && current_profile.supports_thinking;
 
@@ -361,6 +169,8 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::CloudflareWorkersAi => {
                         "All Cloudflare Workers AI accounts exhausted or failed."
                     }
+                    AiProvider::AzureOpenAi => "Azure OpenAI request failed or no accounts configured.",
+                    AiProvider::LocalOllama => "Local Ollama server unreachable (http://localhost:11434).",
                 };
                 ui_tx
                     .send(AgentToUiMessage::OutputToken(format!(

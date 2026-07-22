@@ -15,26 +15,34 @@ pub fn run_agent_thread(
 ) {
     let accounts = load_accounts_from_env();
     let or_accounts = load_openrouter_accounts_from_env();
+    let azure_accounts = load_azure_accounts_from_env();
+    let _ollama_accounts = load_local_ollama_accounts_from_env();
     let mut usage_tracker = UsageTracker::new(&workspace_root);
     send_usage_update(&mut usage_tracker, &accounts, &or_accounts, &ui_tx);
     let mut provider = match std::env::var("LLM_PROVIDER")
-        .or_else(|_| std::env::var("AI_PROVIDER"))
-        .map(|s| s.to_lowercase())
-        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
     {
-        Ok("openrouter") => AiProvider::OpenRouter,
+        "openrouter" | "or" => AiProvider::OpenRouter,
+        "azure" | "azure_openai" => AiProvider::AzureOpenAi,
+        "ollama" | "local" => AiProvider::LocalOllama,
         _ => AiProvider::CloudflareWorkersAi,
     };
     let mut model = match provider {
         AiProvider::OpenRouter => std::env::var("OPENROUTER_MODEL")
-            .or_else(|_| std::env::var("CF_MODEL"))
             .unwrap_or_else(|_| "tencent/hy3:free".to_string()),
         AiProvider::CloudflareWorkersAi => std::env::var("CF_MODEL")
             .unwrap_or_else(|_| "@cf/moonshotai/kimi-k2.7-code".to_string()),
+        AiProvider::AzureOpenAi => std::env::var("AZURE_OPENAI_DEPLOYMENT")
+            .unwrap_or_else(|_| "gpt-4o".to_string()),
+        AiProvider::LocalOllama => std::env::var("OLLAMA_MODEL")
+            .unwrap_or_else(|_| "llama3.2".to_string()),
     };
     let mut thinking = std::env::var("CF_THINKING")
         .map(|v| v != "0")
-        .unwrap_or(false);
+        .unwrap_or(true);
+
     let mut selected_profile = match provider {
         AiProvider::OpenRouter => ModelInfo {
             id: model.clone(),
@@ -44,6 +52,8 @@ pub fn run_agent_thread(
             supports_thinking: false,
         },
         AiProvider::CloudflareWorkersAi => default_model_info(&model),
+        AiProvider::AzureOpenAi => default_model_info(&model),
+        AiProvider::LocalOllama => default_model_info(&model),
     };
     if !selected_profile.supports_thinking {
         thinking = false;
@@ -110,6 +120,7 @@ pub fn run_agent_thread(
             &mut workspace_root,
             &accounts,
             &or_accounts,
+            &azure_accounts,
             &mut provider,
             &mut model,
             &mut thinking,
@@ -129,6 +140,7 @@ pub fn run_agent_thread(
                 &mut workspace_root,
                 &accounts,
                 &or_accounts,
+                &azure_accounts,
                 &mut provider,
                 &mut model,
                 &mut thinking,
@@ -149,6 +161,7 @@ fn process_ui_message(
     workspace_root: &mut PathBuf,
     accounts: &[CloudflareAccount],
     or_accounts: &[OpenRouterAccount],
+    azure_accounts: &[AzureOpenAiAccount],
     provider: &mut AiProvider,
     model: &mut String,
     thinking: &mut bool,
@@ -165,6 +178,8 @@ fn process_ui_message(
             let fetch_result = match *provider {
                 AiProvider::CloudflareWorkersAi => fetch_model_catalog(accounts),
                 AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
+                AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
+                AiProvider::LocalOllama => fetch_local_ollama_models(&load_local_ollama_accounts_from_env()),
             };
             match fetch_result {
                 Ok(models) => {
@@ -254,6 +269,8 @@ fn process_ui_message(
             let fetch_result = match *provider {
                 AiProvider::CloudflareWorkersAi => fetch_model_catalog(accounts),
                 AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
+                AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
+                AiProvider::LocalOllama => fetch_local_ollama_models(&load_local_ollama_accounts_from_env()),
             };
             match fetch_result {
                 Ok(models) => {
@@ -368,6 +385,7 @@ fn process_ui_message(
                 workspace_root,
                 accounts,
                 or_accounts,
+                azure_accounts,
                 model,
                 selected_profile,
                 *provider,

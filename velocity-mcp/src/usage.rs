@@ -50,6 +50,24 @@ pub struct OpenRouterAccount {
 }
 
 #[derive(Debug, Clone)]
+pub struct AzureOpenAiAccount {
+    pub n: u32,
+    pub api_key: String,
+    pub endpoint: String,
+    pub deployment: String,
+    pub api_version: String,
+    pub tier: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalOllamaAccount {
+    pub host: String,
+    pub default_model: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct AccountUsageView {
     pub n: u32,
     pub label: String,
@@ -483,6 +501,67 @@ pub fn load_openrouter_accounts_from_env() -> Vec<OpenRouterAccount> {
         (tier_ord(&a.tier), a.n).cmp(&(tier_ord(&b.tier), b.n))
     });
     accounts
+}
+
+pub fn load_azure_accounts_from_env() -> Vec<AzureOpenAiAccount> {
+    dotenvy::dotenv().ok();
+    let mut accounts = Vec::new();
+    for i in 1..=30u32 {
+        let key_var = format!("AZURE_OPENAI_ACCOUNT_{i}_KEY");
+        let endpoint_var = format!("AZURE_OPENAI_ACCOUNT_{i}_ENDPOINT");
+        let deployment_var = format!("AZURE_OPENAI_ACCOUNT_{i}_DEPLOYMENT");
+        if let (Ok(key), Ok(endpoint)) = (std::env::var(&key_var), std::env::var(&endpoint_var)) {
+            let deployment = std::env::var(&deployment_var)
+                .unwrap_or_else(|_| "gpt-4o".to_string());
+            let api_version = std::env::var(format!("AZURE_OPENAI_ACCOUNT_{i}_API_VERSION"))
+                .unwrap_or_else(|_| "2024-06-01".to_string());
+            let label = std::env::var(format!("AZURE_OPENAI_ACCOUNT_{i}_LABEL"))
+                .unwrap_or_else(|_| format!("Azure-Account-{i}"));
+            let tier = std::env::var(format!("AZURE_OPENAI_ACCOUNT_{i}_TIER"))
+                .unwrap_or_else(|_| "paid".to_string());
+            accounts.push(AzureOpenAiAccount {
+                n: i,
+                api_key: key,
+                endpoint,
+                deployment,
+                api_version,
+                tier: tier.to_lowercase(),
+                label,
+            });
+        }
+    }
+    if accounts.is_empty() {
+        if let (Ok(key), Ok(endpoint)) = (
+            std::env::var("AZURE_OPENAI_API_KEY"),
+            std::env::var("AZURE_OPENAI_ENDPOINT"),
+        ) {
+            let deployment = std::env::var("AZURE_OPENAI_DEPLOYMENT")
+                .unwrap_or_else(|_| "gpt-4o".to_string());
+            let api_version = std::env::var("AZURE_OPENAI_API_VERSION")
+                .unwrap_or_else(|_| "2024-06-01".to_string());
+            accounts.push(AzureOpenAiAccount {
+                n: 1,
+                api_key: key,
+                endpoint,
+                deployment,
+                api_version,
+                tier: "paid".to_string(),
+                label: "Azure-Default".to_string(),
+            });
+        }
+    }
+    accounts
+}
+
+pub fn load_local_ollama_accounts_from_env() -> Vec<LocalOllamaAccount> {
+    dotenvy::dotenv().ok();
+    let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let default_model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
+    vec![LocalOllamaAccount {
+        host,
+        default_model,
+        label: "Local-Ollama".to_string(),
+    }]
 }
 
 fn serialize_usage_nda(data: &UsageFile) -> String {

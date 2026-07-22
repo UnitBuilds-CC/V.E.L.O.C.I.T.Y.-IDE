@@ -88,6 +88,16 @@ pub fn session_click_report(
         )
     })?;
     state.snapshot = crawl_page_snapshot_with_session(&mut state.session, &target_url)?;
+    let bridge_arc = crate::editor::browser::native_bridge::get_or_create_native_bridge(session_id);
+    if let Ok(mut bridge) = bridge_arc.lock() {
+        let _ = bridge.click(&format!("{}:{}", role, matched_name));
+        let triples = bridge.capture_nda();
+        let _ = crate::editor::browser::native_bridge::persist_native_nda_triples(
+            workspace_root,
+            session_id,
+            &triples,
+        );
+    }
     build_session_action_report(
         workspace_root,
         sitemap_path,
@@ -139,6 +149,16 @@ pub fn session_fill_report(
         find_textbox_element(&state.snapshot, field).map(describe_element_actionability)
     };
     apply_fill_field(&mut state, field, value)?;
+    let bridge_arc = crate::editor::browser::native_bridge::get_or_create_native_bridge(session_id);
+    if let Ok(mut bridge) = bridge_arc.lock() {
+        let _ = bridge.fill(field, value);
+        let triples = bridge.capture_nda();
+        let _ = crate::editor::browser::native_bridge::persist_native_nda_triples(
+            workspace_root,
+            session_id,
+            &triples,
+        );
+    }
     build_session_action_report(
         workspace_root,
         sitemap_path,
@@ -242,6 +262,17 @@ pub fn navigate_session_report(
     let mut session = load_session_state(workspace_root, session_id)
         .unwrap_or_else(|_| empty_browser_session_state(session_id));
     let snapshot = crawl_page_snapshot_with_session(&mut session, url)?;
+    
+    let bridge_arc = crate::editor::browser::native_bridge::get_or_create_native_bridge(session_id);
+    if let Ok(mut bridge) = bridge_arc.lock() {
+        if let Ok(triples) = bridge.navigate(url) {
+            let _ = crate::editor::browser::native_bridge::persist_native_nda_triples(
+                workspace_root,
+                session_id,
+                &triples,
+            );
+        }
+    }
     persist_snapshot_to_sitemap(&snapshot, sitemap_path)?;
     let facts_path = write_crawl_facts(
         &snapshot.url,

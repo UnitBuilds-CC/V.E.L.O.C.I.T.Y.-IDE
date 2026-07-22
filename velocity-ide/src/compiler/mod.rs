@@ -5,3 +5,5 @@ pub mod rust_to_nda;
 pub mod nda_lexer;
 pub mod nda_parser;
 pub mod nda_jit;
+pub mod wasm_runner;
+pub mod fuzzer;

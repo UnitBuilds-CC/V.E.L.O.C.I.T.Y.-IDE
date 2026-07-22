@@ -3,13 +3,15 @@ use super::super::provider::*;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::utils::build_inline_tool_docs;
 use crate::usage::{
-    load_accounts_from_env, load_openrouter_accounts_from_env, UsageTracker,
+    load_accounts_from_env, load_azure_accounts_from_env, load_openrouter_accounts_from_env,
+    UsageTracker,
 };
 use std::sync::{Arc, Mutex};
 
 pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
     let accounts = load_accounts_from_env();
     let or_accounts = load_openrouter_accounts_from_env();
+    let azure_accounts = load_azure_accounts_from_env();
     let mut usage_tracker = UsageTracker::new(&request.workspace_root);
     let selected_profile = match request.provider {
         AiProvider::OpenRouter => ModelInfo {
@@ -28,6 +30,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
             let profile = default_model_info(&request.model);
             enrich_model_profile(&accounts, &profile)
         }
+        AiProvider::AzureOpenAi => default_model_info(&request.model),
+        AiProvider::LocalOllama => default_model_info(&request.model),
     };
     let thinking = request.thinking && selected_profile.supports_thinking;
 
@@ -166,6 +170,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         &request.workspace_root,
         &accounts,
         &or_accounts,
+        &azure_accounts,
         &request.model,
         &selected_profile,
         request.provider,

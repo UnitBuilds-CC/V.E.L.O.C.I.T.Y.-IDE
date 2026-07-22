@@ -104,6 +104,12 @@ pub fn build_request(
                     "exclude": false
                 });
             }
+            AiProvider::AzureOpenAi => {
+                request["reasoning_effort"] = json!("high");
+            }
+            AiProvider::LocalOllama => {
+                request["think"] = json!(true);
+            }
         }
     }
     request

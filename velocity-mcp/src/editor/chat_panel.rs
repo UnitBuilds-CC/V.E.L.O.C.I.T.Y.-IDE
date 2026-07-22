@@ -218,6 +218,8 @@ fn render_model_bar(
                 for prov in [
                     crate::agent::AiProvider::CloudflareWorkersAi,
                     crate::agent::AiProvider::OpenRouter,
+                    crate::agent::AiProvider::AzureOpenAi,
+                    crate::agent::AiProvider::LocalOllama,
                 ] {
                     provider_changed |= ui
                         .selectable_value(&mut state.provider, prov, prov.label())

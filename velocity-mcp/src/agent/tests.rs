@@ -502,6 +502,14 @@ fn test_fallback_provider_resolution() {
     );
     assert_eq!(
         fallback_provider(AiProvider::OpenRouter),
+        AiProvider::AzureOpenAi
+    );
+    assert_eq!(
+        fallback_provider(AiProvider::AzureOpenAi),
+        AiProvider::LocalOllama
+    );
+    assert_eq!(
+        fallback_provider(AiProvider::LocalOllama),
         AiProvider::CloudflareWorkersAi
     );
     assert_eq!(
@@ -511,6 +519,14 @@ fn test_fallback_provider_resolution() {
     assert_eq!(
         default_provider_model(AiProvider::OpenRouter),
         "tencent/hy3:free"
+    );
+    assert_eq!(
+        default_provider_model(AiProvider::AzureOpenAi),
+        "gpt-4o"
+    );
+    assert_eq!(
+        default_provider_model(AiProvider::LocalOllama),
+        "llama3.2"
     );
 }
 

@@ -307,7 +307,9 @@ pub fn enrich_model_profile(accounts: &[crate::usage::CloudflareAccount], profil
 pub fn fallback_provider(current: AiProvider) -> AiProvider {
     match current {
         AiProvider::CloudflareWorkersAi => AiProvider::OpenRouter,
-        AiProvider::OpenRouter => AiProvider::CloudflareWorkersAi,
+        AiProvider::OpenRouter => AiProvider::AzureOpenAi,
+        AiProvider::AzureOpenAi => AiProvider::LocalOllama,
+        AiProvider::LocalOllama => AiProvider::CloudflareWorkersAi,
     }
 }
 
@@ -315,5 +317,77 @@ pub fn default_provider_model(provider: AiProvider) -> String {
     match provider {
         AiProvider::CloudflareWorkersAi => "@cf/moonshotai/kimi-k2.7-code".to_string(),
         AiProvider::OpenRouter => "tencent/hy3:free".to_string(),
+        AiProvider::AzureOpenAi => "gpt-4o".to_string(),
+        AiProvider::LocalOllama => "llama3.2".to_string(),
     }
+}
+
+pub fn fetch_local_ollama_models(
+    accounts: &[crate::usage::LocalOllamaAccount],
+) -> Result<Vec<ModelInfo>, String> {
+    let host = accounts.first().map(|a| a.host.as_str()).unwrap_or("http://localhost:11434");
+    Ok(vec![
+        ModelInfo {
+            id: "llama3.2".to_string(),
+            label: format!("llama3.2 ({host})"),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: false,
+        },
+        ModelInfo {
+            id: "qwen2.5-coder".to_string(),
+            label: format!("qwen2.5-coder ({host})"),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: false,
+        },
+        ModelInfo {
+            id: "deepseek-r1".to_string(),
+            label: format!("deepseek-r1 ({host})"),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: true,
+        },
+    ])
+}
+
+pub fn fetch_azure_models(
+    accounts: &[crate::usage::AzureOpenAiAccount],
+) -> Result<Vec<ModelInfo>, String> {
+    if accounts.is_empty() {
+        return Ok(vec![
+            ModelInfo {
+                id: "gpt-4o".to_string(),
+                label: "GPT-4o (Azure)".to_string(),
+                api_style: ApiStyle::OpenAiTools,
+                supports_tools: true,
+                supports_thinking: false,
+            },
+            ModelInfo {
+                id: "gpt-4o-mini".to_string(),
+                label: "GPT-4o Mini (Azure)".to_string(),
+                api_style: ApiStyle::OpenAiTools,
+                supports_tools: true,
+                supports_thinking: false,
+            },
+            ModelInfo {
+                id: "o1".to_string(),
+                label: "o1 (Azure)".to_string(),
+                api_style: ApiStyle::OpenAiTools,
+                supports_tools: true,
+                supports_thinking: true,
+            },
+        ]);
+    }
+    let mut catalog = Vec::new();
+    for acct in accounts {
+        catalog.push(ModelInfo {
+            id: acct.deployment.clone(),
+            label: format!("{} ({})", acct.deployment, acct.label),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: true,
+            supports_thinking: acct.deployment.contains("o1") || acct.deployment.contains("o3"),
+        });
+    }
+    Ok(catalog)
 }

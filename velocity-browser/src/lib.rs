@@ -17,6 +17,8 @@ pub mod session_storage_events;
 pub mod session_storage_quota;
 pub mod session_swarm;
 pub mod style;
+pub mod screencast;
+pub mod vector_memory;
 
 pub use agentic::{ActionPredictorEngine, AgenticAomNode, AgenticAomTree, NdaEncoder, OcrTextBoundingBox, PredictedActionTarget, VelocityOcrEngine, ZeroAllocNdaWriter};
 pub use dom::{CustomElementDefinition, CustomElementRegistry, DomTree, FormDataSerializer, MutationBatcher, MutationRecord, NativeMutationObserver, RawSlabNode, SlabDomTree, SlotProjection, SlotProjectionEngine, UnmanagedSlabArena, SLAB_NODE_DIRTY, SLAB_NODE_VISIBLE};
