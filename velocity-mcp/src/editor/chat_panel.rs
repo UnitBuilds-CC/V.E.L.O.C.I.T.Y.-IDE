@@ -125,18 +125,16 @@ pub fn render_chat_panel(
 ) -> bool {
     let mut preferences_changed = false;
     egui::Frame::new()
-        .inner_margin(egui::Margin::same(8))
+        .fill(palette.bg_primary)
+        .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 preferences_changed |= render_header(ui, state, agent_tx, palette);
                 ui.add_space(4.0);
-                preferences_changed |= render_model_bar(ui, state, agent_tx, palette);
                 ui.separator();
                 render_messages(ui, state, palette);
-                ui.separator();
-                preferences_changed |= render_tool_controls(ui, state, agent_tx, palette);
                 render_pending_approvals(ui, state, agent_tx, palette);
-                ui.separator();
+                ui.add_space(6.0);
                 render_input(ui, state, agent_tx, palette);
             });
         });
@@ -168,7 +166,7 @@ fn render_header(
 
         if state.agent_active {
             if ui
-                .small_button("⏹ Stop")
+                .small_button("⏹ Interrupt")
                 .on_hover_text("Interrupt current agent task")
                 .clicked()
             {
@@ -177,6 +175,14 @@ fn render_header(
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .small_button("Clear")
+                .on_hover_text("Clear chat display & reset context")
+                .clicked()
+            {
+                state.messages.clear();
+                let _ = agent_tx.send(UiToAgentMessage::ClearHistory);
+            }
             if ui
                 .small_button(if state.show_thoughts {
                     "Hide thoughts"
@@ -189,106 +195,7 @@ fn render_header(
                 state.show_thoughts = !state.show_thoughts;
                 preferences_changed = true;
             }
-            if ui
-                .small_button("Clear")
-                .on_hover_text("Clear chat display & reset context")
-                .clicked()
-            {
-                state.messages.clear();
-                let _ = agent_tx.send(UiToAgentMessage::ClearHistory);
-            }
         });
-    });
-    preferences_changed
-}
-
-fn render_model_bar(
-    ui: &mut egui::Ui,
-    state: &mut ChatPanelState,
-    agent_tx: &Sender<UiToAgentMessage>,
-    palette: IdePalette,
-) -> bool {
-    let mut preferences_changed = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.label(
-            egui::RichText::new("Provider")
-                .small()
-                .color(palette.text_muted),
-        );
-        let mut provider_changed = false;
-        egui::ComboBox::from_id_salt("agent_provider")
-            .selected_text(state.provider.label())
-            .width(160.0)
-            .show_ui(ui, |ui| {
-                for prov in [
-                    crate::agent::AiProvider::CloudflareWorkersAi,
-                    crate::agent::AiProvider::OpenRouter,
-                    crate::agent::AiProvider::AzureOpenAi,
-                    crate::agent::AiProvider::LocalOllama,
-                ] {
-                    provider_changed |= ui
-                        .selectable_value(&mut state.provider, prov, prov.label())
-                        .changed();
-                }
-            });
-        if provider_changed {
-            state.models_loading = true;
-            preferences_changed = true;
-            let _ = agent_tx.send(UiToAgentMessage::SetProvider(state.provider));
-        }
-
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Model")
-                .small()
-                .color(palette.text_muted),
-        );
-        let mut model_changed = false;
-        egui::ComboBox::from_id_salt("agent_model")
-            .selected_text(truncate_model_label(&state.selected_model, 28))
-            .width(260.0)
-            .show_ui(ui, |ui| {
-                for model in state.available_models.clone() {
-                    model_changed |= ui
-                        .selectable_value(&mut state.selected_model, model.id.clone(), model.label)
-                        .changed();
-                }
-            });
-        if model_changed {
-            preferences_changed = true;
-            let _ = agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
-        }
-
-        if ui
-            .button(if state.models_loading {
-                "Loading…"
-            } else {
-                "↻ Models"
-            })
-            .clicked()
-            && !state.models_loading
-        {
-            state.models_loading = true;
-            let _ = agent_tx.send(UiToAgentMessage::RefreshModels);
-        }
-
-        let thinking_changed = ui
-            .add_enabled(
-                state.thinking_supported,
-                egui::Checkbox::new(&mut state.thinking_enabled, "Thinking"),
-            )
-            .changed();
-        if thinking_changed {
-            preferences_changed = true;
-            let _ = agent_tx.send(UiToAgentMessage::SetThinking(state.thinking_enabled));
-        }
-        if !state.thinking_supported {
-            ui.label(
-                egui::RichText::new("unsupported")
-                    .small()
-                    .color(palette.text_muted),
-            );
-        }
     });
     preferences_changed
 }
@@ -741,48 +648,72 @@ fn render_input(
     agent_tx: &Sender<UiToAgentMessage>,
     palette: IdePalette,
 ) {
-    ui.horizontal(|ui| {
-        let input_width = ui.available_width() - 90.0;
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut state.input)
-                .desired_width(input_width)
-                .desired_rows(3)
-                .hint_text(
-                    "Type instructions for the agent… (Enter to send, Shift+Enter for newline)",
-                ),
-        );
+    egui::Frame::new()
+        .fill(palette.bg_secondary)
+        .stroke(egui::Stroke::new(1.0, palette.border))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                let response = ui.add(
+                    egui::TextEdit::multiline(&mut state.input)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(2)
+                        .hint_text("Type instructions for the agent… (Enter to send, Shift+Enter for newline)"),
+                );
 
-        let mut submit = false;
-        if response.has_focus() {
-            let (enter_pressed, shift_pressed) = ui.input(|i| (
-                i.key_pressed(egui::Key::Enter),
-                i.modifiers.shift,
-            ));
-            if enter_pressed && !shift_pressed {
-                ui.input_mut(|i| {
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                let mut submit = false;
+                if response.has_focus() {
+                    let (enter_pressed, shift_pressed) = ui.input(|i| (
+                        i.key_pressed(egui::Key::Enter),
+                        i.modifiers.shift,
+                    ));
+                    if enter_pressed && !shift_pressed {
+                        ui.input_mut(|i| {
+                            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                        });
+                        submit = true;
+                    }
+                }
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut state.auto_approve, "Auto-approve tools");
+                    ui.add_space(8.0);
+
+                    // Floating model pill selector
+                    let mut model_changed = false;
+                    egui::ComboBox::from_id_salt("floating_agent_model")
+                        .selected_text(truncate_model_label(&state.selected_model, 24))
+                        .show_ui(ui, |ui| {
+                            for model in state.available_models.clone() {
+                                model_changed |= ui
+                                    .selectable_value(&mut state.selected_model, model.id.clone(), model.label)
+                                    .changed();
+                            }
+                        });
+                    if model_changed {
+                        let _ = agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let send_btn = egui::Button::new(egui::RichText::new("➔").strong().color(egui::Color32::WHITE))
+                            .corner_radius(egui::CornerRadius::same(12))
+                            .fill(palette.accent)
+                            .min_size(egui::vec2(28.0, 28.0));
+
+                        if ui.add(send_btn).clicked() || submit {
+                            let text = state.input.trim().to_string();
+                            state.input.clear();
+                            if !text.is_empty() {
+                                state.push_user(text.clone());
+                                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(text));
+                            }
+                        }
+                    });
                 });
-                submit = true;
-            }
-        }
-
-        let send_clicked = ui
-            .add(
-                egui::Button::new(egui::RichText::new("Send").color(palette.text).strong())
-                    .fill(palette.accent.gamma_multiply(0.35))
-                    .stroke(egui::Stroke::new(1.0, palette.accent)),
-            )
-            .clicked();
-
-        if send_clicked || submit {
-            let text = state.input.trim().to_string();
-            state.input.clear();
-            if !text.is_empty() {
-                state.push_user(text.clone());
-                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(text));
-            }
-        }
-    });
+            });
+        });
 }
 
 fn truncate_model_label(model: &str, max: usize) -> String {

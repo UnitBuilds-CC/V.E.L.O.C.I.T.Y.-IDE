@@ -553,45 +553,6 @@ impl eframe::App for VelocityApp {
                         );
                     });
                 });
-
-                let profile = self.appearance.profile;
-                let blocked = self.orchestrator.retryable_blocked_task_count();
-                let approvals = self.pending_approvals.len();
-                let dirty = self.dirty_buffer_count();
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} mode · {}",
-                            profile.label(),
-                            profile.focus_label()
-                        ))
-                        .small()
-                        .color(palette.text_muted),
-                    );
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!("Approvals: {approvals}"))
-                            .small()
-                            .color(if approvals > 0 { palette.warning } else { palette.text_muted }),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("Blocked: {blocked}"))
-                            .small()
-                            .color(if blocked > 0 { palette.warning } else { palette.text_muted }),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("Dirty: {dirty}"))
-                            .small()
-                            .color(if dirty > 0 { palette.warning } else { palette.text_muted }),
-                    );
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(profile.quick_tip())
-                            .small()
-                            .color(palette.text_muted),
-                    );
-                });
             });
         });
 
@@ -601,53 +562,27 @@ impl eframe::App for VelocityApp {
                 .default_size(self.left_sidebar_width)
                 .show(ui, |ui: &mut egui::Ui| {
                     self.left_sidebar_width = ui.available_width().max(180.0);
-                    ui.add_space(4.0);
+                    ui.add_space(8.0);
                     ui.vertical(|ui: &mut egui::Ui| {
-                    ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.label(
-                            egui::RichText::new("📁 PROJECTS")
-                                .size(12.0)
-                                .strong()
-                                .color(palette.accent),
-                        );
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if ui
-                            .button("➕ Register")
-                            .on_hover_text("Register Project Directory")
-                            .clicked()
-                        {
-                            self.show_add_project_ui = !self.show_add_project_ui;
+                        // Antigravity 2.0 Top Action: + New Conversation / Mission
+                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new("➕ New Mission")).clicked() {
+                            self.mission_control.brief.clear();
+                            self.focus_panel(TabKind::MissionControl);
                         }
-                    });
 
-                    if self.show_add_project_ui {
-                        ui.horizontal(|ui: &mut egui::Ui| {
-                            ui.text_edit_singleline(&mut self.new_project_path_input);
-                            if ui.button("Add").clicked() {
-                                let path = PathBuf::from(&self.new_project_path_input);
-                                if path.exists() && path.is_dir() {
-                                    if !self.projects.contains(&path) {
-                                        self.projects.push(path.clone());
-                                    }
-                                    self.new_project_path_input.clear();
-                                    self.show_add_project_ui = false;
-                                } else {
-                                    self.status_message =
-                                        "Path does not exist or is not a directory".into();
-                                }
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            let mode_0 = self.left_sidebar_tab == 0;
+                            let mode_1 = self.left_sidebar_tab == 1;
+                            if ui.selectable_label(mode_0, "📁 Files").clicked() {
+                                self.left_sidebar_tab = 0;
+                            }
+                            if ui.selectable_label(mode_1, "📜 Activity").clicked() {
+                                self.left_sidebar_tab = 1;
                             }
                         });
-                    }
-
-                    let active_name = self
-                        .workspace_root
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    egui::ComboBox::from_id_salt("project_combo")
-                        .selected_text(active_name)
-                        .show_ui(ui, |ui: &mut egui::Ui| {
+                        ui.separator();
+                        ui.add_space(4.0);
                             let mut selected_idx =
                                 self.projects.iter().position(|p| p == &self.workspace_root);
                             let projects = self.projects.clone();
@@ -732,7 +667,6 @@ impl eframe::App for VelocityApp {
                         });
                     }
                 });
-            });
             self.left_sidebar_width = panel_response.response.rect.width().max(180.0);
         }
 
