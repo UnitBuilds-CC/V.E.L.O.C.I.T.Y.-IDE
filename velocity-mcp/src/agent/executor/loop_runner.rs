@@ -40,7 +40,7 @@ pub fn run_agent_reasoning_loop(
     let mut current_model = model.to_string();
     let mut current_profile = profile.clone();
     let mut current_thinking = thinking && current_profile.supports_thinking;
-    let mut provider_switched = false;
+    let mut fallback_attempts: usize = 0;
 
     let registered_tools = registry::get_tools();
     let cf_tools: Vec<Value> = registered_tools
@@ -145,8 +145,8 @@ pub fn run_agent_reasoning_loop(
                     _ => true,
                 };
 
-                if !provider_switched && fallback_available {
-                    provider_switched = true;
+                if fallback_attempts < 7 && fallback_available {
+                    fallback_attempts += 1;
                     let prev_provider = current_provider;
                     current_provider = fallback;
                     current_model = default_provider_model(current_provider);
@@ -161,8 +161,9 @@ pub fn run_agent_reasoning_loop(
 
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
-                            "Provider {} unavailable/exhausted. Seamlessly falling back to {} (Model: {})...",
+                            "Provider {} unavailable/exhausted (Attempt {}/7). Seamlessly falling back to default provider {} (Model: {})...",
                             prev_provider.label(),
+                            fallback_attempts,
                             current_provider.label(),
                             current_model
                         )))

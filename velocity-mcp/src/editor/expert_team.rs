@@ -48,6 +48,14 @@ impl ExpertMember {
             lower_path.contains(&lower_pat) || lower_pat.contains(&lower_path)
         })
     }
+
+    pub fn resolve_effective_provider_and_model(&self, default_provider: AiProvider, default_model: &str) -> (AiProvider, String) {
+        if self.model_id.trim().is_empty() {
+            (default_provider, default_model.to_string())
+        } else {
+            (self.provider, self.model_id.clone())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
