@@ -455,20 +455,55 @@ impl eframe::App for VelocityApp {
         egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui: &mut egui::Ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
+                    ui.spacing_mut().item_spacing.x = 8.0;
 
-                    let core_buttons: [(&str, fn(&mut VelocityApp)); 6] = [
-                        ("➕ New", VelocityApp::open_editor_stub),
-                        ("📂 Open", VelocityApp::open_file_dialog),
-                        ("💾 Save", VelocityApp::save_active),
-                        ("💾 Save As…", VelocityApp::save_active_as),
-                        ("💾 Save All", VelocityApp::save_all),
-                        ("🔄 Models", VelocityApp::refresh_models),
-                    ];
-                    for (label, action) in core_buttons {
-                        if ui.button(label).clicked() {
-                            action(self);
+                    // Left Cluster: File Menu Dropdown
+                    ui.menu_button("File 🗁", |ui| {
+                        if ui.button("➕ New File").clicked() {
+                            self.open_editor_stub();
+                            ui.close();
                         }
+                        if ui.button("📂 Open File…").clicked() {
+                            self.open_file_dialog();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("💾 Save").clicked() {
+                            self.save_active();
+                            ui.close();
+                        }
+                        if ui.button("💾 Save As…").clicked() {
+                            self.save_active_as();
+                            ui.close();
+                        }
+                        if ui.button("💾 Save All").clicked() {
+                            self.save_all();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("🔄 Refresh Models").clicked() {
+                            self.refresh_models();
+                            ui.close();
+                        }
+                    });
+
+                    ui.separator();
+
+                    // Center Cluster: View Navigation Controls
+                    if ui.button("💬 Chat").clicked() {
+                        self.focus_panel(TabKind::Chat);
+                    }
+                    if ui.button("🎛 Mission").clicked() {
+                        self.focus_panel(TabKind::MissionControl);
+                    }
+                    if ui.button("🧠 Orchestrate").clicked() {
+                        self.focus_panel(TabKind::Orchestrator);
+                    }
+                    if ui.button("📊 Usage").clicked() {
+                        self.focus_panel(TabKind::Usage);
+                    }
+                    if ui.button("⚙ Settings").clicked() {
+                        self.focus_panel(TabKind::Settings);
                     }
 
                     if !self.pending_approvals.is_empty() {
@@ -481,35 +516,42 @@ impl eframe::App for VelocityApp {
                         }
                     }
 
-                    ui.separator();
-                    for (label, action) in Self::toolbar_profile_actions(self.appearance.profile) {
-                        if ui.button(*label).clicked() {
-                            action(self);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(if self.right_sidebar_visible { "🧠 Hide history" } else { "🧠 History" })
+                            .clicked()
+                        {
+                            self.toggle_right_sidebar();
                         }
-                    }
+                        if ui
+                            .button(if self.left_sidebar_visible { "📁 Hide sidebar" } else { "📁 Sidebar" })
+                            .clicked()
+                        {
+                            self.toggle_left_sidebar();
+                        }
 
-                    ui.separator();
-                    if ui
-                        .button(if self.left_sidebar_visible { "🧱 Hide left" } else { "🧱 Show left" })
-                        .clicked()
-                    {
-                        self.toggle_left_sidebar();
-                    }
-                    if ui
-                        .button(if self.right_sidebar_visible { "🧠 Hide right" } else { "🧠 Show right" })
-                        .clicked()
-                    {
-                        self.toggle_right_sidebar();
-                    }
-
-                    if dirty_buffer_count > 0 {
                         ui.separator();
+
+                        if dirty_buffer_count > 0 {
+                            ui.label(
+                                egui::RichText::new(format!("Δ {} unsaved", dirty_buffer_count))
+                                    .strong()
+                                    .color(palette.warning),
+                            );
+                            ui.separator();
+                        }
+
+                        let model_name = if self.selected_model.is_empty() {
+                            "default"
+                        } else {
+                            &self.selected_model
+                        };
                         ui.label(
-                            egui::RichText::new(format!("Δ {} dirty", dirty_buffer_count))
-                                .strong()
-                                .color(palette.warning),
+                            egui::RichText::new(format!("⚡ {} / {}", self.provider.label(), model_name))
+                                .small()
+                                .color(palette.accent),
                         );
-                    }
+                    });
                 });
 
                 let profile = self.appearance.profile;

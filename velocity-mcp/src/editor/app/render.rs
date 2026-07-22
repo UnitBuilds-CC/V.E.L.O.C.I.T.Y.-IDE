@@ -875,7 +875,8 @@ impl<'a> TabViewerImpl<'a> {
             });
 
             ui.add_space(8.0);
-            ui.columns(2, |columns| {
+            let num_cols = if ui.available_width() < 900.0 { 1 } else { 2 };
+            ui.columns(num_cols, |columns| {
                 columns[0].vertical(|ui| {
                     let selected_task = self
                         .app
@@ -1237,7 +1238,8 @@ impl<'a> TabViewerImpl<'a> {
                     });
                 });
 
-                columns[1].vertical(|ui| {
+                let col2_idx = if columns.len() > 1 { 1 } else { 0 };
+                columns[col2_idx].vertical(|ui| {
                     ui.group(|ui| {
                         let agent_snapshot = RenderSnapshot::new(&self.app.agent_ui_state);
                         ui.label(egui::RichText::new("Approvals, metrics, and reasoning").strong());

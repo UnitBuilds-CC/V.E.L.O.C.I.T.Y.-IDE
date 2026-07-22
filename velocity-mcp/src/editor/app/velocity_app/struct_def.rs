@@ -406,7 +406,7 @@ impl VelocityApp {
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
             left_sidebar_tab: 0,
-            right_sidebar_visible: true,
+            right_sidebar_visible: false,
             right_sidebar_width: 280.0,
             tab_counter,
             agent_ui_state: AgentUiState::default(),
