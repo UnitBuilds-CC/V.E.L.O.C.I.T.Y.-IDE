@@ -66,9 +66,14 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Output => self.output_panel(ui),
             TabKind::Orchestrator => {
                 let palette = self.app.palette();
-                self.app
-                    .orchestrator
-                    .ui(ui, &self.app.workspace_root, &self.app.mediator, palette);
+                self.app.orchestrator.ui(
+                    ui,
+                    &self.app.workspace_root,
+                    &self.app.mediator,
+                    &mut self.app.expert_teams,
+                    &mut self.app.active_team_index,
+                    palette,
+                );
             }
             TabKind::MissionControl => {
                 self.mission_control_panel(ui);
