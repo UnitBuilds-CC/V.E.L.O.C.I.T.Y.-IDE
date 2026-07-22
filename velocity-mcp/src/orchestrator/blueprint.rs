@@ -86,7 +86,7 @@ impl TaskGraph {
             "wgpu abstraction, scene graph, camera, PBR materials.",
             vec!["crates/renderer/".into()],
             vec![TaskId(1)],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(3),
@@ -94,7 +94,7 @@ impl TaskGraph {
             "Spatial hash, rigid bodies, collisions, integrator.",
             vec!["crates/physics/".into()],
             vec![TaskId(1)],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(4),
@@ -102,7 +102,7 @@ impl TaskGraph {
             "hecs integration, schedule, systems.",
             vec!["crates/ecs/".into()],
             vec![TaskId(1)],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(5),
@@ -110,7 +110,7 @@ impl TaskGraph {
             "glTF/obj loader, texture cache, hot reload.",
             vec!["crates/assets/".into()],
             vec![TaskId(1)],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(6),
@@ -118,7 +118,7 @@ impl TaskGraph {
             "cpal/wrapper, spatial audio, event triggers.",
             vec!["crates/audio/".into()],
             vec![TaskId(1)],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(7),
@@ -126,7 +126,7 @@ impl TaskGraph {
             "Player input, game states, UI overlay, progression.",
             vec!["crates/gameplay/".into()],
             vec![TaskId(2), TaskId(3), TaskId(4), TaskId(6)],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(8),
@@ -141,7 +141,7 @@ impl TaskGraph {
                 TaskId(6),
                 TaskId(7),
             ],
-            Some(TaskId(1)),
+            None,
         );
         g.add(
             TaskId(9),
@@ -149,7 +149,7 @@ impl TaskGraph {
             "Main entry, CI, release packaging.",
             vec!["src/main.rs".into(), "Justfile".into(), ".github/".into()],
             vec![TaskId(8)],
-            Some(TaskId(1)),
+            None,
         );
 
         g
