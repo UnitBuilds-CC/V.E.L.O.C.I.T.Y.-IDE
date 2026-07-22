@@ -4,6 +4,7 @@ pub mod reports;
 pub mod scripts;
 
 pub use execution::*;
+pub use payloads::*;
 pub use reports::*;
 
 #[cfg(test)]
