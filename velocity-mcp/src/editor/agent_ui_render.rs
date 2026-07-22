@@ -154,8 +154,8 @@ pub fn render_pending_approvals(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
 pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
     let metrics = &snapshot.state.metrics;
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
 
         // State icon
         let state_icon = match metrics.state {

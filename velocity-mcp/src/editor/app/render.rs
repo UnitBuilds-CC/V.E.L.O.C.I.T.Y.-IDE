@@ -721,6 +721,10 @@ impl<'a> TabViewerImpl<'a> {
             && snapshot.tasks.is_empty()
             && self.app.mission_control.interventions.is_empty();
         egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("mission_control_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
             ui.heading("🎛 Mission Control");
             ui.label(
                 egui::RichText::new("One brief → routed plan → live swarm → operator interventions")
@@ -1421,6 +1425,7 @@ impl<'a> TabViewerImpl<'a> {
                         });
                     });
                 });
+            });
             });
         });
     }

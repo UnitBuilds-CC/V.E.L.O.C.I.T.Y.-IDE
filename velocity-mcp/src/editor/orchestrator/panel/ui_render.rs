@@ -24,15 +24,19 @@ impl OrchestratorPanel {
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
 
-        ui.horizontal(|ui| {
-            ui.heading("🧠 Live Orchestrator");
-            let label = if self.expanded {
-                "− Less Details"
-            } else {
-                "+ More Details"
-            };
-            ui.toggle_value(&mut self.expanded, label);
-        });
+        ScrollArea::vertical()
+            .id_salt("orchestrator_panel_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("🧠 Live Orchestrator");
+                    let label = if self.expanded {
+                        "− Less Details"
+                    } else {
+                        "+ More Details"
+                    };
+                    ui.toggle_value(&mut self.expanded, label);
+                });
         ui.separator();
 
         self.render_policy_controls(ui, workspace_root, palette);
@@ -393,6 +397,7 @@ impl OrchestratorPanel {
                 );
                 self.draw_task_graph(ui, &plan, has_cycle, palette);
             });
+        });
         });
     }
 
