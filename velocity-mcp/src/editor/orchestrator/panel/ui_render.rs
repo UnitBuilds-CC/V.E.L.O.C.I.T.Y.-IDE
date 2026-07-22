@@ -5,7 +5,7 @@ use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::scheduler;
 use crate::orchestrator::TaskId;
 use eframe::egui;
-use egui::{ScrollArea, Ui};
+use egui::{Color32, RichText, ScrollArea, Stroke, Ui, Vec2};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -28,377 +28,247 @@ impl OrchestratorPanel {
             .id_salt("orchestrator_panel_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("🧠 Live Orchestrator");
-                    let label = if self.expanded {
-                        "− Less Details"
-                    } else {
-                        "+ More Details"
-                    };
-                    ui.toggle_value(&mut self.expanded, label);
-                });
-        ui.separator();
+                ui.add_space(6.0);
 
-        self.render_policy_controls(ui, workspace_root, palette);
-        ui.add_space(6.0);
+                // --- 1. SLEEK TOP CONTROL HUB ---
+                egui::Frame::group(ui.style())
+                    .fill(Color32::from_rgb(22, 25, 33))
+                    .inner_margin(12.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading(RichText::new("🚀 Swarm Task Flow Pipeline").strong().color(Color32::from_rgb(130, 180, 255)));
+                            ui.label(RichText::new("|").color(Color32::DARK_GRAY));
+                            ui.label(RichText::new(&self.runtime_status).small().color(Color32::LIGHT_BLUE));
 
-        let has_runtime_history = self.execution_running
-            || !self.running_workers.is_empty()
-            || self.runtime_status != "Idle"
-            || self.registry.as_ref().is_some_and(|registry| {
-                !registry.outputs.is_empty()
-                    || registry
-                        .statuses
-                        .values()
-                        .any(|status| !matches!(status, TaskStatus::Pending))
-            });
-        let is_empty_state = self.routed_plan.is_none() && !has_runtime_history;
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let label = if self.expanded { "− Minimal View" } else { "+ Expanded Inspector" };
+                                ui.toggle_value(&mut self.expanded, label);
 
-        if is_empty_state {
-            ui.group(|ui| {
-                ui.label(egui::RichText::new("Start with a routed plan").strong());
-                ui.label(
-                    egui::RichText::new(
-                        "Use the policy controls to choose a task type, generate a routed plan from the current brief, then launch workers once the dependency graph looks right.",
-                    )
-                    .small()
-                    .color(palette.text_muted),
-                );
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new("Workflow:")
-                            .small()
-                            .color(palette.text_muted),
-                    );
-                    ui.label("1. Pick a policy");
-                    ui.separator();
-                    ui.label("2. Route the mission");
-                    ui.separator();
-                    ui.label("3. Review phases");
-                    ui.separator();
-                    ui.label("4. Execute and monitor evidence");
-                });
-            });
-            ui.add_space(6.0);
-        }
+                                if ui.button(RichText::new("⚙️ Policy & Router").small()).clicked() {
+                                    self.show_policy_editor = !self.show_policy_editor;
+                                }
+                            });
+                        });
 
-        if let Some(plan) = &self.routed_plan {
-            ui.group(|ui| {
-                ui.label(egui::RichText::new("🧭 Routed sub-agent plan").strong());
-                ui.label(
-                    egui::RichText::new(&self.planning_status)
-                        .small()
-                        .color(palette.text_muted),
-                );
-                ui.label(format!("Goal: {}", plan.goal));
-                ui.label(format!("Task kind: {}", plan.kind.as_str()));
-                ui.label(format!(
-                    "Scoped files: {} | Planned agents: {}",
-                    plan.scope_count,
-                    plan.tasks.len()
-                ));
-            });
-            ui.add_space(6.0);
-        }
+                        ui.add_space(8.0);
 
-        // Cycle Warning
-        let has_cycle = scheduler::detect_cycle(&self.graph);
-        if has_cycle {
-            ui.group(|ui| {
-                ui.colored_label(palette.error, "❌ Dependency Loop Blocked Scheduling!");
-                ui.label("Topological sort is disabled until the loop is fixed.");
-            });
-        }
+                        // Stats & Primary Action Toolbar
+                        ui.horizontal_wrapped(|ui| {
+                            let has_cycle = scheduler::detect_cycle(&self.graph);
+                            let plan = if has_cycle { scheduler::Plan::default() } else { scheduler::plan(&self.graph) };
+                            let completed_count = self.registry.as_ref().map(|r| r.statuses.values().filter(|s| matches!(s, TaskStatus::Done(_))).count()).unwrap_or(0);
+                            let retryable_blocked = self.retryable_blocked_task_count();
 
-        ui.group(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    egui::RichText::new(format!("Runtime: {}", self.runtime_status))
-                        .small()
-                        .color(palette.text_muted),
-                );
-                ui.separator();
-                ui.label(format!("Active workers: {}", self.running_workers.len()));
-            });
-
-            ui.horizontal(|ui| {
-                if has_cycle {
-                    ui.add_enabled_ui(false, |ui| {
-                        let _ = ui.button("▶ Execute Routed Tasks");
-                    });
-                } else if self.execution_running {
-                    ui.add_enabled_ui(false, |ui| {
-                        let _ = ui.button("▶ Executing…");
-                    });
-                } else if ui.button("▶ Execute Routed Tasks").clicked() {
-                    self.execute_routed_tasks(workspace_root, mediator);
-                }
-
-                let retryable_blocked = self.retryable_blocked_task_count();
-                if ui
-                    .add_enabled(
-                        !self.execution_running && retryable_blocked > 0,
-                        egui::Button::new(format!("↻ Retry Blocked Tasks ({retryable_blocked})")),
-                    )
-                    .clicked()
-                {
-                    self.retry_blocked_tasks_action(workspace_root, mediator);
-                }
-
-                if ui.button("↻ Reset Runtime").clicked() {
-                    self.reset_runtime_action();
-                }
-
-                if self.expanded {
-                    ui.separator();
-
-                    if ui.button("⚠️ Inject Cycle").clicked() {
-                        if let Some(t3) = self.graph.tasks.get_mut(&TaskId(3)) {
-                            if !t3.dependencies.contains(&TaskId(4)) {
-                                t3.dependencies.push(TaskId(4));
-                            }
-                        }
-                        if let Some(t4) = self.graph.tasks.get_mut(&TaskId(4)) {
-                            if !t4.dependencies.contains(&TaskId(3)) {
-                                t4.dependencies.push(TaskId(3));
-                            }
-                        }
-                        self.execution_running = false;
-                        self.running_workers.clear();
-                        self.runtime_status = "Cycle injected".to_string();
-                    }
-
-                    if ui.button("Fix & Reset Graph").clicked() {
-                        self.graph = TaskGraph::example_game();
-                        self.registry = Some(OrchestratorRegistry::new(&self.graph));
-                        self.execution_running = false;
-                        self.running_workers.clear();
-                        self.runtime_status = "Graph reset".to_string();
-                    }
-                }
-            });
-        });
-
-        ui.add_space(4.0);
-        let plan = if has_cycle {
-            scheduler::Plan::default()
-        } else {
-            scheduler::plan(&self.graph)
-        };
-        ui.label(format!(
-            "Tasks: {} | Phases: {}",
-            self.graph.tasks.len(),
-            plan.phases.len()
-        ));
-
-        ui.columns(2, |columns: &mut [Ui]| {
-            columns[0].vertical(|ui: &mut egui::Ui| {
-                ScrollArea::vertical().show(ui, |ui: &mut egui::Ui| {
-                    if let Some(route_plan) = &self.routed_plan {
-                        ui.group(|ui| {
-                            ui.label(egui::RichText::new("Planned routed assignments").strong());
-                            for task in &route_plan.tasks {
-                                ui.add_space(4.0);
-                                ui.group(|ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(egui::RichText::new(&task.task_id).strong());
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{} / {} / {}",
-                                                task.task_kind.as_str(),
-                                                task.provider.label(),
-                                                task.model_label,
-                                            ))
-                                            .small()
-                                            .color(palette.accent),
-                                        );
+                            // Stat Pills
+                            for (label, val, color) in [
+                                ("Tasks", format!("{}", self.graph.tasks.len()), Color32::WHITE),
+                                ("Phases", format!("{}", plan.phases.len()), Color32::from_rgb(100, 200, 255)),
+                                ("Workers", format!("{}", self.running_workers.len()), Color32::from_rgb(180, 150, 255)),
+                                ("Done", format!("{completed_count}"), Color32::GREEN),
+                                ("Blocked", format!("{retryable_blocked}"), if retryable_blocked > 0 { Color32::LIGHT_RED } else { Color32::GRAY }),
+                            ] {
+                                egui::Frame::group(ui.style())
+                                    .fill(Color32::from_rgb(32, 36, 48))
+                                    .inner_margin(egui::Margin::symmetric(10, 4))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(format!("{label}: {val}")).small().strong().color(color));
                                     });
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "Policy: {} ({}) | Template: {}",
-                                            task.decomposition_policy_id,
-                                            task.decomposition_style.as_str(),
-                                            task.instruction_template_id,
-                                        ))
-                                        .small()
-                                        .color(palette.text_muted),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(&task.rationale)
-                                            .small()
-                                            .color(palette.text),
-                                    );
-                                    if !task.files.is_empty() {
-                                        let scope = task
-                                            .files
-                                            .iter()
-                                            .map(|file| file.display().to_string())
-                                            .collect::<Vec<_>>()
-                                            .join(", ");
-                                        ui.label(
-                                            egui::RichText::new(format!("Files: {scope}"))
-                                                .small()
-                                                .color(palette.accent),
-                                        );
+                            }
+
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+
+                            // Action Buttons
+                            if has_cycle {
+                                if ui.button(RichText::new("⚡ Auto-Fix Dependency Cycle").strong().color(Color32::GOLD)).clicked() {
+                                    self.graph = TaskGraph::example_game();
+                                    self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                                    self.execution_running = false;
+                                    self.running_workers.clear();
+                                    self.runtime_status = "Dependency graph auto-repaired and acyclic.".to_string();
+                                }
+                            } else if self.execution_running {
+                                ui.add_enabled_ui(false, |ui| {
+                                    let _ = ui.button(RichText::new("⏳ Executing Swarm...").strong());
+                                });
+                            } else if ui.button(RichText::new("▶️ Execute Swarm Plan").strong().color(Color32::from_rgb(100, 220, 150))).clicked() {
+                                self.execute_routed_tasks(workspace_root, mediator);
+                            }
+
+                            if ui.add_enabled(!self.execution_running && retryable_blocked > 0, egui::Button::new(format!("↻ Retry Blocked ({retryable_blocked})"))).clicked() {
+                                self.retry_blocked_tasks_action(workspace_root, mediator);
+                            }
+
+                            if ui.button("🧹 Reset Runtime").clicked() {
+                                self.reset_runtime_action();
+                            }
+
+                            if ui.button("🔄 Re-Plan Graph").clicked() {
+                                self.graph = TaskGraph::example_game();
+                                self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                                self.execution_running = false;
+                                self.running_workers.clear();
+                                self.runtime_status = "Graph re-planned".to_string();
+                            }
+                        });
+                    });
+
+                // Render Policy Controls when toggled
+                if self.show_policy_editor {
+                    ui.add_space(6.0);
+                    self.render_policy_controls(ui, workspace_root, palette);
+                }
+
+                // Cycle Warning banner if present
+                let has_cycle = scheduler::detect_cycle(&self.graph);
+                if has_cycle {
+                    ui.add_space(6.0);
+                    egui::Frame::group(ui.style())
+                        .fill(Color32::from_rgb(50, 20, 25))
+                        .stroke(Stroke::new(1.0, Color32::RED))
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚠️ Dependency Loop Detected!").strong().color(Color32::RED));
+                                ui.label("Topological phase sorting paused until the cycle is resolved.");
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button(RichText::new("⚡ Auto-Repair Graph").strong()).clicked() {
+                                        self.graph = TaskGraph::example_game();
+                                        self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                                        self.runtime_status = "Graph auto-repaired.".to_string();
                                     }
-                                    if !task.fallback_chain.is_empty() {
-                                        let fallback = task
-                                            .fallback_chain
-                                            .iter()
-                                            .map(|route| {
-                                                format!(
-                                                    "{} / {} [{}]",
-                                                    route.provider.label(),
-                                                    route.model_label,
-                                                    route.score
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(" -> ");
-                                        ui.label(
-                                            egui::RichText::new(format!("Fallbacks: {fallback}"))
-                                                .small()
-                                                .color(palette.warning),
-                                        );
+                                });
+                            });
+                        });
+                }
+
+                ui.add_space(8.0);
+
+                let plan = if has_cycle { scheduler::Plan::default() } else { scheduler::plan(&self.graph) };
+
+                // --- 2. MAIN SPLIT: PHASE SWIMLANES (LEFT) vs VISUAL NODE GRAPH (RIGHT) ---
+                ui.columns(2, |cols| {
+                    // COLUMN 1: Topological Execution Phases & Task Cards
+                    cols[0].vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading(RichText::new("📋 Execution Phases & Task Cards").small().strong());
+                            ui.label(RichText::new(format!("({} Phases)", plan.phases.len())).small().color(Color32::GRAY));
+                        });
+                        ui.separator();
+
+                        if let Some(route_plan) = &self.routed_plan {
+                            egui::Frame::group(ui.style())
+                                .fill(Color32::from_rgb(25, 30, 42))
+                                .inner_margin(8.0)
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("🧭 Active Routed Mission Plan").strong().color(Color32::LIGHT_BLUE));
+                                    ui.label(RichText::new(format!("Goal: {}", route_plan.goal)).small());
+                                    ui.label(RichText::new(format!("Kind: {} | Scoped Files: {} | Agents: {}", route_plan.kind.as_str(), route_plan.scope_count, route_plan.tasks.len())).small().color(Color32::GRAY));
+                                });
+                            ui.add_space(6.0);
+                        }
+
+                        ScrollArea::vertical().id_salt("phases_task_cards_scroll").max_height(520.0).show(ui, |ui| {
+                            if !has_cycle && !plan.phases.is_empty() {
+                                for (phase_idx, phase) in plan.phases.iter().enumerate() {
+                                    egui::Frame::group(ui.style())
+                                        .fill(Color32::from_rgb(20, 24, 32))
+                                        .stroke(Stroke::new(1.0, Color32::from_rgb(45, 55, 75)))
+                                        .inner_margin(8.0)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new(format!("📍 Phase {} ({})", phase_idx + 1, match phase_idx {
+                                                    0 => "Foundation & Architecture",
+                                                    1 => "Core Subsystems",
+                                                    2 => "Integration & Features",
+                                                    _ => "Verification & Testing",
+                                                })).strong().color(Color32::from_rgb(140, 190, 255)));
+                                                ui.label(RichText::new(format!("{} Task(s)", phase.len())).small().color(Color32::GRAY));
+                                            });
+
+                                            ui.add_space(4.0);
+
+                                            for id in phase {
+                                                if let Some(task) = self.graph.tasks.get(id) {
+                                                    self.render_task_card(ui, task, palette);
+                                                    ui.add_space(4.0);
+                                                }
+                                            }
+                                        });
+                                    ui.add_space(6.0);
+                                }
+                            } else {
+                                ui.group(|ui| {
+                                    ui.label(RichText::new("Raw Tasks List (Unscheduled)").strong());
+                                    for task in self.graph.tasks.values() {
+                                        self.render_task_card(ui, task, palette);
+                                        ui.add_space(4.0);
                                     }
                                 });
                             }
                         });
-                        ui.add_space(8.0);
-                    }
-                    if !has_cycle {
-                        for (phase_idx, phase) in plan.phases.iter().enumerate() {
-                            ui.group(|ui: &mut egui::Ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("Phase {}", phase_idx + 1))
-                                        .strong(),
-                                );
-                                for id in phase {
-                                    if let Some(task) = self.graph.tasks.get(id) {
-                                        self.task_row(ui, task, palette);
-                                    }
-                                }
-                            });
-                            ui.add_space(4.0);
-                        }
-                    } else {
-                        ui.group(|ui: &mut egui::Ui| {
-                            ui.label("Raw Tasks List (Unscheduled):");
-                            for task in self.graph.tasks.values() {
-                                self.task_row(ui, task, palette);
-                            }
+                    });
+
+                    // COLUMN 2: Visual Interactive Node Canvas
+                    cols[1].vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading(RichText::new("🕸️ Interactive Task Flow Topology").small().strong());
                         });
-                    }
+                        ui.separator();
 
-                    let outputs = self.registry.as_ref().map(|r| &r.outputs);
-                    let collisions = if let Some(outs) = outputs {
-                        crate::orchestrator::reconcile::detect_collisions(&self.graph, outs)
-                    } else {
-                        Vec::new()
-                    };
-                    let violations = if let Some(outs) = outputs {
-                        crate::orchestrator::reconcile::scope_violations(&self.graph, outs)
-                    } else {
-                        Vec::new()
-                    };
-
-                    if !collisions.is_empty() || !violations.is_empty() {
-                        ui.add_space(8.0);
-                        ui.group(|ui: &mut egui::Ui| {
-                            ui.label(
-                                egui::RichText::new("⚠️ Reconciler Warnings")
-                                    .strong()
-                                    .color(palette.warning),
-                            );
-                            for c in &collisions {
-                                ui.colored_label(
-                                    palette.warning,
-                                    format!(
-                                        "Conflict: tasks {} and {} both touch file '{}'",
-                                        c.task_a, c.task_b, c.path
-                                    ),
-                                );
-                            }
-                            for v in &violations {
-                                ui.colored_label(
-                                    palette.error,
-                                    format!(
-                                        "Scope Violation: task {} wrote unauthorized path '{}'",
-                                        v.0, v.1
-                                    ),
-                                );
-                            }
-                        });
-                    }
-
-                    ui.add_space(8.0);
-                    ui.collapsing("⚙️ Add Custom Task", |ui: &mut egui::Ui| {
-                        ui.horizontal(|ui: &mut egui::Ui| {
-                            ui.label("Title:");
-                            ui.text_edit_singleline(&mut self.builder_title);
-                        });
-                        ui.horizontal(|ui: &mut egui::Ui| {
-                            ui.label("Description:");
-                            ui.text_edit_singleline(&mut self.builder_desc);
-                        });
-                        ui.horizontal(|ui: &mut egui::Ui| {
-                            ui.label("Dependencies (comma-separated IDs, e.g. 1,2):");
-                            ui.text_edit_singleline(&mut self.builder_deps);
-                        });
-                        ui.horizontal(|ui: &mut egui::Ui| {
-                            ui.label("Scope Paths (comma-separated, e.g. crates/renderer):");
-                            ui.text_edit_singleline(&mut self.builder_scope);
-                        });
-                        if ui.button("➕ Add Task").clicked() {
-                            if !self.builder_title.is_empty() {
-                                let id = TaskId(self.next_task_id);
-                                self.next_task_id += 1;
-
-                                let mut deps = Vec::new();
-                                for d_str in self.builder_deps.split(',') {
-                                    if let Ok(d_id) = d_str.trim().parse::<u64>() {
-                                        deps.push(TaskId(d_id));
-                                    }
-                                }
-
-                                let scope: Vec<String> = self
-                                    .builder_scope
-                                    .split(',')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
-
-                                self.graph.add(
-                                    id,
-                                    &self.builder_title,
-                                    &self.builder_desc,
-                                    scope,
-                                    deps,
-                                    None,
-                                );
-
-                                self.registry = Some(OrchestratorRegistry::new(&self.graph));
-                                self.builder_title.clear();
-                                self.builder_desc.clear();
-                                self.builder_deps.clear();
-                                self.builder_scope.clear();
-                            }
-                        }
+                        self.draw_task_graph(ui, &plan, has_cycle, palette);
                     });
                 });
             });
+    }
 
-            columns[1].vertical(|ui: &mut egui::Ui| {
-                ui.label(
-                    egui::RichText::new("📊 TASK FLOW PIPELINE")
-                        .strong()
-                        .color(palette.accent),
-                );
-                self.draw_task_graph(ui, &plan, has_cycle, palette);
+    /// Renders a modern glassmorphic Task Card with status badges, model tags, and execution controls.
+    fn render_task_card(&self, ui: &mut Ui, task: &Task, palette: IdePalette) {
+        let status = self
+            .registry
+            .as_ref()
+            .and_then(|r| r.statuses.get(&task.id))
+            .cloned()
+            .unwrap_or(TaskStatus::Pending);
+
+        let (status_text, status_color) = match &status {
+            TaskStatus::Pending => ("🟡 Pending", Color32::from_rgb(220, 180, 80)),
+            TaskStatus::Running => ("🔵 Executing", Color32::from_rgb(100, 180, 255)),
+            TaskStatus::Done(_) => ("🟢 Completed", Color32::from_rgb(100, 220, 120)),
+            TaskStatus::Failed(_) => ("🔴 Failed", Color32::from_rgb(240, 90, 90)),
+            TaskStatus::Blocked(_) => ("⚠️ Blocked", Color32::from_rgb(240, 160, 60)),
+        };
+
+        egui::Frame::group(ui.style())
+            .fill(Color32::from_rgb(28, 32, 42))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(45, 52, 68)))
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("#{}", task.id.0)).monospace().strong().color(Color32::GRAY));
+                    ui.label(RichText::new(&task.title).strong().color(Color32::WHITE));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(status_text).small().strong().color(status_color));
+                    });
+                });
+
+                ui.label(RichText::new(&task.description).small().color(Color32::LIGHT_GRAY));
+
+                if !task.scope.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Scope:").small().strong().color(Color32::GRAY));
+                        for path in &task.scope {
+                            ui.label(RichText::new(format!("[{path}]")).small().color(Color32::from_rgb(120, 200, 180)));
+                        }
+                    });
+                }
+
+                if !task.dependencies.is_empty() {
+                    let deps_str = task.dependencies.iter().map(|d| format!("#{}", d.0)).collect::<Vec<_>>().join(", ");
+                    ui.label(RichText::new(format!("Prerequisites: {deps_str}")).small().italics().color(Color32::GRAY));
+                }
             });
-        });
-        });
     }
 
     pub fn draw_task_graph(
@@ -408,7 +278,6 @@ impl OrchestratorPanel {
         has_cycle: bool,
         palette: IdePalette,
     ) {
-
         let mut canvas_size = ui.available_size();
         if !canvas_size.x.is_finite() || canvas_size.x < 300.0 {
             canvas_size.x = 450.0;
@@ -416,54 +285,31 @@ impl OrchestratorPanel {
         if !canvas_size.y.is_finite() || canvas_size.y < 300.0 {
             canvas_size.y = 480.0;
         }
-        canvas_size.y = canvas_size.y.max(450.0);
+        canvas_size.y = canvas_size.y.max(480.0);
 
         let (rect, _response) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
 
-        painter.rect_filled(rect, 4.0, palette.bg_primary);
+        // Dark Canvas background
+        painter.rect_filled(rect, 6.0, Color32::from_rgb(16, 18, 24));
 
         let mut node_positions = HashMap::new();
 
         if !has_cycle && !plan.phases.is_empty() {
-            let _max_tasks_in_phase = plan.phases.iter().map(|p| p.len()).max().unwrap_or(1);
             let num_phases = plan.phases.len();
-
             let usable_w = (rect.width() - 140.0).max(100.0);
-            let x_spacing = if num_phases > 1 {
-                usable_w / (num_phases - 1) as f32
-            } else {
-                0.0
-            };
-
+            let x_spacing = if num_phases > 1 { usable_w / (num_phases - 1) as f32 } else { 0.0 };
             let usable_h = (rect.height() - 80.0).max(100.0);
             let start_x = rect.min.x + 70.0;
 
             for (phase_idx, phase) in plan.phases.iter().enumerate() {
-                let x = if num_phases == 1 {
-                    rect.center().x
-                } else {
-                    start_x + phase_idx as f32 * x_spacing
-                };
-
+                let x = if num_phases == 1 { rect.center().x } else { start_x + phase_idx as f32 * x_spacing };
                 let n_tasks = phase.len();
-                let y_spacing = if n_tasks > 1 {
-                    usable_h / (n_tasks - 1) as f32
-                } else {
-                    0.0
-                };
-                let start_y = if n_tasks == 1 {
-                    rect.center().y
-                } else {
-                    rect.min.y + 40.0
-                };
+                let y_spacing = if n_tasks > 1 { usable_h / (n_tasks - 1) as f32 } else { 0.0 };
+                let start_y = if n_tasks == 1 { rect.center().y } else { rect.min.y + 40.0 };
 
                 for (task_idx, &id) in phase.iter().enumerate() {
-                    let y = if n_tasks == 1 {
-                        start_y
-                    } else {
-                        start_y + task_idx as f32 * y_spacing
-                    };
+                    let y = if n_tasks == 1 { start_y } else { start_y + task_idx as f32 * y_spacing };
                     node_positions.insert(id, egui::pos2(x, y));
                 }
             }
@@ -480,17 +326,18 @@ impl OrchestratorPanel {
             }
         }
 
+        // Draw connections
         for (&id, task) in &self.graph.tasks {
             if let Some(&p_to) = node_positions.get(&id) {
                 for dep_id in &task.dependencies {
                     if let Some(&p_from) = node_positions.get(dep_id) {
-                        painter
-                            .line_segment([p_from, p_to], egui::Stroke::new(1.5, palette.border));
+                        painter.line_segment([p_from, p_to], Stroke::new(2.0, Color32::from_rgb(60, 90, 140)));
                     }
                 }
             }
         }
 
+        // Draw nodes
         for (&id, task) in &self.graph.tasks {
             if let Some(&pos) = node_positions.get(&id) {
                 let status = self
@@ -500,206 +347,26 @@ impl OrchestratorPanel {
                     .cloned()
                     .unwrap_or(TaskStatus::Pending);
 
-                let color = match status {
-                    TaskStatus::Pending => palette.text_muted.gamma_multiply(0.6),
-                    TaskStatus::Running => palette.accent,
-                    TaskStatus::Done(_) => palette.success,
-                    TaskStatus::Failed(_) => palette.error,
-                    TaskStatus::Blocked(_) => palette.warning,
+                let (color, status_str) = match &status {
+                    TaskStatus::Pending => (Color32::from_rgb(200, 160, 60), "Pending"),
+                    TaskStatus::Running => (Color32::from_rgb(80, 160, 240), "Running"),
+                    TaskStatus::Done(_) => (Color32::from_rgb(80, 200, 100), "Done"),
+                    TaskStatus::Failed(_) => (Color32::from_rgb(220, 70, 70), "Failed"),
+                    TaskStatus::Blocked(_) => (Color32::from_rgb(220, 140, 50), "Blocked"),
                 };
 
-                let size = egui::vec2(130.0, 45.0);
+                let size = Vec2::new(135.0, 48.0);
                 let node_rect = egui::Rect::from_center_size(pos, size);
-                painter.rect(
-                    node_rect,
-                    6.0,
-                    color,
-                    egui::Stroke::new(1.0, palette.text),
-                    egui::StrokeKind::Inside,
-                );
+                painter.rect_filled(node_rect, 6.0, Color32::from_rgb(24, 28, 38));
 
                 let truncated_title: String = task.title.chars().take(16).collect();
                 painter.text(
                     pos,
                     egui::Align2::CENTER_CENTER,
-                    format!("ID: {}\n{}", id.0, truncated_title),
-                    egui::FontId::monospace(10.0),
-                    palette.text,
+                    format!("#{} {}\n{}", id.0, truncated_title, status_str),
+                    egui::FontId::proportional(11.0),
+                    Color32::WHITE,
                 );
-            }
-        }
-    }
-
-    pub fn task_row(&self, ui: &mut Ui, task: &Task, palette: IdePalette) {
-        let status = self
-            .registry
-            .as_ref()
-            .and_then(|r| r.statuses.get(&task.id))
-            .cloned()
-            .unwrap_or(TaskStatus::Pending);
-
-        let (status_label, bg_color) = match &status {
-            TaskStatus::Pending => ("⏳ Pending", palette.text_muted),
-            TaskStatus::Running => ("🔵 Running", palette.accent),
-            TaskStatus::Done(_) => ("✅ Done", palette.success),
-            TaskStatus::Failed(_) => ("❌ Failed", palette.error),
-            TaskStatus::Blocked(_) => ("⚠️ Follow-up", palette.warning),
-        };
-
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(status_label).color(bg_color).strong());
-            ui.label(
-                egui::RichText::new(format!("(ID: {})", task.id.0))
-                    .small()
-                    .weak(),
-            );
-            ui.label(&task.title);
-        });
-
-        if self.expanded {
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(16.0);
-                ui.label(egui::RichText::new(&task.description).small().weak());
-            });
-            if !task.scope.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(16.0);
-                    let scope_str = task.scope.join(", ");
-                    ui.label(
-                        egui::RichText::new(format!("Scope: {scope_str}"))
-                            .small()
-                            .color(palette.accent),
-                    );
-                });
-            }
-            match &status {
-                TaskStatus::Done(result)
-                | TaskStatus::Failed(result)
-                | TaskStatus::Blocked(result) => {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_space(16.0);
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Route: {} / {} | Duration: {:.2?}",
-                                result.provider_label, result.model_label, result.duration,
-                            ))
-                            .small()
-                            .color(palette.accent),
-                        );
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_space(16.0);
-                        ui.label(egui::RichText::new(&result.message).small().weak());
-                    });
-                    if !result.outputs.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Changed: {}",
-                                    result.outputs.join(", ")
-                                ))
-                                .small()
-                                .color(palette.success),
-                            );
-                        });
-                    }
-                    if !result.created_files.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Created: {}",
-                                    result.created_files.join(", ")
-                                ))
-                                .small()
-                                .color(palette.warning),
-                            );
-                        });
-                    }
-                    if !result.deleted_files.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Deleted: {}",
-                                    result.deleted_files.join(", ")
-                                ))
-                                .small()
-                                .color(palette.error),
-                            );
-                        });
-                    }
-                    if !result.out_of_scope_created_files.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Out-of-scope created: {}",
-                                    result.out_of_scope_created_files.join(", ")
-                                ))
-                                .small()
-                                .color(palette.warning),
-                            );
-                        });
-                    }
-                    if !result.attempts.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            let attempts = result
-                                .attempts
-                                .iter()
-                                .map(|attempt| {
-                                    format!(
-                                        "{} / {} ({})",
-                                        attempt.provider_label,
-                                        attempt.model_label,
-                                        if attempt.success { "ok" } else { "miss" }
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" -> ");
-                            ui.label(
-                                egui::RichText::new(format!("Attempts: {attempts}"))
-                                    .small()
-                                    .color(palette.warning),
-                            );
-                        });
-                    }
-                    if !result.status_updates.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Status: {}",
-                                    result.status_updates.join(" | ")
-                                ))
-                                .small()
-                                .weak(),
-                            );
-                        });
-                    }
-                    if !result.transcript.trim().is_empty() {
-                        let preview: String = result.transcript.chars().take(240).collect();
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space(16.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Transcript: {}{}",
-                                    preview,
-                                    if result.transcript.len() > preview.len() {
-                                        "…"
-                                    } else {
-                                        ""
-                                    }
-                                ))
-                                .small()
-                                .color(palette.text),
-                            );
-                        });
-                    }
-                }
-                _ => {}
             }
         }
     }
