@@ -1,0 +1,193 @@
+use super::super::models::*;
+use super::super::provider::*;
+use super::loop_runner::run_agent_reasoning_loop;
+use super::utils::build_inline_tool_docs;
+use crate::usage::{
+    load_accounts_from_env, load_openrouter_accounts_from_env, UsageTracker,
+};
+use std::sync::{Arc, Mutex};
+
+pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
+    let accounts = load_accounts_from_env();
+    let or_accounts = load_openrouter_accounts_from_env();
+    let mut usage_tracker = UsageTracker::new(&request.workspace_root);
+    let selected_profile = match request.provider {
+        AiProvider::OpenRouter => ModelInfo {
+            id: request.model.clone(),
+            label: request
+                .model
+                .rsplit('/')
+                .next()
+                .unwrap_or(&request.model)
+                .to_string(),
+            api_style: ApiStyle::OpenAiChat,
+            supports_tools: false,
+            supports_thinking: false,
+        },
+        AiProvider::CloudflareWorkersAi => {
+            let profile = default_model_info(&request.model);
+            enrich_model_profile(&accounts, &profile)
+        }
+    };
+    let thinking = request.thinking && selected_profile.supports_thinking;
+
+    let use_inline_tools =
+        request.provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
+    let mut message_history = vec![ChatMessage {
+        role: "system".to_string(),
+        content: format!(
+            "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
+            You have access to local workspace files and execution sandboxes via tools. \
+            Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
+            if use_inline_tools { build_inline_tool_docs() } else { String::new() }
+        ),
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    }];
+    message_history.push(ChatMessage {
+        role: "user".to_string(),
+        content: request.prompt,
+        name: None,
+        tool_call_id: None,
+        tool_calls: None,
+    });
+
+    let (agent_event_tx, agent_event_rx) = crossbeam_channel::unbounded();
+    let (agent_ui_tx, agent_ui_rx) = crossbeam_channel::unbounded();
+    let cancel_rx = request.cancel_rx;
+    let progress = request.progress;
+    let status_updates = Arc::new(Mutex::new(Vec::new()));
+    let transcript = Arc::new(Mutex::new(String::new()));
+    let changed_files = Arc::new(Mutex::new(Vec::new()));
+
+    let status_updates_collector = status_updates.clone();
+    let transcript_collector = transcript.clone();
+    let changed_files_collector = changed_files.clone();
+    let progress_collector = progress.clone();
+    let auto_approve_tx = agent_ui_tx.clone();
+
+    let collector = std::thread::spawn(move || {
+        while let Ok(msg) = agent_event_rx.recv() {
+            match msg {
+                AgentToUiMessage::StatusUpdate(status) => {
+                    status_updates_collector
+                        .lock()
+                        .unwrap()
+                        .push(status.clone());
+                    if let Some(progress) = &progress_collector {
+                        let mut progress = progress.lock().unwrap();
+                        progress.status_updates.push(status.clone());
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::Status,
+                            message: status,
+                        });
+                    }
+                }
+                AgentToUiMessage::OutputToken(token) | AgentToUiMessage::ThoughtToken(token) => {
+                    transcript_collector.lock().unwrap().push_str(&token);
+                    if let Some(progress) = &progress_collector {
+                        let mut progress = progress.lock().unwrap();
+                        progress.transcript.push_str(&token);
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::Transcript,
+                            message: token,
+                        });
+                    }
+                }
+                AgentToUiMessage::UpdateFileBuffer { path, .. } => {
+                    let mut guard = changed_files_collector.lock().unwrap();
+                    if !guard.contains(&path) {
+                        guard.push(path.clone());
+                    }
+                    if let Some(progress) = &progress_collector {
+                        let changed_path = path.display().to_string();
+                        let mut progress = progress.lock().unwrap();
+                        if !progress.changed_files.contains(&changed_path) {
+                            progress.changed_files.push(changed_path.clone());
+                        }
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::FileChange,
+                            message: changed_path,
+                        });
+                    }
+                }
+                AgentToUiMessage::RequestToolApproval {
+                    id,
+                    tool_name,
+                    arguments,
+                } => {
+                    let status = format!("Auto-approving tool: {tool_name}");
+                    status_updates_collector
+                        .lock()
+                        .unwrap()
+                        .push(status.clone());
+                    if let Some(progress) = &progress_collector {
+                        let mut progress = progress.lock().unwrap();
+                        progress.status_updates.push(status.clone());
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::ToolApproval,
+                            message: tool_name.clone(),
+                        });
+                        progress.events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::Status,
+                            message: status,
+                        });
+                    }
+                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool {
+                        id,
+                        tool_name,
+                        arguments,
+                    });
+                }
+                AgentToUiMessage::ToolExecutionStarted { tool_name } => {
+                    if let Some(progress) = &progress_collector {
+                        progress.lock().unwrap().events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::ToolStarted,
+                            message: tool_name,
+                        });
+                    }
+                }
+                AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
+                    if let Some(progress) = &progress_collector {
+                        progress.lock().unwrap().events.push(HeadlessSubAgentEvent {
+                            kind: HeadlessSubAgentEventKind::ToolFinished,
+                            message: format!("{} => {}", tool_name, result),
+                        });
+                    }
+                }
+                AgentToUiMessage::AgentFinished => break,
+                _ => {}
+            }
+        }
+    });
+
+    run_agent_reasoning_loop(
+        &request.workspace_root,
+        &accounts,
+        &or_accounts,
+        &request.model,
+        &selected_profile,
+        request.provider,
+        thinking,
+        &mut message_history,
+        &mut usage_tracker,
+        &agent_ui_rx,
+        cancel_rx.as_ref(),
+        progress.as_ref(),
+        &agent_event_tx,
+        &mut Vec::new(),
+    );
+
+    drop(agent_event_tx);
+    let _ = collector.join();
+
+    let status_updates = status_updates.lock().unwrap().clone();
+    let transcript = transcript.lock().unwrap().clone();
+    let changed_files = changed_files.lock().unwrap().clone();
+    HeadlessSubAgentResult {
+        status_updates,
+        transcript,
+        changed_files,
+    }
+}

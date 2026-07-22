@@ -15,7 +15,7 @@ pub struct Collision {
 
 /// Report files modified by more than one task.
 pub fn detect_collisions(
-    graph: &TaskGraph,
+    _graph: &TaskGraph,
     outputs: &HashMap<TaskId, Vec<String>>,
 ) -> Vec<Collision> {
     let mut files_to_tasks: HashMap<String, Vec<TaskId>> = HashMap::new();

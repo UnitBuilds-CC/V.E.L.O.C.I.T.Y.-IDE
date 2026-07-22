@@ -2,7 +2,6 @@
 //!
 //! Provides a circular buffer of task events with immutable snapshot rendering.
 
-use crate::editor::agent_ui_state::{AgentState, WarningLevel};
 use eframe::egui;
 use std::path::Path;
 use std::time::Instant;
@@ -384,8 +383,9 @@ pub fn render_mission_activity_feed(
     }
 
     egui::ScrollArea::vertical()
+        .id_salt("mission_activity_feed_scroll")
         .max_height(220.0)
-        .show(ui, |ui| {
+        .show(ui, |ui: &mut egui::Ui| {
             for (_, event) in snapshot
                 .state
                 .visible_events()
@@ -490,11 +490,12 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
         ui.separator();
 
         egui::ScrollArea::vertical()
-            .max_height(300.0)
-            .show(ui, |ui| {
+            .id_salt("task_timeline_panel_scroll")
+            .max_height(160.0)
+            .show(ui, |ui: &mut egui::Ui| {
                 // Use fixed array for task depths (max 256 tasks concurrently)
-                let mut task_depths = [0u8; 256];
-                let mut active_task_count = 0;
+                let task_depths = [0u8; 256];
+                let _active_task_count = 0;
 
                 for (_, event) in snapshot.state.chronological_events() {
                     let task_id = event.task_id as usize;

@@ -7,6 +7,7 @@ use crate::editor::agent_ui_state::*;
 use eframe::egui;
 
 /// Immutable snapshot for rendering (zero-copy reference)
+#[allow(dead_code)]
 pub struct RenderSnapshot<'a> {
     pub state: &'a AgentUiState,
 }
@@ -18,7 +19,7 @@ impl<'a> RenderSnapshot<'a> {
 }
 
 /// Render thinking panel (immutable render)
-pub fn render_thinking_panel(ui: &mut egui::Ui, snapshot: &RenderSnapshot, palette: (u8, u8, u8)) {
+pub fn render_thinking_panel(ui: &mut egui::Ui, snapshot: &RenderSnapshot, _palette: (u8, u8, u8)) {
     let frame = egui::Frame::new()
         .fill(egui::Color32::from_rgb(25, 27, 39))
         .inner_margin(8.0)
@@ -55,7 +56,7 @@ pub fn render_thinking_panel(ui: &mut egui::Ui, snapshot: &RenderSnapshot, palet
                         );
                     } else {
                         // Iterate over ring buffer in order (zero-copy)
-                        for (_, entry) in snapshot.state.thinking.visible_steps() {
+                        for (idx, entry) in snapshot.state.thinking.visible_steps() {
                             let phase_icon = match entry.phase {
                                 ThinkingPhase::Analysis => "🔍",
                                 ThinkingPhase::Planning => "📋",
@@ -93,7 +94,7 @@ pub fn render_thinking_panel(ui: &mut egui::Ui, snapshot: &RenderSnapshot, palet
                             let text = snapshot
                                 .state
                                 .thinking
-                                .get_step_text(entry.text_offset as usize);
+                                .get_step_text(idx);
                             if !text.is_empty() {
                                 ui.label(
                                     egui::RichText::new(text)

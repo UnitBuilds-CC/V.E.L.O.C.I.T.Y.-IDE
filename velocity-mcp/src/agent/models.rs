@@ -13,6 +13,7 @@ pub enum UiToAgentMessage {
     SetThinking(bool),
     SetProvider(AiProvider),
     UserPrompt(String),
+    ClearHistory,
     ApproveTool {
         id: String,
         tool_name: String,

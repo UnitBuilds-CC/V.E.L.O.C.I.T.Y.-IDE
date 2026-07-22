@@ -1,8 +1,8 @@
 //! Topological scheduling of tasks.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
-use super::blueprint::{Task, TaskGraph};
+use super::blueprint::TaskGraph;
 use super::TaskId;
 
 /// A queued execution plan derived from a [`TaskGraph`].

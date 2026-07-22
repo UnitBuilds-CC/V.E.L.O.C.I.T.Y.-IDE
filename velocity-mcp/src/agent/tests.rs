@@ -1,6 +1,7 @@
 use super::executor::*;
 use super::models::*;
 use super::nda::*;
+use super::provider::*;
 
 fn message() -> ChatMessage {
     ChatMessage {
@@ -429,6 +430,20 @@ fn writes_last_request_artifacts() {
     assert!(json.contains("\"model\""));
 }
 
+#[allow(dead_code)]
+#[derive(serde::Deserialize, serde::Serialize)]
+struct ToolCallFunction {
+    name: String,
+    arguments: String,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Deserialize, serde::Serialize)]
+struct ToolCall {
+    id: String,
+    function: ToolCallFunction,
+}
+
 #[test]
 fn test_eager_merkle_compaction() {
     let mut long_content = String::new();
@@ -439,6 +454,19 @@ fn test_eager_merkle_compaction() {
     }
 
     let original_messages = vec![
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: "Calling read_file".to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Some(serde_json::json!([{
+                "id": "call_xyz",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{}"
+                }
+            }])),
+        },
         ChatMessage {
             role: "tool".to_string(),
             content: long_content,
@@ -456,12 +484,71 @@ fn test_eager_merkle_compaction() {
     ];
 
     let compressed = compress_history(&original_messages, true);
-    assert_eq!(compressed.len(), 2);
-    assert_eq!(compressed[0].role, "tool");
+    assert_eq!(compressed.len(), 3);
+    assert_eq!(compressed[1].role, "tool");
 
-    let content = &compressed[0].content;
+    let content = &compressed[1].content;
     assert!(content.contains("compressed to optimize context"));
     assert!(content.contains("Merkle Hash:"));
     assert!(content.contains("fn test_function"));
     assert!(content.contains("class TestClass"));
+}
+
+#[test]
+fn test_fallback_provider_resolution() {
+    assert_eq!(
+        fallback_provider(AiProvider::CloudflareWorkersAi),
+        AiProvider::OpenRouter
+    );
+    assert_eq!(
+        fallback_provider(AiProvider::OpenRouter),
+        AiProvider::CloudflareWorkersAi
+    );
+    assert_eq!(
+        default_provider_model(AiProvider::CloudflareWorkersAi),
+        "@cf/moonshotai/kimi-k2.7-code"
+    );
+    assert_eq!(
+        default_provider_model(AiProvider::OpenRouter),
+        "tencent/hy3:free"
+    );
+}
+
+#[test]
+fn test_compress_history_truncates_giant_uncompressed_tool_output() {
+    let mut giant_output = String::with_capacity(15_000);
+    for i in 0..1500 {
+        giant_output.push_str(&format!("Line {:04}: sample text content.\n", i));
+    }
+
+    let messages = vec![ChatMessage {
+        role: "tool".to_string(),
+        content: giant_output,
+        name: Some("grep_search".to_string()),
+        tool_call_id: Some("call_giant".to_string()),
+        tool_calls: None,
+    }];
+
+    let compressed = compress_history(&messages, true);
+    assert_eq!(compressed.len(), 1);
+    assert!(compressed[0].content.contains("Truncated middle output of 'grep_search'"));
+    assert!(compressed[0].content.len() < 13_000);
+}
+
+#[test]
+fn test_compress_history_converts_orphan_tool_messages() {
+    let orphan_tool = ChatMessage {
+        role: "tool".to_string(),
+        content: "Success output".to_string(),
+        name: Some("read_file".to_string()),
+        tool_call_id: Some("call_orphan_123".to_string()),
+        tool_calls: None,
+    };
+
+    let compressed = compress_history(&[orphan_tool], true);
+    assert_eq!(compressed.len(), 1);
+    assert_eq!(compressed[0].role, "user");
+    assert!(compressed[0].content.contains("[Tool result for 'read_file']: Success output"));
+    assert!(compressed[0].tool_call_id.is_none());
+    assert!(compressed[0].name.is_none());
 }

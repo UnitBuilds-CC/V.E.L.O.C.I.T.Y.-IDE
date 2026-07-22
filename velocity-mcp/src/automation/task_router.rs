@@ -151,8 +151,10 @@ pub fn partition_files_by_coupling(files: &[PathBuf], site_map: &SiteMap) -> Vec
         let callers = site_map.get_callers(file_hash);
         let dependencies = site_map.get_dependencies(file_hash);
 
-        let mut merged = false;
-        for partition in &mut partitions {
+        let mut matching_indices = Vec::new();
+
+        for (idx, partition) in partitions.iter().enumerate() {
+            let mut is_coupled = false;
             for other_file in partition.iter() {
                 let other_hash = path_identity_hash(other_file);
                 let reverse_callers = site_map.get_callers(other_hash);
@@ -162,18 +164,25 @@ pub fn partition_files_by_coupling(files: &[PathBuf], site_map: &SiteMap) -> Vec
                     || dependencies.contains(&other_hash)
                     || reverse_dependencies.contains(&file_hash)
                 {
-                    partition.push(file.clone());
-                    merged = true;
+                    is_coupled = true;
                     break;
                 }
             }
-            if merged {
-                break;
+            if is_coupled {
+                matching_indices.push(idx);
             }
         }
 
-        if !merged {
+        if matching_indices.is_empty() {
             partitions.push(vec![file.clone()]);
+        } else {
+            let first_idx = matching_indices[0];
+            partitions[first_idx].push(file.clone());
+
+            for &idx in matching_indices.iter().skip(1).rev() {
+                let drained = partitions.remove(idx);
+                partitions[first_idx].extend(drained);
+            }
         }
     }
 

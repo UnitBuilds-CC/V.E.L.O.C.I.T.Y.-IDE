@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use velocity_ide::site_map::{SiteMap, VcTriple};
+use velocity_ide::site_map::SiteMap;
 
 #[derive(Clone, Debug)]
 pub struct EditLock {
@@ -27,6 +27,68 @@ pub struct Conflict {
     pub kind: ConflictKind,
 }
 
+fn is_dir_scope(path: &Path, range: (usize, usize)) -> bool {
+    path.is_dir()
+        || path.extension().is_none()
+        || path.to_string_lossy().ends_with('/')
+        || path.to_string_lossy().ends_with('\\')
+        || range.1 == usize::MAX
+        || range.1 == usize::MAX / 4
+}
+
+fn path_identity_hash(path: &Path) -> u64 {
+    let canonical = canonicalize_scope_path(path);
+    hash_str(&canonical)
+}
+
+fn scopes_overlap(a: &Path, a_is_dir: bool, b: &Path, b_is_dir: bool) -> bool {
+    let a_canonical = canonicalize_scope_path(a);
+    let b_canonical = canonicalize_scope_path(b);
+
+    if a_canonical == b_canonical {
+        return true;
+    }
+
+    if a_is_dir && is_canonical_within_scope(&b_canonical, &a_canonical) {
+        return true;
+    }
+
+    if b_is_dir && is_canonical_within_scope(&a_canonical, &b_canonical) {
+        return true;
+    }
+
+    false
+}
+
+fn is_canonical_within_scope(path: &str, scope_root: &str) -> bool {
+    path == scope_root
+        || path
+            .strip_prefix(scope_root)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn canonicalize_scope_path(path: &Path) -> String {
+    let mut normalized = Vec::new();
+    for component in path.components() {
+        use std::path::Component;
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => normalized.push("..".to_string()),
+            Component::Normal(part) => normalized.push(part.to_string_lossy().replace('\\', "/")),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    normalized.join("/")
+}
+
+fn hash_str(s: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let d = h.finalize();
+    u64::from_le_bytes(d[..8].try_into().unwrap())
+}
+
 pub struct MediatorArena {
     locks: Mutex<HashMap<PathBuf, Vec<EditLock>>>,
 }
@@ -39,6 +101,7 @@ impl MediatorArena {
     }
 
     /// Try to acquire an edit lock. Returns Err(Conflict) if an overlap or coupling conflict is found.
+    /// Try to acquire an edit lock. Returns Err(Conflict) if an overlap or coupling conflict is found.
     pub fn acquire_lock(
         &self,
         file_path: PathBuf,
@@ -46,6 +109,7 @@ impl MediatorArena {
         agent_id: String,
         site_map: &SiteMap,
     ) -> Result<(), Conflict> {
+        self.prune_stale_locks(Duration::from_secs(1800));
         let mut locks_guard = self.locks.lock().unwrap();
 
         let requested = EditLock {
@@ -55,20 +119,25 @@ impl MediatorArena {
             timestamp: Instant::now(),
         };
 
+        let requested_canonical = canonicalize_scope_path(&file_path);
+        let requested_is_dir = is_dir_scope(&file_path, line_range);
+
         // 1. Direct path overlap and exact-file line overlap checks.
-        let requested_is_dir = file_path.is_dir();
         for (other_path, other_locks) in locks_guard.iter() {
             for existing in other_locks {
                 if existing.agent_id == agent_id {
                     continue;
                 }
 
-                let existing_is_dir = existing.file_path.is_dir();
+                let existing_is_dir = is_dir_scope(other_path, existing.line_range);
                 if !scopes_overlap(&file_path, requested_is_dir, other_path, existing_is_dir) {
                     continue;
                 }
 
-                if !requested_is_dir && !existing_is_dir && other_path == &file_path {
+                if !requested_is_dir
+                    && !existing_is_dir
+                    && canonicalize_scope_path(other_path) == requested_canonical
+                {
                     let (req_start, req_end) = line_range;
                     let (exist_start, exist_end) = existing.line_range;
                     if req_start <= exist_end && req_end >= exist_start {
@@ -98,7 +167,7 @@ impl MediatorArena {
         let callers = site_map.get_callers(file_identity_hash);
 
         for (other_path, other_locks) in locks_guard.iter() {
-            if other_path != &file_path {
+            if canonicalize_scope_path(other_path) != requested_canonical {
                 for existing in other_locks {
                     if existing.agent_id != agent_id {
                         let other_identity_hash = path_identity_hash(other_path);
@@ -123,12 +192,13 @@ impl MediatorArena {
     /// Release locks held by an agent on a file.
     pub fn release_lock(&self, file_path: &Path, agent_id: &str) {
         let mut locks_guard = self.locks.lock().unwrap();
-        if let Some(file_locks) = locks_guard.get_mut(file_path) {
-            file_locks.retain(|lock| lock.agent_id != agent_id);
-            if file_locks.is_empty() {
-                locks_guard.remove(file_path);
+        let target_canonical = canonicalize_scope_path(file_path);
+        locks_guard.retain(|path, file_locks| {
+            if canonicalize_scope_path(path) == target_canonical {
+                file_locks.retain(|lock| lock.agent_id != agent_id);
             }
-        }
+            !file_locks.is_empty()
+        });
     }
 
     /// Release every lock held by a specific agent across all tracked paths.
@@ -145,7 +215,11 @@ impl MediatorArena {
         let mut locks_guard = self.locks.lock().unwrap();
         let now = Instant::now();
         locks_guard.retain(|_, file_locks| {
-            file_locks.retain(|lock| now.duration_since(lock.timestamp) <= max_age);
+            file_locks.retain(|lock| {
+                now.checked_duration_since(lock.timestamp)
+                    .map(|d| d <= max_age)
+                    .unwrap_or(true)
+            });
             !file_locks.is_empty()
         });
     }
@@ -208,64 +282,11 @@ impl MediatorArena {
     }
 }
 
-fn path_identity_hash(path: &Path) -> u64 {
-    let canonical = canonicalize_scope_path(path);
-    hash_str(&canonical)
-}
-
-fn scopes_overlap(a: &Path, a_is_dir: bool, b: &Path, b_is_dir: bool) -> bool {
-    let a_canonical = canonicalize_scope_path(a);
-    let b_canonical = canonicalize_scope_path(b);
-
-    if a_canonical == b_canonical {
-        return true;
-    }
-
-    if a_is_dir && is_canonical_within_scope(&b_canonical, &a_canonical) {
-        return true;
-    }
-
-    if b_is_dir && is_canonical_within_scope(&a_canonical, &b_canonical) {
-        return true;
-    }
-
-    false
-}
-
-fn is_canonical_within_scope(path: &str, scope_root: &str) -> bool {
-    path == scope_root
-        || path
-            .strip_prefix(scope_root)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn canonicalize_scope_path(path: &Path) -> String {
-    let mut normalized = Vec::new();
-    for component in path.components() {
-        use std::path::Component;
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => normalized.push("..".to_string()),
-            Component::Normal(part) => normalized.push(part.to_string_lossy().replace('\\', "/")),
-            Component::RootDir | Component::Prefix(_) => {}
-        }
-    }
-    normalized.join("/")
-}
-
-fn hash_str(s: &str) -> u64 {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().unwrap())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use velocity_ide::site_map::NdaNode;
+    use velocity_ide::site_map::VcTriple;
 
     #[test]
     fn test_mediator_locks_and_conflicts() {

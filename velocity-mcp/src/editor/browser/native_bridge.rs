@@ -1,5 +1,4 @@
-use velocity_browser::{BrowserSession, SwarmSessionOrchestrator, NdaTriple, ActionPredictorEngine, StreamJitTokenizer};
-use std::collections::HashMap;
+use velocity_browser::{BrowserSession, SwarmSessionOrchestrator, NdaTriple};
 
 pub struct NativeBrowserBridge {
     pub swarm: SwarmSessionOrchestrator,

@@ -1,5 +1,5 @@
 use eframe::egui;
-use eframe::egui::{Color32, FontId, Response, Stroke, TextEdit, TextFormat};
+use eframe::egui::{Color32, FontId, Response, TextEdit, TextFormat};
 use once_cell::sync::Lazy;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{self, ThemeSet};
@@ -133,7 +133,7 @@ impl CodeEditor {
             .inner
         });
 
-        let mut response = scroll_output.inner;
+        let response = scroll_output.inner;
 
         if let Some(target_line) = pending_line {
             let mut char_idx = 0;

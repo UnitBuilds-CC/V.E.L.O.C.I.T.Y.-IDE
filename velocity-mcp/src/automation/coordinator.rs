@@ -9,7 +9,6 @@ use crate::automation::task_router::{
 use crate::orchestrator::blueprint::Task;
 use crate::orchestrator::worker::{spawn_live_worker, WorkerAssignment};
 use crate::orchestrator::TaskId;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;

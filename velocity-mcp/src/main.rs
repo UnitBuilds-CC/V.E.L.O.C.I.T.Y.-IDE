@@ -288,7 +288,7 @@ fn main() {
                         }
                         ipc::telemetry_share::TelemetryRequest::PresenceUpdate {
                             cursor_line,
-                            cursor_col,
+                            cursor_col: _,
                         } => {
                             let start_time = std::time::Instant::now();
 

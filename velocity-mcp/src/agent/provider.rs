@@ -95,12 +95,12 @@ pub fn infer_openrouter_model_info(item: &serde_json::Value) -> Option<ModelInfo
         || lower.contains("/o1")
         || lower.contains("/o3");
 
-    let supports_tools = false;
+    let supports_tools = true;
 
     Some(ModelInfo {
         label,
         id,
-        api_style: ApiStyle::OpenAiChat,
+        api_style: ApiStyle::OpenAiTools,
         supports_tools,
         supports_thinking,
     })
@@ -113,6 +113,7 @@ pub fn fetch_model_catalog(accounts: &[crate::usage::CloudflareAccount]) -> Resu
             account.id
         );
         let response = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(15))
             .set("Authorization", &format!("Bearer {}", account.token))
             .set("Accept", "application/json")
             .call()
@@ -167,6 +168,7 @@ pub fn fetch_openrouter_models(
         };
 
         match ureq::get("https://openrouter.ai/api/v1/models")
+            .timeout(std::time::Duration::from_secs(15))
             .set("Authorization", &format!("Bearer {}", current_key))
             .set("HTTP-Referer", "https://velocity-ide.local")
             .set("X-Title", "Velocity Cognitive IDE")
@@ -270,6 +272,7 @@ pub fn enrich_model_profile(accounts: &[crate::usage::CloudflareAccount], profil
         account.id, encoded_model
     );
     let Ok(response) = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
         .set("Authorization", &format!("Bearer {}", account.token))
         .set("Accept", "application/json")
         .call()
@@ -299,4 +302,18 @@ pub fn enrich_model_profile(accounts: &[crate::usage::CloudflareAccount], profil
         enriched.api_style = ApiStyle::OpenAiChat;
     }
     enriched
+}
+
+pub fn fallback_provider(current: AiProvider) -> AiProvider {
+    match current {
+        AiProvider::CloudflareWorkersAi => AiProvider::OpenRouter,
+        AiProvider::OpenRouter => AiProvider::CloudflareWorkersAi,
+    }
+}
+
+pub fn default_provider_model(provider: AiProvider) -> String {
+    match provider {
+        AiProvider::CloudflareWorkersAi => "@cf/moonshotai/kimi-k2.7-code".to_string(),
+        AiProvider::OpenRouter => "tencent/hy3:free".to_string(),
+    }
 }

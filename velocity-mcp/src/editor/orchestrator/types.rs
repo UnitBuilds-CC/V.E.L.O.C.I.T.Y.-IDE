@@ -1,7 +1,7 @@
 use crate::automation::{
     AgentTaskKind, DecompositionStyle, RoutedSubAgentTask,
 };
-use crate::orchestrator::blueprint::{Task, TaskGraph};
+use crate::orchestrator::blueprint::TaskGraph;
 use crate::orchestrator::registry::{OrchestratorRegistry, TaskStatus};
 use crate::orchestrator::worker::{WorkerResult, WorkerThreadSnapshot};
 use crate::orchestrator::TaskId;

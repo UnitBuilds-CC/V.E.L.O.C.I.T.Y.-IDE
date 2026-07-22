@@ -13,6 +13,7 @@ const SIDEBAR_BUFFER_SIZE: usize = 256;
 const SIDEBAR_TEXT_POOL_SIZE: usize = 16384; // 16 KB
 
 /// Sidebar entry types
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SidebarEntryType {
@@ -27,6 +28,7 @@ pub enum SidebarEntryType {
 }
 
 /// Sidebar entry (fixed 48 bytes)
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct SidebarEntry {
     pub entry_type: SidebarEntryType,

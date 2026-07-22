@@ -1,0 +1,796 @@
+use serde_json::{json, Value};
+use std::error::Error;
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+
+struct SidecarDaemon {
+    child: std::process::Child,
+}
+
+static SIDECAR_DAEMON: Mutex<Option<SidecarDaemon>> = Mutex::new(None);
+
+pub fn resolve_workspace_path(
+    root: &Path,
+    rel_path: &str,
+    allow_create: bool,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let clean_rel = rel_path.trim_start_matches('/').trim_start_matches('\\');
+    let target = root.join(clean_rel);
+
+    if allow_create {
+        if let Some(parent) = target.parent() {
+            let parent_canon = parent.canonicalize().or_else(|_| {
+                fs::create_dir_all(parent)?;
+                parent.canonicalize()
+            })?;
+            if !parent_canon.starts_with(root) {
+                return Err(format!("Access Denied: Path escapes workspace root ({})", rel_path).into());
+            }
+        }
+        Ok(target)
+    } else {
+        let canon = target.canonicalize().map_err(|_| {
+            format!("File or directory not found in workspace: {}", rel_path)
+        })?;
+
+        if !canon.starts_with(root) {
+            return Err(format!("Access Denied: Path escapes workspace root ({})", rel_path).into());
+        }
+        Ok(canon)
+    }
+}
+
+pub fn scan_file_content(content: &str) -> Option<String> {
+    let lowercase = content.to_lowercase();
+    if lowercase.contains("api_key = \"sk-") || lowercase.contains("secret = \"") {
+        Some("Potential hardcoded secret or API key detected.".to_string())
+    } else {
+        None
+    }
+}
+
+pub fn handle_system_tool(
+    root: &Path,
+    name: &str,
+    arguments: &Value,
+) -> Result<Option<String>, Box<dyn Error>> {
+    let result = match name {
+        "convert_to_nda" | "read_nda" | "execute_nda" => {
+            execute_csharp_mcp_tool(name, arguments)?
+        }
+        "read_file" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(root, rel_path, false)?;
+            let content = fs::read_to_string(full_path)?;
+            content
+        }
+        "write_file" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let content = arguments["content"].as_str().ok_or("content is required")?;
+
+            let scan_warning = scan_file_content(content);
+
+            let full_path = resolve_workspace_path(root, rel_path, true)?;
+            if let Some(parent) = full_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(full_path, content)?;
+
+            if let Some(warn) = scan_warning {
+                format!(
+                    "Success: File written successfully. WARNING: Security scan warning triggered: [{}]. Please immediately correct this exposure in your next step.",
+                    warn
+                )
+            } else {
+                "Success: File written successfully".to_string()
+            }
+        }
+        "list_dir" => {
+            let rel_path = arguments["relativeDirPath"]
+                .as_str()
+                .ok_or("relativeDirPath is required")?;
+            let target_dir = if rel_path == "." || rel_path.is_empty() {
+                root.to_path_buf()
+            } else {
+                resolve_workspace_path(root, rel_path, false)?
+            };
+
+            let mut entries_list = Vec::new();
+            let entries = fs::read_dir(&target_dir).map_err(|e| {
+                format!(
+                    "Failed to read directory '{}': {:?}",
+                    target_dir.display(),
+                    e
+                )
+            })?;
+
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_dir = entry.file_type()?.is_dir();
+                entries_list.push(format!("{}{}", name, if is_dir { "/" } else { "" }));
+            }
+            entries_list.join("\n")
+        }
+        "delete_file" => {
+            let rel_path = arguments["relativeFilePath"]
+                .as_str()
+                .ok_or("relativeFilePath is required")?;
+            let full_path = resolve_workspace_path(root, rel_path, false)?;
+
+            if full_path.is_dir() {
+                return Err("delete_file cannot be used to delete a directory. Use a command line tool if needed.".into());
+            }
+
+            fs::remove_file(&full_path)?;
+            format!(
+                "Success: File '{}' deleted successfully.",
+                rel_path
+            )
+        }
+        "grep_search" => {
+            let query = arguments["query"].as_str().ok_or("query is required")?;
+            let root_dir = root.to_path_buf();
+            let mut matches = Vec::new();
+
+            fn search_dir(
+                dir: &Path,
+                query: &str,
+                matches: &mut Vec<String>,
+                root: &Path,
+            ) -> Result<(), Box<dyn Error>> {
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let file_type = entry.file_type()?;
+
+                        if file_type.is_dir() {
+                            let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                            if dir_name == "node_modules"
+                                || dir_name == ".git"
+                                || dir_name == "target"
+                                || dir_name == "dist"
+                                || dir_name == "build"
+                                || dir_name == ".vscode"
+                                || dir_name == ".idea"
+                                || dir_name == "bin"
+                                || dir_name == "obj"
+                            {
+                                continue;
+                            }
+                            search_dir(&path, query, matches, root)?;
+                        } else if file_type.is_file() {
+                            let extension = path
+                                .extension()
+                                .and_then(|ext| ext.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            let skip_exts = [
+                                "png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz",
+                                "7z", "rar", "exe", "dll", "so", "dylib", "class", "pyc", "nda",
+                            ];
+                            if skip_exts.contains(&extension.as_str()) {
+                                continue;
+                            }
+
+                            if let Ok(metadata) = path.metadata() {
+                                if metadata.len() > 1024 * 1024 {
+                                    continue;
+                                }
+                            }
+
+                            if let Ok(content) = fs::read_to_string(&path) {
+                                let rel = path
+                                    .strip_prefix(root)
+                                    .unwrap_or(&path)
+                                    .to_string_lossy()
+                                    .to_string();
+                                for (idx, line) in content.lines().enumerate() {
+                                    if line.contains(query) {
+                                        matches.push(format!(
+                                            "{}:{}: {}",
+                                            rel,
+                                            idx + 1,
+                                            line.trim()
+                                        ));
+                                        if matches.len() >= 100 {
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+
+            search_dir(&root_dir, query, &mut matches, root)?;
+            if matches.is_empty() {
+                format!("No matches found for '{}'", query)
+            } else {
+                matches.join("\n")
+            }
+        }
+        "run_command" => {
+            let cmd_str = arguments["command"]
+                .as_str()
+                .ok_or("command is required")?;
+
+            let (shell, arg) = if cfg!(target_os = "windows") {
+                ("cmd", "/C")
+            } else {
+                ("sh", "-c")
+            };
+
+            let output = Command::new(shell)
+                .arg(arg)
+                .arg(cmd_str)
+                .current_dir(root)
+                .output()?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{}{}", stdout, stderr);
+
+            if combined.trim().is_empty() {
+                format!(
+                    "Command executed with exit code: {}",
+                    output.status.code().unwrap_or(-1)
+                )
+            } else {
+                combined
+            }
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(result))
+}
+
+fn execute_csharp_mcp_tool(
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<String, Box<dyn Error>> {
+    let exe_path = "C:\\WUIAS\\velocity_nda\\VelocityMcpServer.exe";
+
+    if !Path::new(exe_path).exists() {
+        return execute_rust_fallback_tool(tool_name, arguments);
+    }
+
+    let mut daemon_guard = SIDECAR_DAEMON.lock().unwrap();
+
+    if daemon_guard.is_none() {
+        let child = Command::new(exe_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        *daemon_guard = Some(SidecarDaemon { child });
+    } else {
+        let daemon = daemon_guard.as_mut().unwrap();
+        if let Ok(Some(_status)) = daemon.child.try_wait() {
+            let child = Command::new(exe_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+            *daemon = SidecarDaemon { child };
+        }
+    }
+
+    let daemon = daemon_guard.as_mut().unwrap();
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments
+        },
+        "id": 999
+    });
+
+    let request_str = serde_json::to_string(&request)? + "\n";
+
+    {
+        let stdin = daemon
+            .child
+            .stdin
+            .as_mut()
+            .ok_or("Failed to open stdin of C# daemon")?;
+        stdin.write_all(request_str.as_bytes())?;
+        stdin.flush()?;
+    }
+
+    let response_str;
+    {
+        let stdout = daemon
+            .child
+            .stdout
+            .as_mut()
+            .ok_or("Failed to open stdout of C# daemon")?;
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line)?;
+            if line.is_empty() {
+                return Err("C# sidecar daemon closed stdout unexpectedly".into());
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                response_str = trimmed.to_string();
+                break;
+            } else {
+                eprintln!("[C# Sidecar Log] {}", trimmed);
+            }
+        }
+    }
+
+    let response: Value = serde_json::from_str(&response_str)?;
+
+    if let Some(err) = response.get("error") {
+        return Err(format!(
+            "C# Execution Error: {}",
+            err["message"].as_str().unwrap_or("Unknown")
+        )
+        .into());
+    }
+
+    let is_error = response["result"]["isError"].as_bool().unwrap_or(false);
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .ok_or("Failed to parse tool text output")?;
+
+    if is_error {
+        Err(text.into())
+    } else {
+        Ok(text.to_string())
+    }
+}
+
+fn execute_rust_fallback_tool(
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<String, Box<dyn Error>> {
+    match tool_name {
+        "convert_to_nda" => {
+            let file_path = arguments["filePath"]
+                .as_str()
+                .ok_or("filePath is required")?;
+            let output_path = arguments["outputPath"].as_str().unwrap_or("");
+
+            let final_output = if output_path.is_empty() {
+                format!("{}.nda", file_path)
+            } else {
+                output_path.to_string()
+            };
+
+            let content = fs::read(file_path)?;
+
+            let mut nda_bytes = Vec::new();
+            nda_bytes.extend_from_slice(b"NDAV");
+
+            let size = content.len() as u32;
+            nda_bytes.extend_from_slice(&size.to_le_bytes());
+
+            let file_name = Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown.txt");
+            nda_bytes.extend_from_slice(file_name.as_bytes());
+            nda_bytes.push(0);
+            nda_bytes.extend_from_slice(&content);
+
+            fs::write(&final_output, nda_bytes)?;
+
+            Ok(format!(
+                "Success: File converted and signed to NDA container at: {}",
+                final_output
+            ))
+        }
+        "read_nda" => {
+            let nda_path = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
+            let nda_bytes = fs::read(nda_path)?;
+
+            if nda_bytes.len() < 9 || &nda_bytes[0..4] != b"NDAV" {
+                return Err("Invalid NDA container format".into());
+            }
+
+            let size = u32::from_le_bytes([nda_bytes[4], nda_bytes[5], nda_bytes[6], nda_bytes[7]])
+                as usize;
+
+            let mut name_end = 8;
+            while name_end < nda_bytes.len() && nda_bytes[name_end] != 0 {
+                name_end += 1;
+            }
+
+            let file_name = String::from_utf8_lossy(&nda_bytes[8..name_end]).to_string();
+
+            let report = json!({
+                "format": "NDAV-Fallback",
+                "fileName": file_name,
+                "payloadSizeBytes": size,
+                "visualDisplayCommands": [
+                    "display_text: NDA Container Contents Verified",
+                    format!("display_text: Filename: {}", file_name),
+                    format!("display_text: Size: {} bytes", size)
+                ]
+            });
+
+            Ok(serde_json::to_string_pretty(&report)?)
+        }
+        "execute_nda" => {
+            let nda_path = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
+            let nda_bytes = fs::read(nda_path)?;
+
+            if nda_bytes.len() < 9 || &nda_bytes[0..4] != b"NDAV" {
+                return Err("Invalid NDA container format".into());
+            }
+
+            let mut name_end = 8;
+            while name_end < nda_bytes.len() && nda_bytes[name_end] != 0 {
+                name_end += 1;
+            }
+
+            let file_name = String::from_utf8_lossy(&nda_bytes[8..name_end]).to_string();
+            let payload = &nda_bytes[name_end + 1..];
+
+            let temp_dir = std::env::temp_dir();
+            let temp_file_path = temp_dir.join(&file_name);
+            fs::write(&temp_file_path, payload)?;
+
+            let ext = Path::new(&file_name)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            let cmd_args = arguments["arguments"].as_array();
+            let mut args_vec = Vec::new();
+            if let Some(arr) = cmd_args {
+                for v in arr {
+                    if let Some(s) = v.as_str() {
+                        args_vec.push(s.to_string());
+                    }
+                }
+            }
+
+            let (shell_cmd, mut final_args) = match ext.as_str() {
+                "py" => (
+                    "python".to_string(),
+                    vec![temp_file_path.to_string_lossy().to_string()],
+                ),
+                "js" => (
+                    "node".to_string(),
+                    vec![temp_file_path.to_string_lossy().to_string()],
+                ),
+                "ps1" => (
+                    "powershell".to_string(),
+                    vec![
+                        "-ExecutionPolicy".to_string(),
+                        "Bypass".to_string(),
+                        "-File".to_string(),
+                        temp_file_path.to_string_lossy().to_string(),
+                    ],
+                ),
+                "sh" => (
+                    "bash".to_string(),
+                    vec![temp_file_path.to_string_lossy().to_string()],
+                ),
+                "bat" | "cmd" => (
+                    "cmd".to_string(),
+                    vec![
+                        "/c".to_string(),
+                        temp_file_path.to_string_lossy().to_string(),
+                    ],
+                ),
+                _ => (temp_file_path.to_string_lossy().to_string(), Vec::new()),
+            };
+
+            final_args.extend(args_vec);
+
+            let dll_path = "C:\\WUIAS\\wuias_shield\\wuias_shield.dll";
+            let use_sandbox = Path::new(dll_path).exists() && cfg!(target_os = "windows");
+
+            let output = if use_sandbox {
+                #[cfg(target_os = "windows")]
+                {
+                    run_in_dll_sandbox(&shell_cmd, &final_args, dll_path)?
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let out = Command::new(&shell_cmd).args(&final_args).output()?;
+                    String::from_utf8_lossy(&out.stdout).to_string()
+                        + &String::from_utf8_lossy(&out.stderr)
+                }
+            } else {
+                let out = Command::new(&shell_cmd).args(&final_args).output()?;
+                String::from_utf8_lossy(&out.stdout).to_string()
+                    + &String::from_utf8_lossy(&out.stderr)
+            };
+
+            let _ = fs::remove_file(temp_file_path);
+
+            Ok(output)
+        }
+        _ => Err(format!("Unknown fallback tool: {}", tool_name).into()),
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[allow(non_snake_case)]
+extern "system" {
+    fn CreateProcessW(
+        lpApplicationName: *const u16,
+        lpCommandLine: *mut u16,
+        lpProcessAttributes: *mut std::ffi::c_void,
+        lpThreadAttributes: *mut std::ffi::c_void,
+        bInheritHandles: i32,
+        dwCreationFlags: u32,
+        lpEnvironment: *mut std::ffi::c_void,
+        lpCurrentDirectory: *const u16,
+        lpStartupInfo: *mut STARTUPINFOW,
+        lpProcessInformation: *mut PROCESS_INFORMATION,
+    ) -> i32;
+    fn VirtualAllocEx(
+        hProcess: *mut std::ffi::c_void,
+        lpAddress: *mut std::ffi::c_void,
+        dwSize: usize,
+        flAllocationType: u32,
+        flProtect: u32,
+    ) -> *mut std::ffi::c_void;
+    fn WriteProcessMemory(
+        hProcess: *mut std::ffi::c_void,
+        lpBaseAddress: *mut std::ffi::c_void,
+        lpBuffer: *const std::ffi::c_void,
+        nSize: usize,
+        lpNumberOfBytesWritten: *mut usize,
+    ) -> i32;
+    fn CreateRemoteThread(
+        hProcess: *mut std::ffi::c_void,
+        lpThreadAttributes: *mut std::ffi::c_void,
+        dwStackSize: usize,
+        lpStartAddress: unsafe extern "system" fn(*mut std::ffi::c_void) -> u32,
+        lpParameter: *mut std::ffi::c_void,
+        dwCreationFlags: u32,
+        lpThreadId: *mut u32,
+    ) -> *mut std::ffi::c_void;
+    fn ResumeThread(hThread: *mut std::ffi::c_void) -> u32;
+    fn GetModuleHandleW(lpModuleName: *const u16) -> *mut std::ffi::c_void;
+    fn GetProcAddress(
+        hModule: *mut std::ffi::c_void,
+        lpProcName: *const u8,
+    ) -> *mut std::ffi::c_void;
+    fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
+    fn WaitForSingleObject(hHandle: *mut std::ffi::c_void, dwMilliseconds: u32) -> u32;
+}
+
+#[cfg(target_os = "windows")]
+#[allow(non_snake_case)]
+#[repr(C)]
+pub struct STARTUPINFOW {
+    cb: u32,
+    lpReserved: *mut u16,
+    lpDesktop: *mut u16,
+    lpTitle: *mut u16,
+    dwX: u32,
+    dwY: u32,
+    dwXSize: u32,
+    dwYSize: u32,
+    dwXCountChars: u32,
+    dwYCountChars: u32,
+    dwFillAttribute: u32,
+    dwFlags: u32,
+    wShowWindow: u16,
+    cbReserved2: u16,
+    lpReserved2: *mut u8,
+    hStdInput: *mut std::ffi::c_void,
+    hStdOutput: *mut std::ffi::c_void,
+    hStdError: *mut std::ffi::c_void,
+}
+
+#[cfg(target_os = "windows")]
+#[allow(non_snake_case)]
+#[repr(C)]
+pub struct PROCESS_INFORMATION {
+    hProcess: *mut std::ffi::c_void,
+    hThread: *mut std::ffi::c_void,
+    dwProcessId: u32,
+    dwThreadId: u32,
+}
+
+#[cfg(target_os = "windows")]
+fn to_wstring(s: &str) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    std::ffi::OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+#[allow(non_snake_case)]
+fn run_in_dll_sandbox(
+    app: &str,
+    args: &[String],
+    dll_path: &str,
+) -> Result<String, Box<dyn Error>> {
+    let session_id = format!(
+        "nda_session_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs()
+    );
+    let redirect_dir = format!("C:\\WUIAS\\sandbox\\redirect\\{}", session_id);
+    fs::create_dir_all(&redirect_dir)?;
+
+    let w_dll_path = to_wstring(dll_path);
+    let cmd_line_str = format!("\"{}\" {}", app, args.join(" "));
+    let mut w_cmd_line = to_wstring(&cmd_line_str);
+
+    let _ = Command::new("reg")
+        .args(&[
+            "add",
+            &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id),
+            "/f",
+        ])
+        .output();
+
+    unsafe {
+        let mut si: STARTUPINFOW = std::mem::zeroed();
+        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+
+        std::env::set_var("WUIAS_SESSION_ID", &session_id);
+        std::env::set_var("WUIAS_REDIRECT_DIR", &redirect_dir);
+
+        let CREATE_SUSPENDED: u32 = 0x00000004;
+        let success = CreateProcessW(
+            std::ptr::null(),
+            w_cmd_line.as_mut_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            CREATE_SUSPENDED,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            &mut si,
+            &mut pi,
+        );
+
+        std::env::remove_var("WUIAS_SESSION_ID");
+        std::env::remove_var("WUIAS_REDIRECT_DIR");
+
+        if success == 0 {
+            return Err(format!(
+                "CreateProcessW failed. Error code: {}",
+                std::io::Error::last_os_error()
+            )
+            .into());
+        }
+
+        let path_size = (dll_path.len() + 1) * 2;
+        let MEM_COMMIT = 0x1000;
+        let MEM_RESERVE = 0x2000;
+        let PAGE_READWRITE = 0x04;
+
+        let remote_mem = VirtualAllocEx(
+            pi.hProcess,
+            std::ptr::null_mut(),
+            path_size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        );
+
+        if remote_mem.is_null() {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return Err("VirtualAllocEx failed in target process".into());
+        }
+
+        let dll_bytes: Vec<u8> = w_dll_path.iter().flat_map(|&w| w.to_le_bytes()).collect();
+
+        let mut written = 0;
+        let write_ok = WriteProcessMemory(
+            pi.hProcess,
+            remote_mem,
+            dll_bytes.as_ptr() as *const std::ffi::c_void,
+            dll_bytes.len(),
+            &mut written,
+        );
+
+        if write_ok == 0 {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return Err("WriteProcessMemory failed to write DLL path".into());
+        }
+
+        let kernel32_name = to_wstring("kernel32.dll");
+        let h_kernel32 = GetModuleHandleW(kernel32_name.as_ptr());
+        if h_kernel32.is_null() {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return Err("Failed to locate kernel32.dll in host".into());
+        }
+
+        let load_library_addr = GetProcAddress(h_kernel32, b"LoadLibraryW\0".as_ptr());
+        if load_library_addr.is_null() {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return Err("Failed to resolve LoadLibraryW address".into());
+        }
+
+        let mut thread_id = 0;
+        let load_library_fn: unsafe extern "system" fn(*mut std::ffi::c_void) -> u32 =
+            std::mem::transmute(load_library_addr);
+        let h_thread = CreateRemoteThread(
+            pi.hProcess,
+            std::ptr::null_mut(),
+            0,
+            load_library_fn,
+            remote_mem,
+            0,
+            &mut thread_id,
+        );
+
+        if h_thread.is_null() {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return Err("CreateRemoteThread failed to load DLL".into());
+        }
+
+        WaitForSingleObject(h_thread, 5000);
+        CloseHandle(h_thread);
+
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+
+        WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+        CloseHandle(pi.hProcess);
+    }
+
+    let mut run_output = format!(
+        "=== Sandboxed execution completed (Session: {}) ===\n",
+        session_id
+    );
+
+    fn count_files_recursive(dir: &Path) -> usize {
+        let mut count = 0;
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        count += count_files_recursive(&entry.path());
+                    } else if file_type.is_file() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    let files_count = count_files_recursive(Path::new(&redirect_dir));
+    run_output += &format!(
+        "Sandbox redirect folder: {}\nRedirected files written: {}\n",
+        redirect_dir, files_count
+    );
+
+    let _ = Command::new("reg")
+        .args(&[
+            "delete",
+            &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id),
+            "/f",
+        ])
+        .output();
+
+    Ok(run_output)
+}

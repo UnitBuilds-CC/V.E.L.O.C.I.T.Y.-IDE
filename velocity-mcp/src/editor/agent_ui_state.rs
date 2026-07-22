@@ -58,7 +58,7 @@ pub struct ThinkingPanelState {
     // Ring buffer for thinking steps
     steps: [ThinkingStepEntry; THINKING_BUFFER_SIZE],
     step_count: usize,
-    step_head: usize, // For circular insertion
+    step_head: usize, // Next write index for circular insertion
 
     // Fixed text pool for thinking content (no Vec)
     text_pool: [u8; 16384], // 16KB fixed pool
@@ -99,12 +99,6 @@ impl ThinkingPanelState {
 
     /// Start new thinking phase
     pub fn start_phase(&mut self, phase: ThinkingPhase) {
-        if self.step_count >= THINKING_BUFFER_SIZE {
-            self.step_head = (self.step_head + 1) % THINKING_BUFFER_SIZE;
-        } else {
-            self.step_count += 1;
-        }
-
         let idx = self.step_head;
         self.steps[idx] = ThinkingStepEntry {
             phase,
@@ -113,6 +107,10 @@ impl ThinkingPanelState {
             text_offset: self.text_used as u16,
             text_len: 0,
         };
+        self.step_head = (self.step_head + 1) % THINKING_BUFFER_SIZE;
+        if self.step_count < THINKING_BUFFER_SIZE {
+            self.step_count += 1;
+        }
         self.current_phase = Some(phase);
     }
 
@@ -120,8 +118,13 @@ impl ThinkingPanelState {
     pub fn complete_phase(&mut self) {
         if let Some(idx) = self.get_current_step_idx() {
             self.steps[idx].completed = true;
-            self.steps[idx].text_len =
-                (self.text_used - (self.steps[idx].text_offset as usize)) as u16;
+            let offset = self.steps[idx].text_offset as usize;
+            if self.text_used >= offset {
+                self.steps[idx].text_len = (self.text_used - offset) as u16;
+            }
+        }
+        if self.auto_collapse {
+            self.expanded = false;
         }
     }
 
@@ -130,14 +133,10 @@ impl ThinkingPanelState {
         if self.step_count == 0 {
             return None;
         }
-        Some(if self.step_count >= THINKING_BUFFER_SIZE {
-            self.step_head
-        } else {
-            self.step_count - 1
-        })
+        Some((self.step_head + THINKING_BUFFER_SIZE - 1) % THINKING_BUFFER_SIZE)
     }
 
-    /// Get thinking text for a step (zero-copy slice)
+    /// Get thinking text for a step by slot index (zero-copy slice)
     pub fn get_step_text(&self, idx: usize) -> &str {
         if idx >= THINKING_BUFFER_SIZE {
             return "";
@@ -145,15 +144,20 @@ impl ThinkingPanelState {
         let entry = self.steps[idx];
         let start = entry.text_offset as usize;
         let end = start + entry.text_len as usize;
+        if end > self.text_pool.len() {
+            return "";
+        }
         std::str::from_utf8(&self.text_pool[start..end]).unwrap_or("")
     }
 
-    /// Get visible steps (zero-copy)
+    /// Get visible steps (zero-copy iterator)
     pub fn visible_steps(&self) -> impl Iterator<Item = (usize, &ThinkingStepEntry)> {
         let count = self.step_count.min(THINKING_BUFFER_SIZE);
+        let head = self.step_head;
+        let step_count = self.step_count;
         (0..count).map(move |i| {
-            let idx = if self.step_count >= THINKING_BUFFER_SIZE {
-                (self.step_head + i) % THINKING_BUFFER_SIZE
+            let idx = if step_count >= THINKING_BUFFER_SIZE {
+                (head + i) % THINKING_BUFFER_SIZE
             } else {
                 i
             };
@@ -164,6 +168,14 @@ impl ThinkingPanelState {
     /// Get total number of thinking steps recorded
     pub fn step_count(&self) -> usize {
         self.step_count
+    }
+
+    /// Clear all thinking state
+    pub fn clear(&mut self) {
+        self.step_count = 0;
+        self.step_head = 0;
+        self.text_used = 0;
+        self.current_phase = None;
     }
 }
 
@@ -210,15 +222,17 @@ impl Default for ApprovalManagerState {
 }
 
 impl ApprovalManagerState {
-    /// Add approval (returns false if full)
+    /// Add approval (returns false if text pool full, wraps ring buffer if full)
     pub fn add_approval(&mut self, tool_id: u32, tool_name: &str, auto_approve: bool) -> bool {
-        if self.count >= APPROVAL_BUFFER_SIZE {
-            return false;
-        }
-
         let name_bytes = tool_name.as_bytes();
         if self.text_used + name_bytes.len() >= self.text_pool.len() {
             return false;
+        }
+
+        if self.count >= APPROVAL_BUFFER_SIZE {
+            // Evict oldest entry in ring buffer
+            self.head = (self.head + 1) % APPROVAL_BUFFER_SIZE;
+            self.count -= 1;
         }
 
         let idx = (self.head + self.count) % APPROVAL_BUFFER_SIZE;
@@ -237,25 +251,29 @@ impl ApprovalManagerState {
         true
     }
 
-    /// Remove approval at index
+    /// Remove approval at index relative to head
     pub fn remove(&mut self, idx: usize) -> bool {
         if idx >= self.count {
             return false;
         }
-        // Shift ring buffer
-        if self.count < APPROVAL_BUFFER_SIZE {
-            let actual_idx = (self.head + idx) % APPROVAL_BUFFER_SIZE;
+        if idx == 0 {
+            self.head = (self.head + 1) % APPROVAL_BUFFER_SIZE;
+        } else {
             for i in idx..self.count - 1 {
-                let from = (self.head + i + 1) % APPROVAL_BUFFER_SIZE;
                 let to = (self.head + i) % APPROVAL_BUFFER_SIZE;
+                let from = (self.head + i + 1) % APPROVAL_BUFFER_SIZE;
                 self.pending[to] = self.pending[from];
             }
         }
         self.count = self.count.saturating_sub(1);
+        if self.count == 0 {
+            self.head = 0;
+            self.text_used = 0;
+        }
         true
     }
 
-    /// Get tool name for approval (zero-copy)
+    /// Get tool name for approval at logical index (zero-copy)
     pub fn get_tool_name(&self, idx: usize) -> &str {
         if idx >= self.count {
             return "";
@@ -264,14 +282,19 @@ impl ApprovalManagerState {
         let entry = self.pending[actual_idx];
         let start = entry.tool_name_offset as usize;
         let end = start + entry.tool_name_len as usize;
+        if end > self.text_pool.len() {
+            return "";
+        }
         std::str::from_utf8(&self.text_pool[start..end]).unwrap_or("")
     }
 
-    /// Get pending approvals count
+    /// Get pending approvals count (correctly indexing ring buffer)
     pub fn pending_count(&self) -> usize {
-        self.pending[..self.count]
-            .iter()
-            .filter(|e| !e.auto_approve)
+        (0..self.count)
+            .filter(|&i| {
+                let idx = (self.head + i) % APPROVAL_BUFFER_SIZE;
+                !self.pending[idx].auto_approve
+            })
             .count()
     }
 
@@ -281,7 +304,16 @@ impl ApprovalManagerState {
     }
 }
 
-/// Agent metrics with fixed history
+/// Historical metrics entry
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MetricsHistoryEntry {
+    pub timestamp_ms: u32,
+    pub tokens_used: u32,
+    pub estimated_cost: u32,
+    pub tool_duration_ms: u32,
+}
+
+/// Agent metrics with fixed history ring buffer
 pub struct AgentMetricsState {
     pub state: AgentState,
     pub tokens_used: u32,
@@ -291,6 +323,9 @@ pub struct AgentMetricsState {
     pub tool_call_count: u32,
     pub last_tool_duration_ms: u32,
     pub thinking_enabled: bool,
+    pub history: [MetricsHistoryEntry; METRICS_HISTORY_SIZE],
+    pub history_count: usize,
+    pub history_head: usize,
 }
 
 impl Default for AgentMetricsState {
@@ -304,11 +339,29 @@ impl Default for AgentMetricsState {
             tool_call_count: 0,
             last_tool_duration_ms: 0,
             thinking_enabled: false,
+            history: [MetricsHistoryEntry::default(); METRICS_HISTORY_SIZE],
+            history_count: 0,
+            history_head: 0,
         }
     }
 }
 
 impl AgentMetricsState {
+    pub fn record_snapshot(&mut self, tool_duration_ms: u32) {
+        let idx = self.history_head;
+        self.history[idx] = MetricsHistoryEntry {
+            timestamp_ms: (std::time::Instant::now().elapsed().as_millis() as u32),
+            tokens_used: self.tokens_used,
+            estimated_cost: self.estimated_cost,
+            tool_duration_ms,
+        };
+        self.history_head = (self.history_head + 1) % METRICS_HISTORY_SIZE;
+        if self.history_count < METRICS_HISTORY_SIZE {
+            self.history_count += 1;
+        }
+        self.last_tool_duration_ms = tool_duration_ms;
+    }
+
     pub fn budget_percentage(&self) -> u8 {
         if self.tokens_max == 0 {
             0
@@ -340,6 +393,7 @@ pub enum WarningLevel {
 }
 
 /// Complete agentic UI state container (all ring buffers, zero allocation)
+#[allow(dead_code)]
 pub struct AgentUiState {
     pub thinking: ThinkingPanelState,
     pub approvals: ApprovalManagerState,
@@ -367,6 +421,24 @@ mod tests {
         assert!(state.append_token("test token"));
         state.complete_phase();
         assert_eq!(state.step_count, 1);
+        let visible: Vec<_> = state.visible_steps().collect();
+        assert_eq!(visible.len(), 1);
+        let (idx, entry) = visible[0];
+        assert_eq!(entry.phase, ThinkingPhase::Analysis);
+        assert_eq!(state.get_step_text(idx), "test token");
+    }
+
+    #[test]
+    fn test_thinking_buffer_wrapping() {
+        let mut state = ThinkingPanelState::default();
+        for _ in 0..THINKING_BUFFER_SIZE + 10 {
+            state.start_phase(ThinkingPhase::Planning);
+            state.append_token("step");
+            state.complete_phase();
+        }
+        assert_eq!(state.step_count(), THINKING_BUFFER_SIZE);
+        let visible: Vec<_> = state.visible_steps().collect();
+        assert_eq!(visible.len(), THINKING_BUFFER_SIZE);
     }
 
     #[test]
@@ -374,8 +446,22 @@ mod tests {
         let mut state = ApprovalManagerState::default();
         assert!(state.add_approval(1, "test_tool", false));
         assert_eq!(state.pending_count(), 1);
+        assert_eq!(state.get_tool_name(0), "test_tool");
         assert!(state.remove(0));
         assert_eq!(state.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_approval_ring_buffer_full_eviction() {
+        let mut state = ApprovalManagerState::default();
+        for i in 0..APPROVAL_BUFFER_SIZE + 5 {
+            assert!(state.add_approval(i as u32, &format!("tool_{}", i), false));
+        }
+        assert_eq!(state.total_count(), APPROVAL_BUFFER_SIZE);
+        assert_eq!(state.get_tool_name(0), "tool_5"); // oldest 5 evicted
+        assert!(state.remove(0));
+        assert_eq!(state.total_count(), APPROVAL_BUFFER_SIZE - 1);
+        assert_eq!(state.get_tool_name(0), "tool_6");
     }
 
     #[test]
@@ -392,4 +478,13 @@ mod tests {
         state.tokens_used = 9500;
         assert_eq!(state.warning_level(), WarningLevel::Critical);
     }
+
+    #[test]
+    fn test_metrics_history_ring_buffer() {
+        let mut state = AgentMetricsState::default();
+        state.record_snapshot(150);
+        assert_eq!(state.history_count, 1);
+        assert_eq!(state.last_tool_duration_ms, 150);
+    }
 }
+

@@ -1,0 +1,872 @@
+use crate::registry::types::Tool;
+use serde_json::json;
+
+pub fn get_browser_tools() -> Vec<Tool> {
+    vec![
+        Tool {
+            name: "web_navigate".to_string(),
+            description: "Navigate and crawl a page with the current static AOM-first browser engine. It captures a truthful live snapshot, persists SiteMap facts, and writes browser artifacts for links, forms, and cookies discovered in fetched HTML.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Absolute URL to navigate to and crawl." },
+                    "concurrency": { "type": "integer", "description": "Unused by the current static browser engine." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured crawl summary with persisted artifact paths instead of verbose multiline text." }
+                },
+                "required": ["url"]
+            }),
+        },
+        Tool {
+            name: "browser_create_session".to_string(),
+            description: "Create or reset a persisted browser session with its own cookie jar and navigation state.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured session creation summary instead of verbose multiline text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_runtime_capture".to_string(),
+            description: "Capture a page through the Go chromedp runtime, then persist the resulting browser snapshot, session state, HTML fallback, and crawl facts into the Rust browser artifact model.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "url": { "type": "string", "description": "Absolute URL to capture through the runtime-backed browser." },
+                    "timeoutMs": { "type": "integer", "minimum": 1, "description": "Optional runtime capture timeout in milliseconds. Defaults to 15000." },
+                    "apiBase": { "type": "string", "description": "Optional Go browser API base URL override. Defaults to VELOCITY_BROWSER_API_BASE or http://127.0.0.1:8080." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "url"]
+            }),
+        },
+        Tool {
+            name: "browser_runtime_visual_capture".to_string(),
+            description: "Capture a truthful runtime PNG screenshot through the Go browser API and persist both the image and artifact metadata under .velocity/browser-runtime-visuals.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Absolute URL to capture as a runtime visual artifact." },
+                    "apiBase": { "type": "string", "description": "Optional Go browser API base URL override. Defaults to VELOCITY_BROWSER_API_BASE or http://127.0.0.1:8080." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime visual artifact summary instead of verbose multiline text." }
+                },
+                "required": ["url"]
+            }),
+        },
+        Tool {
+            name: "runtime_create_session".to_string(),
+            description: "Create an explicit Go runtime browser session and persist the Rust-side runtime session mapping under .velocity/runtime-browser-sessions.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "startUrl": { "type": "string", "description": "Optional absolute URL to open when the runtime session is created." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional startup wait timeout in milliseconds." },
+                    "apiBase": { "type": "string", "description": "Optional Go browser API base URL override." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime session summary instead of verbose multiline text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "runtime_get_session".to_string(),
+            description: "Read a persisted explicit runtime browser session mapping.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime session summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "runtime_close_session".to_string(),
+            description: "Close an explicit Go runtime browser session and remove the persisted Rust-side runtime session mapping.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured close summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "runtime_capture_session".to_string(),
+            description: "Capture the current page from an explicit Go runtime browser session and persist it into the Rust browser artifact model.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_navigate".to_string(),
+            description: "Navigate an explicit Go runtime browser session to an absolute URL, then persist the captured result.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "url": { "type": "string", "description": "Absolute URL to navigate to." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId", "url"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_click".to_string(),
+            description: "Click a runtime target in an explicit Go browser session using either nodeId or selector, then persist the captured result.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "nodeId": { "type": "string", "description": "Optional runtime node identifier. Either nodeId or selector is required." },
+                    "selector": { "type": "string", "description": "Optional CSS selector fallback. Either nodeId or selector is required." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_js_click".to_string(),
+            description: "Dispatch a JS click against an explicit Go runtime browser session target. Requires nodeId because the runtime API does not support selector fallback for js_click.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "nodeId": { "type": "string", "description": "Runtime node identifier required by the Go js_click action." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId", "nodeId"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_evaluate".to_string(),
+            description: "Evaluate JavaScript in an explicit Go runtime browser session, then persist the captured result and returned evaluation payload.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "script": { "type": "string", "description": "JavaScript expression or snippet to evaluate in the runtime session." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId", "script"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_fill".to_string(),
+            description: "Fill a runtime target in an explicit Go browser session using nodeId or selector, then persist the captured result.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "nodeId": { "type": "string", "description": "Optional runtime node identifier. Either nodeId or selector is required." },
+                    "selector": { "type": "string", "description": "Optional CSS selector fallback. Either nodeId or selector is required." },
+                    "value": { "type": "string", "description": "Value to type into the target field." },
+                    "natural": { "type": "boolean", "description": "When true, request more human-like typing cadence from the runtime." },
+                    "clear": { "type": "boolean", "description": "When true, clear the field before typing." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId", "value"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_submit".to_string(),
+            description: "Submit within an explicit Go runtime browser session by targeting a nodeId or selector when available, or by allowing the runtime to fall back to Enter-key submission.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "nodeId": { "type": "string", "description": "Optional runtime node identifier." },
+                    "selector": { "type": "string", "description": "Optional CSS selector fallback." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "runtime_session_press_key".to_string(),
+            description: "Press a key in an explicit Go runtime browser session, then persist the captured result.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Rust-side persisted runtime session identifier." },
+                    "key": { "type": "string", "description": "Key name to dispatch, such as Enter or Tab." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-action wait timeout in milliseconds." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime capture summary." }
+                },
+                "required": ["sessionId", "key"]
+            }),
+        },
+        Tool {
+            name: "runtime_reseed_auth".to_string(),
+            description: "Copy auth cookies plus CSRF-relevant storage from a source browser session or checkpoint into a target explicit runtime session, then report the resulting runtime auth diagnosis.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "targetSessionId": { "type": "string", "description": "Persisted runtime session identifier to update with recovered auth state." },
+                    "sourceSessionId": { "type": "string", "description": "Source browser session identifier to copy auth state from." },
+                    "sourceCheckpointName": { "type": "string", "description": "Optional checkpoint name on the source session; when provided, copy from that checkpoint instead of the live source session." },
+                    "waitTimeoutMs": { "type": "integer", "minimum": 1, "description": "Optional post-apply wait timeout in milliseconds for the Go runtime state-apply endpoint." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured runtime auth reseed report instead of verbose multiline text." }
+                },
+                "required": ["targetSessionId", "sourceSessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_get_session".to_string(),
+            description: "Read the current persisted browser session state, including current URL, cookies, and storage state.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned session read report with summary fields and persisted session artifact path instead of the full session payload." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_list_snapshots".to_string(),
+            description: "List persisted browser snapshot artifacts from the workspace snapshot directory using compact summaries that include persisted snapshot artifact paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "urlContains": { "type": "string", "description": "Optional case-insensitive substring filter on snapshot URL." },
+                    "titleContains": { "type": "string", "description": "Optional case-insensitive substring filter on snapshot title." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of snapshot summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for snapshot URL ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_read_snapshot".to_string(),
+            description: "Read a persisted browser snapshot JSON artifact by its original page URL.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Original page URL captured in the persisted browser snapshot." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned snapshot read report with summary fields and persisted snapshot artifact path instead of the full snapshot payload." }
+                },
+                "required": ["url"]
+            }),
+        },
+        Tool {
+            name: "browser_read_visual_fallback".to_string(),
+            description: "Read the persisted HTML fallback artifact for a captured page URL when truthful raw HTML evidence is available.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Original page URL captured in the persisted browser snapshot and HTML fallback artifact." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned HTML fallback report with byte count and artifact path instead of the raw HTML content." }
+                },
+                "required": ["url"]
+            }),
+        },
+        Tool {
+            name: "browser_diff_snapshots".to_string(),
+            description: "Compute a truthful semantic diff between two persisted browser snapshots identified by their original page URLs.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "beforeUrl": { "type": "string", "description": "Original page URL for the earlier persisted browser snapshot." },
+                    "afterUrl": { "type": "string", "description": "Original page URL for the later persisted browser snapshot." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned diff read report with rendered summary metadata plus before/after persisted artifact paths instead of the full diff payload." }
+                },
+                "required": ["beforeUrl", "afterUrl"]
+            }),
+        },
+        Tool {
+            name: "browser_list_sessions".to_string(),
+            description: "List persisted browser sessions from the workspace session directory using compact summaries that include persisted session artifact paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionIdContains": { "type": "string", "description": "Optional case-insensitive substring filter on session id." },
+                    "urlContains": { "type": "string", "description": "Optional case-insensitive substring filter on current URL." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of session summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for session id ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_get_storage".to_string(),
+            description: "Read persisted browser storage state for a session scope (local or session).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "scope": { "type": "string", "description": "Storage scope: local or session." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured storage summary with counts and session metadata instead of raw storage entries only." }
+                },
+                "required": ["sessionId", "scope"]
+            }),
+        },
+        Tool {
+            name: "browser_set_storage".to_string(),
+            description: "Seed or update persisted browser storage state for a session scope (local or session).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "scope": { "type": "string", "description": "Storage scope: local or session." },
+                    "entries": {
+                        "type": "object",
+                        "description": "String key/value storage entries to merge into the selected scope.",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "compact": { "type": "boolean", "description": "When true, return a structured storage update summary instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "scope", "entries"]
+            }),
+        },
+        Tool {
+            name: "browser_get_cookies".to_string(),
+            description: "Read the persisted browser cookie jar for a session so authenticated flows can inspect recovery state explicitly.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured cookie summary with counts and cookie names instead of raw cookie values." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_set_cookies".to_string(),
+            description: "Seed or update the persisted browser cookie jar for a session to recover or resume authenticated flows.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "cookies": {
+                        "type": "array",
+                        "description": "Cookie name/value pairs to merge into the session cookie jar.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string" },
+                                "value": { "type": "string" }
+                            },
+                            "required": ["name", "value"]
+                        }
+                    },
+                    "compact": { "type": "boolean", "description": "When true, return a structured cookie update summary instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "cookies"]
+            }),
+        },
+        Tool {
+            name: "browser_auth_diagnostics".to_string(),
+            description: "Read a compact, truthful auth/session recovery diagnosis for a persisted browser session using cookies, storage, and the current snapshot if available.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_save_auth_profile".to_string(),
+            description: "Save a reusable auth profile from a source browser session or checkpoint using only auth cookies plus CSRF-relevant storage.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profileName": { "type": "string", "description": "Auth profile identifier stored under .velocity/browser-auth-profiles." },
+                    "sourceSessionId": { "type": "string", "description": "Source session identifier to capture auth state from." },
+                    "sourceCheckpointName": { "type": "string", "description": "Optional checkpoint name on the source session; when provided, capture from that checkpoint instead of the live source session." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured auth profile save report instead of verbose multiline text." }
+                },
+                "required": ["profileName", "sourceSessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_list_auth_profiles".to_string(),
+            description: "List saved browser auth profiles using compact summaries that include filtered auth cookie/storage counts and persisted artifact paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profileNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on auth profile name." },
+                    "sourceSessionIdContains": { "type": "string", "description": "Optional case-insensitive substring filter on source session id." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of auth profile summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for auth profile name ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_read_auth_profile".to_string(),
+            description: "Read a saved browser auth profile by name.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profileName": { "type": "string", "description": "Auth profile identifier stored under .velocity/browser-auth-profiles." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned auth profile summary report instead of the full profile payload." }
+                },
+                "required": ["profileName"]
+            }),
+        },
+        Tool {
+            name: "browser_apply_auth_profile".to_string(),
+            description: "Apply a saved auth profile to a target browser session, then report the resulting auth diagnosis for that session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "profileName": { "type": "string", "description": "Saved auth profile identifier stored under .velocity/browser-auth-profiles." },
+                    "targetSessionId": { "type": "string", "description": "Target session identifier to update with the saved auth profile." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured auth profile apply report instead of verbose multiline text." }
+                },
+                "required": ["profileName", "targetSessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_reseed_auth".to_string(),
+            description: "Copy auth cookies plus CSRF-relevant storage from a source browser session or checkpoint into a target session, then report the resulting target auth diagnosis.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "targetSessionId": { "type": "string", "description": "Session identifier to update with recovered auth state." },
+                    "sourceSessionId": { "type": "string", "description": "Source session identifier to copy auth state from." },
+                    "sourceCheckpointName": { "type": "string", "description": "Optional checkpoint name on the source session; when provided, copy from that checkpoint instead of the live source session." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured auth reseed report instead of verbose multiline text." }
+                },
+                "required": ["targetSessionId", "sourceSessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_access_diagnostics".to_string(),
+            description: "Read a compact, truthful access/challenge diagnosis for a persisted browser session using the current snapshot when available.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "compact": { "type": "boolean", "description": "When true, return the structured access diagnosis report; otherwise render a multiline operator summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_get_session_network".to_string(),
+            description: "Read the persisted per-session network config that the truthful browser runtime can apply to outgoing requests.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "compact": { "type": "boolean", "description": "When true, return the structured network config report; otherwise render a multiline operator summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_read_session_transcript".to_string(),
+            description: "Read persisted browser session transcript history for a session, with compact discovery or a full entry lookup by sequence.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "sequence": { "type": "integer", "minimum": 1, "description": "Optional transcript sequence number to read one full entry instead of listing recent summaries." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of transcript summaries to return when listing." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for transcript sequence ordering. Defaults to asc." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured transcript report or full entry JSON; otherwise render a multiline transcript summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_session_health".to_string(),
+            description: "Read a truthful aggregated health and recovery report for a persisted browser session using saved session, snapshot, auth, access, checkpoint, network, and HTML fallback evidence.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "compact": { "type": "boolean", "description": "When true, return the structured health report; otherwise render a multiline operator summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_get_trace_summary".to_string(),
+            description: "Read compact runtime trace summary for browser operations including console messages, network activity, DOM mutations, screenshots, and health warnings.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compact": { "type": "boolean", "description": "When true, return structured JSON trace summary; otherwise render operator summary text." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_get_trace_logs".to_string(),
+            description: "Read rich runtime trace entries for browser operations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "compact": { "type": "boolean", "description": "When true, return structured JSON trace log array; otherwise render formatted trace entry lines." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_set_session_network".to_string(),
+            description: "Update the persisted per-session network config for request headers, user-agent, timeout, redirect following, and allow/block URL policy.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "userAgent": { "type": "string", "description": "Optional User-Agent override for outgoing requests." },
+                    "headers": { "type": "object", "description": "Optional header map to merge or replace into the persisted session network config.", "additionalProperties": { "type": "string" } },
+                    "replaceHeaders": { "type": "boolean", "description": "When true, replace all saved custom headers with the provided header map instead of merging." },
+                    "timeoutMs": { "type": "integer", "minimum": 1, "description": "Optional request timeout in milliseconds." },
+                    "clearTimeout": { "type": "boolean", "description": "When true, clear any saved timeout override and fall back to the transport default." },
+                    "followRedirects": { "type": "boolean", "description": "Optional redirect-following override for this persisted session." },
+                    "clearFollowRedirects": { "type": "boolean", "description": "When true, clear any saved redirect-following override and fall back to the transport default." },
+                    "allowedUrlPrefixes": { "type": "array", "items": { "type": "string" }, "description": "Optional allow-list of absolute URL prefixes. When non-empty, only matching URLs are allowed." },
+                    "blockedUrlPrefixes": { "type": "array", "items": { "type": "string" }, "description": "Optional block-list of absolute URL prefixes that are always denied." },
+                    "compact": { "type": "boolean", "description": "When true, return the structured network update report; otherwise render a multiline operator summary." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_session_navigate".to_string(),
+            description: "Navigate a persisted browser session so cookies and current URL survive across requests.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "url": { "type": "string", "description": "Absolute URL to navigate within the persisted session." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured navigation summary with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "url"]
+            }),
+        },
+        Tool {
+            name: "browser_session_click".to_string(),
+            description: "Click a navigable element in the current persisted browser session using the truthful static AOM-first interaction model.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "role": { "type": "string", "description": "Semantic role to match, such as link or button." },
+                    "name": { "type": "string", "description": "Semantic name or nearby text for the target element." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured session action report with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "role", "name"]
+            }),
+        },
+        Tool {
+            name: "browser_session_fill".to_string(),
+            description: "Fill a form field in the current persisted browser session using the truthful static AOM/form interaction model.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "field": { "type": "string", "description": "Field label, name, or nearby semantic text to match." },
+                    "value": { "type": "string", "description": "Value to write into the matched field." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured session action report with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "field", "value"]
+            }),
+        },
+        Tool {
+            name: "browser_session_submit".to_string(),
+            description: "Submit a form in the current persisted browser session using the truthful static form-post interaction model.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "form": { "type": "string", "description": "Optional form id to submit; defaults to the first form in the current snapshot." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured session action report with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_session_wait".to_string(),
+            description: "Poll the current page in a persisted browser session until text or an element appears, then persist the updated snapshot and semantic diff.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier stored under .velocity/browser-sessions." },
+                    "text": { "type": "string", "description": "Wait until this text appears in the current snapshot." },
+                    "title": { "type": "string", "description": "Wait until the current page title contains this text." },
+                    "urlContains": { "type": "string", "description": "Wait until the current page URL contains this fragment." },
+                    "mutation": { "type": "string", "description": "Wait until the current snapshot exposes a runtime mutation label containing this text." },
+                    "requestMethod": { "type": "string", "description": "Structured request wait: require a captured request with this HTTP method." },
+                    "requestUrlContains": { "type": "string", "description": "Structured request wait: require a captured request URL containing this fragment." },
+                    "requestStatus": { "type": "integer", "description": "Structured request wait: require a captured request with this status code." },
+                    "requestResource": { "type": "string", "description": "Structured request wait: require a captured request resource kind such as document or xhr." },
+                    "storageScope": { "type": "string", "description": "Structured storage wait: require a captured storage bucket scope such as local or session." },
+                    "storageKey": { "type": "string", "description": "Structured storage wait: require a captured storage entry key within storageScope." },
+                    "storageValue": { "type": "string", "description": "Optional structured storage wait value substring once storageScope and storageKey match." },
+                    "settle": { "type": "string", "description": "Wait until the current snapshot exposes an engine-observed settle signal containing this text." },
+                    "settleScope": { "type": "string", "description": "Structured settle wait: require a settle signal scope such as network, navigation, or response." },
+                    "settleState": { "type": "string", "description": "Optional structured settle state to require within settleScope, such as settled or complete." },
+                    "runtimeScope": { "type": "string", "description": "Wait until the current snapshot exposes a runtime-state entry for this scope." },
+                    "runtimeKey": { "type": "string", "description": "Wait until the current snapshot exposes a runtime-state entry for this key within runtimeScope." },
+                    "runtimeValue": { "type": "string", "description": "Optional runtime-state value substring to require once runtimeScope and runtimeKey match." },
+                    "protocolKind": { "type": "string", "description": "Structured protocol-event wait: require an observed protocol event kind such as redirect, download, upload, stream, or event." },
+                    "protocolPhase": { "type": "string", "description": "Structured protocol-event wait: require an observed protocol event phase such as start, update, complete, or commit." },
+                    "protocolTarget": { "type": "string", "description": "Optional protocol-event target substring to require, such as a final URL, route, or resource identifier." },
+                    "protocolDetail": { "type": "string", "description": "Optional protocol-event detail substring to require once the protocol event matches the other fields." },
+                    "networkIdle": { "type": "boolean", "description": "When true, wait for a truthful network-settled signal or equivalent runtime evidence." },
+                    "appReady": { "type": "boolean", "description": "When true, wait for truthful app-ready evidence such as navigation settled plus runtime/store readiness signals." },
+                    "mutationSettled": { "type": "boolean", "description": "When true, wait for truthful mutation/hydration completion evidence from settle or mutation labels." },
+                    "streamComplete": { "type": "boolean", "description": "When true, wait for truthful completion evidence for stream/event style runtime activity." },
+                    "role": { "type": "string", "description": "Optional role when waiting for an element." },
+                    "name": { "type": "string", "description": "Optional accessible name when waiting for an element." },
+                    "requireActionable": { "type": "boolean", "description": "When waiting by role and name, require the matched target to be actionable in the current static browser model." },
+                    "stablePolls": { "type": "integer", "description": "For stability waits, require this many consecutive unchanged polls before succeeding." },
+                    "timeoutMs": { "type": "integer", "description": "Maximum time to wait before failing." },
+                    "intervalMs": { "type": "integer", "description": "Polling interval between re-fetches." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured wait summary instead of the verbose multiline text output." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_save_checkpoint".to_string(),
+            description: "Persist the current browser session and its latest snapshot as a named checkpoint for later restore or forking.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Existing browser session identifier." },
+                    "checkpointName": { "type": "string", "description": "Human-readable checkpoint name." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured checkpoint save summary instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "checkpointName"]
+            }),
+        },
+        Tool {
+            name: "browser_restore_checkpoint".to_string(),
+            description: "Restore a saved browser session checkpoint, optionally forking it into a different session id.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Original session identifier that owns the checkpoint." },
+                    "checkpointName": { "type": "string", "description": "Checkpoint name to restore." },
+                    "targetSessionId": { "type": "string", "description": "Optional new session identifier to restore into." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured restore summary with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["sessionId", "checkpointName"]
+            }),
+        },
+        Tool {
+            name: "browser_list_checkpoints".to_string(),
+            description: "List saved browser checkpoints for a session from the persisted checkpoint artifacts, including compact summaries with checkpoint artifact paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier that owns the checkpoints." },
+                    "checkpointNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on checkpoint name." },
+                    "titleContains": { "type": "string", "description": "Optional case-insensitive substring filter on checkpoint page title." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of checkpoint summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for checkpoint name ordering. Defaults to asc." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_read_checkpoint".to_string(),
+            description: "Read a saved browser session checkpoint JSON artifact for inspection.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier that owns the checkpoint." },
+                    "checkpointName": { "type": "string", "description": "Checkpoint name to inspect." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned checkpoint read report with summary fields and persisted checkpoint artifact path instead of the full checkpoint payload." }
+                },
+                "required": ["sessionId", "checkpointName"]
+            }),
+        },
+        Tool {
+            name: "browser_diff_checkpoints".to_string(),
+            description: "Compute a truthful semantic diff between two saved browser checkpoints for the same session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session identifier that owns the checkpoints." },
+                    "beforeCheckpointName": { "type": "string", "description": "Earlier checkpoint name to compare from." },
+                    "afterCheckpointName": { "type": "string", "description": "Later checkpoint name to compare to." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned diff read report with rendered summary metadata plus before/after persisted artifact paths instead of the full diff payload." }
+                },
+                "required": ["sessionId", "beforeCheckpointName", "afterCheckpointName"]
+            }),
+        },
+        Tool {
+            name: "browser_save_workflow".to_string(),
+            description: "Persist a semantic browser workflow as JSON plus NDA-backed DSL for later deterministic replay.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Workflow name." },
+                    "startUrl": { "type": "string", "description": "Initial URL for replay." },
+                    "variables": {
+                        "type": "object",
+                        "description": "Optional workflow variables used by {{variable}} templates in step fields.",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "Workflow steps. Supported kinds: navigate, click, fill_field, submit_form, wait_for_text, wait_for_element, wait_for_title, wait_for_url_contains, wait_for_mutation, wait_for_request, wait_for_storage, wait_for_settle, wait_for_runtime_state, wait_for_protocol_event, wait_for_stable, extract_text, save_checkpoint, restore_checkpoint, if_text_contains, if_output_equals, assert_element, assert_text_contains, assert_output.",
+                        "items": { "type": "object" }
+                    },
+                    "compact": { "type": "boolean", "description": "When true, return a structured workflow save summary with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["name", "startUrl", "steps"]
+            }),
+        },
+        Tool {
+            name: "browser_read_workflow".to_string(),
+            description: "Read a saved browser workflow JSON artifact from the workspace.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .browser.json workflow relative to the workspace root." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned workflow read report with summary fields and persisted workflow artifact paths instead of the full workflow payload." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "browser_list_workflows".to_string(),
+            description: "List saved browser workflow artifacts from the workspace workflow directory using compact summaries with workflow JSON and NDA artifact paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workflowNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on workflow name." },
+                    "startUrlContains": { "type": "string", "description": "Optional case-insensitive substring filter on workflow start URL." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of workflow summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for workflow name ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_replay_workflow".to_string(),
+            description: "Replay a saved semantic browser workflow deterministically using the current static AOM-first engine with session/form support. Provide sessionId to run inside an existing persisted session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .browser.json workflow relative to the workspace root." },
+                    "sessionId": { "type": "string", "description": "Optional persisted session id to replay inside instead of an ephemeral session." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured replay summary with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "browser_list_workflow_runs".to_string(),
+            description: "List persisted browser workflow run reports from the workspace run-artifact directory using compact summaries with run report paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workflowNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on workflow name." },
+                    "sessionIdContains": { "type": "string", "description": "Optional case-insensitive substring filter on session id." },
+                    "finalUrlContains": { "type": "string", "description": "Optional case-insensitive substring filter on final URL." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of workflow run summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for workflow/session ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_read_workflow_run".to_string(),
+            description: "Read a persisted browser workflow run report for a workflow/session pair.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "workflowName": { "type": "string", "description": "Workflow name that produced the run report." },
+                    "sessionId": { "type": "string", "description": "Session identifier captured in the run report." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned workflow run read report with summary fields and persisted run artifact path instead of the full run report." }
+                },
+                "required": ["workflowName", "sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_save_workflow_suite".to_string(),
+            description: "Persist a semantic browser workflow suite as JSON so multiple saved workflows can run as a lightweight regression pack.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Suite name." },
+                    "workflows": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Relative paths to saved .browser.json workflows."
+                    },
+                    "compact": { "type": "boolean", "description": "When true, return a structured suite save summary with artifact paths instead of verbose multiline text." }
+                },
+                "required": ["name", "workflows"]
+            }),
+        },
+        Tool {
+            name: "browser_read_workflow_suite".to_string(),
+            description: "Read a saved browser workflow suite JSON artifact from the workspace.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .suite.json file relative to the workspace root." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned workflow suite read report with summary fields and persisted suite artifact path instead of the full suite payload." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "browser_list_workflow_suites".to_string(),
+            description: "List saved browser workflow suite artifacts from the workspace suite directory using compact summaries with suite artifact paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "suiteNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on suite name." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of suite summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for suite name ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_run_workflow_suite".to_string(),
+            description: "Execute a saved semantic browser workflow suite and persist an aggregated suite run report.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "relativeFilePath": { "type": "string", "description": "Path to a saved .suite.json file relative to the workspace root." },
+                    "compact": { "type": "boolean", "description": "When true, return a structured suite execution summary with the persisted suite report path instead of verbose multiline text." }
+                },
+                "required": ["relativeFilePath"]
+            }),
+        },
+        Tool {
+            name: "browser_list_workflow_suite_runs".to_string(),
+            description: "List persisted browser workflow suite run reports from the workspace suite-run artifact directory using compact summaries with suite run report paths.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "suiteNameContains": { "type": "string", "description": "Optional case-insensitive substring filter on suite name." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Optional maximum number of suite run summaries to return after sorting." },
+                    "sortDirection": { "type": "string", "enum": ["asc", "desc"], "description": "Optional sort direction for suite name ordering. Defaults to asc." }
+                }
+            }),
+        },
+        Tool {
+            name: "browser_read_workflow_suite_run".to_string(),
+            description: "Read a persisted browser workflow suite run report by suite name.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "suiteName": { "type": "string", "description": "Suite name that produced the suite run report." },
+                    "compact": { "type": "boolean", "description": "When true, return a browser-owned suite run read report with summary fields and persisted suite-run artifact path instead of the full suite run report." }
+                },
+                "required": ["suiteName"]
+            }),
+        },
+    ]
+}

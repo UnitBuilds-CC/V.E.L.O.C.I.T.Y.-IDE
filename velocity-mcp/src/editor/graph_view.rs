@@ -2,7 +2,7 @@ use crate::automation::mediator::MediatorArena;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub struct MerkleGraphView {
     // Cache node positions to avoid layout jumping on redraw

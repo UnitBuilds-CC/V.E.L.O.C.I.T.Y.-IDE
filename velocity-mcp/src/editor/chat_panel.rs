@@ -29,6 +29,27 @@ pub struct ChatPanelState {
     pub tools_supported: bool,
     pub models_loading: bool,
     pub show_thoughts: bool,
+    pub provider: crate::agent::AiProvider,
+}
+
+impl Default for ChatPanelState {
+    fn default() -> Self {
+        Self {
+            messages: Vec::new(),
+            input: String::new(),
+            agent_active: false,
+            pending_approvals: Vec::new(),
+            auto_approve: false,
+            available_models: Vec::new(),
+            selected_model: "@cf/moonshotai/kimi-k2.7-code".into(),
+            thinking_enabled: false,
+            thinking_supported: true,
+            tools_supported: true,
+            models_loading: false,
+            show_thoughts: false,
+            provider: crate::agent::AiProvider::CloudflareWorkersAi,
+        }
+    }
 }
 
 impl ChatPanelState {
@@ -41,7 +62,14 @@ impl ChatPanelState {
     }
 
     pub fn append_agent_token(&mut self, token: &str) {
-        if self.agent_active {
+        let need_new = self.agent_active
+            || self
+                .messages
+                .last()
+                .map(|m| m.role != ChatRole::Agent)
+                .unwrap_or(true);
+
+        if need_new {
             self.messages.push(UiChatMessage {
                 role: ChatRole::Agent,
                 content: String::new(),
@@ -100,7 +128,7 @@ pub fn render_chat_panel(
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                render_header(ui, state, palette);
+                render_header(ui, state, agent_tx, palette);
                 ui.add_space(4.0);
                 render_model_bar(ui, state, agent_tx, palette);
                 ui.separator();
@@ -114,7 +142,12 @@ pub fn render_chat_panel(
         });
 }
 
-fn render_header(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePalette) {
+fn render_header(
+    ui: &mut egui::Ui,
+    state: &mut ChatPanelState,
+    agent_tx: &Sender<UiToAgentMessage>,
+    palette: IdePalette,
+) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Agent Chat")
@@ -131,6 +164,16 @@ fn render_header(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePale
         };
         ui.label(egui::RichText::new(label).size(12.0).color(color));
 
+        if state.agent_active {
+            if ui
+                .small_button("⏹ Stop")
+                .on_hover_text("Interrupt current agent task")
+                .clicked()
+            {
+                let _ = agent_tx.send(UiToAgentMessage::CancelTask);
+            }
+        }
+
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .small_button(if state.show_thoughts {
@@ -145,10 +188,11 @@ fn render_header(ui: &mut egui::Ui, state: &mut ChatPanelState, palette: IdePale
             }
             if ui
                 .small_button("Clear")
-                .on_hover_text("Clear chat display")
+                .on_hover_text("Clear chat display & reset context")
                 .clicked()
             {
                 state.messages.clear();
+                let _ = agent_tx.send(UiToAgentMessage::ClearHistory);
             }
         });
     });
@@ -161,6 +205,31 @@ fn render_model_bar(
     palette: IdePalette,
 ) {
     ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new("Provider")
+                .small()
+                .color(palette.text_muted),
+        );
+        let mut provider_changed = false;
+        egui::ComboBox::from_id_salt("agent_provider")
+            .selected_text(state.provider.label())
+            .width(160.0)
+            .show_ui(ui, |ui| {
+                for prov in [
+                    crate::agent::AiProvider::CloudflareWorkersAi,
+                    crate::agent::AiProvider::OpenRouter,
+                ] {
+                    provider_changed |= ui
+                        .selectable_value(&mut state.provider, prov, prov.label())
+                        .changed();
+                }
+            });
+        if provider_changed {
+            state.models_loading = true;
+            let _ = agent_tx.send(UiToAgentMessage::SetProvider(state.provider));
+        }
+
+        ui.add_space(8.0);
         ui.label(
             egui::RichText::new("Model")
                 .small()
@@ -672,9 +741,19 @@ fn render_input(
                 ),
         );
 
-        let enter_send = ui.input(|i| {
-            i.key_pressed(egui::Key::Enter) && !i.modifiers.shift && response.has_focus()
-        });
+        let mut submit = false;
+        if response.has_focus() {
+            let (enter_pressed, shift_pressed) = ui.input(|i| (
+                i.key_pressed(egui::Key::Enter),
+                i.modifiers.shift,
+            ));
+            if enter_pressed && !shift_pressed {
+                ui.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                });
+                submit = true;
+            }
+        }
 
         let send_clicked = ui
             .add(
@@ -684,18 +763,12 @@ fn render_input(
             )
             .clicked();
 
-        if send_clicked || enter_send {
+        if send_clicked || submit {
             let text = state.input.trim().to_string();
+            state.input.clear();
             if !text.is_empty() {
-                state.push_user(text);
-                state.input.clear();
-                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(
-                    state
-                        .messages
-                        .last()
-                        .map(|m| m.content.clone())
-                        .unwrap_or_default(),
-                ));
+                state.push_user(text.clone());
+                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(text));
             }
         }
     });
