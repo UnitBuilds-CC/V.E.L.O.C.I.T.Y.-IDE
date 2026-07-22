@@ -502,4 +502,39 @@ impl VelocityApp {
         self.right_sidebar_width = 280.0;
         self.save_workspace_preferences();
     }
+
+    pub fn apply_profile_layout(&mut self, profile: crate::editor::theme::WorkspaceProfile) {
+        self.appearance.profile = profile;
+        match profile {
+            crate::editor::theme::WorkspaceProfile::Coder => {
+                self.focus_panel(TabKind::Chat);
+                self.left_sidebar_visible = true;
+                self.left_sidebar_tab = 0;
+                self.right_sidebar_visible = false;
+                self.status_message = "Switched to Coder mode (Code & Chat Focus)".to_string();
+            }
+            crate::editor::theme::WorkspaceProfile::AutomationOperator => {
+                self.focus_panel(TabKind::MissionControl);
+                self.focus_panel(TabKind::Output);
+                self.left_sidebar_visible = true;
+                self.left_sidebar_tab = 1;
+                self.right_sidebar_visible = true;
+                self.status_message = "Switched to Automation Operator mode (WA & Evidence Focus)".to_string();
+            }
+            crate::editor::theme::WorkspaceProfile::MissionControl => {
+                self.focus_panel(TabKind::MissionControl);
+                self.focus_panel(TabKind::Orchestrator);
+                self.left_sidebar_visible = false;
+                self.right_sidebar_visible = true;
+                self.status_message = "Switched to Mission Control mode (Swarm Focus)".to_string();
+            }
+            crate::editor::theme::WorkspaceProfile::Accessibility => {
+                self.focus_panel(TabKind::Chat);
+                self.left_sidebar_visible = false;
+                self.right_sidebar_visible = false;
+                self.status_message = "Switched to Zen Focus mode (Distraction-Free)".to_string();
+            }
+        }
+        self.save_workspace_preferences();
+    }
 }

@@ -927,41 +927,70 @@ impl<'a> TabViewerImpl<'a> {
                                         );
                                         let desktop_evidence_state =
                                             is_desktop_automation.then(|| desktop_automation_evidence_state(task));
-                                        ui.group(|ui| {
-                                            ui.horizontal_wrapped(|ui| {
-                                                if ui.selectable_label(is_selected, format!("#{} {}", task.id, task.title)).clicked() {
-                                                    self.app.mission_control.set_selected_task(Some(task.id));
+                                        
+                                        // Card container frame
+                                        egui::Frame::new()
+                                            .fill(if is_selected { palette.bg_tertiary } else { palette.bg_primary })
+                                            .stroke(egui::Stroke::new(if is_selected { 1.5 } else { 1.0 }, if is_selected { palette.accent } else { palette.border }))
+                                            .corner_radius(egui::CornerRadius::same(8))
+                                            .inner_margin(egui::Margin::same(10))
+                                            .show(ui, |ui| {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    let status_color = match task.status_label.as_str() {
+                                                        "Done" => palette.success,
+                                                        "Running" => palette.accent,
+                                                        "Blocked" => palette.warning,
+                                                        _ => palette.text_muted,
+                                                    };
+                                                    ui.label(egui::RichText::new(format!("🤖 Worker #{}", task.id)).strong().color(palette.accent));
+                                                    ui.label(egui::RichText::new(&task.title).strong());
+                                                    ui.label(egui::RichText::new(format!("• {}", task.status_label)).small().color(status_color));
+                                                    
+                                                    // Model Badge
+                                                    let model_str = if task.model_label.is_empty() {
+                                                        format!("⚡ {}", self.app.selected_model)
+                                                    } else {
+                                                        format!("⚡ {}", task.model_label)
+                                                    };
+                                                    ui.label(egui::RichText::new(model_str).small().color(palette.accent));
+
+                                                    if let Some(evidence_state) = desktop_evidence_state {
+                                                        ui.label(egui::RichText::new(evidence_state.label()).small().color(palette.warning));
+                                                    }
+                                                });
+
+                                                if !task.description.is_empty() {
+                                                    ui.add_space(2.0);
+                                                    ui.label(egui::RichText::new(format!("Target: {}", task.description)).small().color(palette.text_muted));
                                                 }
-                                                ui.label(egui::RichText::new(&task.status_label).small().color(palette.accent));
-                                                if let Some(evidence_state) = desktop_evidence_state {
-                                                    ui.label(egui::RichText::new(evidence_state.label()).small().color(palette.warning));
+
+                                                if !task.scope.is_empty() {
+                                                    ui.label(egui::RichText::new(format!("Scope: {}", task.scope.join(", "))).small().color(palette.text_muted));
                                                 }
+
+                                                ui.add_space(4.0);
+                                                ui.horizontal_wrapped(|ui| {
+                                                    if ui.selectable_label(is_selected, if is_selected { "🔍 Inspecting" } else { "🔍 Inspect Thread" }).clicked() {
+                                                        self.app.mission_control.set_selected_task(Some(task.id));
+                                                    }
+                                                    if ui.button("🛑 Stop").clicked() {
+                                                        if self.app.orchestrator.stop_task_action(crate::orchestrator::TaskId(task.id)) {
+                                                            self.app.status_message = format!("Stopped worker #{}", task.id);
+                                                        }
+                                                    }
+                                                    if ui.button("🔄 Retry").clicked() {
+                                                        if self.app.orchestrator.retry_task_action(crate::orchestrator::TaskId(task.id), &self.app.workspace_root, &self.app.mediator) {
+                                                            self.app.status_message = format!("Requeued worker #{}", task.id);
+                                                        }
+                                                    }
+                                                    if ui.button("🧹 Reset").clicked() {
+                                                        if self.app.orchestrator.reset_task_action(crate::orchestrator::TaskId(task.id)) {
+                                                            self.app.status_message = format!("Reset worker #{}", task.id);
+                                                        }
+                                                    }
+                                                });
                                             });
-                                            if !task.description.is_empty() {
-                                                ui.label(egui::RichText::new(&task.description).small().weak());
-                                            }
-                                            ui.horizontal_wrapped(|ui| {
-                                                if ui.small_button(if is_selected { "Selected" } else { "Select" }).clicked() {
-                                                    self.app.mission_control.set_selected_task(Some(task.id));
-                                                }
-                                                if ui.small_button("Stop").clicked() {
-                                                    if self.app.orchestrator.stop_task_action(crate::orchestrator::TaskId(task.id)) {
-                                                        self.app.status_message = format!("Stopped task #{}", task.id);
-                                                    }
-                                                }
-                                                if ui.small_button("Retry").clicked() {
-                                                    if self.app.orchestrator.retry_task_action(crate::orchestrator::TaskId(task.id), &self.app.workspace_root, &self.app.mediator) {
-                                                        self.app.status_message = format!("Requeued task #{}", task.id);
-                                                    }
-                                                }
-                                                if ui.small_button("Reset").clicked() {
-                                                    if self.app.orchestrator.reset_task_action(crate::orchestrator::TaskId(task.id)) {
-                                                        self.app.status_message = format!("Reset task #{}", task.id);
-                                                    }
-                                                }
-                                            });
-                                        });
-                                        ui.add_space(4.0);
+                                        ui.add_space(6.0);
                                     });
                                 }
                             });

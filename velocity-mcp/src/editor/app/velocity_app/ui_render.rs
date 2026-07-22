@@ -457,7 +457,7 @@ impl eframe::App for VelocityApp {
                 ui.horizontal(|ui: &mut egui::Ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
 
-                    // Left Cluster: File Menu Dropdown
+                    // Left Cluster: File Menu Dropdown & Profile Mode Selector
                     ui.menu_button("File 🗁", |ui| {
                         if ui.button("➕ New File").clicked() {
                             self.open_editor_stub();
@@ -486,6 +486,54 @@ impl eframe::App for VelocityApp {
                             ui.close();
                         }
                     });
+
+                    let cur_profile = self.appearance.profile;
+                    ui.menu_button(format!("Mode: {}", cur_profile.label()), |ui| {
+                        if ui.selectable_label(cur_profile == WorkspaceProfile::Coder, "💻 Coder (Code & Chat Focus)").clicked() {
+                            self.apply_profile_layout(WorkspaceProfile::Coder);
+                            ui.close();
+                        }
+                        if ui.selectable_label(cur_profile == WorkspaceProfile::AutomationOperator, "🤖 Automation & QA Operator").clicked() {
+                            self.apply_profile_layout(WorkspaceProfile::AutomationOperator);
+                            ui.close();
+                        }
+                        if ui.selectable_label(cur_profile == WorkspaceProfile::MissionControl, "🎛 Mission Control & Swarm").clicked() {
+                            self.apply_profile_layout(WorkspaceProfile::MissionControl);
+                            ui.close();
+                        }
+                        if ui.selectable_label(cur_profile == WorkspaceProfile::Accessibility, "🎨 Accessibility & Zen Focus").clicked() {
+                            self.apply_profile_layout(WorkspaceProfile::Accessibility);
+                            ui.close();
+                        }
+                    });
+
+                    ui.separator();
+
+                    // Contextual Profile Quick Actions
+                    match self.appearance.profile {
+                        WorkspaceProfile::Coder => {
+                            if ui.button("⚙ Build").clicked() {
+                                self.build_active();
+                            }
+                            if ui.button("▶ Run").clicked() {
+                                self.run_active();
+                            }
+                        }
+                        WorkspaceProfile::AutomationOperator => {
+                            if ui.button("🎥 WA Smoke Test").clicked() {
+                                self.apply_mission_brief_preset(
+                                    super::super::render::desktop_automation_smoke_test_brief(),
+                                    crate::automation::AgentTaskKind::DesktopAutomation,
+                                );
+                            }
+                        }
+                        WorkspaceProfile::MissionControl => {
+                            if ui.button("🧭 Route").clicked() {
+                                self.plan_routed_subagents();
+                            }
+                        }
+                        WorkspaceProfile::Accessibility => {}
+                    }
 
                     ui.separator();
 

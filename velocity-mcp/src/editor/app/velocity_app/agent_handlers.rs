@@ -288,6 +288,7 @@ impl VelocityApp {
             ));
         }
         self.toggle_mission_control();
+        self.mission_control.active_sub_tab = 1;
     }
 
     pub fn current_routing_goal(&self) -> Option<String> {
