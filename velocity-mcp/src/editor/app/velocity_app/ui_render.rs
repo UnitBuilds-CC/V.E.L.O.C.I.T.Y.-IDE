@@ -647,43 +647,48 @@ impl eframe::App for VelocityApp {
 
                     ui.separator();
 
-                    let timeline_snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.task_timeline);
-                    render_task_timeline(ui, &timeline_snapshot);
-
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(self.left_sidebar_tab == 0, "📁 Files").clicked() {
+                            self.left_sidebar_tab = 0;
+                        }
+                        if ui.selectable_label(self.left_sidebar_tab == 1, "📜 Activity").clicked() {
+                            self.left_sidebar_tab = 1;
+                        }
+                    });
                     ui.separator();
-                    ui.label(
-                        egui::RichText::new("🌲 FILE EXPLORER")
-                            .size(12.0)
-                            .strong()
-                            .color(palette.accent),
-                    );
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if let Some(tree) = self.file_tree.take() {
-                            let tree_copied = tree.clone();
-                            let root = tree_copied.clone();
-                            
-                            fn render_tree_node(ui: &mut egui::Ui, node: &FileNode, app: &mut VelocityApp) {
-                                if let Some(children) = &node.children {
-                                    for child in children {
-                                        if child.is_dir {
-                                            ui.collapsing(format!("📁 {}", child.name), |ui| {
-                                                render_tree_node(ui, child, app);
-                                            });
-                                        } else {
-                                            ui.horizontal(|ui| {
-                                                ui.label("📄");
-                                                if ui.selectable_label(false, &child.name).clicked() {
-                                                    app.open_editor(Some(child.path.clone()));
-                                                }
-                                            });
+
+                    if self.left_sidebar_tab == 1 {
+                        let timeline_snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.task_timeline);
+                        render_task_timeline(ui, &timeline_snapshot);
+                    } else {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            if let Some(tree) = self.file_tree.take() {
+                                let tree_copied = tree.clone();
+                                let root = tree_copied.clone();
+                                
+                                fn render_tree_node(ui: &mut egui::Ui, node: &FileNode, app: &mut VelocityApp) {
+                                    if let Some(children) = &node.children {
+                                        for child in children {
+                                            if child.is_dir {
+                                                ui.collapsing(format!("📁 {}", child.name), |ui| {
+                                                    render_tree_node(ui, child, app);
+                                                });
+                                            } else {
+                                                ui.horizontal(|ui| {
+                                                    ui.label("📄");
+                                                    if ui.selectable_label(false, &child.name).clicked() {
+                                                        app.open_editor(Some(child.path.clone()));
+                                                    }
+                                                });
+                                            }
                                         }
                                     }
                                 }
+                                render_tree_node(ui, &root, self);
+                                self.file_tree = Some(tree);
                             }
-                            render_tree_node(ui, &root, self);
-                            self.file_tree = Some(tree);
-                        }
-                    });
+                        });
+                    }
                 });
             });
             self.left_sidebar_width = panel_response.response.rect.width().max(180.0);

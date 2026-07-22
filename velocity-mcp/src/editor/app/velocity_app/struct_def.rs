@@ -78,6 +78,7 @@ pub struct VelocityApp {
     pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
+    pub left_sidebar_tab: usize,
     pub right_sidebar_visible: bool,
     pub right_sidebar_width: f32,
 
@@ -258,16 +259,10 @@ impl VelocityApp {
             .collect();
 
         let primary_kinds: Vec<TabKind> = match profile {
-            WorkspaceProfile::Coder => vec![TabKind::Chat, TabKind::Search],
-            WorkspaceProfile::AutomationOperator => vec![
-                TabKind::MissionControl,
-                TabKind::Orchestrator,
-                TabKind::Output,
-            ],
+            WorkspaceProfile::Coder => vec![TabKind::Chat, TabKind::Output],
+            WorkspaceProfile::AutomationOperator => vec![TabKind::Orchestrator, TabKind::MissionControl],
             WorkspaceProfile::MissionControl => vec![TabKind::MissionControl, TabKind::Chat],
-            WorkspaceProfile::Accessibility => {
-                vec![TabKind::MissionControl, TabKind::Chat, TabKind::Settings]
-            }
+            WorkspaceProfile::Accessibility => vec![TabKind::Chat, TabKind::Settings],
         };
 
         for tab in Self::collect_panel_tabs(&self.tabs, &primary_kinds) {
@@ -276,67 +271,11 @@ impl VelocityApp {
             }
         }
 
-        let mut dock = DockState::new(if root_tabs.is_empty() {
+        DockState::new(if root_tabs.is_empty() {
             self.tabs.clone()
         } else {
             root_tabs
-        });
-        let surface = dock.main_surface_mut();
-
-        match profile {
-            WorkspaceProfile::Coder => {
-                let right_tabs = Self::collect_panel_tabs(
-                    &self.tabs,
-                    &[TabKind::MissionControl, TabKind::Orchestrator, TabKind::Settings],
-                );
-                let bottom_tabs = Self::collect_panel_tabs(&self.tabs, &[TabKind::Output]);
-                let center = if right_tabs.is_empty() {
-                    None
-                } else {
-                    Some(surface.split_right(NodeIndex::root(), 0.72, right_tabs)[0])
-                };
-                if !bottom_tabs.is_empty() {
-                    surface.split_below(center.unwrap_or(NodeIndex::root()), 0.7, bottom_tabs);
-                }
-            }
-            WorkspaceProfile::AutomationOperator => {
-                let right_tabs =
-                    Self::collect_panel_tabs(&self.tabs, &[TabKind::Graph, TabKind::Settings]);
-                let bottom_tabs = Self::collect_panel_tabs(&self.tabs, &[TabKind::Chat]);
-                let center = if right_tabs.is_empty() {
-                    None
-                } else {
-                    Some(surface.split_right(NodeIndex::root(), 0.7, right_tabs)[0])
-                };
-                if !bottom_tabs.is_empty() {
-                    surface.split_below(center.unwrap_or(NodeIndex::root()), 0.64, bottom_tabs);
-                }
-            }
-            WorkspaceProfile::MissionControl => {
-                let right_tabs = Self::collect_panel_tabs(
-                    &self.tabs,
-                    &[TabKind::Orchestrator, TabKind::Usage, TabKind::Settings],
-                );
-                let bottom_tabs = Self::collect_panel_tabs(&self.tabs, &[TabKind::Output]);
-                let center = if right_tabs.is_empty() {
-                    None
-                } else {
-                    Some(surface.split_right(NodeIndex::root(), 0.68, right_tabs)[0])
-                };
-                if !bottom_tabs.is_empty() {
-                    surface.split_below(center.unwrap_or(NodeIndex::root()), 0.6, bottom_tabs);
-                }
-            }
-            WorkspaceProfile::Accessibility => {
-                let bottom_tabs =
-                    Self::collect_panel_tabs(&self.tabs, &[TabKind::Output, TabKind::Search]);
-                if !bottom_tabs.is_empty() {
-                    surface.split_below(NodeIndex::root(), 0.7, bottom_tabs);
-                }
-            }
-        }
-
-        dock
+        })
     }
 
     pub fn apply_workspace_profile(&mut self, profile: WorkspaceProfile) {
@@ -424,33 +363,15 @@ impl VelocityApp {
         apply_theme(&cc.egui_ctx, appearance);
 
         let mut tab_counter = 0u64;
-        let output = Tab {
-            id: TabId::next(&mut tab_counter),
-            kind: TabKind::Output,
-        };
         let chat = Tab {
             id: TabId::next(&mut tab_counter),
             kind: TabKind::Chat,
         };
-        let orchestrator = Tab {
+        let output = Tab {
             id: TabId::next(&mut tab_counter),
-            kind: TabKind::Orchestrator,
+            kind: TabKind::Output,
         };
-        let mission_control = Tab {
-            id: TabId::next(&mut tab_counter),
-            kind: TabKind::MissionControl,
-        };
-        let graph = Tab {
-            id: TabId::next(&mut tab_counter),
-            kind: TabKind::Graph,
-        };
-        let tabs = vec![
-            mission_control.clone(),
-            output.clone(),
-            chat.clone(),
-            orchestrator.clone(),
-            graph.clone(),
-        ];
+        let tabs = vec![chat.clone(), output.clone()];
 
         let mut projects = vec![workspace_root.clone()];
         if let Some(parent) = workspace_root.parent() {
@@ -467,16 +388,10 @@ impl VelocityApp {
             agent_tx,
             agent_rx,
             workspace_root,
-            tabs,
-            active_tab: Some(mission_control.id.clone()),
+            tabs: tabs.clone(),
+            active_tab: Some(chat.id.clone()),
             buffers: HashMap::new(),
-            dock_state: Some(DockState::new(vec![
-                mission_control,
-                output,
-                chat,
-                orchestrator,
-                graph,
-            ])),
+            dock_state: Some(DockState::new(tabs)),
             chat_input: String::new(),
             command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
             chat_history: String::new(),
@@ -490,6 +405,7 @@ impl VelocityApp {
             provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
+            left_sidebar_tab: 0,
             right_sidebar_visible: true,
             right_sidebar_width: 280.0,
             tab_counter,
