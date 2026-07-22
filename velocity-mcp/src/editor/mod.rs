@@ -23,3 +23,6 @@ pub mod task_timeline;
 
 // Agentic UI Phase 2 - Smart sidebar
 pub mod smart_sidebar;
+
+// Expert Teams Studio & Task Routing
+pub mod expert_team;

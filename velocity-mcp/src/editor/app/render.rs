@@ -73,6 +73,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::MissionControl => {
                 self.mission_control_panel(ui);
             }
+            TabKind::TeamStudio => {
+                self.app.render_team_studio(ui);
+            }
             TabKind::Usage => {
                 render_usage_panel(
                     ui,
@@ -506,6 +509,9 @@ impl<'a> TabViewerImpl<'a> {
                                     if ui.button("Focus chat").clicked() {
                                         self.app.focus_panel(TabKind::Chat);
                                     }
+                                    if ui.button("🧠 Team Studio").clicked() {
+                                        self.app.focus_panel(TabKind::TeamStudio);
+                                    }
                                     if ui.button("Open search").clicked() {
                                         self.app.focus_panel(TabKind::Search);
                                     }
@@ -516,6 +522,9 @@ impl<'a> TabViewerImpl<'a> {
                                 WorkspaceProfile::AutomationOperator => {
                                     if ui.button("Open orchestrator").clicked() {
                                         self.app.focus_panel(TabKind::Orchestrator);
+                                    }
+                                    if ui.button("🧠 Team Studio").clicked() {
+                                        self.app.focus_panel(TabKind::TeamStudio);
                                     }
                                     if ui.button("Show output").clicked() {
                                         self.app.focus_panel(TabKind::Output);
@@ -528,6 +537,9 @@ impl<'a> TabViewerImpl<'a> {
                                     if ui.button("Open mission control").clicked() {
                                         self.app.focus_panel(TabKind::MissionControl);
                                     }
+                                    if ui.button("🧠 Team Studio").clicked() {
+                                        self.app.focus_panel(TabKind::TeamStudio);
+                                    }
                                     if ui.button("Review approvals").clicked() {
                                         self.app.focus_panel(TabKind::Chat);
                                     }
@@ -538,6 +550,9 @@ impl<'a> TabViewerImpl<'a> {
                                 WorkspaceProfile::Accessibility => {
                                     if ui.button("Open settings").clicked() {
                                         self.app.focus_panel(TabKind::Settings);
+                                    }
+                                    if ui.button("🧠 Team Studio").clicked() {
+                                        self.app.focus_panel(TabKind::TeamStudio);
                                     }
                                     if ui.button("Focus mission control").clicked() {
                                         self.app.focus_panel(TabKind::MissionControl);

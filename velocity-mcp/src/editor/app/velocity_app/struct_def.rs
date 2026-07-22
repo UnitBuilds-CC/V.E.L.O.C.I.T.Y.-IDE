@@ -84,6 +84,10 @@ pub struct VelocityApp {
 
     pub tab_counter: u64,
 
+    pub expert_teams: Vec<crate::editor::expert_team::ExpertTeam>,
+    pub active_team_index: usize,
+    pub selected_member_id: Option<String>,
+
     pub agent_ui_state: AgentUiState,
     pub task_timeline: TTState,
     pub smart_sidebar: SmartSidebarState,
@@ -384,6 +388,7 @@ impl VelocityApp {
         }
 
         let provider_settings = load_workspace_provider_settings(&workspace_root);
+        let expert_teams = crate::editor::expert_team::load_expert_teams(&workspace_root);
         let mut app = Self {
             agent_tx,
             agent_rx,
@@ -393,8 +398,8 @@ impl VelocityApp {
             buffers: HashMap::new(),
             dock_state: Some(DockState::new(tabs)),
             chat_input: String::new(),
-            command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
             chat_history: String::new(),
+            command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
             command_palette: CommandPalette {
                 open: false,
                 query: String::new(),
@@ -409,6 +414,9 @@ impl VelocityApp {
             right_sidebar_visible: false,
             right_sidebar_width: 280.0,
             tab_counter,
+            expert_teams,
+            active_team_index: 0,
+            selected_member_id: None,
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),
             smart_sidebar: SmartSidebarState::default(),
