@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::agent::{AiProvider, ApiStyle, ModelInfo};
 use crate::automation::instruction_registry::AgentTaskKind;
 

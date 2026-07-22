@@ -342,6 +342,7 @@ fn parse_forms(url: &str, html: &str) -> Vec<BrowserForm> {
     forms
 }
 
+#[allow(dead_code)]
 fn parse_html_to_snapshot(
     url: &str,
     html: &str,

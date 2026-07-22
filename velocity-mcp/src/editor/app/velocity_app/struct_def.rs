@@ -13,7 +13,10 @@ use crate::editor::mission_control::MissionControlState;
 use crate::editor::orchestrator_panel::OrchestratorPanel;
 use crate::editor::smart_sidebar::SmartSidebarState;
 use crate::editor::task_timeline::{persist_mission_activity_nda, TaskTimelineState as TTState};
-use crate::usage::AccountUsageView;
+use crate::usage::{
+    load_workspace_provider_settings, save_workspace_provider_settings, AccountUsageView,
+    WorkspaceProviderSettings,
+};
 
 use super::super::types::*;
 use crate::agent::AiProvider;
@@ -23,6 +26,8 @@ use crate::editor::theme::{apply_theme, AppearanceSettings, IdePalette, Workspac
 pub struct WorkspacePreferences {
     pub appearance: AppearanceSettings,
     pub auto_approve: bool,
+    #[serde(default)]
+    pub show_thoughts: bool,
     pub selected_model: String,
     pub provider: String,
     pub thinking_enabled: bool,
@@ -37,6 +42,7 @@ impl WorkspacePreferences {
         Self {
             appearance: app.appearance,
             auto_approve: app.auto_approve,
+            show_thoughts: app.chat.show_thoughts,
             selected_model: app.selected_model.clone(),
             provider: app.provider.label().to_string(),
             thinking_enabled: app.thinking_enabled,
@@ -69,6 +75,7 @@ pub struct VelocityApp {
     pub command_palette: CommandPalette,
     pub status_message: String,
     pub appearance: AppearanceSettings,
+    pub provider_settings: WorkspaceProviderSettings,
     pub left_sidebar_visible: bool,
     pub left_sidebar_width: f32,
     pub right_sidebar_visible: bool,
@@ -115,6 +122,7 @@ pub struct VelocityApp {
     pub terminal_input: String,
     pub current_agent_task_id: u32,
 
+    #[allow(dead_code)]
     pub chat_input: String,
     pub chat_history: String,
 }
@@ -184,6 +192,7 @@ impl VelocityApp {
         self.right_sidebar_visible = preferences.right_sidebar_visible;
         self.right_sidebar_width = preferences.right_sidebar_width.max(220.0);
         self.chat.auto_approve = self.auto_approve;
+        self.chat.show_thoughts = preferences.show_thoughts;
         self.chat.selected_model = self.selected_model.clone();
         self.chat.thinking_enabled = self.thinking_enabled;
         self.status_message = format!("Restored {} workspace", self.appearance.profile.label());
@@ -191,6 +200,27 @@ impl VelocityApp {
 
     pub fn persist_mission_activity(&self) {
         persist_mission_activity_nda(&self.workspace_root, &self.task_timeline);
+    }
+
+    pub fn reload_workspace_provider_settings(&mut self) {
+        self.provider_settings = load_workspace_provider_settings(&self.workspace_root);
+    }
+
+    pub fn save_provider_settings(&mut self) {
+        match save_workspace_provider_settings(&self.workspace_root, &self.provider_settings) {
+            Ok(()) => {
+                self.status_message = "Saved workspace provider settings".into();
+                let _ = self.agent_tx.send(UiToAgentMessage::ReloadProviderConfig);
+                let _ = self.agent_tx.send(UiToAgentMessage::ApplySessionState {
+                    provider: self.provider,
+                    model: self.selected_model.clone(),
+                    thinking: self.thinking_enabled,
+                });
+            }
+            Err(err) => {
+                self.status_message = err;
+            }
+        }
     }
 
     pub fn palette(&self) -> IdePalette {
@@ -319,7 +349,7 @@ impl VelocityApp {
             .cloned()
             .collect();
 
-        let mut push_unique = |kind: TabKind, tabs: &mut Vec<Tab>, counter: &mut u64| {
+        let push_unique = |kind: TabKind, tabs: &mut Vec<Tab>, counter: &mut u64| {
             if tabs
                 .iter()
                 .any(|tab| std::mem::discriminant(&tab.kind) == std::mem::discriminant(&kind))
@@ -432,6 +462,7 @@ impl VelocityApp {
             }
         }
 
+        let provider_settings = load_workspace_provider_settings(&workspace_root);
         let mut app = Self {
             agent_tx,
             agent_rx,
@@ -456,6 +487,7 @@ impl VelocityApp {
             },
             status_message: String::from("Ready"),
             appearance,
+            provider_settings,
             left_sidebar_visible: true,
             left_sidebar_width: 240.0,
             right_sidebar_visible: true,
@@ -527,7 +559,11 @@ impl VelocityApp {
         app.task_timeline
             .session_marker("IDE session ready", "agentic workspace initialized");
         app.persist_mission_activity();
-        let _ = app.agent_tx.send(UiToAgentMessage::RefreshModels);
+        let _ = app.agent_tx.send(UiToAgentMessage::ApplySessionState {
+            provider: app.provider,
+            model: app.selected_model.clone(),
+            thinking: app.thinking_enabled,
+        });
         app.save_workspace_preferences();
         app
     }

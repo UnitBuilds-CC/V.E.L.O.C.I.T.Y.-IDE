@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crossbeam_channel::Sender as CrossbeamSender;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};

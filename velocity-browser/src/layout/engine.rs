@@ -2,7 +2,6 @@ use crate::dom::DomTree;
 use crate::nda::NdaTriple;
 use crate::parser::html::NodeType;
 use crate::style::StyleCascader;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DisplayMode {

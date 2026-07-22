@@ -18,9 +18,7 @@ pub struct DomNode {
     pub parent: Option<usize>,
 }
 
-pub struct HtmlParser {
-    nodes: Vec<DomNode>,
-}
+pub struct HtmlParser;
 
 impl HtmlParser {
     pub fn parse(html: &str) -> Vec<DomNode> {

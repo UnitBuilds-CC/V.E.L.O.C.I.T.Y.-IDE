@@ -496,6 +496,7 @@ pub fn wait_for_session(
     }
 }
 
+#[allow(dead_code)]
 fn extract_snapshot_value(
     snapshot: &BrowserPageSnapshot,
     source: &str,

@@ -43,6 +43,7 @@ impl OrchestratorRegistry {
         })
     }
 
+    #[allow(dead_code)]
     pub fn has_blocked(&self) -> bool {
         self.statuses
             .values()

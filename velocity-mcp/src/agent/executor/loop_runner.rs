@@ -3,11 +3,12 @@ use super::super::nda::*;
 use super::super::provider::*;
 use super::thread::{apply_headless_control_messages, run_compilation_check};
 use super::utils::{
-    build_request, compress_history, estimate_tokens, is_quota_exhausted_error,
-    sanitize_chat_token, send_usage_update,
+    build_request, compress_history, estimate_tokens, sanitize_chat_token, send_usage_update,
 };
 use crate::registry;
-use crate::usage::{AzureOpenAiAccount, CloudflareAccount, OpenRouterAccount, UsageTracker};
+use crate::usage::{
+    AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker,
+};
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{json, Value};
 use std::io::BufRead;
@@ -19,6 +20,7 @@ pub fn run_agent_reasoning_loop(
     accounts: &[CloudflareAccount],
     or_accounts: &[OpenRouterAccount],
     azure_accounts: &[AzureOpenAiAccount],
+    ollama_accounts: &[LocalOllamaAccount],
     model: &str,
     profile: &ModelInfo,
     provider: AiProvider,
@@ -118,7 +120,7 @@ pub fn run_agent_reasoning_loop(
                 super::dispatch::execute_azure_request(azure_accounts, &request_body, ui_tx)
             }
             AiProvider::LocalOllama => {
-                super::dispatch::execute_ollama_request(&request_body, ui_tx)
+                super::dispatch::execute_ollama_request(ollama_accounts, &request_body, ui_tx)
             }
         };
 
@@ -127,10 +129,10 @@ pub fn run_agent_reasoning_loop(
             None => {
                 let fallback = fallback_provider(current_provider);
                 let fallback_available = match fallback {
-                    AiProvider::OpenRouter => !or_accounts.is_empty() || !openrouter_api_key().is_empty(),
+                    AiProvider::OpenRouter => !or_accounts.is_empty() || !openrouter_api_key().trim().is_empty(),
                     AiProvider::CloudflareWorkersAi => !accounts.is_empty(),
                     AiProvider::AzureOpenAi => !azure_accounts.is_empty(),
-                    AiProvider::LocalOllama => true,
+                    AiProvider::LocalOllama => !ollama_accounts.is_empty(),
                 };
 
                 if !provider_switched && fallback_available {
@@ -622,16 +624,12 @@ pub fn run_agent_reasoning_loop(
                 }
                 if let Ok(ui_msg) = ui_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                     match ui_msg {
-                        UiToAgentMessage::ApproveTool {
-                            id,
-                            tool_name: _,
-                            arguments,
-                        } => {
+                        UiToAgentMessage::ApproveTool { id, arguments } => {
                             if pending_ids.remove(&id) {
                                 resolved_approvals.insert(id, Some(arguments));
                             }
                         }
-                        UiToAgentMessage::RejectTool { id, tool_name: _ } => {
+                        UiToAgentMessage::RejectTool { id } => {
                             if pending_ids.remove(&id) {
                                 resolved_approvals.insert(id, None);
                             }
@@ -664,52 +662,55 @@ pub fn run_agent_reasoning_loop(
                 let ui_tx_clone = ui_tx.clone();
 
                 let handle = std::thread::spawn(move || {
-                    let mut tool_result = String::new();
-                    let mut file_buffer_update = None;
-                    let mut changelog_entry = None;
+                    let (tool_result, file_buffer_update, changelog_entry) =
+                        if let Some(approved_args) = approval {
+                            ui_tx_clone
+                                .send(AgentToUiMessage::ToolExecutionStarted {
+                                    tool_name: tool_name.clone(),
+                                })
+                                .ok();
 
-                    if let Some(approved_args) = approval {
-                        ui_tx_clone
-                            .send(AgentToUiMessage::ToolExecutionStarted {
-                                tool_name: tool_name.clone(),
-                            })
-                            .ok();
-
-                        match registry::call_tool_in_workspace(
-                            &workspace_root_clone,
-                            &tool_name,
-                            &approved_args,
-                        ) {
-                            Ok(res) => {
-                                tool_result = res;
-                                if tool_name == "write_file" {
-                                    if let Some(rel_path) =
-                                        approved_args["relativeFilePath"].as_str()
-                                    {
-                                        let full_path = workspace_root_clone.join(rel_path);
-                                        if let Some(content) = approved_args["content"].as_str() {
-                                            file_buffer_update =
-                                                Some((full_path, content.to_string()));
+                            let mut file_buffer_update = None;
+                            let mut changelog_entry = None;
+                            let tool_result = match registry::call_tool_in_workspace(
+                                &workspace_root_clone,
+                                &tool_name,
+                                &approved_args,
+                            ) {
+                                Ok(res) => {
+                                    if tool_name == "write_file" {
+                                        if let Some(rel_path) =
+                                            approved_args["relativeFilePath"].as_str()
+                                        {
+                                            let full_path = workspace_root_clone.join(rel_path);
+                                            if let Some(content) = approved_args["content"].as_str() {
+                                                file_buffer_update =
+                                                    Some((full_path, content.to_string()));
+                                            }
+                                            changelog_entry =
+                                                Some((rel_path.to_string(), "write_file"));
                                         }
-                                        changelog_entry =
-                                            Some((rel_path.to_string(), "write_file"));
                                     }
+                                    res
                                 }
-                            }
-                            Err(e) => {
-                                tool_result = format!("Error executing tool: {:?}", e);
-                            }
-                        }
+                                Err(e) => format!("Error executing tool: {:?}", e),
+                            };
 
-                        ui_tx_clone
-                            .send(AgentToUiMessage::ToolExecutionFinished {
-                                tool_name: tool_name.clone(),
-                                result: tool_result.clone(),
-                            })
-                            .ok();
-                    } else {
-                        tool_result = "Error: Tool execution rejected by the user.".to_string();
-                    }
+                            ui_tx_clone
+                                .send(AgentToUiMessage::ToolExecutionFinished {
+                                    tool_name: tool_name.clone(),
+                                    result: tool_result.clone(),
+                                })
+                                .ok();
+
+                            (tool_result, file_buffer_update, changelog_entry)
+                        } else {
+                            (
+                                "Error: Tool execution rejected by the user.".to_string(),
+                                None,
+                                None,
+                            )
+                        };
 
                     (
                         call_id,

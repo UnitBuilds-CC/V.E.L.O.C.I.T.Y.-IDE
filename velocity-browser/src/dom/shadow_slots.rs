@@ -1,5 +1,4 @@
 use crate::dom::DomTree;
-use crate::parser::html::DomNode;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

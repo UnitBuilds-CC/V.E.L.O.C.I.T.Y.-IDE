@@ -9,6 +9,12 @@ pub enum UiToAgentMessage {
     SetWorkspace(PathBuf),
     RefreshModels,
     RefreshUsage,
+    ReloadProviderConfig,
+    ApplySessionState {
+        provider: AiProvider,
+        model: String,
+        thinking: bool,
+    },
     SetModel(String),
     SetThinking(bool),
     SetProvider(AiProvider),
@@ -16,13 +22,10 @@ pub enum UiToAgentMessage {
     ClearHistory,
     ApproveTool {
         id: String,
-        tool_name: String,
         arguments: Value,
     },
-    #[allow(dead_code)]
     RejectTool {
         id: String,
-        tool_name: String,
     },
     RunLocalBuild,
     RunLocalRun,
@@ -106,7 +109,6 @@ pub struct HeadlessSubAgentRequest {
 pub struct HeadlessSubAgentResult {
     pub status_updates: Vec<String>,
     pub transcript: String,
-    pub changed_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]

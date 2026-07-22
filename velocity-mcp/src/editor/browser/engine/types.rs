@@ -1,8 +1,7 @@
 use crate::editor::browser::models::*;
 use crate::editor::browser::truncate_string;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use sha2::Digest;
 
 
 pub fn summarize_workflow(workflow: BrowserWorkflow) -> BrowserWorkflowSummary {

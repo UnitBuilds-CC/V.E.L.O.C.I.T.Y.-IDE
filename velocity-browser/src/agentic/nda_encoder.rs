@@ -1,6 +1,4 @@
 use crate::nda::NdaTriple;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 pub struct NdaEncoder {
     pub triples: Vec<NdaTriple>,

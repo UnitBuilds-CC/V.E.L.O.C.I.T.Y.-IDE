@@ -122,23 +122,25 @@ pub fn render_chat_panel(
     state: &mut ChatPanelState,
     agent_tx: &Sender<UiToAgentMessage>,
     palette: IdePalette,
-) {
+) -> bool {
+    let mut preferences_changed = false;
     egui::Frame::new()
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                render_header(ui, state, agent_tx, palette);
+                preferences_changed |= render_header(ui, state, agent_tx, palette);
                 ui.add_space(4.0);
-                render_model_bar(ui, state, agent_tx, palette);
+                preferences_changed |= render_model_bar(ui, state, agent_tx, palette);
                 ui.separator();
                 render_messages(ui, state, palette);
                 ui.separator();
-                render_tool_controls(ui, state, agent_tx, palette);
+                preferences_changed |= render_tool_controls(ui, state, agent_tx, palette);
                 render_pending_approvals(ui, state, agent_tx, palette);
                 ui.separator();
                 render_input(ui, state, agent_tx, palette);
             });
         });
+    preferences_changed
 }
 
 fn render_header(
@@ -146,7 +148,8 @@ fn render_header(
     state: &mut ChatPanelState,
     agent_tx: &Sender<UiToAgentMessage>,
     palette: IdePalette,
-) {
+) -> bool {
+    let mut preferences_changed = false;
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Agent Chat")
@@ -184,6 +187,7 @@ fn render_header(
                 .clicked()
             {
                 state.show_thoughts = !state.show_thoughts;
+                preferences_changed = true;
             }
             if ui
                 .small_button("Clear")
@@ -195,6 +199,7 @@ fn render_header(
             }
         });
     });
+    preferences_changed
 }
 
 fn render_model_bar(
@@ -202,7 +207,8 @@ fn render_model_bar(
     state: &mut ChatPanelState,
     agent_tx: &Sender<UiToAgentMessage>,
     palette: IdePalette,
-) {
+) -> bool {
+    let mut preferences_changed = false;
     ui.horizontal_wrapped(|ui| {
         ui.label(
             egui::RichText::new("Provider")
@@ -227,6 +233,7 @@ fn render_model_bar(
             });
         if provider_changed {
             state.models_loading = true;
+            preferences_changed = true;
             let _ = agent_tx.send(UiToAgentMessage::SetProvider(state.provider));
         }
 
@@ -248,6 +255,7 @@ fn render_model_bar(
                 }
             });
         if model_changed {
+            preferences_changed = true;
             let _ = agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
         }
 
@@ -271,6 +279,7 @@ fn render_model_bar(
             )
             .changed();
         if thinking_changed {
+            preferences_changed = true;
             let _ = agent_tx.send(UiToAgentMessage::SetThinking(state.thinking_enabled));
         }
         if !state.thinking_supported {
@@ -281,6 +290,7 @@ fn render_model_bar(
             );
         }
     });
+    preferences_changed
 }
 
 fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalette) {
@@ -388,7 +398,6 @@ fn sanitize_display_text(s: &str) -> String {
 fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
     let mut in_code_block = false;
     let mut code_accumulator = String::new();
-    let mut code_language = String::new();
     let mut current_list_number = 0;
 
     for line in text.lines() {
@@ -418,7 +427,6 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                 in_code_block = false;
             } else {
                 in_code_block = true;
-                code_language = line[3..].trim().to_string();
             }
             continue;
         }
@@ -656,11 +664,14 @@ fn render_tool_controls(
     state: &mut ChatPanelState,
     _agent_tx: &Sender<UiToAgentMessage>,
     palette: IdePalette,
-) {
+) -> bool {
+    let mut preferences_changed = false;
     ui.horizontal(|ui| {
         // Always allow auto-approve — inline tool calling works for all models
         // regardless of whether the model supports native OpenAI tool_calls.
-        ui.checkbox(&mut state.auto_approve, "Auto-approve tools");
+        if ui.checkbox(&mut state.auto_approve, "Auto-approve tools").changed() {
+            preferences_changed = true;
+        }
         if !state.tools_supported {
             ui.label(
                 egui::RichText::new("(inline mode)")
@@ -669,6 +680,7 @@ fn render_tool_controls(
             );
         }
     });
+    preferences_changed
 }
 
 fn render_pending_approvals(
@@ -701,14 +713,12 @@ fn render_pending_approvals(
                             if ui.button("Decline").clicked() {
                                 let _ = agent_tx.send(UiToAgentMessage::RejectTool {
                                     id: id.clone(),
-                                    tool_name: tool_name.clone(),
                                 });
                                 state.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
                             }
                             if ui.button("Approve").clicked() {
                                 let _ = agent_tx.send(UiToAgentMessage::ApproveTool {
                                     id: id.clone(),
-                                    tool_name: tool_name.clone(),
                                     arguments: arguments.clone(),
                                 });
                                 state.pending_approvals.retain(|(p_id, _, _)| p_id != &id);

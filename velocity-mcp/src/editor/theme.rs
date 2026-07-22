@@ -365,10 +365,12 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
     ctx.set_global_style(style);
 }
 
+#[allow(dead_code)]
 pub fn code_font_id() -> FontId {
     AppearanceSettings::default().code_font_id()
 }
 
+#[allow(dead_code)]
 pub fn ui_font_id() -> FontId {
     AppearanceSettings::default().ui_font_id()
 }

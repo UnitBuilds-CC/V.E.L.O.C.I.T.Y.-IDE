@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub struct FormDataSerializer;
 
 impl FormDataSerializer {
-    pub fn serialize_form(tree: &DomTree, form_id_or_selector: &str) -> HashMap<String, String> {
+    pub fn serialize_form(tree: &DomTree, _form_id_or_selector: &str) -> HashMap<String, String> {
         let mut form_data = HashMap::new();
 
         for node in &tree.nodes {

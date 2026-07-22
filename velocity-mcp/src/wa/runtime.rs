@@ -187,6 +187,7 @@ where
     })
 }
 
+#[allow(dead_code)]
 pub fn run_script_report(
     root: &Path,
     session_id: &str,

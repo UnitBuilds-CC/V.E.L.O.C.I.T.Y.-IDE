@@ -26,6 +26,46 @@ fn default_limit_free() -> u32 {
     50
 }
 
+fn default_free_tier() -> String {
+    "free".to_string()
+}
+
+fn default_paid_tier() -> String {
+    "paid".to_string()
+}
+
+fn default_cloudflare_label() -> String {
+    "default".to_string()
+}
+
+fn default_openrouter_label() -> String {
+    "OR-Default".to_string()
+}
+
+fn default_azure_label() -> String {
+    "Azure-Default".to_string()
+}
+
+fn default_azure_deployment() -> String {
+    "gpt-4o".to_string()
+}
+
+fn default_azure_api_version() -> String {
+    "2024-06-01".to_string()
+}
+
+fn default_ollama_host() -> String {
+    "http://localhost:11434".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "llama3.2".to_string()
+}
+
+fn default_ollama_label() -> String {
+    "Local-Ollama".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct UsageFile {
     date: String,
@@ -51,11 +91,13 @@ pub struct OpenRouterAccount {
 
 #[derive(Debug, Clone)]
 pub struct AzureOpenAiAccount {
+    #[allow(dead_code)]
     pub n: u32,
     pub api_key: String,
     pub endpoint: String,
     pub deployment: String,
     pub api_version: String,
+    #[allow(dead_code)]
     pub tier: String,
     pub label: String,
 }
@@ -64,7 +106,92 @@ pub struct AzureOpenAiAccount {
 pub struct LocalOllamaAccount {
     pub host: String,
     pub default_model: String,
+    #[allow(dead_code)]
     pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceCloudflareSettings {
+    #[serde(default)]
+    pub account_id: String,
+    #[serde(default)]
+    pub api_token: String,
+    #[serde(default = "default_free_tier")]
+    pub tier: String,
+    #[serde(default = "default_cloudflare_label")]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceOpenRouterSettings {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_free_tier")]
+    pub tier: String,
+    #[serde(default = "default_openrouter_label")]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceAzureOpenAiSettings {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_azure_deployment")]
+    pub deployment: String,
+    #[serde(default = "default_azure_api_version")]
+    pub api_version: String,
+    #[serde(default = "default_paid_tier")]
+    pub tier: String,
+    #[serde(default = "default_azure_label")]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceOllamaSettings {
+    #[serde(default = "default_ollama_host")]
+    pub host: String,
+    #[serde(default = "default_ollama_model")]
+    pub default_model: String,
+    #[serde(default = "default_ollama_label")]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceProviderSettings {
+    #[serde(default)]
+    pub cloudflare: WorkspaceCloudflareSettings,
+    #[serde(default)]
+    pub openrouter: WorkspaceOpenRouterSettings,
+    #[serde(default)]
+    pub azure_openai: WorkspaceAzureOpenAiSettings,
+    #[serde(default)]
+    pub ollama: WorkspaceOllamaSettings,
+}
+
+impl WorkspaceCloudflareSettings {
+    pub fn is_configured(&self) -> bool {
+        !self.account_id.trim().is_empty() && !self.api_token.trim().is_empty()
+    }
+}
+
+impl WorkspaceOpenRouterSettings {
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.trim().is_empty()
+    }
+}
+
+impl WorkspaceAzureOpenAiSettings {
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.trim().is_empty() && !self.endpoint.trim().is_empty()
+    }
+}
+
+impl WorkspaceOllamaSettings {
+    pub fn is_configured(&self) -> bool {
+        !self.host.trim().is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -425,6 +552,87 @@ impl UsageTracker {
             % available.len();
         Some(available[idx])
     }
+}
+
+pub fn provider_settings_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".velocity").join("provider-settings.json")
+}
+
+pub fn load_workspace_provider_settings(workspace_root: &Path) -> WorkspaceProviderSettings {
+    let path = provider_settings_path(workspace_root);
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<WorkspaceProviderSettings>(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_workspace_provider_settings(
+    workspace_root: &Path,
+    settings: &WorkspaceProviderSettings,
+) -> Result<(), String> {
+    let path = provider_settings_path(workspace_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create provider settings folder: {err}"))?;
+    }
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|err| format!("Failed to serialize provider settings: {err}"))?;
+    std::fs::write(path, json).map_err(|err| format!("Failed to save provider settings: {err}"))
+}
+
+pub fn load_accounts(workspace_root: &Path) -> Vec<CloudflareAccount> {
+    let workspace_settings = load_workspace_provider_settings(workspace_root);
+    if workspace_settings.cloudflare.is_configured() {
+        return vec![CloudflareAccount {
+            n: 1,
+            id: workspace_settings.cloudflare.account_id,
+            token: workspace_settings.cloudflare.api_token,
+            tier: workspace_settings.cloudflare.tier.to_lowercase(),
+            label: workspace_settings.cloudflare.label,
+        }];
+    }
+    load_accounts_from_env()
+}
+
+pub fn load_openrouter_accounts(workspace_root: &Path) -> Vec<OpenRouterAccount> {
+    let workspace_settings = load_workspace_provider_settings(workspace_root);
+    if workspace_settings.openrouter.is_configured() {
+        return vec![OpenRouterAccount {
+            n: 1,
+            token: workspace_settings.openrouter.api_key,
+            tier: workspace_settings.openrouter.tier.to_lowercase(),
+            label: workspace_settings.openrouter.label,
+        }];
+    }
+    load_openrouter_accounts_from_env()
+}
+
+pub fn load_azure_accounts(workspace_root: &Path) -> Vec<AzureOpenAiAccount> {
+    let workspace_settings = load_workspace_provider_settings(workspace_root);
+    if workspace_settings.azure_openai.is_configured() {
+        return vec![AzureOpenAiAccount {
+            n: 1,
+            api_key: workspace_settings.azure_openai.api_key,
+            endpoint: workspace_settings.azure_openai.endpoint,
+            deployment: workspace_settings.azure_openai.deployment,
+            api_version: workspace_settings.azure_openai.api_version,
+            tier: workspace_settings.azure_openai.tier.to_lowercase(),
+            label: workspace_settings.azure_openai.label,
+        }];
+    }
+    load_azure_accounts_from_env()
+}
+
+pub fn load_local_ollama_accounts(workspace_root: &Path) -> Vec<LocalOllamaAccount> {
+    let workspace_settings = load_workspace_provider_settings(workspace_root);
+    if workspace_settings.ollama.is_configured() {
+        return vec![LocalOllamaAccount {
+            host: workspace_settings.ollama.host,
+            default_model: workspace_settings.ollama.default_model,
+            label: workspace_settings.ollama.label,
+        }];
+    }
+    load_local_ollama_accounts_from_env()
 }
 
 pub fn load_accounts_from_env() -> Vec<CloudflareAccount> {

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::agent::{AiProvider, ModelInfo};
 use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;

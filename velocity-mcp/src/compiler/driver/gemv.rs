@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;

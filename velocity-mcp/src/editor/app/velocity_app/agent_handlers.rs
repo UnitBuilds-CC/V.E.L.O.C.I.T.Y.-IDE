@@ -88,7 +88,6 @@ impl VelocityApp {
         let (id, tool_name, arguments) = self.pending_approvals[idx].clone();
         let _ = self.agent_tx.send(UiToAgentMessage::ApproveTool {
             id: id.clone(),
-            tool_name: tool_name.clone(),
             arguments,
         });
         self.pending_approvals.remove(idx);
@@ -113,7 +112,6 @@ impl VelocityApp {
         let (id, tool_name, _) = self.pending_approvals[idx].clone();
         let _ = self.agent_tx.send(UiToAgentMessage::RejectTool {
             id: id.clone(),
-            tool_name: tool_name.clone(),
         });
         self.pending_approvals.remove(idx);
         self.chat
@@ -332,6 +330,7 @@ impl VelocityApp {
         files
     }
 
+    #[allow(dead_code)]
     pub fn focus_orchestrator_tab(&mut self) {
         if let Some(tab) = self
             .tabs
@@ -455,7 +454,6 @@ impl VelocityApp {
                     if should_auto {
                         let _ = self.agent_tx.send(UiToAgentMessage::ApproveTool {
                             id,
-                            tool_name,
                             arguments,
                         });
                     } else {

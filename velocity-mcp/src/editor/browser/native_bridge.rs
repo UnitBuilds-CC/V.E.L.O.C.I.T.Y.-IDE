@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use velocity_browser::{BrowserSession, SwarmSessionOrchestrator, NdaTriple};
 use velocity_browser::screencast::ScreencastRecorder;
 use velocity_browser::vector_memory::SiteVectorStore;

@@ -1,25 +1,25 @@
-use crate::agentic::{ActionPredictorEngine, AgenticAomTree, NdaEncoder, PredictedActionTarget, VelocityOcrEngine, ZeroAllocNdaWriter};
-use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree, SlotProjectionEngine};
+use crate::agentic::{ActionPredictorEngine, AgenticAomTree, NdaEncoder, PredictedActionTarget, VelocityOcrEngine};
+use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree};
 use crate::engine::{
-    AudioContextNode, BezierPoint, Canvas2DContext, CanvasElement, CanvasExtractor, CaptchaSolverEngine, CaptchaType, ConsoleTraceRecord,
-    DeviceProfile, DownloadStreamArtifact, FileChooserEvent, FileManager, FrameTarget, Geocoordinates, GeolocationProvider,
-    GpuTileCompositor, InterstitialClassifier, InterstitialKind, NetworkTracker, PaymentItem, PaymentRequestEngine, PdfMediaExtractor,
-    PixelBuffer, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager, ShadowFrameExtractor, ShadowHost, SoftwareRasterizer,
-    StealthHumanBehavior, SvgVectorEngine, TabSandbox, TraceCollector, VelocityCodecsEngine, WebAudioEngine, WebCryptoEngine, WebGLContext,
+    CanvasElement, CanvasExtractor, CaptchaSolverEngine, DeviceProfile, FileManager, FrameTarget,
+    GeolocationProvider, GpuTileCompositor, InterstitialClassifier, InterstitialKind, NetworkTracker,
+    PaymentRequestEngine, PushNotificationManager, SandboxCapabilities, ServiceWorkerManager,
+    ShadowFrameExtractor, ShadowHost, SoftwareRasterizer, StealthHumanBehavior, TabSandbox,
+    TraceCollector, VelocityCodecsEngine, WebAudioEngine, WebCryptoEngine, WebGLContext,
     WebGpuComputeEngine,
 };
 use crate::js::{JsEventLoopScheduler, JsVirtualMachine, PointerEvent, SyntheticEventDispatcher, WasmInterpreter, WasmSimdPipeline, WebWorkerPool};
-use crate::layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D, ParallelLayoutEngine};
-use crate::net::{BluetoothDevice, HttpClient, InspectorServer, NativeWsClient, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport, WebRtcTransport};
+use crate::layout::{DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, JustifyContent, LayoutBox, LayoutEngine2D, ParallelLayoutEngine};
+use crate::net::{HttpClient, InspectorServer, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport};
 use crate::nda::NdaTriple;
 use crate::parser::{CssMatcher, FastCssParser, HtmlParser, Html5Tokenizer, StreamJitTokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
-use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
-use crate::session_history::{HistoryItem, HistoryStack};
+use crate::session_cookie_store::CookieStore;
+use crate::session_history::HistoryStack;
 use crate::session_indexeddb::IndexedDbStorage;
-use crate::session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
+use crate::session_storage_events::StorageEventBroadcaster;
 pub use crate::session_storage_quota::StorageQuotaManager;
-use crate::style::{FontShaperEngine, ScopedCssMatcher, StyleCascader};
+use crate::style::{FontShaperEngine, StyleCascader};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

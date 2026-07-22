@@ -222,10 +222,14 @@ pub fn execute_azure_request(
 }
 
 pub fn execute_ollama_request(
+    ollama_accounts: &[LocalOllamaAccount],
     request_body: &Value,
     ui_tx: &Sender<AgentToUiMessage>,
 ) -> Option<ureq::Response> {
-    let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let host = ollama_accounts
+        .first()
+        .map(|account| account.host.as_str())
+        .unwrap_or("http://localhost:11434");
     let api_url = format!("{}/v1/chat/completions", host.trim_end_matches('/'));
     match ureq::post(&api_url)
         .timeout(Duration::from_secs(60))

@@ -1,4 +1,3 @@
-use crate::dom::DomTree;
 use crate::parser::html::DomNode;
 
 pub struct ScopedCssMatcher;

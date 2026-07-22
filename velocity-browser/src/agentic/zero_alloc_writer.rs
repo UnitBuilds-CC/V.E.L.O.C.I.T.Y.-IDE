@@ -1,5 +1,3 @@
-use crate::nda::NdaTriple;
-
 pub struct ZeroAllocNdaWriter<'a> {
     pub buffer: &'a mut [u8],
     pub cursor: usize,

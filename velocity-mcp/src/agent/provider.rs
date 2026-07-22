@@ -1,9 +1,7 @@
 use super::models::*;
 
 pub fn openrouter_api_key() -> String {
-    const OPENROUTER_API_KEY: &str =
-        "[REDACTED_OPENROUTER_API_KEY]";
-    std::env::var("OPENROUTER_API_KEY").unwrap_or_else(|_| OPENROUTER_API_KEY.to_string())
+    std::env::var("OPENROUTER_API_KEY").unwrap_or_default()
 }
 
 pub fn infer_model_info(id: String, item: &serde_json::Value) -> Option<ModelInfo> {
@@ -166,6 +164,10 @@ pub fn fetch_openrouter_models(
             }
             acct.token.clone()
         };
+
+        if current_key.trim().is_empty() {
+            continue;
+        }
 
         match ureq::get("https://openrouter.ai/api/v1/models")
             .timeout(std::time::Duration::from_secs(15))

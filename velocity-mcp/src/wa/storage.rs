@@ -75,6 +75,7 @@ fn snapshot_nda_path(root: &Path, session_id: &str, snapshot_name: &str) -> Resu
         .join(format!("{}.nda", snapshot_stem(session_id, snapshot_name))))
 }
 
+#[allow(dead_code)]
 fn script_json_legacy_path(root: &Path, name: &str) -> Result<PathBuf, Box<dyn Error>> {
     Ok(ensure_velocity_dir(root, "wa-scripts")?.join(format!("{}.wa.json", slugify(name))))
 }

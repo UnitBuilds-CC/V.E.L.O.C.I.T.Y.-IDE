@@ -55,7 +55,13 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             }
             TabKind::Chat => {
                 let palette = self.app.palette();
-                render_chat_panel(ui, &mut self.app.chat, &self.app.agent_tx, palette);
+                if render_chat_panel(ui, &mut self.app.chat, &self.app.agent_tx, palette) {
+                    self.app.auto_approve = self.app.chat.auto_approve;
+                    self.app.selected_model = self.app.chat.selected_model.clone();
+                    self.app.thinking_enabled = self.app.chat.thinking_enabled;
+                    self.app.provider = self.app.chat.provider;
+                    self.app.save_workspace_preferences();
+                }
             }
             TabKind::Output => self.output_panel(ui),
             TabKind::Orchestrator => {
@@ -96,208 +102,475 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
 impl<'a> TabViewerImpl<'a> {
     pub fn settings_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.app.palette();
+        let truncate_model = |model: &str| {
+            if model.chars().count() > 36 {
+                format!("{}…", model.chars().take(35).collect::<String>())
+            } else {
+                model.to_string()
+            }
+        };
+        let provider_badge = |ui: &mut egui::Ui, configured: bool| {
+            let (label, color) = if configured {
+                ("Workspace configured", palette.success)
+            } else {
+                ("Env fallback", palette.warning)
+            };
+            ui.label(egui::RichText::new(label).small().color(color));
+        };
+        let text_row = |ui: &mut egui::Ui,
+                        label: &str,
+                        value: &mut String,
+                        hint: &str,
+                        secret: bool| {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                ui.add(
+                    egui::TextEdit::singleline(value)
+                        .desired_width(260.0)
+                        .hint_text(hint)
+                        .password(secret),
+                );
+            });
+        };
+
         egui::Frame::new()
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
-                ui.heading("Appearance & Workspace");
-                ui.label(
-                    egui::RichText::new(
-                        "Tune palette, density, scale, and role defaults for coding, automation, or supervision.",
-                    )
-                    .color(palette.text_muted),
-                );
-                ui.add_space(8.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Workspace settings");
+                    ui.label(
+                        egui::RichText::new(
+                            "Tune layout, agent defaults, and per-workspace provider credentials without leaving the app.",
+                        )
+                        .color(palette.text_muted),
+                    );
+                    ui.add_space(8.0);
 
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new("Workspace profile").strong());
-                    let mut selected_profile = self.app.appearance.profile;
-                    egui::ComboBox::from_id_salt("appearance_profile")
-                        .selected_text(selected_profile.label())
-                        .show_ui(ui, |ui| {
-                            for profile in WorkspaceProfile::ALL {
-                                ui.selectable_value(&mut selected_profile, profile, profile.label());
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Appearance & workspace").strong());
+                        ui.label(
+                            egui::RichText::new(
+                                "Shape the shell for coding, automation, supervision, or accessibility-first work.",
+                            )
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                        ui.add_space(8.0);
+
+                        ui.label(egui::RichText::new("Workspace profile").strong());
+                        let mut selected_profile = self.app.appearance.profile;
+                        egui::ComboBox::from_id_salt("appearance_profile")
+                            .selected_text(selected_profile.label())
+                            .show_ui(ui, |ui| {
+                                for profile in WorkspaceProfile::ALL {
+                                    ui.selectable_value(&mut selected_profile, profile, profile.label());
+                                }
+                            });
+                        ui.label(
+                            egui::RichText::new(selected_profile.description())
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        if selected_profile != self.app.appearance.profile {
+                            self.app.apply_workspace_profile(selected_profile);
+                            self.app.apply_appearance(ui.ctx());
+                            self.app.save_workspace_preferences();
+                        }
+
+                        ui.add_space(8.0);
+                        ui.columns(2, |columns| {
+                            columns[0].group(|ui| {
+                                ui.label(egui::RichText::new("Theme").strong());
+                                let mut theme = self.app.appearance.theme;
+                                egui::ComboBox::from_id_salt("appearance_theme")
+                                    .selected_text(theme.label())
+                                    .show_ui(ui, |ui| {
+                                        for variant in ThemeVariant::ALL {
+                                            ui.selectable_value(&mut theme, variant, variant.label());
+                                        }
+                                    });
+                                if theme != self.app.appearance.theme {
+                                    self.app.appearance.theme = theme;
+                                    self.app.apply_appearance(ui.ctx());
+                                    self.app.save_workspace_preferences();
+                                }
+
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new("Density").strong());
+                                let mut density = self.app.appearance.density;
+                                egui::ComboBox::from_id_salt("appearance_density")
+                                    .selected_text(density.label())
+                                    .show_ui(ui, |ui| {
+                                        for option in Density::ALL {
+                                            ui.selectable_value(&mut density, option, option.label());
+                                        }
+                                    });
+                                if density != self.app.appearance.density {
+                                    self.app.appearance.density = density;
+                                    self.app.apply_appearance(ui.ctx());
+                                    self.app.save_workspace_preferences();
+                                }
+                            });
+
+                            columns[1].group(|ui| {
+                                ui.label(egui::RichText::new("Scale").strong());
+                                let mut changed = false;
+                                changed |= ui
+                                    .add(egui::Slider::new(&mut self.app.appearance.ui_scale, 0.85..=1.35).text("UI scale"))
+                                    .changed();
+                                changed |= ui
+                                    .add(egui::Slider::new(&mut self.app.appearance.code_scale, 0.85..=1.35).text("Code scale"))
+                                    .changed();
+                                if changed {
+                                    self.app.apply_appearance(ui.ctx());
+                                    self.app.save_workspace_preferences();
+                                }
+
+                                ui.add_space(6.0);
+                                if ui.button("Reset to profile defaults").clicked() {
+                                    let profile = self.app.appearance.profile;
+                                    self.app.apply_workspace_profile(profile);
+                                    self.app.apply_appearance(ui.ctx());
+                                    self.app.save_workspace_preferences();
+                                }
+                                if ui.button("Reset workspace layout").clicked() {
+                                    self.app.reset_workspace_layout();
+                                    self.app.apply_appearance(ui.ctx());
+                                }
+                            });
+                        });
+                    });
+
+                    ui.add_space(8.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Agent defaults").strong());
+                        ui.label(
+                            egui::RichText::new(
+                                "These controls mirror the chat toolbar, but live here so workspace behavior is configurable in one place.",
+                            )
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                        ui.add_space(6.0);
+
+                        let mut provider = self.app.provider;
+                        let mut selected_model = self.app.selected_model.clone();
+                        let mut thinking_enabled = self.app.thinking_enabled;
+                        let mut auto_approve = self.app.auto_approve;
+                        let mut show_thoughts = self.app.chat.show_thoughts;
+                        let mut provider_changed = false;
+                        let mut model_changed = false;
+                        let mut refresh_models = false;
+
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(egui::RichText::new("Provider").small().color(palette.text_muted));
+                            egui::ComboBox::from_id_salt("settings_agent_provider")
+                                .selected_text(provider.label())
+                                .width(180.0)
+                                .show_ui(ui, |ui| {
+                                    for prov in [
+                                        crate::agent::AiProvider::CloudflareWorkersAi,
+                                        crate::agent::AiProvider::OpenRouter,
+                                        crate::agent::AiProvider::AzureOpenAi,
+                                        crate::agent::AiProvider::LocalOllama,
+                                    ] {
+                                        provider_changed |= ui
+                                            .selectable_value(&mut provider, prov, prov.label())
+                                            .changed();
+                                    }
+                                });
+
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("Model").small().color(palette.text_muted));
+                            if self.app.available_models.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(truncate_model(&selected_model))
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                            } else {
+                                egui::ComboBox::from_id_salt("settings_agent_model")
+                                    .selected_text(truncate_model(&selected_model))
+                                    .width(280.0)
+                                    .show_ui(ui, |ui| {
+                                        for model in self.app.available_models.clone() {
+                                            model_changed |= ui
+                                                .selectable_value(&mut selected_model, model.id.clone(), model.label)
+                                                .changed();
+                                        }
+                                    });
+                            }
+
+                            if ui
+                                .button(if self.app.models_loading {
+                                    "Loading…"
+                                } else {
+                                    "↻ Models"
+                                })
+                                .clicked()
+                                && !self.app.models_loading
+                            {
+                                refresh_models = true;
                             }
                         });
-                    ui.label(
-                        egui::RichText::new(selected_profile.description())
-                            .small()
-                            .color(palette.text_muted),
-                    );
-                    if selected_profile != self.app.appearance.profile {
-                        self.app.apply_workspace_profile(selected_profile);
-                        self.app.apply_appearance(ui.ctx());
-                        self.app.save_workspace_preferences();
-                    }
-                });
-
-                ui.add_space(8.0);
-                ui.columns(2, |columns| {
-                    columns[0].group(|ui| {
-                        ui.label(egui::RichText::new("Theme").strong());
-                        let mut theme = self.app.appearance.theme;
-                        egui::ComboBox::from_id_salt("appearance_theme")
-                            .selected_text(theme.label())
-                            .show_ui(ui, |ui| {
-                                for variant in ThemeVariant::ALL {
-                                    ui.selectable_value(&mut theme, variant, variant.label());
-                                }
-                            });
-                        if theme != self.app.appearance.theme {
-                            self.app.appearance.theme = theme;
-                            self.app.apply_appearance(ui.ctx());
-                            self.app.save_workspace_preferences();
-                        }
 
                         ui.add_space(6.0);
-                        ui.label(egui::RichText::new("Density").strong());
-                        let mut density = self.app.appearance.density;
-                        egui::ComboBox::from_id_salt("appearance_density")
-                            .selected_text(density.label())
-                            .show_ui(ui, |ui| {
-                                for option in Density::ALL {
-                                    ui.selectable_value(&mut density, option, option.label());
-                                }
-                            });
-                        if density != self.app.appearance.density {
-                            self.app.appearance.density = density;
-                            self.app.apply_appearance(ui.ctx());
-                            self.app.save_workspace_preferences();
-                        }
-                    });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_enabled(
+                                self.app.thinking_supported,
+                                egui::Checkbox::new(&mut thinking_enabled, "Thinking"),
+                            );
+                            ui.checkbox(&mut auto_approve, "Auto-approve tools");
+                            ui.checkbox(&mut show_thoughts, "Show thoughts");
+                        });
 
-                    columns[1].group(|ui| {
-                        ui.label(egui::RichText::new("Scale").strong());
-                        let mut changed = false;
-                        changed |= ui
-                            .add(egui::Slider::new(&mut self.app.appearance.ui_scale, 0.85..=1.35).text("UI scale"))
-                            .changed();
-                        changed |= ui
-                            .add(egui::Slider::new(&mut self.app.appearance.code_scale, 0.85..=1.35).text("Code scale"))
-                            .changed();
-                        if changed {
-                            self.app.apply_appearance(ui.ctx());
-                            self.app.save_workspace_preferences();
-                        }
-
-                        ui.add_space(6.0);
-                        if ui.button("Reset to profile defaults").clicked() {
-                            let profile = self.app.appearance.profile;
-                            self.app.apply_workspace_profile(profile);
-                            self.app.apply_appearance(ui.ctx());
-                            self.app.save_workspace_preferences();
-                        }
-                        if ui.button("Reset workspace layout").clicked() {
-                            self.app.reset_workspace_layout();
-                            self.app.apply_appearance(ui.ctx());
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-                ui.group(|ui| {
-                    let profile = self.app.appearance.profile;
-                    let retryable_blocked = self.app.orchestrator.retryable_blocked_task_count();
-                    let approval_count = self.app.pending_approvals.len();
-                    let dirty_count = self.app.dirty_buffer_count();
-                    ui.label(egui::RichText::new("Workspace guidance").strong());
-                    ui.label(
-                        egui::RichText::new(profile.focus_label())
-                            .small()
-                            .color(palette.accent),
-                    );
-                    ui.label(
-                        egui::RichText::new(profile.quick_tip())
+                        ui.label(
+                            egui::RichText::new(
+                                "Provider, model, and thinking changes apply immediately. Auto-approve and thought visibility persist per workspace.",
+                            )
                             .small()
                             .color(palette.text_muted),
-                    );
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for summary in [
-                            format!("Pending approvals: {approval_count}"),
-                            format!("Dirty editors: {dirty_count}"),
-                            format!("Blocked tasks: {retryable_blocked}"),
-                        ] {
-                            egui::Frame::new()
-                                .fill(palette.bg_tertiary)
-                                .stroke(egui::Stroke::new(1.0, palette.border))
-                                .corner_radius(egui::CornerRadius::same(6))
-                                .inner_margin(egui::Margin::symmetric(10, 6))
-                                .show(ui, |ui| {
-                                    ui.label(summary);
-                                });
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        match profile {
-                            WorkspaceProfile::Coder => {
-                                if ui.button("Focus chat").clicked() {
-                                    self.app.focus_panel(TabKind::Chat);
-                                }
-                                if ui.button("Open search").clicked() {
-                                    self.app.focus_panel(TabKind::Search);
-                                }
-                                if ui.button("Show output").clicked() {
-                                    self.app.focus_panel(TabKind::Output);
-                                }
-                            }
-                            WorkspaceProfile::AutomationOperator => {
-                                if ui.button("Open orchestrator").clicked() {
-                                    self.app.focus_panel(TabKind::Orchestrator);
-                                }
-                                if ui.button("Show output").clicked() {
-                                    self.app.focus_panel(TabKind::Output);
-                                }
-                                if ui.button("Focus mission control").clicked() {
-                                    self.app.focus_panel(TabKind::MissionControl);
-                                }
-                            }
-                            WorkspaceProfile::MissionControl => {
-                                if ui.button("Open mission control").clicked() {
-                                    self.app.focus_panel(TabKind::MissionControl);
-                                }
-                                if ui.button("Review approvals").clicked() {
-                                    self.app.focus_panel(TabKind::Chat);
-                                }
-                                if ui.button("Open orchestrator").clicked() {
-                                    self.app.focus_panel(TabKind::Orchestrator);
-                                }
-                            }
-                            WorkspaceProfile::Accessibility => {
-                                if ui.button("Open settings").clicked() {
-                                    self.app.focus_panel(TabKind::Settings);
-                                }
-                                if ui.button("Focus mission control").clicked() {
-                                    self.app.focus_panel(TabKind::MissionControl);
-                                }
-                                if ui.button("Focus chat").clicked() {
-                                    self.app.focus_panel(TabKind::Chat);
-                                }
-                            }
-                        }
-                    });
-                });
+                        );
 
-                ui.add_space(8.0);
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new("Preview").strong());
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, color) in [
-                            ("Accent", palette.accent),
-                            ("Success", palette.success),
-                            ("Warning", palette.warning),
-                            ("Error", palette.error),
-                        ] {
-                            egui::Frame::new()
-                                .fill(palette.bg_tertiary)
-                                .stroke(egui::Stroke::new(1.0, palette.border))
-                                .corner_radius(egui::CornerRadius::same(6))
-                                .inner_margin(egui::Margin::symmetric(10, 6))
-                                .show(ui, |ui| {
-                                    ui.colored_label(color, "●");
-                                    ui.label(label);
-                                });
+                        let mut prefs_dirty = false;
+                        if provider_changed {
+                            self.app.provider = provider;
+                            self.app.chat.provider = provider;
+                            self.app.models_loading = true;
+                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::SetProvider(provider));
+                            prefs_dirty = true;
                         }
+                        if model_changed {
+                            self.app.selected_model = selected_model.clone();
+                            self.app.chat.selected_model = selected_model.clone();
+                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::SetModel(selected_model));
+                            prefs_dirty = true;
+                        }
+                        if thinking_enabled != self.app.thinking_enabled {
+                            self.app.thinking_enabled = thinking_enabled;
+                            self.app.chat.thinking_enabled = thinking_enabled;
+                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::SetThinking(thinking_enabled));
+                            prefs_dirty = true;
+                        }
+                        if auto_approve != self.app.auto_approve {
+                            self.app.auto_approve = auto_approve;
+                            self.app.chat.auto_approve = auto_approve;
+                            prefs_dirty = true;
+                        }
+                        if show_thoughts != self.app.chat.show_thoughts {
+                            self.app.chat.show_thoughts = show_thoughts;
+                            prefs_dirty = true;
+                        }
+                        if refresh_models {
+                            self.app.models_loading = true;
+                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::RefreshModels);
+                        }
+                        if prefs_dirty {
+                            self.app.save_workspace_preferences();
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Providers & credentials").strong());
+                        ui.label(
+                            egui::RichText::new(
+                                "Credentials are stored per workspace in .velocity\\provider-settings.json. Leave fields blank to keep using environment or .env values.",
+                            )
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                        ui.add_space(8.0);
+
+                        egui::CollapsingHeader::new("Cloudflare Workers AI")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    provider_badge(ui, self.app.provider_settings.cloudflare.is_configured());
+                                    ui.label(
+                                        egui::RichText::new("Account ID + token are required for workspace override.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                                text_row(ui, "Account ID", &mut self.app.provider_settings.cloudflare.account_id, "Cloudflare account ID", false);
+                                text_row(ui, "API token", &mut self.app.provider_settings.cloudflare.api_token, "Cloudflare API token", true);
+                                text_row(ui, "Tier", &mut self.app.provider_settings.cloudflare.tier, "free or paid", false);
+                                text_row(ui, "Label", &mut self.app.provider_settings.cloudflare.label, "default", false);
+                            });
+
+                        egui::CollapsingHeader::new("OpenRouter")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    provider_badge(ui, self.app.provider_settings.openrouter.is_configured());
+                                    ui.label(
+                                        egui::RichText::new("Workspace key overrides env-based OpenRouter access.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                                text_row(ui, "API key", &mut self.app.provider_settings.openrouter.api_key, "OpenRouter API key", true);
+                                text_row(ui, "Tier", &mut self.app.provider_settings.openrouter.tier, "free or paid", false);
+                                text_row(ui, "Label", &mut self.app.provider_settings.openrouter.label, "OR-Default", false);
+                            });
+
+                        egui::CollapsingHeader::new("Azure OpenAI")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    provider_badge(ui, self.app.provider_settings.azure_openai.is_configured());
+                                    ui.label(
+                                        egui::RichText::new("Endpoint and key are required; deployment and API version can be tuned here too.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                                text_row(ui, "Endpoint", &mut self.app.provider_settings.azure_openai.endpoint, "https://your-resource.openai.azure.com", false);
+                                text_row(ui, "API key", &mut self.app.provider_settings.azure_openai.api_key, "Azure OpenAI key", true);
+                                text_row(ui, "Deployment", &mut self.app.provider_settings.azure_openai.deployment, "gpt-4o", false);
+                                text_row(ui, "API version", &mut self.app.provider_settings.azure_openai.api_version, "2024-06-01", false);
+                                text_row(ui, "Tier", &mut self.app.provider_settings.azure_openai.tier, "paid", false);
+                                text_row(ui, "Label", &mut self.app.provider_settings.azure_openai.label, "Azure-Default", false);
+                            });
+
+                        egui::CollapsingHeader::new("Local Ollama")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    provider_badge(ui, self.app.provider_settings.ollama.is_configured());
+                                    ui.label(
+                                        egui::RichText::new("Host is enough to activate a workspace-local Ollama target.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                                text_row(ui, "Host", &mut self.app.provider_settings.ollama.host, "http://localhost:11434", false);
+                                text_row(ui, "Default model", &mut self.app.provider_settings.ollama.default_model, "llama3.2", false);
+                                text_row(ui, "Label", &mut self.app.provider_settings.ollama.label, "Local-Ollama", false);
+                            });
+
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("Save provider settings").clicked() {
+                                self.app.save_provider_settings();
+                            }
+                            if ui.button("Reload provider settings").clicked() {
+                                self.app.reload_workspace_provider_settings();
+                                self.app.status_message = "Reloaded workspace provider settings from disk".into();
+                            }
+                            if ui.button("Open chat controls").clicked() {
+                                self.app.focus_panel(TabKind::Chat);
+                            }
+                        });
+                    });
+
+                    ui.add_space(8.0);
+                    ui.group(|ui| {
+                        let profile = self.app.appearance.profile;
+                        let retryable_blocked = self.app.orchestrator.retryable_blocked_task_count();
+                        let approval_count = self.app.pending_approvals.len();
+                        let dirty_count = self.app.dirty_buffer_count();
+                        ui.label(egui::RichText::new("Workspace guidance").strong());
+                        ui.label(
+                            egui::RichText::new(profile.focus_label())
+                                .small()
+                                .color(palette.accent),
+                        );
+                        ui.label(
+                            egui::RichText::new(profile.quick_tip())
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            for summary in [
+                                format!("Pending approvals: {approval_count}"),
+                                format!("Dirty editors: {dirty_count}"),
+                                format!("Blocked tasks: {retryable_blocked}"),
+                            ] {
+                                egui::Frame::new()
+                                    .fill(palette.bg_tertiary)
+                                    .stroke(egui::Stroke::new(1.0, palette.border))
+                                    .corner_radius(egui::CornerRadius::same(6))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.label(summary);
+                                    });
+                            }
+                        });
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            match profile {
+                                WorkspaceProfile::Coder => {
+                                    if ui.button("Focus chat").clicked() {
+                                        self.app.focus_panel(TabKind::Chat);
+                                    }
+                                    if ui.button("Open search").clicked() {
+                                        self.app.focus_panel(TabKind::Search);
+                                    }
+                                    if ui.button("Show output").clicked() {
+                                        self.app.focus_panel(TabKind::Output);
+                                    }
+                                }
+                                WorkspaceProfile::AutomationOperator => {
+                                    if ui.button("Open orchestrator").clicked() {
+                                        self.app.focus_panel(TabKind::Orchestrator);
+                                    }
+                                    if ui.button("Show output").clicked() {
+                                        self.app.focus_panel(TabKind::Output);
+                                    }
+                                    if ui.button("Focus mission control").clicked() {
+                                        self.app.focus_panel(TabKind::MissionControl);
+                                    }
+                                }
+                                WorkspaceProfile::MissionControl => {
+                                    if ui.button("Open mission control").clicked() {
+                                        self.app.focus_panel(TabKind::MissionControl);
+                                    }
+                                    if ui.button("Review approvals").clicked() {
+                                        self.app.focus_panel(TabKind::Chat);
+                                    }
+                                    if ui.button("Open orchestrator").clicked() {
+                                        self.app.focus_panel(TabKind::Orchestrator);
+                                    }
+                                }
+                                WorkspaceProfile::Accessibility => {
+                                    if ui.button("Open settings").clicked() {
+                                        self.app.focus_panel(TabKind::Settings);
+                                    }
+                                    if ui.button("Focus mission control").clicked() {
+                                        self.app.focus_panel(TabKind::MissionControl);
+                                    }
+                                    if ui.button("Focus chat").clicked() {
+                                        self.app.focus_panel(TabKind::Chat);
+                                    }
+                                }
+                            }
+                        });
+                    });
+
+                    ui.add_space(8.0);
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Preview").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            for (label, color) in [
+                                ("Accent", palette.accent),
+                                ("Success", palette.success),
+                                ("Warning", palette.warning),
+                                ("Error", palette.error),
+                            ] {
+                                egui::Frame::new()
+                                    .fill(palette.bg_tertiary)
+                                    .stroke(egui::Stroke::new(1.0, palette.border))
+                                    .corner_radius(egui::CornerRadius::same(6))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.colored_label(color, "●");
+                                        ui.label(label);
+                                    });
+                            }
+                        });
                     });
                 });
             });

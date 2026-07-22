@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::automation::mediator::MediatorArena;
 use eframe::egui::{self, Color32};
 use std::path::{Path, PathBuf};

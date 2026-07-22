@@ -13,6 +13,7 @@ pub struct Task {
     /// Files this task should focus on, if any. Used for sandboxing and collision scope.
     pub scope: Vec<String>,
     pub dependencies: Vec<TaskId>,
+    #[allow(dead_code)]
     pub output: Option<String>,
 }
 

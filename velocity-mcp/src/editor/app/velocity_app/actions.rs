@@ -463,6 +463,7 @@ impl VelocityApp {
         self.toggle_panel(TabKind::Chat);
     }
 
+    #[allow(dead_code)]
     pub fn toggle_orchestrator(&mut self) {
         self.toggle_panel(TabKind::Orchestrator);
     }
@@ -471,10 +472,12 @@ impl VelocityApp {
         self.toggle_panel(TabKind::MissionControl);
     }
 
+    #[allow(dead_code)]
     pub fn toggle_search(&mut self) {
         self.toggle_panel(TabKind::Search);
     }
 
+    #[allow(dead_code)]
     pub fn toggle_settings(&mut self) {
         self.toggle_panel(TabKind::Settings);
     }

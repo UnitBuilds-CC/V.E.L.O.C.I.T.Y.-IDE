@@ -216,6 +216,7 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub fn render_usage_compact(
     ui: &mut egui::Ui,
     accounts: &[AccountUsageView],

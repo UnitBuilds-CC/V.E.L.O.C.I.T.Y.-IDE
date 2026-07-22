@@ -1,5 +1,3 @@
-use crate::layout::LayoutBox;
-
 #[derive(Debug, Clone)]
 pub struct SvgPathCommand {
     pub cmd_type: char, // 'M', 'L', 'C', 'Z'

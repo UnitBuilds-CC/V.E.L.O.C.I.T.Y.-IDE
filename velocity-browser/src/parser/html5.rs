@@ -39,17 +39,15 @@ pub enum TokenKind {
     Eof,
 }
 
-pub struct Html5Tokenizer<'a> {
-    input: &'a str,
+pub struct Html5Tokenizer {
     chars: Vec<char>,
     pos: usize,
     state: Html5State,
 }
 
-impl<'a> Html5Tokenizer<'a> {
-    pub fn new(input: &'a str) -> Self {
+impl Html5Tokenizer {
+    pub fn new(input: &str) -> Self {
         Self {
-            input,
             chars: input.chars().collect(),
             pos: 0,
             state: Html5State::Data,

@@ -3,15 +3,16 @@ use super::super::provider::*;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::utils::build_inline_tool_docs;
 use crate::usage::{
-    load_accounts_from_env, load_azure_accounts_from_env, load_openrouter_accounts_from_env,
+    load_accounts, load_azure_accounts, load_local_ollama_accounts, load_openrouter_accounts,
     UsageTracker,
 };
 use std::sync::{Arc, Mutex};
 
 pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAgentResult {
-    let accounts = load_accounts_from_env();
-    let or_accounts = load_openrouter_accounts_from_env();
-    let azure_accounts = load_azure_accounts_from_env();
+    let accounts = load_accounts(&request.workspace_root);
+    let or_accounts = load_openrouter_accounts(&request.workspace_root);
+    let azure_accounts = load_azure_accounts(&request.workspace_root);
+    let ollama_accounts = load_local_ollama_accounts(&request.workspace_root);
     let mut usage_tracker = UsageTracker::new(&request.workspace_root);
     let selected_profile = match request.provider {
         AiProvider::OpenRouter => ModelInfo {
@@ -63,11 +64,9 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     let progress = request.progress;
     let status_updates = Arc::new(Mutex::new(Vec::new()));
     let transcript = Arc::new(Mutex::new(String::new()));
-    let changed_files = Arc::new(Mutex::new(Vec::new()));
 
     let status_updates_collector = status_updates.clone();
     let transcript_collector = transcript.clone();
-    let changed_files_collector = changed_files.clone();
     let progress_collector = progress.clone();
     let auto_approve_tx = agent_ui_tx.clone();
 
@@ -100,10 +99,6 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                     }
                 }
                 AgentToUiMessage::UpdateFileBuffer { path, .. } => {
-                    let mut guard = changed_files_collector.lock().unwrap();
-                    if !guard.contains(&path) {
-                        guard.push(path.clone());
-                    }
                     if let Some(progress) = &progress_collector {
                         let changed_path = path.display().to_string();
                         let mut progress = progress.lock().unwrap();
@@ -140,7 +135,6 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                     }
                     let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool {
                         id,
-                        tool_name,
                         arguments,
                     });
                 }
@@ -171,6 +165,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         &accounts,
         &or_accounts,
         &azure_accounts,
+        &ollama_accounts,
         &request.model,
         &selected_profile,
         request.provider,
@@ -189,10 +184,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
 
     let status_updates = status_updates.lock().unwrap().clone();
     let transcript = transcript.lock().unwrap().clone();
-    let changed_files = changed_files.lock().unwrap().clone();
     HeadlessSubAgentResult {
         status_updates,
         transcript,
-        changed_files,
     }
 }

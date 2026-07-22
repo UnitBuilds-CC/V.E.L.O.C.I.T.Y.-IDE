@@ -14,7 +14,7 @@ pub struct PointerEvent {
 pub struct SyntheticEventDispatcher;
 
 impl SyntheticEventDispatcher {
-    pub fn dispatch_pointer_event(tree: &mut DomTree, target_node_id: usize, mut event: PointerEvent) -> PointerEvent {
+    pub fn dispatch_pointer_event(tree: &mut DomTree, target_node_id: usize, event: PointerEvent) -> PointerEvent {
         let mut path = Vec::new();
         let mut curr = Some(target_node_id);
 

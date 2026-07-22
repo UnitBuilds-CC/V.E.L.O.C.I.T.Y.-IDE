@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;

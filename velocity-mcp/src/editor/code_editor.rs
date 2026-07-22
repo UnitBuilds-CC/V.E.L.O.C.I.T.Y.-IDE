@@ -166,6 +166,7 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 }
 
 /// Render a gutter with line numbers next to a code text edit.
+#[allow(dead_code)]
 pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
     let mut editor = CodeEditor::default();
     editor.show(ui, text, None, None, &[], AppearanceSettings::default())

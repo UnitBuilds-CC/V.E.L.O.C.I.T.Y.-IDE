@@ -618,11 +618,17 @@ impl eframe::App for VelocityApp {
                                     let new_path = proj.clone();
                                     if new_path.is_dir() {
                                         self.workspace_root = new_path.clone();
+                                        self.reload_workspace_provider_settings();
                                         self.restore_workspace_preferences();
                                         self.apply_appearance(&ctx);
                                         let _ = self
                                             .agent_tx
                                             .send(crate::agent::UiToAgentMessage::SetWorkspace(new_path.clone()));
+                                        let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::ApplySessionState {
+                                            provider: self.provider,
+                                            model: self.selected_model.clone(),
+                                            thinking: self.thinking_enabled,
+                                        });
                                         self.status_message = format!(
                                             "Switched to {:?}",
                                             proj.file_name().unwrap_or_default()

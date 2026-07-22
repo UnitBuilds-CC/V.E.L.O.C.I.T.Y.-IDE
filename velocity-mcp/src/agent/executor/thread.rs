@@ -8,18 +8,24 @@ use crossbeam_channel::{Receiver, Sender};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub fn run_agent_thread(
-    mut workspace_root: PathBuf,
-    ui_rx: Receiver<UiToAgentMessage>,
-    ui_tx: Sender<AgentToUiMessage>,
+fn load_runtime_accounts(
+    workspace_root: &PathBuf,
+) -> (
+    Vec<CloudflareAccount>,
+    Vec<OpenRouterAccount>,
+    Vec<AzureOpenAiAccount>,
+    Vec<LocalOllamaAccount>,
 ) {
-    let accounts = load_accounts_from_env();
-    let or_accounts = load_openrouter_accounts_from_env();
-    let azure_accounts = load_azure_accounts_from_env();
-    let _ollama_accounts = load_local_ollama_accounts_from_env();
-    let mut usage_tracker = UsageTracker::new(&workspace_root);
-    send_usage_update(&mut usage_tracker, &accounts, &or_accounts, &ui_tx);
-    let mut provider = match std::env::var("LLM_PROVIDER")
+    (
+        load_accounts(workspace_root),
+        load_openrouter_accounts(workspace_root),
+        load_azure_accounts(workspace_root),
+        load_local_ollama_accounts(workspace_root),
+    )
+}
+
+fn initial_provider_from_env() -> AiProvider {
+    match std::env::var("LLM_PROVIDER")
         .unwrap_or_default()
         .to_lowercase()
         .as_str()
@@ -28,33 +34,119 @@ pub fn run_agent_thread(
         "azure" | "azure_openai" => AiProvider::AzureOpenAi,
         "ollama" | "local" => AiProvider::LocalOllama,
         _ => AiProvider::CloudflareWorkersAi,
-    };
-    let mut model = match provider {
-        AiProvider::OpenRouter => std::env::var("OPENROUTER_MODEL")
-            .unwrap_or_else(|_| "tencent/hy3:free".to_string()),
-        AiProvider::CloudflareWorkersAi => std::env::var("CF_MODEL")
-            .unwrap_or_else(|_| "@cf/moonshotai/kimi-k2.7-code".to_string()),
-        AiProvider::AzureOpenAi => std::env::var("AZURE_OPENAI_DEPLOYMENT")
-            .unwrap_or_else(|_| "gpt-4o".to_string()),
-        AiProvider::LocalOllama => std::env::var("OLLAMA_MODEL")
-            .unwrap_or_else(|_| "llama3.2".to_string()),
-    };
-    let mut thinking = std::env::var("CF_THINKING")
-        .map(|v| v != "0")
-        .unwrap_or(true);
+    }
+}
 
-    let mut selected_profile = match provider {
+fn initial_model_for_provider(provider: AiProvider, ollama_accounts: &[LocalOllamaAccount]) -> String {
+    match provider {
+        AiProvider::OpenRouter => std::env::var("OPENROUTER_MODEL")
+            .unwrap_or_else(|_| default_provider_model(provider)),
+        AiProvider::CloudflareWorkersAi => {
+            std::env::var("CF_MODEL").unwrap_or_else(|_| default_provider_model(provider))
+        }
+        AiProvider::AzureOpenAi => std::env::var("AZURE_OPENAI_DEPLOYMENT")
+            .unwrap_or_else(|_| default_provider_model(provider)),
+        AiProvider::LocalOllama => ollama_accounts
+            .first()
+            .map(|account| account.default_model.clone())
+            .or_else(|| std::env::var("OLLAMA_MODEL").ok())
+            .unwrap_or_else(|| default_provider_model(provider)),
+    }
+}
+
+fn initial_selected_profile(provider: AiProvider, model: &str) -> ModelInfo {
+    match provider {
         AiProvider::OpenRouter => ModelInfo {
-            id: model.clone(),
-            label: model.rsplit('/').next().unwrap_or(&model).to_string(),
+            id: model.to_string(),
+            label: model.rsplit('/').next().unwrap_or(model).to_string(),
             api_style: ApiStyle::OpenAiTools,
             supports_tools: true,
             supports_thinking: false,
         },
-        AiProvider::CloudflareWorkersAi => default_model_info(&model),
-        AiProvider::AzureOpenAi => default_model_info(&model),
-        AiProvider::LocalOllama => default_model_info(&model),
-    };
+        AiProvider::CloudflareWorkersAi | AiProvider::AzureOpenAi | AiProvider::LocalOllama => {
+            default_model_info(model)
+        }
+    }
+}
+
+fn fetch_models_for_provider(
+    provider: AiProvider,
+    accounts: &[CloudflareAccount],
+    or_accounts: &[OpenRouterAccount],
+    azure_accounts: &[AzureOpenAiAccount],
+    ollama_accounts: &[LocalOllamaAccount],
+    usage_tracker: &UsageTracker,
+) -> Result<Vec<ModelInfo>, String> {
+    match provider {
+        AiProvider::CloudflareWorkersAi => fetch_model_catalog(accounts),
+        AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
+        AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
+        AiProvider::LocalOllama => fetch_local_ollama_models(ollama_accounts),
+    }
+}
+
+fn sync_model_state(
+    provider: AiProvider,
+    accounts: &[CloudflareAccount],
+    model_catalog: &mut Vec<ModelInfo>,
+    model: &mut String,
+    selected_profile: &mut ModelInfo,
+    thinking: &mut bool,
+    requested_model: Option<String>,
+    requested_thinking: Option<bool>,
+    ui_tx: &Sender<AgentToUiMessage>,
+) {
+    let fallback_model = requested_model.unwrap_or_else(|| model.clone());
+    if model_catalog.iter().any(|candidate| candidate.id == fallback_model) {
+        *model = fallback_model;
+    } else {
+        *model = model_catalog
+            .first()
+            .map(|candidate| candidate.id.clone())
+            .unwrap_or(fallback_model);
+    }
+
+    *selected_profile = model_catalog
+        .iter()
+        .find(|candidate| candidate.id == *model)
+        .cloned()
+        .unwrap_or_else(|| default_model_info(model));
+
+    if provider == AiProvider::CloudflareWorkersAi {
+        *selected_profile = enrich_model_profile(accounts, selected_profile);
+        if let Some(entry) = model_catalog.iter_mut().find(|candidate| candidate.id == *model) {
+            *entry = selected_profile.clone();
+        }
+    }
+
+    let desired_thinking = requested_thinking.unwrap_or(*thinking);
+    *thinking = desired_thinking && selected_profile.supports_thinking;
+
+    ui_tx
+        .send(AgentToUiMessage::ModelCatalog {
+            models: model_catalog.clone(),
+            selected: model.clone(),
+            thinking: *thinking,
+        })
+        .ok();
+}
+
+pub fn run_agent_thread(
+    mut workspace_root: PathBuf,
+    ui_rx: Receiver<UiToAgentMessage>,
+    ui_tx: Sender<AgentToUiMessage>,
+) {
+    let (mut accounts, mut or_accounts, mut azure_accounts, mut ollama_accounts) =
+        load_runtime_accounts(&workspace_root);
+    let mut usage_tracker = UsageTracker::new(&workspace_root);
+    send_usage_update(&mut usage_tracker, &accounts, &or_accounts, &ui_tx);
+    let mut provider = initial_provider_from_env();
+    let mut model = initial_model_for_provider(provider, &ollama_accounts);
+    let mut thinking = std::env::var("CF_THINKING")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+
+    let mut selected_profile = initial_selected_profile(provider, &model);
     if !selected_profile.supports_thinking {
         thinking = false;
     }
@@ -118,9 +210,10 @@ pub fn run_agent_thread(
         process_ui_message(
             msg,
             &mut workspace_root,
-            &accounts,
-            &or_accounts,
-            &azure_accounts,
+            &mut accounts,
+            &mut or_accounts,
+            &mut azure_accounts,
+            &mut ollama_accounts,
             &mut provider,
             &mut model,
             &mut thinking,
@@ -138,9 +231,10 @@ pub fn run_agent_thread(
             process_ui_message(
                 deferred,
                 &mut workspace_root,
-                &accounts,
-                &or_accounts,
-                &azure_accounts,
+                &mut accounts,
+                &mut or_accounts,
+                &mut azure_accounts,
+                &mut ollama_accounts,
                 &mut provider,
                 &mut model,
                 &mut thinking,
@@ -159,9 +253,10 @@ pub fn run_agent_thread(
 fn process_ui_message(
     msg: UiToAgentMessage,
     workspace_root: &mut PathBuf,
-    accounts: &[CloudflareAccount],
-    or_accounts: &[OpenRouterAccount],
-    azure_accounts: &[AzureOpenAiAccount],
+    accounts: &mut Vec<CloudflareAccount>,
+    or_accounts: &mut Vec<OpenRouterAccount>,
+    azure_accounts: &mut Vec<AzureOpenAiAccount>,
+    ollama_accounts: &mut Vec<LocalOllamaAccount>,
     provider: &mut AiProvider,
     model: &mut String,
     thinking: &mut bool,
@@ -175,39 +270,27 @@ fn process_ui_message(
 ) {
     match msg {
         UiToAgentMessage::RefreshModels => {
-            let fetch_result = match *provider {
-                AiProvider::CloudflareWorkersAi => fetch_model_catalog(accounts),
-                AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
-                AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
-                AiProvider::LocalOllama => fetch_local_ollama_models(&load_local_ollama_accounts_from_env()),
-            };
-            match fetch_result {
+            match fetch_models_for_provider(
+                *provider,
+                accounts,
+                or_accounts,
+                azure_accounts,
+                ollama_accounts,
+                usage_tracker,
+            ) {
                 Ok(models) => {
                     *model_catalog = models;
-                    if !model_catalog.iter().any(|candidate| candidate.id == *model) {
-                        *model = model_catalog
-                            .first()
-                            .map(|candidate| candidate.id.clone())
-                            .unwrap_or_else(|| model.clone());
-                    }
-                    *selected_profile = model_catalog
-                        .iter()
-                        .find(|candidate| candidate.id == *model)
-                        .cloned()
-                        .unwrap_or_else(|| default_model_info(model));
-                    if *provider == AiProvider::CloudflareWorkersAi {
-                        *selected_profile = enrich_model_profile(accounts, selected_profile);
-                    }
-                    if !selected_profile.supports_thinking {
-                        *thinking = false;
-                    }
-                    ui_tx
-                        .send(AgentToUiMessage::ModelCatalog {
-                            models: model_catalog.clone(),
-                            selected: model.clone(),
-                            thinking: *thinking,
-                        })
-                        .ok();
+                    sync_model_state(
+                        *provider,
+                        accounts,
+                        model_catalog,
+                        model,
+                        selected_profile,
+                        thinking,
+                        None,
+                        None,
+                        ui_tx,
+                    );
                 }
                 Err(error) => {
                     ui_tx.send(AgentToUiMessage::StatusUpdate(error)).ok();
@@ -219,38 +302,31 @@ fn process_ui_message(
         }
         UiToAgentMessage::SetModel(selected) => {
             if !selected.trim().is_empty() {
-                *model = selected;
-                *selected_profile = model_catalog
-                    .iter()
-                    .find(|candidate| candidate.id == *model)
-                    .cloned()
-                    .unwrap_or_else(|| default_model_info(model));
-                *selected_profile = enrich_model_profile(accounts, selected_profile);
-                if let Some(entry) = model_catalog
-                    .iter_mut()
-                    .find(|candidate| candidate.id == *model)
-                {
-                    *entry = selected_profile.clone();
-                }
-                if !selected_profile.supports_thinking {
-                    *thinking = false;
-                }
+                sync_model_state(
+                    *provider,
+                    accounts,
+                    model_catalog,
+                    model,
+                    selected_profile,
+                    thinking,
+                    Some(selected),
+                    None,
+                    ui_tx,
+                );
                 ui_tx
-                    .send(AgentToUiMessage::ModelCatalog {
-                        models: model_catalog.clone(),
-                        selected: model.clone(),
-                        thinking: *thinking,
-                    })
-                    .ok();
-                ui_tx
-                    .send(AgentToUiMessage::StatusUpdate(format!(
-                        "Model set to {model}"
-                    )))
+                    .send(AgentToUiMessage::StatusUpdate(format!("Model set to {model}")))
                     .ok();
             }
         }
         UiToAgentMessage::SetThinking(enabled) => {
             *thinking = enabled && selected_profile.supports_thinking;
+            ui_tx
+                .send(AgentToUiMessage::ModelCatalog {
+                    models: model_catalog.clone(),
+                    selected: model.clone(),
+                    thinking: *thinking,
+                })
+                .ok();
             ui_tx
                 .send(AgentToUiMessage::StatusUpdate(
                     if *thinking {
@@ -262,36 +338,55 @@ fn process_ui_message(
                 ))
                 .ok();
         }
-        UiToAgentMessage::SetProvider(new_provider) => {
-            *provider = new_provider;
+        UiToAgentMessage::ReloadProviderConfig => {
+            let (new_accounts, new_or_accounts, new_azure_accounts, new_ollama_accounts) =
+                load_runtime_accounts(workspace_root);
+            *accounts = new_accounts;
+            *or_accounts = new_or_accounts;
+            *azure_accounts = new_azure_accounts;
+            *ollama_accounts = new_ollama_accounts;
+            send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Reloaded workspace provider settings.".to_string(),
+                ))
+                .ok();
+        }
+        UiToAgentMessage::ApplySessionState {
+            provider: requested_provider,
+            model: requested_model,
+            thinking: requested_thinking,
+        } => {
+            *provider = requested_provider;
             ui_tx.send(AgentToUiMessage::ProviderChanged(*provider)).ok();
 
-            let fetch_result = match *provider {
-                AiProvider::CloudflareWorkersAi => fetch_model_catalog(accounts),
-                AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
-                AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
-                AiProvider::LocalOllama => fetch_local_ollama_models(&load_local_ollama_accounts_from_env()),
-            };
-            match fetch_result {
+            match fetch_models_for_provider(
+                *provider,
+                accounts,
+                or_accounts,
+                azure_accounts,
+                ollama_accounts,
+                usage_tracker,
+            ) {
                 Ok(models) => {
                     *model_catalog = models;
-                    if !model_catalog.iter().any(|candidate| candidate.id == *model) {
-                        *model = model_catalog
-                            .first()
-                            .map(|candidate| candidate.id.clone())
-                            .unwrap_or_else(|| model.clone());
-                    }
-                    *selected_profile = model_catalog
-                        .iter()
-                        .find(|candidate| candidate.id == *model)
-                        .cloned()
-                        .unwrap_or_else(|| default_model_info(model));
-                    if *provider == AiProvider::CloudflareWorkersAi {
-                        *selected_profile = enrich_model_profile(accounts, selected_profile);
-                    }
-                    if !selected_profile.supports_thinking {
-                        *thinking = false;
-                    }
+                    sync_model_state(
+                        *provider,
+                        accounts,
+                        model_catalog,
+                        model,
+                        selected_profile,
+                        thinking,
+                        Some(requested_model),
+                        Some(requested_thinking),
+                        ui_tx,
+                    );
+                }
+                Err(error) => {
+                    *model = requested_model;
+                    *selected_profile = initial_selected_profile(*provider, model);
+                    *thinking = requested_thinking && selected_profile.supports_thinking;
+                    *model_catalog = vec![selected_profile.clone()];
                     ui_tx
                         .send(AgentToUiMessage::ModelCatalog {
                             models: model_catalog.clone(),
@@ -299,6 +394,35 @@ fn process_ui_message(
                             thinking: *thinking,
                         })
                         .ok();
+                    ui_tx.send(AgentToUiMessage::StatusUpdate(error)).ok();
+                }
+            }
+        }
+        UiToAgentMessage::SetProvider(new_provider) => {
+            *provider = new_provider;
+            ui_tx.send(AgentToUiMessage::ProviderChanged(*provider)).ok();
+
+            match fetch_models_for_provider(
+                *provider,
+                accounts,
+                or_accounts,
+                azure_accounts,
+                ollama_accounts,
+                usage_tracker,
+            ) {
+                Ok(models) => {
+                    *model_catalog = models;
+                    sync_model_state(
+                        *provider,
+                        accounts,
+                        model_catalog,
+                        model,
+                        selected_profile,
+                        thinking,
+                        None,
+                        None,
+                        ui_tx,
+                    );
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
                             "Loaded {} models for {}",
@@ -314,8 +438,17 @@ fn process_ui_message(
         }
         UiToAgentMessage::SetWorkspace(new_root) => {
             if new_root.is_dir() {
-                write_sitemap_nda(&new_root);
-                *message_history = load_chatlogs_nda(&new_root).unwrap_or_else(|| {
+                *workspace_root = new_root.clone();
+                let (new_accounts, new_or_accounts, new_azure_accounts, new_ollama_accounts) =
+                    load_runtime_accounts(workspace_root);
+                *accounts = new_accounts;
+                *or_accounts = new_or_accounts;
+                *azure_accounts = new_azure_accounts;
+                *ollama_accounts = new_ollama_accounts;
+                *usage_tracker = UsageTracker::new(workspace_root);
+                send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
+                write_sitemap_nda(workspace_root);
+                *message_history = load_chatlogs_nda(workspace_root).unwrap_or_else(|| {
                     let use_inline = *provider == AiProvider::OpenRouter
                         || !selected_profile.supports_tools;
                     vec![ChatMessage {
@@ -331,19 +464,14 @@ fn process_ui_message(
                         tool_calls: None,
                     }]
                 });
-                *workspace_root = new_root.clone();
-                *usage_tracker = UsageTracker::new(&new_root);
-                send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
                 let restored: Vec<(String, String)> = message_history
                     .iter()
                     .filter(|m| m.role == "user" || m.role == "assistant")
                     .map(|m| (m.role.clone(), m.content.clone()))
                     .collect();
-                if !restored.is_empty() {
-                    ui_tx
-                        .send(AgentToUiMessage::ChatHistoryRestored(restored))
-                        .ok();
-                }
+                ui_tx
+                    .send(AgentToUiMessage::ChatHistoryRestored(restored))
+                    .ok();
                 ui_tx
                     .send(AgentToUiMessage::StatusUpdate(
                         "Agent workspace switched.".to_string(),
@@ -386,6 +514,7 @@ fn process_ui_message(
                 accounts,
                 or_accounts,
                 azure_accounts,
+                ollama_accounts,
                 model,
                 selected_profile,
                 *provider,
