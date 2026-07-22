@@ -679,12 +679,38 @@ fn render_input(
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut state.auto_approve, "Auto-approve tools");
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
+
+                    // Floating Provider selector dropdown
+                    let mut provider_changed = false;
+                    egui::ComboBox::from_id_salt("floating_agent_provider")
+                        .selected_text(state.provider.label())
+                        .show_ui(ui, |ui| {
+                            for provider in [
+                                crate::agent::AiProvider::CloudflareWorkersAi,
+                                crate::agent::AiProvider::OpenRouter,
+                                crate::agent::AiProvider::OpenAI,
+                                crate::agent::AiProvider::Anthropic,
+                                crate::agent::AiProvider::GoogleVertex,
+                                crate::agent::AiProvider::AzureOpenAi,
+                                crate::agent::AiProvider::LocalOllama,
+                            ] {
+                                if ui.selectable_value(&mut state.provider, provider, provider.label()).clicked() {
+                                    provider_changed = true;
+                                }
+                            }
+                        });
+                    if provider_changed {
+                        let _ = agent_tx.send(UiToAgentMessage::SetProvider(state.provider));
+                        let _ = agent_tx.send(UiToAgentMessage::RefreshModels);
+                    }
+
+                    ui.add_space(4.0);
 
                     // Floating model pill selector
                     let mut model_changed = false;
                     egui::ComboBox::from_id_salt("floating_agent_model")
-                        .selected_text(truncate_model_label(&state.selected_model, 24))
+                        .selected_text(truncate_model_label(&state.selected_model, 22))
                         .show_ui(ui, |ui| {
                             for model in state.available_models.clone() {
                                 model_changed |= ui

@@ -51,6 +51,7 @@ fn initial_model_for_provider(provider: AiProvider, ollama_accounts: &[LocalOlla
             .map(|account| account.default_model.clone())
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
             .unwrap_or_else(|| default_provider_model(provider)),
+        _ => default_provider_model(provider),
     }
 }
 
@@ -63,9 +64,7 @@ fn initial_selected_profile(provider: AiProvider, model: &str) -> ModelInfo {
             supports_tools: true,
             supports_thinking: false,
         },
-        AiProvider::CloudflareWorkersAi | AiProvider::AzureOpenAi | AiProvider::LocalOllama => {
-            default_model_info(model)
-        }
+        _ => default_model_info(model),
     }
 }
 
@@ -82,6 +81,7 @@ fn fetch_models_for_provider(
         AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
         AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
         AiProvider::LocalOllama => fetch_local_ollama_models(ollama_accounts),
+        _ => Ok(vec![default_model_info(&default_provider_model(provider))]),
     }
 }
 

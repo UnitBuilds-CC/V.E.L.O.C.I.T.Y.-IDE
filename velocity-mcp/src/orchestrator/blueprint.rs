@@ -57,9 +57,11 @@ impl TaskGraph {
             },
         );
         if let Some(parent_id) = parent {
-            if let Some(parent) = self.tasks.get_mut(&parent_id) {
-                if !parent.dependencies.contains(&id) {
-                    parent.dependencies.push(id);
+            if parent_id != id {
+                if let Some(parent) = self.tasks.get_mut(&parent_id) {
+                    if !parent.dependencies.contains(&id) {
+                        parent.dependencies.push(id);
+                    }
                 }
             }
         }

@@ -128,12 +128,15 @@ pub enum ApiStyle {
 }
 
 /// Which AI backend to use for inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AiProvider {
     CloudflareWorkersAi,
     OpenRouter,
     AzureOpenAi,
     LocalOllama,
+    OpenAI,
+    Anthropic,
+    GoogleVertex,
 }
 
 impl AiProvider {
@@ -143,6 +146,9 @@ impl AiProvider {
             AiProvider::OpenRouter => "OpenRouter",
             AiProvider::AzureOpenAi => "Azure OpenAI",
             AiProvider::LocalOllama => "Local Ollama",
+            AiProvider::OpenAI => "OpenAI Direct",
+            AiProvider::Anthropic => "Anthropic Claude",
+            AiProvider::GoogleVertex => "Google Vertex AI",
         }
     }
 }

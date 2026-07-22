@@ -312,6 +312,9 @@ pub fn fallback_provider(current: AiProvider) -> AiProvider {
         AiProvider::OpenRouter => AiProvider::AzureOpenAi,
         AiProvider::AzureOpenAi => AiProvider::LocalOllama,
         AiProvider::LocalOllama => AiProvider::CloudflareWorkersAi,
+        AiProvider::OpenAI => AiProvider::CloudflareWorkersAi,
+        AiProvider::Anthropic => AiProvider::CloudflareWorkersAi,
+        AiProvider::GoogleVertex => AiProvider::CloudflareWorkersAi,
     }
 }
 
@@ -319,6 +322,9 @@ pub fn default_provider_model(provider: AiProvider) -> String {
     match provider {
         AiProvider::CloudflareWorkersAi => "@cf/moonshotai/kimi-k2.7-code".to_string(),
         AiProvider::OpenRouter => "tencent/hy3:free".to_string(),
+        AiProvider::OpenAI => "gpt-4o".to_string(),
+        AiProvider::Anthropic => "claude-3-5-sonnet-20241022".to_string(),
+        AiProvider::GoogleVertex => "gemini-1.5-pro".to_string(),
         AiProvider::AzureOpenAi => "gpt-4o".to_string(),
         AiProvider::LocalOllama => "llama3.2".to_string(),
     }

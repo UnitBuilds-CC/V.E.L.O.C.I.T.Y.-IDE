@@ -171,7 +171,7 @@ fn render_account_table(ui: &mut egui::Ui, accounts: &[AccountUsageView], palett
                         ui.label(format!("{} / {}", acct.requests, acct.daily_limit));
                         ui.label(acct.remaining.to_string());
                         ui.label(format!(
-                            "↓{} ↑{}",
+                            "📥 {}  📤 {}",
                             format_tokens(acct.tokens_in),
                             format_tokens(acct.tokens_out)
                         ));

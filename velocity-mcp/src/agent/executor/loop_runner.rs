@@ -122,6 +122,15 @@ pub fn run_agent_reasoning_loop(
             AiProvider::LocalOllama => {
                 super::dispatch::execute_ollama_request(ollama_accounts, &request_body, ui_tx)
             }
+            _ => {
+                super::dispatch::execute_openrouter_request(
+                    or_accounts,
+                    accounts,
+                    usage_tracker,
+                    &request_body,
+                    ui_tx,
+                ).0
+            }
         };
 
         let response = match ureq_response {
@@ -133,6 +142,7 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::CloudflareWorkersAi => !accounts.is_empty(),
                     AiProvider::AzureOpenAi => !azure_accounts.is_empty(),
                     AiProvider::LocalOllama => !ollama_accounts.is_empty(),
+                    _ => true,
                 };
 
                 if !provider_switched && fallback_available {
@@ -145,8 +155,7 @@ pub fn run_agent_reasoning_loop(
                         AiProvider::CloudflareWorkersAi => {
                             enrich_model_profile(accounts, &default_model_info(&current_model))
                         }
-                        AiProvider::AzureOpenAi => default_model_info(&current_model),
-                        AiProvider::LocalOllama => default_model_info(&current_model),
+                        _ => default_model_info(&current_model),
                     };
                     current_thinking = thinking && current_profile.supports_thinking;
 
@@ -173,6 +182,7 @@ pub fn run_agent_reasoning_loop(
                     }
                     AiProvider::AzureOpenAi => "Azure OpenAI request failed or no accounts configured.",
                     AiProvider::LocalOllama => "Local Ollama server unreachable (http://localhost:11434).",
+                    _ => "Selected AI Provider request failed or key missing.",
                 };
                 ui_tx
                     .send(AgentToUiMessage::OutputToken(format!(

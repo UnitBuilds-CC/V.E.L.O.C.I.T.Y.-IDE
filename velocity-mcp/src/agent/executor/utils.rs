@@ -110,6 +110,9 @@ pub fn build_request(
             AiProvider::LocalOllama => {
                 request["think"] = json!(true);
             }
+            _ => {
+                request["reasoning_effort"] = json!("high");
+            }
         }
     }
     request

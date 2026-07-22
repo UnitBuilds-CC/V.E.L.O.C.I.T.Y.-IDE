@@ -31,8 +31,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
             let profile = default_model_info(&request.model);
             enrich_model_profile(&accounts, &profile)
         }
-        AiProvider::AzureOpenAi => default_model_info(&request.model),
-        AiProvider::LocalOllama => default_model_info(&request.model),
+        _ => default_model_info(&request.model),
     };
     let thinking = request.thinking && selected_profile.supports_thinking;
 
