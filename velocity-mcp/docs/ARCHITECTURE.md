@@ -1,67 +1,53 @@
 # V.E.L.O.C.I.T.Y. IDE Architecture
 
-V.E.L.O.C.I.T.Y. is a hybrid AI-native IDE written in Rust. Its core responsibilities are: editing code, running an agentic reasoning loop, compiling user projects, and serializing artifacts into the `.nda` binary format.
+V.E.L.O.C.I.T.Y. is a high-performance, AI-native IDE written in pure Rust. Its core responsibilities are: editing code, executing a 4-provider autonomous agentic reasoning loop, browser automation without CDP dependencies, compiling user projects, and serializing state into 18-byte NDA (`.nda`) binary format.
 
 For agent-facing NDA authoring guidance, see `docs/NDA_FORMAT.md`.
 For NDA-vs-JSON boundary decisions, see `docs/NDA_BOUNDARIES.md`.
 
-## Crate layout
+## Workspace Crate Layout
 
-- `main.rs` — binary entry point. Parses CLI flags, starts eframe + agent thread.
-- `editor/` — UI layer.
-  - `app.rs` — root `eframe::App`. Owns docking layout, command palette, keymap, status bar.
-  - `theme.rs` — custom egui visuals, color palette, font setup.
-  - `buffer.rs` — editor buffer model (Rope + String cache).
-  - `code_editor.rs` — line-numbered, syntax-highlighted editor widget.
-- `agent.rs` — background agent thread. Streams from Workers AI, dispatches tools, runs `cargo check`, self-corrects on compile errors.
-- `registry.rs` — tool registry exposed to the agent (read_file, write_file, list_dir, execute_nda, etc.).
-- `benchmark.rs` — kernel / GEMV / Vulkan benchmarks (legacy, heavy warnings).
-- `compiler/` — compiler and tokenizer modules.
-  - `driver.rs` — Vulkan compute driver (legacy, heavy warnings).
-  - `tokenizer.rs` — byte-level tokenizer + NDA embedding table.
-  - `jit.rs` / `shaders.rs` / `nmcp_binary.rs` — experimental codegen.
-- `protocol/` — JSON-RPC / NMCP wire protocols.
-- `ipc/` — shared-memory transport for NMCP server mode.
-- `orchestrator/` *(new)* — meta-agent control plane for parallel sub-agent tasks.
+- **`velocity-mcp`** — Main Rust MCP Server & Native IDE Editor
+  - `agent/` — 4-provider reasoning loops (`loop_runner.rs`, `dispatch.rs`), OpenRouter/Cloudflare/Azure/Ollama dispatchers, history compressor.
+  - `editor/` — Native egui UI layer:
+    - `app/` — Root `VelocityApp` layout, docking, command palette, keymaps.
+    - `chat_panel.rs` — Streaming markdown chat panel with model selection dropdown.
+    - `smart_sidebar.rs` — Ring-buffer context-aware sidebar with diagnostic filtering.
+    - `task_timeline.rs` — Zero-allocation mission activity event feed.
+    - `graph_view.rs` — Workspace File Tree & Symbol Change History Explorer.
+  - `registry/` — System, native browser, and desktop automation tool registry.
+  - `orchestrator/` — DAG work package scheduling, `WorktreeIsolationGuard` sub-agent sandbox, and live worker handles.
+  - `wa/` — Windows UI Automation & `DesktopAutomationAdapter` cross-platform accessibility framework.
+- **`velocity-browser`** — Pure-Rust Native Browser Control Plane (52 Modules)
+  - `dom/` — Slab DOM tree, shadow slots, mutation batcher.
+  - `layout/` — Flexbox, grid track solvers, parallel layout engine.
+  - `js/` — JS virtual machine, event loop scheduler, Wasm SIMD interpreter.
+  - `net/` — HTTP/2/3 (QUIC), TLS fingerprint rotator, WebSocket, WebRtc.
+  - `agentic/` — Spatial AOM tree, Velocity OCR text engine, action predictor.
+  - `screencast.rs` — `ScreencastRecorder` frame metadata logger.
+  - `vector_memory.rs` — `SiteVectorStore` spatial AOM site memory.
+- **`velocity-ide`** — Compiler Driver & AST Engine
+  - `compiler/` — Lexer, parser, JIT sandbox, `WasmPluginRunner`, `PropertyFuzzer`.
+  - `site_map/` — Merkle AST graph indexer and `SiteMap` database.
 
-## Thread boundaries
+## Thread Boundaries
 
 | Thread | Owner | Sends to UI | Receives from UI |
 |--------|-------|-------------|------------------|
 | UI (main) | `VelocityApp` | `UiToAgentMessage` | `AgentToUiMessage` |
-| Agent | `run_agent_thread` | `AgentToUiMessage` | `UiToAgentMessage` |
-| Orchestrator UI integration | `OrchestratorPanel` | same as above | same as above |
+| Agent Thread | `run_agent_thread` | `AgentToUiMessage` | `UiToAgentMessage` |
+| Worker Threads | `LiveWorkerHandle` | `WorkerThreadEvent` | `UiToAgentMessage::CancelTask` |
 
-## Agent loop data flow
+## 4-Provider AI Reasoning Loop Data Flow
 
-1. User prompt → `UiToAgentMessage::UserPrompt` → agent thread.
-2. Agent builds request with tool definitions from `registry::get_tools()`.
-3. Streaming response fills `assistant_content` and `accumulated_tools`.
-4. Tool calls request approval via `RequestToolApproval`.
-5. On approval, `registry::call_tool()` runs synchronously on the tool registry.
-6. After each turn, `run_compilation_check()` runs `cargo check`;
-   errors are injected as a new user message and `run_agent_reasoning_loop` recurses.
+1. User prompt → `UiToAgentMessage::UserPrompt` → `run_agent_thread`.
+2. Agent inspects configured provider (`CloudflareWorkersAi`, `OpenRouter`, `AzureOpenAi`, `LocalOllama`).
+3. Streaming response fills `assistant_content` and dispatches tools.
+4. If a provider encounters quota exhaustion or network timeout, the loop seamlessly fails over to the next provider in the chain: `CloudflareWorkersAi` -> `OpenRouter` -> `AzureOpenAi` -> `LocalOllama`.
+5. Tool execution runs with exact workspace path sandboxing.
+6. After modifications, `run_compilation_check()` validates compiler status with `cargo check`.
 
-## IDE UI state
+## Sub-1,000 LOC Modular Architecture Rule
 
-- `DockState<Tab>` from `egui_dock` is the single source of truth for open tabs.
-- `active_tab` is updated by `egui_dock` focus callbacks, not maintained separately.
-- `command_output` and `chat_history` are capped to a max size to avoid UI lag.
+All files across all crates in the workspace are strictly refactored into modular sub-files under **1,000 lines of code**, guaranteeing clean component isolation and maintainability.
 
-## Orchestrator (parallel agent execution)
-
-See `src/orchestrator/mod.rs` plus the Mission Control/editor integration. The active orchestration stack now includes:
-
-- `TaskGraph` — DAG of work packages.
-- `Scheduler` — topological execution and phase planning.
-- `Worker` — live provider-backed routed worker execution with scoped locking, cancellation, event streaming, and structured results.
-- `Reconciler` — diff-based collision and scope-violation detection.
-- `Validator` — per-worktree validation hooks such as `cargo check` / `cargo test`.
-- `OrchestratorPanel` / Mission Control — operator-facing planning, launch, retry, reset, stop, note routing, and live task supervision.
-
-Current integration is still local-workspace-first, but the runtime is no longer a placeholder: routed sub-agents execute through the real provider-backed worker path used by the active IDE.
-
-## Known constraints
-
-- `Cargo.toml` edits are blocked by workspace security checks, so dependency changes must be applied manually.
-- Legacy modules (`benchmark.rs`, `compiler/driver.rs`, etc.) carry many warnings; they are marked `#[allow(...)]` to keep CI noise low while we refactor incrementally.

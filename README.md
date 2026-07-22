@@ -1,37 +1,33 @@
-# V.E.L.O.C.I.T.Y. Native IDE
+# V.E.L.O.C.I.T.Y. Cognitive IDE
 
-A premium, high-performance developer workspace and agentic environment built in pure Rust. V.E.L.O.C.I.T.Y. combines a native dockable window interface with a self-correcting agentic compiler loop and robust DLL-level sandboxing.
+A premium, high-performance developer workspace and autonomous agentic environment built in pure Rust. V.E.L.O.C.I.T.Y. combines a native GPU-accelerated window interface with a pure-Rust browser control plane (`velocity-browser`), a self-correcting agentic compiler loop, and crisp sub-1k LOC component architecture.
 
 ---
 
 ## Architecture Overview
 
-### Rust IDE (velocity-mcp)
-- **GUI Framework**: `egui` with `egui_dock` for dockable panels
-- **Rendering**: Vulkan GPU acceleration for sub-millisecond frame dispatch
-- **Core Features**:
-  - Syntax highlighting code editor with `syntect`
-  - Real-time command terminal
-  - AI agent control panel with dual providers (OpenRouter, Cloudflare)
-  - DLL-level sandboxing for tool execution
-  - Agent reasoning loops with history budget management
+### 1. Pure-Rust Native Browser Control Plane (`velocity-browser`)
+- **Engine Core**: 52 pure-Rust modules replacing legacy CDP wrappers.
+- **DOM & Layout**: Slab-allocated DOM, shadow slots, flexbox, grid, and parallel layout solvers.
+- **JS VM & Wasm**: Integrated JavaScript virtual machine, event loop scheduler, and SIMD-accelerated Wasm interpreter.
+- **Network & TLS**: HTTP/2 & HTTP/3 (QUIC), WebSocket, WebRTC, native TLS stream with fingerprint rotator.
+- **Stealth & Intelligence**: Hardware WebGPU/WebGL canvas rasterizer, stealth human behavior simulator, built-in OCR text engine, screencasting recorder (`ScreencastRecorder`), and site vector memory (`SiteVectorStore`).
+- **Binary NDA Persistence**: Compact 18-byte Non-Deterministic Automata triples (`NdaTriple`) stored under `.velocity/browser_artifacts/`.
 
-### Go Browser (browsing/)
-- **Orchestration**: Swarm coordination, node agents, graph drivers
-- **API Server**: RESTful API for browser control and automation
-- **Database**: Sitemap, vault, and graph storage
-- **Capabilities**:
-  - Automated web crawling and comparison testing
-  - Session management with security policies
-  - CAPTCHA solving and challenge handling
-  - Orchestrator for distributed browser instances
-  - Native host integration for browser automation
-  - Wireguard VPN integration
+### 2. Multi-Provider AI Reasoning Engine (`velocity-mcp`)
+- **4-Provider Automatic Failover**: Seamless failover chain across 4 backends:
+  - `Cloudflare Workers AI` (`@cf/moonshotai/kimi-k2.7-code`)
+  - `OpenRouter` (`tencent/hy3:free` / custom models)
+  - `Azure OpenAI` (`gpt-4o` with deployment endpoint & `api-key` auth)
+  - `Local Ollama` (`http://localhost:11434` / `llama3.2` / `qwen2.5-coder` / `deepseek-r1`)
+- **History & Token Management**: Compressed history, reasoning effort payload routing, and ring-buffer activity logs.
+- **Sub-Agent Worktree Isolation**: Git worktree sandbox (`WorktreeIsolationGuard`) for safe, isolated multi-agent execution runs.
 
-### MCP Integration
-- Both Rust IDE and Go browser expose MCP interfaces
-- Tool registry bridges IDE commands to browser/orchestration capabilities
-- Shared protocol for seamless cross-language communication
+### 3. Native IDE & UI Layer (`velocity-ide` & `velocity-mcp/src/editor`)
+- **GUI Framework**: Hardware-accelerated `egui` interface with dark HSL color palette.
+- **Workspace File Tree & Symbol History Inspector**: Browse workspace files, declarations, and inspect chronological change histories with context rationale.
+- **Wasm Sandbox JIT & Property Fuzzing**: `WasmPluginRunner` and `PropertyFuzzer` in `velocity-ide` for sandbox code validation.
+- **Cross-Platform Desktop Automation**: Unified `DesktopAutomationAdapter` bridging Windows UI Automation, Linux AT-SPI, and macOS Accessibility.
 
 ---
 
@@ -39,30 +35,31 @@ A premium, high-performance developer workspace and agentic environment built in
 
 ```text
 velocity-workspace/
-├── velocity-mcp/          # Main Rust MCP Server + Native GUI IDE (egui-based)
+├── velocity-mcp/          # Rust MCP Server & Native IDE Editor
 │   ├── src/
-│   │   ├── agent.rs              # Agent reasoning loops, SSE streams & history management
-│   │   ├── registry.rs           # Tool definitions, DLL sandboxing, & fallback execution
-│   │   ├── main.rs               # App entry point
-│   │   ├── editor/               # GUI panels (app, code_editor, theme, chat, status_bar, browser)
-│   │   ├── automation/           # Build runner, test orchestration, mediators
-│   │   ├── compiler/             # Tokenizer, JIT, shader compilation
-│   │   ├── protocol/             # NMCP binary & JSON-RPC implementations
-│   │   ├── ipc/                  # Shared memory & telemetry
-│   │   └── orchestrator/         # Worker scheduling, validation, reconciliation
-│   ├── docs/                     # System architecture and UI guides
-│   ├── scripts/                  # Helper utilities
+│   │   ├── agent/                # 4-provider reasoning loops, dispatchers, & NDA state
+│   │   ├── registry/             # System, browser, & desktop tool definitions
+│   │   ├── editor/               # GUI panels (app, chat, smart_sidebar, task_timeline, graph_view)
+│   │   ├── automation/           # Task routing, mediator edit locks, AST watcher
+│   │   ├── ipc/                  # Shared memory telemetry
+│   │   ├── orchestrator/         # Worker scheduling, worktree isolation, blueprint DAG
+│   │   └── wa/                   # Windows UI Automation & cross-platform desktop adapter
 │   └── Cargo.toml
-├── browsing/              # Go-based browser engine and orchestration
-│   ├── cmd/               # Executables (API, crawler, orchestrator, native_host, mcp, etc.)
-│   ├── pkg/               # Core packages (browser, graph, vault, swarm, db, etc.)
-│   ├── dashboard/         # Web dashboard
-│   ├── extension/         # Browser extension
-│   ├── go.mod             # Go dependencies
-│   └── Sovereign.Containerfile
-├── archive/               # Deprecated components
-│   ├── ide/               # Legacy Python Textual TUI IDE
-│   └── agent/             # Legacy Python agent
+├── velocity-browser/      # Pure-Rust Browser Control Plane
+│   ├── src/
+│   │   ├── dom/                  # Slab DOM tree & mutation observers
+│   │   ├── layout/               # Flexbox & grid track solvers
+│   │   ├── js/                   # JS virtual machine & Wasm interpreter
+│   │   ├── net/                  # HTTP/2/3, TLS fingerprint rotator, WebSocket
+│   │   ├── agentic/              # AOM tree, OCR engine, action predictor
+│   │   ├── screencast.rs         # Frame sequence recording & metadata
+│   │   └── vector_memory.rs      # Spatial AOM site vector store
+│   └── Cargo.toml
+├── velocity-ide/          # Compiler & Shader Pipeline
+│   ├── src/
+│   │   ├── compiler/             # Lexer, parser, JIT sandbox, Wasm runner, Fuzzer
+│   │   └── site_map/             # Merkle AST graph & SiteMap database
+│   └── Cargo.toml
 └── Cargo.toml             # Rust workspace manifest
 ```
 
@@ -70,52 +67,47 @@ velocity-workspace/
 
 ## Configuration
 
-Configure your environment by copying/creating a `.env` file in the workspace root:
+Configure your environment in a `.env` file at the workspace root:
 
 ```env
-# Active LLM Provider ("openrouter" or "cloudflare")
-LLM_PROVIDER=openrouter
+# Primary LLM Provider ("cloudflare", "openrouter", "azure", or "ollama")
+LLM_PROVIDER=cloudflare
 
-# OpenRouter Configuration
-OPENROUTER_API_KEY=your-api-key-here
+# OpenRouter
+OPENROUTER_API_KEY=your-openrouter-key
 OPENROUTER_MODEL=tencent/hy3:free
 
-# Cloudflare Configuration
-CLOUDFLARE_API_KEY=your-api-key-here
-CLOUDFLARE_ACCOUNT_ID=your-account-id
+# Azure OpenAI
+AZURE_OPENAI_API_KEY=your-azure-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_API_VERSION=2024-06-01
+
+# Local Ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=llama3.2
 ```
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-
-- [Rust toolchain](https://rustup.rs/) (Stable, 1.75+)
-- Vulkan SDK (for GPU accelerated rendering)
-- [Just](https://github.com/casey/just) (optional, for running shortcut recipes)
-
 ### Run the IDE
 
-To build and run the native editor, run:
+To launch the native editor workspace:
 
 ```powershell
-# Using Just
-just run
-
-# Using Cargo directly
 cargo run --manifest-path velocity-mcp/Cargo.toml -- --editor
 ```
 
----
+### Run Tests & Validation
 
-## Justfile Recipes
+To check and test all crates across the workspace:
 
-Common development commands can be executed via `just`:
+```powershell
+# Typecheck full workspace
+cargo check --workspace
 
-- `just check` - Run fast compiler typecheck.
-- `just clippy` - Run clippy linting and enforce clean code practices.
-- `just fmt` - Format the codebase.
-- `just test` - Run unit tests (includes testing for the OpenRouter history compressor and relative path sandboxing).
-- `just validate` - Run checks, tests, and clippy in one command.
-- `just diag` - Emit structured diagnostics JSON using the platform-appropriate Python command.
+# Run all 123 unit tests
+cargo test --workspace
+```
