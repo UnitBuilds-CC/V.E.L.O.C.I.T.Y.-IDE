@@ -877,14 +877,21 @@ impl<'a> TabViewerImpl<'a> {
             ui.add_space(8.0);
             let num_cols = if ui.available_width() < 900.0 { 1 } else { 2 };
             ui.columns(num_cols, |columns| {
+                let card_frame = egui::Frame::new()
+                    .fill(palette.bg_secondary)
+                    .stroke(egui::Stroke::new(1.0, palette.border))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::same(12));
+
                 columns[0].vertical(|ui| {
                     let selected_task = self
                         .app
                         .mission_control
                         .selected_task_id
                         .and_then(|selected_id| snapshot.tasks.iter().find(|task| task.id == selected_id));
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new("Mission status").strong());
+                    card_frame.show(ui, |ui| {
+                        ui.label(egui::RichText::new("🎯 Mission Status").strong().color(palette.accent));
+                        ui.add_space(4.0);
                         ui.label(format!("Plan: {}", snapshot.planning_status));
                         ui.label(format!("Runtime: {}", snapshot.runtime_status));
                         if let Some(goal) = &snapshot.goal {
@@ -912,9 +919,10 @@ impl<'a> TabViewerImpl<'a> {
                         }
                     });
 
-                    ui.add_space(6.0);
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new("Swarm scoreboard").strong());
+                    ui.add_space(12.0);
+                    card_frame.show(ui, |ui| {
+                        ui.label(egui::RichText::new("📊 Swarm Scoreboard").strong().color(palette.accent));
+                        ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
                             ui.label(format!("Pending {}", snapshot.pending_tasks));
                             ui.separator();
@@ -930,9 +938,10 @@ impl<'a> TabViewerImpl<'a> {
                         });
                     });
 
-                    ui.add_space(6.0);
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new("Selected task thread").strong());
+                    ui.add_space(12.0);
+                    card_frame.show(ui, |ui| {
+                        ui.label(egui::RichText::new("🔍 Selected Task Details").strong().color(palette.accent));
+                        ui.add_space(4.0);
                         if let Some(task) = selected_task {
                             let is_selected_deskt_auto = task_matches_desktop_automation_lane(
                                 task,
@@ -1097,8 +1106,8 @@ impl<'a> TabViewerImpl<'a> {
                         }
                     });
 
-                    ui.add_space(6.0);
-                    ui.group(|ui| {
+                    ui.add_space(12.0);
+                    card_frame.show(ui, |ui| {
                         let timeline_snapshot = TaskTimelineSnapshot::new(&self.app.task_timeline);
                         render_mission_activity_feed(
                             ui,
@@ -1108,9 +1117,10 @@ impl<'a> TabViewerImpl<'a> {
                         );
                     });
 
-                    ui.add_space(6.0);
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new("Operator intervention inbox").strong());
+                    ui.add_space(12.0);
+                    card_frame.show(ui, |ui| {
+                        ui.label(egui::RichText::new("📥 Operator Intervention Inbox").strong().color(palette.accent));
+                        ui.add_space(4.0);
                         ui.add(
                             egui::TextEdit::multiline(&mut self.app.mission_control.intervention_input)
                                 .desired_rows(3)
@@ -1240,9 +1250,10 @@ impl<'a> TabViewerImpl<'a> {
 
                 let col2_idx = if columns.len() > 1 { 1 } else { 0 };
                 columns[col2_idx].vertical(|ui| {
-                    ui.group(|ui| {
+                    card_frame.show(ui, |ui| {
                         let agent_snapshot = RenderSnapshot::new(&self.app.agent_ui_state);
-                        ui.label(egui::RichText::new("Approvals, metrics, and reasoning").strong());
+                        ui.label(egui::RichText::new("⚡ Approvals, Metrics, and Reasoning").strong().color(palette.accent));
+                        ui.add_space(4.0);
                         render_agent_metrics(ui, &agent_snapshot);
                         ui.separator();
                         render_pending_approvals(ui, &agent_snapshot);
@@ -1250,14 +1261,16 @@ impl<'a> TabViewerImpl<'a> {
                         render_thinking_panel(ui, &agent_snapshot, (226, 227, 243));
                     });
 
-                    ui.add_space(6.0);
-                    ui.group(|ui: &mut egui::Ui| {
-                        ui.label(egui::RichText::new("Live agent cards").strong());
-                        egui::ScrollArea::vertical()
-                            .id_salt("live_agent_cards_scroll")
-                            .max_height(420.0)
-                            .show(ui, |ui: &mut egui::Ui| {
-                            for task in &snapshot.tasks {
+                    ui.add_space(12.0);
+                    let live_cards_frame = egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .stroke(egui::Stroke::new(1.0, palette.border))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::same(12));
+                    live_cards_frame.show(ui, |ui: &mut egui::Ui| {
+                        ui.label(egui::RichText::new("🤖 Live Agent Cards").strong().color(palette.accent));
+                        ui.add_space(4.0);
+                        for task in &snapshot.tasks {
                                 ui.push_id(task.id, |ui: &mut egui::Ui| {
                                 let is_selected = self.app.mission_control.selected_task_id == Some(task.id);
                                 let is_desktop_automation = task_matches_desktop_automation_lane(
@@ -1427,7 +1440,6 @@ impl<'a> TabViewerImpl<'a> {
                         });
                     });
                 });
-            });
             });
         });
     }

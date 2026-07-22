@@ -20,10 +20,13 @@ pub enum TaskEventType {
     Started = 0,
     Completed = 1,
     Failed = 2,
+    #[allow(dead_code)]
     Cancelled = 3,
     ToolCall = 4,
     ToolResult = 5,
+    #[allow(dead_code)]
     PhaseChange = 6,
+    #[allow(dead_code)]
     TokenBudgetUpdate = 7,
     SessionMarker = 8,
     AgentMarker = 9,
@@ -348,6 +351,7 @@ impl TaskTimelineState {
         self.count
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.count = 0;
         self.head = 0;
@@ -374,7 +378,7 @@ pub fn render_mission_activity_feed(
     selected_task_id: Option<u64>,
     max_items: usize,
 ) {
-    ui.label(egui::RichText::new("Mission activity").strong());
+    ui.label(egui::RichText::new("📜 Mission Activity").strong());
     if snapshot.state.event_count() == 0 {
         ui.label(
             egui::RichText::new("No mission activity recorded yet")
@@ -384,75 +388,70 @@ pub fn render_mission_activity_feed(
         return;
     }
 
-    egui::ScrollArea::vertical()
-        .id_salt("mission_activity_feed_scroll")
-        .max_height(220.0)
-        .show(ui, |ui: &mut egui::Ui| {
-            for (_, event) in snapshot
-                .state
-                .visible_events()
-                .filter(|(_, event)| {
-                    selected_task_id
-                        .map(|selected| {
-                            event.task_id == 0
-                                || event.task_id as u64 == selected
-                                || event.parent_task_id as u64 == selected
-                        })
-                        .unwrap_or(true)
+    for (_, event) in snapshot
+        .state
+        .visible_events()
+        .filter(|(_, event)| {
+            selected_task_id
+                .map(|selected| {
+                    event.task_id == 0
+                        || event.task_id as u64 == selected
+                        || event.parent_task_id as u64 == selected
                 })
-                .take(max_items)
-            {
-                let (icon, color) = match event.event_type {
-                    TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
-                    TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
-                    TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
-                    TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
-                    TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
-                    TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(74, 222, 128)),
-                    TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
-                    TaskEventType::TokenBudgetUpdate => {
-                        ("$", egui::Color32::from_rgb(236, 72, 153))
-                    }
-                    TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
-                    TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
-                };
-                let name = snapshot.state.get_text(event.name_offset, event.name_len);
-                let desc = snapshot
-                    .state
-                    .get_text(event.description_offset, event.description_len);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new(icon).color(color));
-                    let task_scope = if event.task_id == 0 {
-                        "Mission".to_string()
-                    } else {
-                        format!("Task #{}", event.task_id)
-                    };
-                    ui.label(
-                        egui::RichText::new(format!("{} · {}", task_scope, name))
-                            .small()
-                            .strong(),
-                    );
-                    if !desc.is_empty() {
-                        ui.label(
-                            egui::RichText::new(format!("— {}", desc))
-                                .small()
-                                .color(egui::Color32::from_rgb(125, 131, 166)),
-                        );
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{:.1}s",
-                                event.timestamp_ms as f32 / 1000.0
-                            ))
-                            .size(9.0)
-                            .color(egui::Color32::from_rgb(125, 131, 166)),
-                        );
-                    });
-                });
-                ui.separator();
+                .unwrap_or(true)
+        })
+        .take(max_items)
+    {
+        let (icon, color) = match event.event_type {
+            TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
+            TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
+            TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
+            TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
+            TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
+            TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(74, 222, 128)),
+            TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
+            TaskEventType::TokenBudgetUpdate => {
+                ("$", egui::Color32::from_rgb(236, 72, 153))
             }
+            TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
+            TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
+        };
+        let name = snapshot.state.get_text(event.name_offset, event.name_len);
+        let desc = snapshot
+            .state
+            .get_text(event.description_offset, event.description_len);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(icon).color(color));
+            let task_scope = if event.task_id == 0 {
+                "Mission".to_string()
+            } else {
+                format!("Task #{}", event.task_id)
+            };
+            ui.label(
+                egui::RichText::new(format!("{} · {}", task_scope, name))
+                    .small()
+                    .strong(),
+            );
+            if !desc.is_empty() {
+                ui.label(
+                    egui::RichText::new(format!("— {}", desc))
+                        .small()
+                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{:.1}s",
+                        event.timestamp_ms as f32 / 1000.0
+                    ))
+                    .size(9.0)
+                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                );
+            });
         });
+        ui.separator();
+    }
 }
 
 /// Render task timeline panel
