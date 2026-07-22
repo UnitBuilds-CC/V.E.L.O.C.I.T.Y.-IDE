@@ -1,5 +1,6 @@
+use crate::editor::theme::AppearanceSettings;
 use eframe::egui;
-use eframe::egui::{Color32, FontId, Response, TextEdit, TextFormat};
+use eframe::egui::{Color32, Response, TextEdit, TextFormat};
 use once_cell::sync::Lazy;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{self, ThemeSet};
@@ -33,11 +34,14 @@ impl CodeEditor {
         path: Option<&std::path::Path>,
         pending_line: Option<usize>,
         active_locks: &[crate::automation::mediator::EditLock],
+        appearance: AppearanceSettings,
     ) -> Response {
         let extension = path
             .and_then(|p| p.extension())
             .and_then(|ext| ext.to_str())
             .unwrap_or("txt");
+        let palette = appearance.palette();
+        let code_font = appearance.code_font_id();
 
         let theme = THEME_SET
             .themes
@@ -63,7 +67,7 @@ impl CodeEditor {
                 for (style, word) in ranges {
                     let color = syntect_color_to_egui(style.foreground);
                     let format = TextFormat {
-                        font_id: FontId::monospace(13.0),
+                        font_id: code_font.clone(),
                         color,
                         ..Default::default()
                     };
@@ -93,14 +97,14 @@ impl CodeEditor {
             let is_locked = is_line_locked(i);
             let format = if is_locked {
                 egui::TextFormat {
-                    font_id: egui::FontId::monospace(13.0),
-                    color: egui::Color32::from_rgb(250, 204, 21),
+                    font_id: code_font.clone(),
+                    color: palette.warning,
                     ..Default::default()
                 }
             } else {
                 egui::TextFormat {
-                    font_id: egui::FontId::monospace(13.0),
-                    color: egui::Color32::from_gray(100),
+                    font_id: code_font.clone(),
+                    color: palette.text_muted,
                     ..Default::default()
                 }
             };
@@ -164,5 +168,5 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 /// Render a gutter with line numbers next to a code text edit.
 pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
     let mut editor = CodeEditor::default();
-    editor.show(ui, text, None, None, &[])
+    editor.show(ui, text, None, None, &[], AppearanceSettings::default())
 }

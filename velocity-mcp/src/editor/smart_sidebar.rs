@@ -372,8 +372,7 @@ impl<'a> SmartSidebarSnapshot<'a> {
 }
 
 /// Render smart sidebar panel
-pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot) {
-    let palette = IdePalette::dark();
+pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot, palette: IdePalette) {
     let frame = egui::Frame::new()
         .fill(palette.bg_secondary)
         .inner_margin(8.0)

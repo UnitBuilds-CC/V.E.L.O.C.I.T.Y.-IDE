@@ -54,8 +54,12 @@ impl OrchestratorPanel {
         }
     }
 
-    pub fn render_policy_controls(&mut self, ui: &mut Ui, workspace_root: &Path) {
-        let palette = IdePalette::dark();
+    pub fn render_policy_controls(
+        &mut self,
+        ui: &mut Ui,
+        workspace_root: &Path,
+        palette: IdePalette,
+    ) {
         let registry = InstructionRegistry::open(workspace_root);
         let kind = self.policy_editor.kind;
         let policies = registry.policies_for_kind(kind);

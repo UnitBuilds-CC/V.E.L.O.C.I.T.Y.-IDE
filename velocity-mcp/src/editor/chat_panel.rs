@@ -121,9 +121,8 @@ pub fn render_chat_panel(
     ui: &mut egui::Ui,
     state: &mut ChatPanelState,
     agent_tx: &Sender<UiToAgentMessage>,
+    palette: IdePalette,
 ) {
-    let palette = IdePalette::dark();
-
     egui::Frame::new()
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {

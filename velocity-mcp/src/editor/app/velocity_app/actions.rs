@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use egui_dock::DockState;
 
 use crate::agent::UiToAgentMessage;
 use crate::editor::buffer::EditorBuffer;
@@ -101,6 +100,22 @@ impl VelocityApp {
             Command {
                 label: "Toggle Merkle Graph",
                 action: |a| a.toggle_panel(TabKind::Graph),
+            },
+            Command {
+                label: "Toggle Left Sidebar",
+                action: |a| a.toggle_left_sidebar(),
+            },
+            Command {
+                label: "Toggle Right Sidebar",
+                action: |a| a.toggle_right_sidebar(),
+            },
+            Command {
+                label: "Open Settings",
+                action: |a| a.toggle_panel(TabKind::Settings),
+            },
+            Command {
+                label: "Reset Workspace Layout",
+                action: |a| a.reset_workspace_layout(),
             },
         ]
     }
@@ -427,7 +442,7 @@ impl VelocityApp {
     }
 
     pub fn rebuild_dock(&mut self) {
-        self.dock_state = Some(DockState::new(self.tabs.clone()));
+        self.dock_state = Some(self.build_workspace_dock(self.appearance.profile));
     }
 
     pub fn build_active(&mut self) {
@@ -458,5 +473,29 @@ impl VelocityApp {
 
     pub fn toggle_search(&mut self) {
         self.toggle_panel(TabKind::Search);
+    }
+
+    pub fn toggle_settings(&mut self) {
+        self.toggle_panel(TabKind::Settings);
+    }
+
+    pub fn toggle_left_sidebar(&mut self) {
+        self.left_sidebar_visible = !self.left_sidebar_visible;
+        self.save_workspace_preferences();
+    }
+
+    pub fn toggle_right_sidebar(&mut self) {
+        self.right_sidebar_visible = !self.right_sidebar_visible;
+        self.save_workspace_preferences();
+    }
+
+    pub fn reset_workspace_layout(&mut self) {
+        let profile = self.appearance.profile;
+        self.apply_workspace_profile(profile);
+        self.left_sidebar_visible = true;
+        self.left_sidebar_width = 240.0;
+        self.right_sidebar_visible = true;
+        self.right_sidebar_width = 280.0;
+        self.save_workspace_preferences();
     }
 }

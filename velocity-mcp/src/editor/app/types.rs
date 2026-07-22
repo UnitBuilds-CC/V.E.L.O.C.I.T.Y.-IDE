@@ -31,6 +31,7 @@ impl Tab {
             TabKind::Usage => "Usage".into(),
             TabKind::Search => "Search".into(),
             TabKind::Graph => "Merkle Graph".into(),
+            TabKind::Settings => "Settings".into(),
         }
     }
 
@@ -56,6 +57,7 @@ pub enum TabKind {
     Usage,
     Search,
     Graph,
+    Settings,
 }
 
 pub struct Command {

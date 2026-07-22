@@ -71,8 +71,7 @@ impl ToastQueue {
         self.toasts.push(toast);
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context) {
-        let palette = IdePalette::dark();
+    pub fn ui(&mut self, ctx: &egui::Context, palette: IdePalette) {
         let now = Instant::now();
         self.toasts
             .retain(|t| now.duration_since(t.created) < t.ttl);

@@ -1,7 +1,8 @@
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, Vec2,
-    Visuals,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style,
+    TextStyle, Vec2, Visuals,
 };
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -48,10 +49,246 @@ impl IdePalette {
             error: Color32::from_rgb(220, 38, 38),
         }
     }
+
+    pub fn operator() -> Self {
+        Self {
+            bg_primary: Color32::from_rgb(6, 12, 16),
+            bg_secondary: Color32::from_rgb(12, 22, 28),
+            bg_tertiary: Color32::from_rgb(17, 32, 41),
+            text: Color32::from_rgb(223, 238, 242),
+            text_muted: Color32::from_rgb(136, 168, 176),
+            accent: Color32::from_rgb(45, 212, 191),
+            border: Color32::from_rgb(29, 55, 65),
+            success: Color32::from_rgb(74, 222, 128),
+            warning: Color32::from_rgb(251, 191, 36),
+            error: Color32::from_rgb(248, 113, 113),
+        }
+    }
+
+    pub fn high_contrast() -> Self {
+        Self {
+            bg_primary: Color32::from_rgb(0, 0, 0),
+            bg_secondary: Color32::from_rgb(10, 10, 10),
+            bg_tertiary: Color32::from_rgb(24, 24, 24),
+            text: Color32::from_rgb(245, 245, 245),
+            text_muted: Color32::from_rgb(196, 196, 196),
+            accent: Color32::from_rgb(96, 165, 250),
+            border: Color32::from_rgb(96, 96, 96),
+            success: Color32::from_rgb(74, 222, 128),
+            warning: Color32::from_rgb(250, 204, 21),
+            error: Color32::from_rgb(248, 113, 113),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeVariant {
+    Midnight,
+    Daylight,
+    Operator,
+    HighContrast,
+}
+
+impl ThemeVariant {
+    pub const ALL: [Self; 4] = [
+        Self::Midnight,
+        Self::Daylight,
+        Self::Operator,
+        Self::HighContrast,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Midnight => "Midnight",
+            Self::Daylight => "Daylight",
+            Self::Operator => "Operator",
+            Self::HighContrast => "High Contrast",
+        }
+    }
+
+    pub fn palette(self) -> IdePalette {
+        match self {
+            Self::Midnight => IdePalette::dark(),
+            Self::Daylight => IdePalette::light(),
+            Self::Operator => IdePalette::operator(),
+            Self::HighContrast => IdePalette::high_contrast(),
+        }
+    }
+
+    pub fn is_dark(self) -> bool {
+        !matches!(self, Self::Daylight)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Density {
+    Compact,
+    Comfortable,
+    Spacious,
+}
+
+impl Density {
+    pub const ALL: [Self; 3] = [Self::Compact, Self::Comfortable, Self::Spacious];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compact => "Compact",
+            Self::Comfortable => "Comfortable",
+            Self::Spacious => "Spacious",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkspaceProfile {
+    Coder,
+    AutomationOperator,
+    MissionControl,
+    Accessibility,
+}
+
+impl WorkspaceProfile {
+    pub const ALL: [Self; 4] = [
+        Self::Coder,
+        Self::AutomationOperator,
+        Self::MissionControl,
+        Self::Accessibility,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Coder => "Coder",
+            Self::AutomationOperator => "Automation Operator",
+            Self::MissionControl => "Mission Control",
+            Self::Accessibility => "Accessibility",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Coder => "Balanced editor-first default for coding and agent review.",
+            Self::AutomationOperator => {
+                "Higher density and operator colors for browser and desktop automation flows."
+            }
+            Self::MissionControl => {
+                "Readable supervisory preset for monitoring multiple agents and interventions."
+            }
+            Self::Accessibility => {
+                "Higher contrast and larger type for long sessions and lower-vision setups."
+            }
+        }
+    }
+
+    pub fn focus_label(self) -> &'static str {
+        match self {
+            Self::Coder => "Editing, diff review, and fast agent iteration",
+            Self::AutomationOperator => "Live automation runs, evidence, and intervention",
+            Self::MissionControl => "Fleet health, blockers, and approvals",
+            Self::Accessibility => "Readable control surfaces with less visual strain",
+        }
+    }
+
+    pub fn quick_tip(self) -> &'static str {
+        match self {
+            Self::Coder => "Keep editor, chat, search, and output close together so code and feedback stay in one loop.",
+            Self::AutomationOperator => "Put runtime state ahead of raw logs so you can tell whether a run is healthy before reading details.",
+            Self::MissionControl => "Start with the exception queue: blocked work, approvals, and failing tasks should surface before everything else.",
+            Self::Accessibility => "Favor fewer competing panels, larger defaults, and one obvious action path per task.",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AppearanceSettings {
+    pub profile: WorkspaceProfile,
+    pub theme: ThemeVariant,
+    pub density: Density,
+    pub ui_scale: f32,
+    pub code_scale: f32,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self::preset(WorkspaceProfile::Coder)
+    }
+}
+
+impl AppearanceSettings {
+    pub fn preset(profile: WorkspaceProfile) -> Self {
+        match profile {
+            WorkspaceProfile::Coder => Self {
+                profile,
+                theme: ThemeVariant::Midnight,
+                density: Density::Comfortable,
+                ui_scale: 1.0,
+                code_scale: 1.0,
+            },
+            WorkspaceProfile::AutomationOperator => Self {
+                profile,
+                theme: ThemeVariant::Operator,
+                density: Density::Compact,
+                ui_scale: 0.98,
+                code_scale: 0.96,
+            },
+            WorkspaceProfile::MissionControl => Self {
+                profile,
+                theme: ThemeVariant::Midnight,
+                density: Density::Spacious,
+                ui_scale: 1.05,
+                code_scale: 1.0,
+            },
+            WorkspaceProfile::Accessibility => Self {
+                profile,
+                theme: ThemeVariant::HighContrast,
+                density: Density::Spacious,
+                ui_scale: 1.15,
+                code_scale: 1.12,
+            },
+        }
+    }
+
+    pub fn apply_profile(&mut self, profile: WorkspaceProfile) {
+        *self = Self::preset(profile);
+    }
+
+    pub fn palette(self) -> IdePalette {
+        self.theme.palette()
+    }
+
+    pub fn ui_font_id(self) -> FontId {
+        FontId::new(13.0 * self.ui_scale, FontFamily::Proportional)
+    }
+
+    pub fn code_font_id(self) -> FontId {
+        FontId::new(13.0 * self.code_scale, FontFamily::Monospace)
+    }
+
+    fn item_spacing(self) -> Vec2 {
+        match self.density {
+            Density::Compact => Vec2::new(4.0, 4.0),
+            Density::Comfortable => Vec2::new(6.0, 6.0),
+            Density::Spacious => Vec2::new(8.0, 8.0),
+        }
+    }
+
+    fn button_padding(self) -> Vec2 {
+        match self.density {
+            Density::Compact => Vec2::new(6.0, 3.0),
+            Density::Comfortable => Vec2::new(8.0, 4.0),
+            Density::Spacious => Vec2::new(10.0, 5.0),
+        }
+    }
+
+    fn window_margin(self) -> i8 {
+        match self.density {
+            Density::Compact => 8,
+            Density::Comfortable => 10,
+            Density::Spacious => 12,
+        }
+    }
 }
 
 pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
-    // Try to load a bundled coding font; fall back to system monospace if unavailable.
     let data = include_font();
     if let Some(data) = data {
         fonts
@@ -67,16 +304,17 @@ pub fn setup_fonts(fonts: &mut FontDefinitions) -> FontId {
 }
 
 fn include_font() -> Option<Vec<u8>> {
-    // Cargo will error if this path is absent, so we only include a placeholder
-    // when a known bundled font exists. The function below is conditionally compiled
-    // by an environment-driven cfg that defaults to off. In practice we rely on system
-    // fonts to avoid missing asset errors.
     None
 }
 
-pub fn apply_theme(ctx: &egui::Context, palette: IdePalette) {
-    let mut visuals = Visuals::dark();
-    visuals.dark_mode = true;
+pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
+    let palette = appearance.palette();
+    let mut visuals = if appearance.theme.is_dark() {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
+    visuals.dark_mode = appearance.theme.is_dark();
     visuals.override_text_color = Some(palette.text);
     visuals.panel_fill = palette.bg_secondary;
     visuals.window_fill = palette.bg_primary;
@@ -107,17 +345,30 @@ pub fn apply_theme(ctx: &egui::Context, palette: IdePalette) {
 
     let mut style = Style::default();
     style.visuals = visuals;
-    style.spacing.item_spacing = Vec2::splat(6.0);
-    style.spacing.button_padding = Vec2::new(8.0, 4.0);
-    style.spacing.window_margin = egui::Margin::same(10);
+    style.spacing.item_spacing = appearance.item_spacing();
+    style.spacing.button_padding = appearance.button_padding();
+    style.spacing.window_margin = egui::Margin::same(appearance.window_margin());
+    style.text_styles.insert(
+        TextStyle::Heading,
+        FontId::new(18.0 * appearance.ui_scale, FontFamily::Proportional),
+    );
+    style.text_styles.insert(TextStyle::Body, appearance.ui_font_id());
+    style.text_styles.insert(TextStyle::Button, appearance.ui_font_id());
+    style.text_styles.insert(
+        TextStyle::Small,
+        FontId::new(11.0 * appearance.ui_scale, FontFamily::Proportional),
+    );
+    style
+        .text_styles
+        .insert(TextStyle::Monospace, appearance.code_font_id());
 
     ctx.set_global_style(style);
 }
 
 pub fn code_font_id() -> FontId {
-    FontId::new(13.0, FontFamily::Monospace)
+    AppearanceSettings::default().code_font_id()
 }
 
 pub fn ui_font_id() -> FontId {
-    FontId::new(13.0, FontFamily::Proportional)
+    AppearanceSettings::default().ui_font_id()
 }

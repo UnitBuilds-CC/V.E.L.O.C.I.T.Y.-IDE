@@ -1,10 +1,12 @@
-use eframe::egui::{self, Color32, Panel, Ui};
+use crate::editor::theme::IdePalette;
+use eframe::egui::{self, Panel, Ui};
 
 pub struct StatusBar;
 
 impl StatusBar {
     pub fn show(
         ui: &mut Ui,
+        palette: IdePalette,
         branch: Option<&str>,
         position: Option<(usize, usize)>,
         build_ok: bool,
@@ -13,9 +15,9 @@ impl StatusBar {
         Panel::bottom("status_bar").show(ui, |ui: &mut egui::Ui| {
             ui.horizontal(|ui: &mut egui::Ui| {
                 let (icon, color) = if build_ok {
-                    ("✔", Color32::from_rgb(74, 222, 128))
+                    ("✔", palette.success)
                 } else {
-                    ("✖", Color32::from_rgb(248, 113, 113))
+                    ("✖", palette.error)
                 };
 
                 ui.label(
@@ -40,7 +42,11 @@ impl StatusBar {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui: &mut egui::Ui| {
-                        ui.label(egui::RichText::new(status).size(12.0).color(Color32::GRAY));
+                        ui.label(
+                            egui::RichText::new(status)
+                                .size(12.0)
+                                .color(palette.text_muted),
+                        );
                     },
                 );
             });

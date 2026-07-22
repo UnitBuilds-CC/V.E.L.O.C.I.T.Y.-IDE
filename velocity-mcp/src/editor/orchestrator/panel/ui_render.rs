@@ -15,8 +15,8 @@ impl OrchestratorPanel {
         ui: &mut Ui,
         workspace_root: &Path,
         mediator: &std::sync::Arc<crate::automation::mediator::MediatorArena>,
+        palette: IdePalette,
     ) {
-        let palette = IdePalette::dark();
         self.ensure_policy_editor_loaded(workspace_root);
         if self.execution_running {
             self.poll_live_workers(workspace_root, mediator);
@@ -35,8 +35,49 @@ impl OrchestratorPanel {
         });
         ui.separator();
 
-        self.render_policy_controls(ui, workspace_root);
+        self.render_policy_controls(ui, workspace_root, palette);
         ui.add_space(6.0);
+
+        let has_runtime_history = self.execution_running
+            || !self.running_workers.is_empty()
+            || self.runtime_status != "Idle"
+            || self.registry.as_ref().is_some_and(|registry| {
+                !registry.outputs.is_empty()
+                    || registry
+                        .statuses
+                        .values()
+                        .any(|status| !matches!(status, TaskStatus::Pending))
+            });
+        let is_empty_state = self.routed_plan.is_none() && !has_runtime_history;
+
+        if is_empty_state {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Start with a routed plan").strong());
+                ui.label(
+                    egui::RichText::new(
+                        "Use the policy controls to choose a task type, generate a routed plan from the current brief, then launch workers once the dependency graph looks right.",
+                    )
+                    .small()
+                    .color(palette.text_muted),
+                );
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new("Workflow:")
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    ui.label("1. Pick a policy");
+                    ui.separator();
+                    ui.label("2. Route the mission");
+                    ui.separator();
+                    ui.label("3. Review phases");
+                    ui.separator();
+                    ui.label("4. Execute and monitor evidence");
+                });
+            });
+            ui.add_space(6.0);
+        }
 
         if let Some(plan) = &self.routed_plan {
             ui.group(|ui| {
@@ -105,30 +146,32 @@ impl OrchestratorPanel {
                     self.reset_runtime_action();
                 }
 
-                ui.separator();
+                if self.expanded {
+                    ui.separator();
 
-                if ui.button("⚠️ Inject Cycle").clicked() {
-                    if let Some(t3) = self.graph.tasks.get_mut(&TaskId(3)) {
-                        if !t3.dependencies.contains(&TaskId(4)) {
-                            t3.dependencies.push(TaskId(4));
+                    if ui.button("⚠️ Inject Cycle").clicked() {
+                        if let Some(t3) = self.graph.tasks.get_mut(&TaskId(3)) {
+                            if !t3.dependencies.contains(&TaskId(4)) {
+                                t3.dependencies.push(TaskId(4));
+                            }
                         }
-                    }
-                    if let Some(t4) = self.graph.tasks.get_mut(&TaskId(4)) {
-                        if !t4.dependencies.contains(&TaskId(3)) {
-                            t4.dependencies.push(TaskId(3));
+                        if let Some(t4) = self.graph.tasks.get_mut(&TaskId(4)) {
+                            if !t4.dependencies.contains(&TaskId(3)) {
+                                t4.dependencies.push(TaskId(3));
+                            }
                         }
+                        self.execution_running = false;
+                        self.running_workers.clear();
+                        self.runtime_status = "Cycle injected".to_string();
                     }
-                    self.execution_running = false;
-                    self.running_workers.clear();
-                    self.runtime_status = "Cycle injected".to_string();
-                }
 
-                if ui.button("Fix & Reset Graph").clicked() {
-                    self.graph = TaskGraph::example_game();
-                    self.registry = Some(OrchestratorRegistry::new(&self.graph));
-                    self.execution_running = false;
-                    self.running_workers.clear();
-                    self.runtime_status = "Graph reset".to_string();
+                    if ui.button("Fix & Reset Graph").clicked() {
+                        self.graph = TaskGraph::example_game();
+                        self.registry = Some(OrchestratorRegistry::new(&self.graph));
+                        self.execution_running = false;
+                        self.running_workers.clear();
+                        self.runtime_status = "Graph reset".to_string();
+                    }
                 }
             });
         });
@@ -229,7 +272,7 @@ impl OrchestratorPanel {
                                 );
                                 for id in phase {
                                     if let Some(task) = self.graph.tasks.get(id) {
-                                        self.task_row(ui, task);
+                                        self.task_row(ui, task, palette);
                                     }
                                 }
                             });
@@ -239,7 +282,7 @@ impl OrchestratorPanel {
                         ui.group(|ui: &mut egui::Ui| {
                             ui.label("Raw Tasks List (Unscheduled):");
                             for task in self.graph.tasks.values() {
-                                self.task_row(ui, task);
+                                self.task_row(ui, task, palette);
                             }
                         });
                     }
@@ -348,13 +391,18 @@ impl OrchestratorPanel {
                         .strong()
                         .color(palette.accent),
                 );
-                self.draw_task_graph(ui, &plan, has_cycle);
+                self.draw_task_graph(ui, &plan, has_cycle, palette);
             });
         });
     }
 
-    pub fn draw_task_graph(&self, ui: &mut Ui, plan: &scheduler::Plan, has_cycle: bool) {
-        let palette = IdePalette::dark();
+    pub fn draw_task_graph(
+        &self,
+        ui: &mut Ui,
+        plan: &scheduler::Plan,
+        has_cycle: bool,
+        palette: IdePalette,
+    ) {
 
         let mut canvas_size = ui.available_size();
         if !canvas_size.x.is_finite() || canvas_size.x < 300.0 {
@@ -477,7 +525,7 @@ impl OrchestratorPanel {
         }
     }
 
-    pub fn task_row(&self, ui: &mut Ui, task: &Task) {
+    pub fn task_row(&self, ui: &mut Ui, task: &Task, palette: IdePalette) {
         let status = self
             .registry
             .as_ref()
@@ -485,7 +533,6 @@ impl OrchestratorPanel {
             .cloned()
             .unwrap_or(TaskStatus::Pending);
 
-        let palette = IdePalette::dark();
         let (status_label, bg_color) = match &status {
             TaskStatus::Pending => ("⏳ Pending", palette.text_muted),
             TaskStatus::Running => ("🔵 Running", palette.accent),

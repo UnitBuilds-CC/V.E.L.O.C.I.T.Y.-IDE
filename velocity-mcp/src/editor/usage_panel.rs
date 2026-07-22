@@ -6,10 +6,9 @@ pub fn render_usage_panel(
     ui: &mut egui::Ui,
     accounts: &[AccountUsageView],
     date: &str,
+    palette: IdePalette,
     on_refresh: impl FnOnce(),
 ) {
-    let palette = IdePalette::dark();
-
     egui::Frame::new()
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
@@ -217,8 +216,11 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
-pub fn render_usage_compact(ui: &mut egui::Ui, accounts: &[AccountUsageView]) -> bool {
-    let palette = IdePalette::dark();
+pub fn render_usage_compact(
+    ui: &mut egui::Ui,
+    accounts: &[AccountUsageView],
+    palette: IdePalette,
+) -> bool {
     let total_remaining: u32 = accounts.iter().map(|a| a.remaining).sum();
     let total_limit: u32 = accounts.iter().map(|a| a.daily_limit).sum();
     let available = accounts.iter().filter(|a| !a.exhausted).count();

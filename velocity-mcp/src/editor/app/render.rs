@@ -2,12 +2,12 @@ use eframe::egui;
 use egui_dock::TabViewer;
 use super::types::*;
 use super::wa::*;
-use crate::editor::theme::IdePalette;
 use crate::editor::agent_ui_render::{render_agent_metrics, render_pending_approvals, render_thinking_panel, RenderSnapshot};
 use crate::editor::chat_panel::render_chat_panel;
 use crate::editor::code_editor::CodeEditor;
-use crate::editor::usage_panel::render_usage_panel;
 use crate::editor::task_timeline::{render_mission_activity_feed, TaskTimelineSnapshot};
+use crate::editor::theme::{Density, ThemeVariant, WorkspaceProfile};
+use crate::editor::usage_panel::render_usage_panel;
 use crate::automation::AgentTaskKind;
 
 pub struct TabViewerImpl<'a> {
@@ -44,6 +44,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 path.as_deref(),
                                 self.app.pending_cursor_line,
                                 &locks,
+                                self.app.appearance,
                             );
                             if self.app.pending_cursor_line.is_some() {
                                 self.app.pending_cursor_line = None;
@@ -53,21 +54,29 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 }
             }
             TabKind::Chat => {
-                render_chat_panel(ui, &mut self.app.chat, &self.app.agent_tx);
+                let palette = self.app.palette();
+                render_chat_panel(ui, &mut self.app.chat, &self.app.agent_tx, palette);
             }
             TabKind::Output => self.output_panel(ui),
             TabKind::Orchestrator => {
+                let palette = self.app.palette();
                 self.app
                     .orchestrator
-                    .ui(ui, &self.app.workspace_root, &self.app.mediator);
+                    .ui(ui, &self.app.workspace_root, &self.app.mediator, palette);
             }
             TabKind::MissionControl => {
                 self.mission_control_panel(ui);
             }
             TabKind::Usage => {
-                render_usage_panel(ui, &self.app.account_usage, &self.app.usage_date, || {
-                    let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::RefreshUsage);
-                });
+                render_usage_panel(
+                    ui,
+                    &self.app.account_usage,
+                    &self.app.usage_date,
+                    self.app.palette(),
+                    || {
+                        let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::RefreshUsage);
+                    },
+                );
             }
             TabKind::Search => {
                 self.app.search_panel(ui);
@@ -77,17 +86,263 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     .graph_view
                     .ui(ui, &self.app.workspace_root, &self.app.mediator);
             }
+            TabKind::Settings => {
+                self.settings_panel(ui);
+            }
         }
     }
 }
 
 impl<'a> TabViewerImpl<'a> {
+    pub fn settings_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.app.palette();
+        egui::Frame::new()
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.heading("Appearance & Workspace");
+                ui.label(
+                    egui::RichText::new(
+                        "Tune palette, density, scale, and role defaults for coding, automation, or supervision.",
+                    )
+                    .color(palette.text_muted),
+                );
+                ui.add_space(8.0);
+
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("Workspace profile").strong());
+                    let mut selected_profile = self.app.appearance.profile;
+                    egui::ComboBox::from_id_salt("appearance_profile")
+                        .selected_text(selected_profile.label())
+                        .show_ui(ui, |ui| {
+                            for profile in WorkspaceProfile::ALL {
+                                ui.selectable_value(&mut selected_profile, profile, profile.label());
+                            }
+                        });
+                    ui.label(
+                        egui::RichText::new(selected_profile.description())
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    if selected_profile != self.app.appearance.profile {
+                        self.app.apply_workspace_profile(selected_profile);
+                        self.app.apply_appearance(ui.ctx());
+                        self.app.save_workspace_preferences();
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.columns(2, |columns| {
+                    columns[0].group(|ui| {
+                        ui.label(egui::RichText::new("Theme").strong());
+                        let mut theme = self.app.appearance.theme;
+                        egui::ComboBox::from_id_salt("appearance_theme")
+                            .selected_text(theme.label())
+                            .show_ui(ui, |ui| {
+                                for variant in ThemeVariant::ALL {
+                                    ui.selectable_value(&mut theme, variant, variant.label());
+                                }
+                            });
+                        if theme != self.app.appearance.theme {
+                            self.app.appearance.theme = theme;
+                            self.app.apply_appearance(ui.ctx());
+                            self.app.save_workspace_preferences();
+                        }
+
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Density").strong());
+                        let mut density = self.app.appearance.density;
+                        egui::ComboBox::from_id_salt("appearance_density")
+                            .selected_text(density.label())
+                            .show_ui(ui, |ui| {
+                                for option in Density::ALL {
+                                    ui.selectable_value(&mut density, option, option.label());
+                                }
+                            });
+                        if density != self.app.appearance.density {
+                            self.app.appearance.density = density;
+                            self.app.apply_appearance(ui.ctx());
+                            self.app.save_workspace_preferences();
+                        }
+                    });
+
+                    columns[1].group(|ui| {
+                        ui.label(egui::RichText::new("Scale").strong());
+                        let mut changed = false;
+                        changed |= ui
+                            .add(egui::Slider::new(&mut self.app.appearance.ui_scale, 0.85..=1.35).text("UI scale"))
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(&mut self.app.appearance.code_scale, 0.85..=1.35).text("Code scale"))
+                            .changed();
+                        if changed {
+                            self.app.apply_appearance(ui.ctx());
+                            self.app.save_workspace_preferences();
+                        }
+
+                        ui.add_space(6.0);
+                        if ui.button("Reset to profile defaults").clicked() {
+                            let profile = self.app.appearance.profile;
+                            self.app.apply_workspace_profile(profile);
+                            self.app.apply_appearance(ui.ctx());
+                            self.app.save_workspace_preferences();
+                        }
+                        if ui.button("Reset workspace layout").clicked() {
+                            self.app.reset_workspace_layout();
+                            self.app.apply_appearance(ui.ctx());
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                ui.group(|ui| {
+                    let profile = self.app.appearance.profile;
+                    let retryable_blocked = self.app.orchestrator.retryable_blocked_task_count();
+                    let approval_count = self.app.pending_approvals.len();
+                    let dirty_count = self.app.dirty_buffer_count();
+                    ui.label(egui::RichText::new("Workspace guidance").strong());
+                    ui.label(
+                        egui::RichText::new(profile.focus_label())
+                            .small()
+                            .color(palette.accent),
+                    );
+                    ui.label(
+                        egui::RichText::new(profile.quick_tip())
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for summary in [
+                            format!("Pending approvals: {approval_count}"),
+                            format!("Dirty editors: {dirty_count}"),
+                            format!("Blocked tasks: {retryable_blocked}"),
+                        ] {
+                            egui::Frame::new()
+                                .fill(palette.bg_tertiary)
+                                .stroke(egui::Stroke::new(1.0, palette.border))
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(egui::Margin::symmetric(10, 6))
+                                .show(ui, |ui| {
+                                    ui.label(summary);
+                                });
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        match profile {
+                            WorkspaceProfile::Coder => {
+                                if ui.button("Focus chat").clicked() {
+                                    self.app.focus_panel(TabKind::Chat);
+                                }
+                                if ui.button("Open search").clicked() {
+                                    self.app.focus_panel(TabKind::Search);
+                                }
+                                if ui.button("Show output").clicked() {
+                                    self.app.focus_panel(TabKind::Output);
+                                }
+                            }
+                            WorkspaceProfile::AutomationOperator => {
+                                if ui.button("Open orchestrator").clicked() {
+                                    self.app.focus_panel(TabKind::Orchestrator);
+                                }
+                                if ui.button("Show output").clicked() {
+                                    self.app.focus_panel(TabKind::Output);
+                                }
+                                if ui.button("Focus mission control").clicked() {
+                                    self.app.focus_panel(TabKind::MissionControl);
+                                }
+                            }
+                            WorkspaceProfile::MissionControl => {
+                                if ui.button("Open mission control").clicked() {
+                                    self.app.focus_panel(TabKind::MissionControl);
+                                }
+                                if ui.button("Review approvals").clicked() {
+                                    self.app.focus_panel(TabKind::Chat);
+                                }
+                                if ui.button("Open orchestrator").clicked() {
+                                    self.app.focus_panel(TabKind::Orchestrator);
+                                }
+                            }
+                            WorkspaceProfile::Accessibility => {
+                                if ui.button("Open settings").clicked() {
+                                    self.app.focus_panel(TabKind::Settings);
+                                }
+                                if ui.button("Focus mission control").clicked() {
+                                    self.app.focus_panel(TabKind::MissionControl);
+                                }
+                                if ui.button("Focus chat").clicked() {
+                                    self.app.focus_panel(TabKind::Chat);
+                                }
+                            }
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("Preview").strong());
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, color) in [
+                            ("Accent", palette.accent),
+                            ("Success", palette.success),
+                            ("Warning", palette.warning),
+                            ("Error", palette.error),
+                        ] {
+                            egui::Frame::new()
+                                .fill(palette.bg_tertiary)
+                                .stroke(egui::Stroke::new(1.0, palette.border))
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(egui::Margin::symmetric(10, 6))
+                                .show(ui, |ui| {
+                                    ui.colored_label(color, "●");
+                                    ui.label(label);
+                                });
+                        }
+                    });
+                });
+            });
+    }
+
     pub fn output_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.app.palette();
+        let code_font = self.app.appearance.code_font_id();
+        let is_empty = self.app.command_output.trim().is_empty();
         egui::Frame::new()
             .inner_margin(egui::Margin::same(10))
-            .fill(IdePalette::dark().bg_primary)
+            .fill(palette.bg_primary)
             .show(ui, |ui: &mut egui::Ui| {
                 ui.vertical(|ui: &mut egui::Ui| {
+                    if is_empty {
+                        ui.group(|ui| {
+                            ui.label(egui::RichText::new("Output is quiet").strong());
+                            ui.label(
+                                egui::RichText::new(
+                                    "Use this panel to capture shell output, automation evidence, and quick diagnostics without leaving the workspace.",
+                                )
+                                .small()
+                                .color(palette.text_muted),
+                            );
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Good first moves:")
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                if ui.small_button("pwd").clicked() {
+                                    self.app.terminal_input = "pwd".into();
+                                }
+                                if ui.small_button("git status").clicked() {
+                                    self.app.terminal_input = "git status".into();
+                                }
+                                if ui.small_button("Focus mission control").clicked() {
+                                    self.app.focus_panel(TabKind::MissionControl);
+                                }
+                            });
+                        });
+                        ui.add_space(8.0);
+                    }
+
                     let scroll_height = ui.available_height() - 75.0;
                     egui::ScrollArea::vertical()
                         .max_height(scroll_height)
@@ -98,9 +353,9 @@ impl<'a> TabViewerImpl<'a> {
                             ui.add(
                                 egui::TextEdit::multiline(&mut text)
                                     .code_editor()
-                                    .font(egui::FontId::monospace(13.0))
+                                    .font(code_font.clone())
                                     .desired_width(f32::INFINITY)
-                                    .text_color(IdePalette::dark().accent),
+                                    .text_color(palette.accent),
                             );
                         });
 
@@ -111,13 +366,13 @@ impl<'a> TabViewerImpl<'a> {
                         ui.label(
                             egui::RichText::new("> ")
                                 .monospace()
-                                .color(IdePalette::dark().accent),
+                                .color(palette.accent),
                         );
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.app.terminal_input)
-                                .font(egui::FontId::monospace(13.0))
+                                .font(code_font)
                                 .desired_width(ui.available_width() - 120.0)
-                                .text_color(IdePalette::dark().text),
+                                .text_color(palette.text),
                         );
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             run_command = true;
@@ -184,11 +439,14 @@ impl<'a> TabViewerImpl<'a> {
     }
 
     pub fn mission_control_panel(&mut self, ui: &mut egui::Ui) {
-        let palette = IdePalette::dark();
+        let palette = self.app.palette();
         let snapshot = self.app.orchestrator.dashboard_snapshot();
         let valid_task_ids: Vec<u64> = snapshot.tasks.iter().map(|task| task.id).collect();
         self.app.mission_control.sync_selected_task(&valid_task_ids);
         self.app.mirror_worker_events_into_timeline(&snapshot);
+        let is_empty_state = !snapshot.has_routed_plan
+            && snapshot.tasks.is_empty()
+            && self.app.mission_control.interventions.is_empty();
         egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
             ui.heading("🎛 Mission Control");
             ui.label(
@@ -197,6 +455,43 @@ impl<'a> TabViewerImpl<'a> {
                     .color(palette.text_muted),
             );
             ui.add_space(8.0);
+
+            if is_empty_state {
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("Start a supervised run").strong());
+                    ui.label(
+                        egui::RichText::new(
+                            "Mission Control is quiet right now. Start with a brief, generate a routed plan, then monitor live execution and intervene only when the system surfaces something important.",
+                        )
+                        .small()
+                        .color(palette.text_muted),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            egui::RichText::new("Good first moves:")
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        if ui.small_button("Desktop smoke test").clicked() {
+                            self.app.apply_mission_brief_preset(
+                                desktop_automation_smoke_test_brief(),
+                                AgentTaskKind::DesktopAutomation,
+                            );
+                        }
+                        if ui.small_button("WA runtime validation").clicked() {
+                            self.app.apply_mission_brief_preset(
+                                desktop_automation_runtime_validation_brief(),
+                                AgentTaskKind::DesktopAutomation,
+                            );
+                        }
+                        if ui.small_button("Focus chat").clicked() {
+                            self.app.focus_panel(TabKind::Chat);
+                        }
+                    });
+                });
+                ui.add_space(8.0);
+            }
 
             if let Some(wa_summary) =
                 desktop_automation_mission_summary(&snapshot.tasks, snapshot.task_kind.as_deref())
@@ -321,7 +616,14 @@ impl<'a> TabViewerImpl<'a> {
                             ui.label(format!("Kind: {}", kind));
                         }
                         ui.label(format!("Scoped files: {}", snapshot.scope_count));
-                        if let Some(task) = selected_task {
+                        if is_empty_state {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("No routed mission yet. Add a brief above, plan it, then use this panel to watch health, blockers, and live worker detail.")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        } else if let Some(task) = selected_task {
                             ui.separator();
                             ui.label(egui::RichText::new(format!("Selected task: #{} {}", task.id, task.title)).strong());
                             ui.label(
@@ -556,7 +858,7 @@ impl<'a> TabViewerImpl<'a> {
                             ui.label(
                                 egui::RichText::new(&item.status)
                                     .small()
-                                    .color(IdePalette::dark().text_muted),
+                                    .color(palette.text_muted),
                             );
                             ui.horizontal(|ui| {
                                 let action_label = if selected_task.map(|task| task.status_label == "Running").unwrap_or(false) {
@@ -693,23 +995,23 @@ impl<'a> TabViewerImpl<'a> {
                                         ui.label(
                                             egui::RichText::new(&task.status_label)
                                                 .small()
-                                                .color(IdePalette::dark().accent),
+                                                .color(palette.accent),
                                         );
                                         if let Some(evidence_state) = desktop_evidence_state {
                                             ui.label(
                                                 egui::RichText::new("Desktop automation")
                                                     .small()
-                                                    .color(IdePalette::dark().warning),
+                                                    .color(palette.warning),
                                             );
                                             let evidence_color = match evidence_state {
                                                 DesktopAutomationEvidenceState::LiveEvidence => {
-                                                    IdePalette::dark().accent
+                                                    palette.accent
                                                 }
                                                 DesktopAutomationEvidenceState::ArtifactBacked => {
-                                                    IdePalette::dark().success
+                                                    palette.success
                                                 }
                                                 DesktopAutomationEvidenceState::AwaitingEvidence => {
-                                                    IdePalette::dark().warning
+                                                    palette.warning
                                                 }
                                             };
                                             ui.label(
@@ -723,7 +1025,7 @@ impl<'a> TabViewerImpl<'a> {
                                         ui.label(
                                             egui::RichText::new(format!("{} / {}", task.provider_label, task.model_label))
                                                 .small()
-                                                .color(IdePalette::dark().accent),
+                                                .color(palette.accent),
                                         );
                                     }
                                     ui.label(egui::RichText::new(&task.description).small().weak());
@@ -731,63 +1033,63 @@ impl<'a> TabViewerImpl<'a> {
                                         ui.label(
                                             egui::RichText::new(format!("Scope: {}", task.scope.join(", ")))
                                                 .small()
-                                                .color(IdePalette::dark().text_muted),
+                                                .color(palette.text_muted),
                                         );
                                     }
                                     if !task.rationale.is_empty() {
                                         ui.label(
                                             egui::RichText::new(format!("Why: {}", task.rationale))
                                                 .small()
-                                                .color(IdePalette::dark().text),
+                                                .color(palette.text),
                                         );
                                     }
                                     if let Some(evidence_state) = desktop_evidence_state {
                                         ui.label(
                                             egui::RichText::new(evidence_state.detail())
                                                 .small()
-                                                .color(IdePalette::dark().text_muted),
+                                                .color(palette.text_muted),
                                         );
                                     }
                                     if !task.outputs.is_empty() {
                                         ui.label(
                                             egui::RichText::new(format!("Outputs: {}", task.outputs.join(", ")))
                                                 .small()
-                                                .color(IdePalette::dark().success),
+                                                .color(palette.success),
                                         );
                                     }
                                     if !task.message.is_empty() {
                                         ui.label(
                                             egui::RichText::new(format!("Status: {}", task.message))
                                                 .small()
-                                                .color(IdePalette::dark().warning),
+                                                .color(palette.warning),
                                         );
                                     }
                                     if let Some(path) = &task.wa_run_path {
                                         ui.label(
                                             egui::RichText::new(format!("WA run: {}", path))
                                                 .small()
-                                                .color(IdePalette::dark().text_muted),
+                                                .color(palette.text_muted),
                                         );
                                     }
                                     if let Some(path) = &task.run_summary_path {
                                         ui.label(
                                             egui::RichText::new(format!("Run summary: {}", path))
                                                 .small()
-                                                .color(IdePalette::dark().text_muted),
+                                                .color(palette.text_muted),
                                         );
                                     }
                                     if let Some(path) = &task.run_facts_path {
                                         ui.label(
                                             egui::RichText::new(format!("Run facts: {}", path))
                                                 .small()
-                                                .color(IdePalette::dark().text_muted),
+                                                .color(palette.text_muted),
                                         );
                                     }
                                     if let Some(run_id) = &task.wa_run_id {
                                         ui.label(
                                             egui::RichText::new(format!("WA run id: {}", run_id))
                                                 .small()
-                                                .color(IdePalette::dark().text_muted),
+                                                .color(palette.text_muted),
                                         );
                                     }
                                     ui.horizontal_wrapped(|ui| {

@@ -3,20 +3,78 @@ use eframe::egui;
 
 use crate::editor::agent_ui_render::{render_agent_metrics, render_pending_approvals, render_thinking_panel, RenderSnapshot};
 use crate::editor::task_timeline::render_task_timeline;
-use crate::editor::theme::IdePalette;
 
 use super::super::helpers::*;
 use super::super::render::TabViewerImpl;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use crate::editor::theme::WorkspaceProfile;
 
 impl VelocityApp {
+    fn toolbar_profile_actions(
+        profile: WorkspaceProfile,
+    ) -> &'static [(&'static str, fn(&mut VelocityApp))] {
+        match profile {
+            WorkspaceProfile::Coder => &[
+                ("⚙️ Build", VelocityApp::build_active),
+                ("▶ Run", VelocityApp::run_active),
+                ("💬 Chat", |app| app.focus_panel(TabKind::Chat)),
+                ("🔍 Search", |app| app.focus_panel(TabKind::Search)),
+                ("📺 Terminal", |app| app.focus_panel(TabKind::Output)),
+                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
+            ],
+            WorkspaceProfile::AutomationOperator => &[
+                ("🧭 Route", VelocityApp::plan_routed_subagents),
+                ("🎛 Mission", |app| app.focus_panel(TabKind::MissionControl)),
+                ("🧠 Orchestrate", |app| app.focus_panel(TabKind::Orchestrator)),
+                ("📺 Evidence", |app| app.focus_panel(TabKind::Output)),
+                ("🔍 Search", |app| app.focus_panel(TabKind::Search)),
+                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
+            ],
+            WorkspaceProfile::MissionControl => &[
+                ("🧭 Route", VelocityApp::plan_routed_subagents),
+                ("🎛 Mission", |app| app.focus_panel(TabKind::MissionControl)),
+                ("🧠 Orchestrate", |app| app.focus_panel(TabKind::Orchestrator)),
+                ("💬 Chat", |app| app.focus_panel(TabKind::Chat)),
+                ("📺 Evidence", |app| app.focus_panel(TabKind::Output)),
+                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
+            ],
+            WorkspaceProfile::Accessibility => &[
+                ("💬 Chat", |app| app.focus_panel(TabKind::Chat)),
+                ("🎛 Mission", |app| app.focus_panel(TabKind::MissionControl)),
+                ("🔍 Search", |app| app.focus_panel(TabKind::Search)),
+                ("📺 Output", |app| app.focus_panel(TabKind::Output)),
+                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
+            ],
+        }
+    }
+
     pub fn search_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let suggested_queries: &[&str] = match self.appearance.profile {
+            crate::editor::theme::WorkspaceProfile::Coder => &["TODO", "fn ", "struct "],
+            crate::editor::theme::WorkspaceProfile::AutomationOperator => {
+                &["desktop", "browser", "automation"]
+            }
+            crate::editor::theme::WorkspaceProfile::MissionControl => {
+                &["worker", "task", "approval"]
+            }
+            crate::editor::theme::WorkspaceProfile::Accessibility => {
+                &["theme", "contrast", "scale"]
+            }
+        };
+
         egui::Frame::new()
             .inner_margin(egui::Margin::same(10))
+            .fill(palette.bg_primary)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.heading("🔍 Search Workspace");
+                    ui.label(
+                        egui::RichText::new("Jump to code, runtime clues, and operator evidence without leaving the current workspace.")
+                            .small()
+                            .color(palette.text_muted),
+                    );
                     ui.horizontal(|ui| {
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut self.search_query)
@@ -44,11 +102,64 @@ impl VelocityApp {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if hits.is_empty() {
                             if self.search_query.is_empty() {
-                                ui.label("Type a query to search files.");
+                                ui.group(|ui| {
+                                    ui.label(egui::RichText::new("Start with a focused query").strong());
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{} mode keeps search tuned for {}.",
+                                            self.appearance.profile.label(),
+                                            self.appearance.profile.focus_label().to_lowercase()
+                                        ))
+                                        .small()
+                                        .color(palette.text_muted),
+                                    );
+                                    ui.add_space(4.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("Suggested searches:")
+                                                .small()
+                                                .color(palette.text_muted),
+                                        );
+                                        for query in suggested_queries {
+                                            if ui.small_button(*query).clicked() {
+                                                self.search_query = (*query).to_string();
+                                                self.search_hits = crate::editor::search::project_search(
+                                                    &self.workspace_root,
+                                                    &self.search_query,
+                                                    100,
+                                                );
+                                            }
+                                        }
+                                    });
+                                });
                             } else {
-                                ui.label("No results found.");
+                                ui.group(|ui| {
+                                    ui.label(egui::RichText::new("No results found").strong());
+                                    ui.label(
+                                        egui::RichText::new("Try a broader term, drop punctuation, or search for a nearby symbol instead.")
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.horizontal_wrapped(|ui| {
+                                        for query in suggested_queries {
+                                            if ui.small_button(format!("Try {}", query)).clicked() {
+                                                self.search_query = (*query).to_string();
+                                                self.search_hits = crate::editor::search::project_search(
+                                                    &self.workspace_root,
+                                                    &self.search_query,
+                                                    100,
+                                                );
+                                            }
+                                        }
+                                    });
+                                });
                             }
                         } else {
+                            ui.label(
+                                egui::RichText::new(format!("{} results", hits.len()))
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
                             for hit in &hits {
                                 let icon = crate::editor::search::icon_for_path(&hit.path);
                                 let title =
@@ -263,6 +374,7 @@ impl VelocityApp {
         if !self.show_full_diff {
             return;
         }
+        let palette = self.palette();
         let mut open = self.show_full_diff;
         let active_change_preview = self.active_change_preview();
         egui::Window::new("Full Diff")
@@ -279,7 +391,7 @@ impl VelocityApp {
                             change_preview.removed_lines
                         ))
                         .strong()
-                        .color(IdePalette::dark().warning),
+                        .color(palette.warning),
                     );
                     ui.add_space(6.0);
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -287,7 +399,7 @@ impl VelocityApp {
                             egui::RichText::new(change_preview.full_diff.as_str())
                                 .monospace()
                                 .size(10.0)
-                                .color(IdePalette::dark().text),
+                                .color(palette.text),
                         );
                     });
                 } else {
@@ -299,8 +411,14 @@ impl VelocityApp {
 }
 
 impl eframe::App for VelocityApp {
+    fn on_exit(&mut self) {
+        self.save_workspace_preferences();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.apply_appearance(&ctx);
+        let palette = self.palette();
         self.handle_agent_messages();
         self.handle_global_shortcuts(&ctx);
         self.update_diagnostics();
@@ -331,75 +449,120 @@ impl eframe::App for VelocityApp {
         let active_change_preview = self.active_change_preview();
 
         egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {
-            ui.horizontal(|ui: &mut egui::Ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
+            ui.vertical(|ui| {
+                ui.horizontal(|ui: &mut egui::Ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
 
-                let buttons: [(&str, fn(&mut VelocityApp)); 8] = [
-                    ("➕ New", VelocityApp::open_editor_stub),
-                    ("📂 Open", VelocityApp::open_file_dialog),
-                    ("💾 Save", VelocityApp::save_active),
-                    ("💾 Save As…", VelocityApp::save_active_as),
-                    ("💾 Save All", VelocityApp::save_all),
-                    ("🔄 Models", VelocityApp::refresh_models),
-                    ("✅ Approve All", VelocityApp::approve_all_pending_tools),
-                    ("🛑 Decline All", VelocityApp::reject_all_pending_tools),
-                ];
-                for (label, action) in buttons {
-                    if ui.button(label).clicked() {
-                        action(self);
+                    let core_buttons: [(&str, fn(&mut VelocityApp)); 6] = [
+                        ("➕ New", VelocityApp::open_editor_stub),
+                        ("📂 Open", VelocityApp::open_file_dialog),
+                        ("💾 Save", VelocityApp::save_active),
+                        ("💾 Save As…", VelocityApp::save_active_as),
+                        ("💾 Save All", VelocityApp::save_all),
+                        ("🔄 Models", VelocityApp::refresh_models),
+                    ];
+                    for (label, action) in core_buttons {
+                        if ui.button(label).clicked() {
+                            action(self);
+                        }
                     }
-                }
 
-                if ui.button("⚙️ Build").clicked() {
-                    self.build_active();
-                }
-                if ui.button("▶ Run").clicked() {
-                    self.run_active();
-                }
-                if ui.button("💬 Chat").clicked() {
-                    self.focus_panel(TabKind::Chat);
-                }
-                if ui.button("🧭 Route").clicked() {
-                    self.plan_routed_subagents();
-                }
-                if ui.button("🎛 Mission").clicked() {
-                    self.focus_panel(TabKind::MissionControl);
-                }
-                if ui.button("🧠 Orchestrate").clicked() {
-                    self.focus_panel(TabKind::Orchestrator);
-                }
-                if ui.button("🔍 Search").clicked() {
-                    self.focus_panel(TabKind::Search);
-                }
-                if ui.button("📊 Graph").clicked() {
-                    self.focus_panel(TabKind::Graph);
-                }
-                if ui.button("📺 Terminal").clicked() {
-                    self.focus_panel(TabKind::Output);
-                }
-                if dirty_buffer_count > 0 {
+                    if !self.pending_approvals.is_empty() {
+                        ui.separator();
+                        if ui.button("✅ Approve All").clicked() {
+                            self.approve_all_pending_tools();
+                        }
+                        if ui.button("🛑 Decline All").clicked() {
+                            self.reject_all_pending_tools();
+                        }
+                    }
+
+                    ui.separator();
+                    for (label, action) in Self::toolbar_profile_actions(self.appearance.profile) {
+                        if ui.button(*label).clicked() {
+                            action(self);
+                        }
+                    }
+
+                    ui.separator();
+                    if ui
+                        .button(if self.left_sidebar_visible { "🧱 Hide left" } else { "🧱 Show left" })
+                        .clicked()
+                    {
+                        self.toggle_left_sidebar();
+                    }
+                    if ui
+                        .button(if self.right_sidebar_visible { "🧠 Hide right" } else { "🧠 Show right" })
+                        .clicked()
+                    {
+                        self.toggle_right_sidebar();
+                    }
+
+                    if dirty_buffer_count > 0 {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!("Δ {} dirty", dirty_buffer_count))
+                                .strong()
+                                .color(palette.warning),
+                        );
+                    }
+                });
+
+                let profile = self.appearance.profile;
+                let blocked = self.orchestrator.retryable_blocked_task_count();
+                let approvals = self.pending_approvals.len();
+                let dirty = self.dirty_buffer_count();
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} mode · {}",
+                            profile.label(),
+                            profile.focus_label()
+                        ))
+                        .small()
+                        .color(palette.text_muted),
+                    );
                     ui.separator();
                     ui.label(
-                        egui::RichText::new(format!("Δ {} dirty", dirty_buffer_count))
-                            .strong()
-                            .color(IdePalette::dark().warning),
+                        egui::RichText::new(format!("Approvals: {approvals}"))
+                            .small()
+                            .color(if approvals > 0 { palette.warning } else { palette.text_muted }),
                     );
-                }
+                    ui.label(
+                        egui::RichText::new(format!("Blocked: {blocked}"))
+                            .small()
+                            .color(if blocked > 0 { palette.warning } else { palette.text_muted }),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("Dirty: {dirty}"))
+                            .small()
+                            .color(if dirty > 0 { palette.warning } else { palette.text_muted }),
+                    );
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new(profile.quick_tip())
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                });
             });
         });
 
-        egui::Panel::left("left_sidebar")
-            .resizable(true)
-            .default_size(240.0)
-            .show(ui, |ui: &mut egui::Ui| {
-                ui.add_space(4.0);
-                ui.vertical(|ui: &mut egui::Ui| {
+        if self.left_sidebar_visible {
+            let panel_response = egui::Panel::left("left_sidebar")
+                .resizable(true)
+                .default_size(self.left_sidebar_width)
+                .show(ui, |ui: &mut egui::Ui| {
+                    self.left_sidebar_width = ui.available_width().max(180.0);
+                    ui.add_space(4.0);
+                    ui.vertical(|ui: &mut egui::Ui| {
                     ui.horizontal(|ui: &mut egui::Ui| {
                         ui.label(
                             egui::RichText::new("📁 PROJECTS")
                                 .size(12.0)
                                 .strong()
-                                .color(IdePalette::dark().accent),
+                                .color(palette.accent),
                         );
                         ui.spacing_mut().item_spacing.x = 4.0;
                         if ui
@@ -441,7 +604,8 @@ impl eframe::App for VelocityApp {
                         .show_ui(ui, |ui: &mut egui::Ui| {
                             let mut selected_idx =
                                 self.projects.iter().position(|p| p == &self.workspace_root);
-                            for (idx, proj) in self.projects.iter().enumerate() {
+                            let projects = self.projects.clone();
+                            for (idx, proj) in projects.into_iter().enumerate() {
                                 let name = proj
                                     .file_name()
                                     .unwrap_or_default()
@@ -454,6 +618,8 @@ impl eframe::App for VelocityApp {
                                     let new_path = proj.clone();
                                     if new_path.is_dir() {
                                         self.workspace_root = new_path.clone();
+                                        self.restore_workspace_preferences();
+                                        self.apply_appearance(&ctx);
                                         let _ = self
                                             .agent_tx
                                             .send(crate::agent::UiToAgentMessage::SetWorkspace(new_path.clone()));
@@ -479,7 +645,7 @@ impl eframe::App for VelocityApp {
                         egui::RichText::new("🌲 FILE EXPLORER")
                             .size(12.0)
                             .strong()
-                            .color(IdePalette::dark().accent),
+                            .color(palette.accent),
                     );
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if let Some(tree) = self.file_tree.take() {
@@ -510,6 +676,8 @@ impl eframe::App for VelocityApp {
                     });
                 });
             });
+            self.left_sidebar_width = panel_response.response.rect.width().max(180.0);
+        }
 
         let mut active_symbol = None;
         if let Some(active_id) = &self.active_tab {
@@ -520,13 +688,15 @@ impl eframe::App for VelocityApp {
             }
         }
 
-        egui::Panel::right("right_sidebar")
-            .resizable(true)
-            .default_size(280.0)
-            .show(ui, |ui: &mut egui::Ui| {
-                ui.add_space(4.0);
-                ui.vertical(|ui: &mut egui::Ui| {
-                    ui.label(egui::RichText::new("🧠 SEMANTIC HISTORY").size(12.0).strong().color(IdePalette::dark().accent));
+        if self.right_sidebar_visible {
+            let panel_response = egui::Panel::right("right_sidebar")
+                .resizable(true)
+                .default_size(self.right_sidebar_width)
+                .show(ui, |ui: &mut egui::Ui| {
+                    self.right_sidebar_width = ui.available_width().max(220.0);
+                    ui.add_space(4.0);
+                    ui.vertical(|ui: &mut egui::Ui| {
+                    ui.label(egui::RichText::new("🧠 SEMANTIC HISTORY").size(12.0).strong().color(palette.accent));
                     ui.separator();
 
                     self.smart_sidebar.clear();
@@ -543,12 +713,12 @@ impl eframe::App for VelocityApp {
                             ui.label(
                                 egui::RichText::new(format!("Δ Active changes: {}", change_preview.file_label))
                                     .strong()
-                                    .color(IdePalette::dark().warning),
+                                    .color(palette.warning),
                             );
                             ui.label(
                                 egui::RichText::new(format!("+{} / -{} lines", change_preview.added_lines, change_preview.removed_lines))
                                     .size(10.0)
-                                    .color(IdePalette::dark().text_muted),
+                                    .color(palette.text_muted),
                             );
                             ui.horizontal(|ui| {
                                 if ui.small_button("Save").clicked() {
@@ -572,7 +742,7 @@ impl eframe::App for VelocityApp {
                                 egui::RichText::new(change_preview.preview.as_str())
                                     .monospace()
                                     .size(10.0)
-                                    .color(IdePalette::dark().text),
+                                    .color(palette.text),
                             );
                         });
                         ui.separator();
@@ -581,7 +751,7 @@ impl eframe::App for VelocityApp {
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
                         self.smart_sidebar.add_quick_action(0, "Inspect semantic history", symbol, 2);
-                        ui.label(egui::RichText::new(format!("Symbol: {}()", symbol)).strong().color(IdePalette::dark().accent));
+                        ui.label(egui::RichText::new(format!("Symbol: {}()", symbol)).strong().color(palette.accent));
                         
                         let symbol_hash = hash_str(symbol);
                         ui.label(egui::RichText::new(format!("Hash: {:016x}", symbol_hash)).size(10.0).weak());
@@ -589,7 +759,7 @@ impl eframe::App for VelocityApp {
                         if let Ok(sm) = crate::automation::open_workspace_site_map(&self.workspace_root) {
                             let callers = sm.get_callers(symbol_hash);
                             ui.add_space(6.0);
-                            ui.label(egui::RichText::new("📞 CALLERS").size(11.0).strong().color(IdePalette::dark().accent));
+                            ui.label(egui::RichText::new("📞 CALLERS").size(11.0).strong().color(palette.accent));
                             if callers.is_empty() {
                                 ui.label("No active callers found in graph.");
                             } else {
@@ -600,7 +770,7 @@ impl eframe::App for VelocityApp {
 
                             let deps = sm.get_dependencies(symbol_hash);
                             ui.add_space(6.0);
-                            ui.label(egui::RichText::new("⚙️ DEPENDENCIES").size(11.0).strong().color(IdePalette::dark().accent));
+                            ui.label(egui::RichText::new("⚙️ DEPENDENCIES").size(11.0).strong().color(palette.accent));
                             if deps.is_empty() {
                                 ui.label("No dependencies found.");
                             } else {
@@ -611,7 +781,7 @@ impl eframe::App for VelocityApp {
 
                             let intent_triples = sm.find_triples(Some(symbol_hash), Some(3), None);
                             ui.add_space(6.0);
-                            ui.label(egui::RichText::new("💬 AI INTENT & TRANSCRIPTS").size(11.0).strong().color(IdePalette::dark().accent));
+                            ui.label(egui::RichText::new("💬 AI INTENT & TRANSCRIPTS").size(11.0).strong().color(palette.accent));
                             if intent_triples.is_empty() {
                                 ui.label("No agent sessions linked to this symbol.");
                             } else {
@@ -634,9 +804,11 @@ impl eframe::App for VelocityApp {
 
                     ui.separator();
                     let sidebar_snapshot = crate::editor::smart_sidebar::SmartSidebarSnapshot::new(&self.smart_sidebar);
-                    crate::editor::smart_sidebar::render_smart_sidebar(ui, &sidebar_snapshot);
+                    crate::editor::smart_sidebar::render_smart_sidebar(ui, &sidebar_snapshot, palette);
                 });
             });
+            self.right_sidebar_width = panel_response.response.rect.width().max(220.0);
+        }
 
         let branch = get_git_branch(&self.workspace_root);
         let build_ok = self.build_errors_count == 0;
@@ -655,6 +827,7 @@ impl eframe::App for VelocityApp {
         };
         crate::editor::status_bar::StatusBar::show(
             ui,
+            palette,
             branch.as_deref(),
             cursor_pos,
             build_ok,
@@ -692,7 +865,7 @@ impl eframe::App for VelocityApp {
                         ui.label(
                             egui::RichText::new("Direct approval actions")
                                 .size(10.0)
-                                .color(IdePalette::dark().text_muted),
+                                .color(palette.text_muted),
                         );
                         if ui.button("Approve all").clicked() {
                             self.approve_all_pending_tools();
@@ -709,7 +882,7 @@ impl eframe::App for VelocityApp {
                             ui.label(
                                 egui::RichText::new(tool_name.as_str())
                                     .size(10.0)
-                                    .color(IdePalette::dark().text),
+                                    .color(palette.text),
                             );
                             if ui.small_button("Approve").clicked() {
                                 self.approve_pending_tool_at(idx);
@@ -729,6 +902,6 @@ impl eframe::App for VelocityApp {
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
         self.full_diff_ui(&ctx);
-        self.toasts.ui(&ctx);
+        self.toasts.ui(&ctx, palette);
     }
 }
