@@ -306,7 +306,9 @@ impl VelocityApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label("File path (relative to workspace):");
-                ui.text_edit_singleline(&mut path_string);
+                if ui.text_edit_singleline(&mut path_string).changed() {
+                    self.pending_open_path = Some(PathBuf::from(&path_string));
+                }
                 ui.horizontal(|ui| {
                     if ui.button("Open").clicked() {
                         let p = self.workspace_root.join(&path_string);
@@ -346,7 +348,9 @@ impl VelocityApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label("File path (relative to workspace):");
-                ui.text_edit_singleline(&mut path_string);
+                if ui.text_edit_singleline(&mut path_string).changed() {
+                    self.pending_save_as_path = Some(PathBuf::from(&path_string));
+                }
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
                         if let Some(id) = self.active_tab.clone() {

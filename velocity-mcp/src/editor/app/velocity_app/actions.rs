@@ -408,32 +408,33 @@ impl VelocityApp {
     }
 
     pub fn focus_panel(&mut self, kind: TabKind) {
-        let maybe_existing = self
-            .tabs
-            .iter()
-            .find(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(&kind))
-            .cloned();
+        if let Some(dock) = self.dock_state.as_mut() {
+            let found_tab = dock
+                .iter_all_tabs()
+                .find(|(_, tab)| std::mem::discriminant(&tab.kind) == std::mem::discriminant(&kind))
+                .map(|(_, tab)| tab.clone());
 
-        let tab_to_focus = if let Some(existing) = maybe_existing {
-            existing
-        } else {
+            if let Some(tab) = found_tab {
+                if let Some(tab_path) = dock.find_tab(&tab) {
+                    let _ = dock.set_active_tab(tab_path);
+                    self.active_tab = Some(tab.id);
+                    return;
+                }
+            }
+
             let id = TabId::next(&mut self.tab_counter);
             let tab = Tab {
                 id: id.clone(),
                 kind,
             };
-            self.tabs.push(tab.clone());
-            if let Some(dock) = self.dock_state.as_mut() {
-                dock.push_to_focused_leaf(tab.clone());
+            if !self.tabs.iter().any(|t| t.id == id) {
+                self.tabs.push(tab.clone());
             }
-            tab
-        };
-
-        self.active_tab = Some(tab_to_focus.id.clone());
-        if let Some(dock) = self.dock_state.as_mut() {
-            if let Some(tab_path) = dock.find_tab(&tab_to_focus) {
+            dock.push_to_focused_leaf(tab.clone());
+            if let Some(tab_path) = dock.find_tab(&tab) {
                 let _ = dock.set_active_tab(tab_path);
             }
+            self.active_tab = Some(id);
         }
     }
 
