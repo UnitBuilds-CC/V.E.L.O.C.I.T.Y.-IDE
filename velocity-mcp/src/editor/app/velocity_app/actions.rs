@@ -9,114 +9,34 @@ use super::struct_def::VelocityApp;
 impl VelocityApp {
     pub fn commands(&self) -> Vec<Command> {
         vec![
-            Command {
-                label: "Command Palette…",
-                action: |a| a.open_command_palette(),
-            },
-            Command {
-                label: "Refresh Models",
-                action: |a| a.refresh_models(),
-            },
-            Command {
-                label: "Approve All Pending Tools",
-                action: |a| a.approve_all_pending_tools(),
-            },
-            Command {
-                label: "Decline All Pending Tools",
-                action: |a| a.reject_all_pending_tools(),
-            },
-            Command {
-                label: "Focus Agent Chat",
-                action: |a| a.toggle_panel(TabKind::Chat),
-            },
-            Command {
-                label: "Focus Mission Control",
-                action: |a| a.toggle_panel(TabKind::MissionControl),
-            },
-            Command {
-                label: "Focus Orchestrator",
-                action: |a| a.toggle_panel(TabKind::Orchestrator),
-            },
-            Command {
-                label: "Plan Routed Sub-Agents",
-                action: |a| a.plan_routed_subagents(),
-            },
-            Command {
-                label: "New File",
-                action: |a| a.open_editor(None),
-            },
-            Command {
-                label: "Open File…",
-                action: |a| a.open_file_dialog(),
-            },
-            Command {
-                label: "Save",
-                action: |a| a.save_active(),
-            },
-            Command {
-                label: "Save As…",
-                action: |a| a.save_active_as(),
-            },
-            Command {
-                label: "Save All",
-                action: |a| a.save_all(),
-            },
-            Command {
-                label: "Close Tab",
-                action: |a| a.close_active_tab(),
-            },
-            Command {
-                label: "Build",
-                action: |a| a.build_active(),
-            },
-            Command {
-                label: "Run",
-                action: |a| a.run_active(),
-            },
-            Command {
-                label: "Toggle Output",
-                action: |a| a.toggle_panel(TabKind::Output),
-            },
-            Command {
-                label: "Toggle Chat",
-                action: |a| a.toggle_panel(TabKind::Chat),
-            },
-            Command {
-                label: "Toggle Orchestrator",
-                action: |a| a.toggle_panel(TabKind::Orchestrator),
-            },
-            Command {
-                label: "Toggle Mission Control",
-                action: |a| a.toggle_panel(TabKind::MissionControl),
-            },
-            Command {
-                label: "Toggle Usage",
-                action: |a| a.toggle_panel(TabKind::Usage),
-            },
-            Command {
-                label: "Toggle Search",
-                action: |a| a.toggle_panel(TabKind::Search),
-            },
-            Command {
-                label: "Toggle Merkle Graph",
-                action: |a| a.toggle_panel(TabKind::Graph),
-            },
-            Command {
-                label: "Toggle Left Sidebar",
-                action: |a| a.toggle_left_sidebar(),
-            },
-            Command {
-                label: "Toggle Right Sidebar",
-                action: |a| a.toggle_right_sidebar(),
-            },
-            Command {
-                label: "Open Settings",
-                action: |a| a.toggle_panel(TabKind::Settings),
-            },
-            Command {
-                label: "Reset Workspace Layout",
-                action: |a| a.reset_workspace_layout(),
-            },
+            // File
+            Command { label: "New File", category: "File", shortcut: Some("Ctrl+N"), action: |a| a.open_editor(None) },
+            Command { label: "Open File…", category: "File", shortcut: Some("Ctrl+O"), action: |a| a.open_file_dialog() },
+            Command { label: "Save", category: "File", shortcut: Some("Ctrl+S"), action: |a| a.save_active() },
+            Command { label: "Save As…", category: "File", shortcut: None, action: |a| a.save_active_as() },
+            Command { label: "Save All", category: "File", shortcut: Some("Ctrl+Shift+S"), action: |a| a.save_all() },
+            Command { label: "Close Tab", category: "File", shortcut: Some("Ctrl+W"), action: |a| a.close_active_tab() },
+            // Build
+            Command { label: "Build", category: "Build", shortcut: Some("Ctrl+B"), action: |a| a.build_active() },
+            Command { label: "Run", category: "Build", shortcut: Some("Ctrl+R"), action: |a| a.run_active() },
+            // Panels
+            Command { label: "Chat", category: "Panels", shortcut: Some("Ctrl+J"), action: |a| a.toggle_panel(TabKind::Chat) },
+            Command { label: "Output", category: "Panels", shortcut: Some("Ctrl+`"), action: |a| a.toggle_panel(TabKind::Output) },
+            Command { label: "Orchestrator", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Orchestrator) },
+            Command { label: "Mission Control", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::MissionControl) },
+            Command { label: "Search", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Search) },
+            Command { label: "Usage", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Usage) },
+            Command { label: "Graph", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Graph) },
+            Command { label: "Settings", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Settings) },
+            // Agent
+            Command { label: "Approve All Tools", category: "Agent", shortcut: None, action: |a| a.approve_all_pending_tools() },
+            Command { label: "Decline All Tools", category: "Agent", shortcut: None, action: |a| a.reject_all_pending_tools() },
+            Command { label: "Plan Sub-Agents", category: "Agent", shortcut: None, action: |a| a.plan_routed_subagents() },
+            Command { label: "Refresh Models", category: "Agent", shortcut: None, action: |a| a.refresh_models() },
+            // View
+            Command { label: "Toggle Sidebar", category: "View", shortcut: Some("Ctrl+E"), action: |a| a.toggle_left_sidebar() },
+            Command { label: "Toggle History", category: "View", shortcut: None, action: |a| a.toggle_right_sidebar() },
+            Command { label: "Reset Layout", category: "View", shortcut: None, action: |a| a.reset_workspace_layout() },
         ]
     }
 
@@ -382,18 +302,6 @@ impl VelocityApp {
         }
     }
 
-    pub fn dirty_buffer_count(&self) -> usize {
-        self.tabs
-            .iter()
-            .filter_map(|tab| {
-                let path = tab.editor_path()?;
-                let buffer = self.buffers.get(&tab.id)?;
-                let disk_content = std::fs::read_to_string(path).ok()?;
-                (disk_content != buffer.content()).then_some(())
-            })
-            .count()
-    }
-
     pub fn save_all(&mut self) {
         let mut saved = 0usize;
         let ids: Vec<TabId> = self.tabs.iter().map(|t| t.id.clone()).collect();
@@ -460,10 +368,6 @@ impl VelocityApp {
         let _ = self.agent_tx.send(UiToAgentMessage::RunLocalRun);
     }
 
-    pub fn toggle_chat(&mut self) {
-        self.toggle_panel(TabKind::Chat);
-    }
-
     #[allow(dead_code)]
     pub fn toggle_orchestrator(&mut self) {
         self.toggle_panel(TabKind::Orchestrator);
@@ -500,41 +404,6 @@ impl VelocityApp {
         self.left_sidebar_width = 240.0;
         self.right_sidebar_visible = true;
         self.right_sidebar_width = 280.0;
-        self.save_workspace_preferences();
-    }
-
-    pub fn apply_profile_layout(&mut self, profile: crate::editor::theme::WorkspaceProfile) {
-        self.appearance.profile = profile;
-        match profile {
-            crate::editor::theme::WorkspaceProfile::Coder => {
-                self.focus_panel(TabKind::Chat);
-                self.left_sidebar_visible = true;
-                self.left_sidebar_tab = 0;
-                self.right_sidebar_visible = false;
-                self.status_message = "Switched to Coder mode (Code & Chat Focus)".to_string();
-            }
-            crate::editor::theme::WorkspaceProfile::AutomationOperator => {
-                self.focus_panel(TabKind::MissionControl);
-                self.focus_panel(TabKind::Output);
-                self.left_sidebar_visible = true;
-                self.left_sidebar_tab = 1;
-                self.right_sidebar_visible = true;
-                self.status_message = "Switched to Automation Operator mode (WA & Evidence Focus)".to_string();
-            }
-            crate::editor::theme::WorkspaceProfile::MissionControl => {
-                self.focus_panel(TabKind::MissionControl);
-                self.focus_panel(TabKind::Orchestrator);
-                self.left_sidebar_visible = false;
-                self.right_sidebar_visible = true;
-                self.status_message = "Switched to Mission Control mode (Swarm Focus)".to_string();
-            }
-            crate::editor::theme::WorkspaceProfile::Accessibility => {
-                self.focus_panel(TabKind::Chat);
-                self.left_sidebar_visible = false;
-                self.right_sidebar_visible = false;
-                self.status_message = "Switched to Zen Focus mode (Distraction-Free)".to_string();
-            }
-        }
         self.save_workspace_preferences();
     }
 }

@@ -43,6 +43,12 @@ impl StatusBar {
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui: &mut egui::Ui| {
                         ui.label(
+                            egui::RichText::new("Ctrl+Shift+P")
+                                .monospace()
+                                .size(11.0)
+                                .color(palette.text_muted.gamma_multiply(0.7)),
+                        );
+                        ui.label(
                             egui::RichText::new(status)
                                 .size(12.0)
                                 .color(palette.text_muted),

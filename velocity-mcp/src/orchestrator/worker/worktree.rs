@@ -3,12 +3,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[allow(dead_code)]
 pub struct WorktreeIsolationGuard {
     pub original_root: PathBuf,
     pub worktree_root: PathBuf,
     pub active: bool,
 }
 
+#[allow(dead_code)]
 impl WorktreeIsolationGuard {
     pub fn new(original_root: &Path, subagent_id: &str) -> Result<Self, String> {
         let worktree_dir = original_root.join(".git").join("worktrees").join(format!("velocity_subagent_{}", subagent_id));

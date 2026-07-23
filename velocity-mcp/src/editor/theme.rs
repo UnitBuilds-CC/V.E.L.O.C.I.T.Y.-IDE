@@ -179,23 +179,6 @@ impl WorkspaceProfile {
         }
     }
 
-    pub fn focus_label(self) -> &'static str {
-        match self {
-            Self::Coder => "Editing, diff review, and fast agent iteration",
-            Self::AutomationOperator => "Live automation runs, evidence, and intervention",
-            Self::MissionControl => "Fleet health, blockers, and approvals",
-            Self::Accessibility => "Readable control surfaces with less visual strain",
-        }
-    }
-
-    pub fn quick_tip(self) -> &'static str {
-        match self {
-            Self::Coder => "Keep editor, chat, search, and output close together so code and feedback stay in one loop.",
-            Self::AutomationOperator => "Put runtime state ahead of raw logs so you can tell whether a run is healthy before reading details.",
-            Self::MissionControl => "Start with the exception queue: blocked work, approvals, and failing tasks should surface before everything else.",
-            Self::Accessibility => "Favor fewer competing panels, larger defaults, and one obvious action path per task.",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

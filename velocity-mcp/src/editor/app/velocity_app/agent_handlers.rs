@@ -160,28 +160,6 @@ impl VelocityApp {
         )));
     }
 
-    pub fn ask_agent_about_active_diff(&mut self) {
-        let Some(change_preview) = self.active_change_preview() else {
-            self.status_message = "No active diff to send".into();
-            return;
-        };
-        let prompt = format!(
-            "Review the following active diff and suggest the best next coding steps.\n\nFile: {}\nAdded lines: {}\nRemoved lines: {}\n\nDiff:\n{}",
-            change_preview.file_label,
-            change_preview.added_lines,
-            change_preview.removed_lines,
-            change_preview.full_diff,
-        );
-        self.chat.push_user(prompt.clone());
-        self.chat_history.push_str("\nYou: ");
-        self.chat_history.push_str(&prompt);
-        self.agent_active = true;
-        self.chat.agent_active = true;
-        self.status_message = "Sent active diff to agent".into();
-        self.toggle_chat();
-        let _ = self.agent_tx.send(UiToAgentMessage::UserPrompt(prompt));
-    }
-
     pub fn apply_mission_brief_preset(&mut self, brief: &str, task_kind: AgentTaskKind) {
         self.mission_control.brief = brief.to_string();
         self.mission_control.set_selected_task(None);
@@ -192,7 +170,7 @@ impl VelocityApp {
         self.mission_control.set_selected_task(None);
         self.mission_control.clear_worker_event_tracking();
         let Some(goal) = self.current_routing_goal() else {
-            self.status_message = "Enter a chat prompt or keep a recent user goal to route".into();
+            self.status_message = "Enter a prompt or set a goal to plan".into();
             self.toasts.push(crate::editor::toast::Toast::warn(
                 "No goal available for routed planning",
             ));
@@ -204,7 +182,7 @@ impl VelocityApp {
         let task_kind = self.orchestrator.selected_policy_kind();
         let scope_files = self.collect_routing_scope_files(&goal);
         if scope_files.is_empty() {
-            self.status_message = "No scoped files available for routed planning".into();
+            self.status_message = "No scoped files for planning".into();
             self.toasts.push(crate::editor::toast::Toast::warn(
                 "No files found for routed planning",
             ));

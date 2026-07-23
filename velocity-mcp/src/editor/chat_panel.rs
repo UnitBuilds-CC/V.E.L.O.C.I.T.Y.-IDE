@@ -150,7 +150,7 @@ fn render_header(
     let mut preferences_changed = false;
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("Agent Chat")
+            egui::RichText::new("Chat")
                 .strong()
                 .size(16.0)
                 .color(palette.text),
@@ -166,7 +166,7 @@ fn render_header(
 
         if state.agent_active {
             if ui
-                .small_button("⏹ Interrupt")
+                .small_button("Interrupt")
                 .on_hover_text("Interrupt current agent task")
                 .clicked()
             {
@@ -177,19 +177,14 @@ fn render_header(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .small_button("Clear")
-                .on_hover_text("Clear chat display & reset context")
+                .on_hover_text("Clear chat & reset context")
                 .clicked()
             {
                 state.messages.clear();
                 let _ = agent_tx.send(UiToAgentMessage::ClearHistory);
             }
             if ui
-                .small_button(if state.show_thoughts {
-                    "Hide thoughts"
-                } else {
-                    "Show thoughts"
-                })
-                .on_hover_text("Toggle reasoning/thought tokens")
+                .small_button(if state.show_thoughts { "Thoughts: on" } else { "Thoughts: off" })
                 .clicked()
             {
                 state.show_thoughts = !state.show_thoughts;
@@ -531,7 +526,7 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
                     .color(accent),
             );
             if ui
-                .small_button("📋 Copy")
+                .small_button("Copy")
                 .on_hover_text("Copy message text to clipboard")
                 .clicked()
             {
@@ -566,30 +561,6 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
     });
 }
 
-fn render_tool_controls(
-    ui: &mut egui::Ui,
-    state: &mut ChatPanelState,
-    _agent_tx: &Sender<UiToAgentMessage>,
-    palette: IdePalette,
-) -> bool {
-    let mut preferences_changed = false;
-    ui.horizontal(|ui| {
-        // Always allow auto-approve — inline tool calling works for all models
-        // regardless of whether the model supports native OpenAI tool_calls.
-        if ui.checkbox(&mut state.auto_approve, "Auto-approve tools").changed() {
-            preferences_changed = true;
-        }
-        if !state.tools_supported {
-            ui.label(
-                egui::RichText::new("(inline mode)")
-                    .small()
-                    .color(palette.text_muted),
-            );
-        }
-    });
-    preferences_changed
-}
-
 fn render_pending_approvals(
     ui: &mut egui::Ui,
     state: &mut ChatPanelState,
@@ -606,7 +577,7 @@ fn render_pending_approvals(
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            ui.colored_label(palette.warning, "⚠ Pending Tool Approvals");
+            ui.colored_label(palette.warning, "Pending Tool Approvals");
             let pending = state.pending_approvals.clone();
             for (id, tool_name, arguments) in pending {
                 ui.group(|ui| {
@@ -659,7 +630,7 @@ fn render_input(
                     egui::TextEdit::multiline(&mut state.input)
                         .desired_width(f32::INFINITY)
                         .desired_rows(2)
-                        .hint_text("Type instructions for the agent… (Enter to send, Shift+Enter for newline)"),
+                        .hint_text("Message… (Enter to send)"),
                 );
 
                 let mut submit = false;
@@ -678,8 +649,8 @@ fn render_input(
 
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut state.auto_approve, "Auto-approve tools");
-                    ui.add_space(6.0);
+                    ui.checkbox(&mut state.auto_approve, "Auto");
+                    ui.add_space(4.0);
 
                     // Floating Provider selector dropdown
                     let mut provider_changed = false;

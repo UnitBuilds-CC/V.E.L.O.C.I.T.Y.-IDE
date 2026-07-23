@@ -31,12 +31,11 @@ impl MerkleGraphView {
     pub fn ui(&mut self, ui: &mut egui::Ui, workspace_root: &Path, mediator: &MediatorArena) {
         ui.vertical(|ui| {
             ui.label(
-                egui::RichText::new("📁 WORKSPACE FILE TREE & SYMBOL HISTORY EXPLORER")
+                egui::RichText::new("Graph")
                     .size(13.0)
                     .strong()
                     .color(Color32::from_rgb(34, 211, 238)),
             );
-            ui.label("Browse files and declared symbols. Select a method or variable to inspect its change history and context rationale.");
             ui.separator();
 
             let sm = match crate::automation::open_workspace_site_map(workspace_root) {
@@ -69,7 +68,7 @@ impl MerkleGraphView {
                             for lock in &active_locks {
                                 let file_name = lock.file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".to_string());
                                 let is_selected = self.selected_file.as_ref() == Some(&lock.file_path);
-                                if ui.selectable_label(is_selected, format!("📄 {}", file_name)).clicked() {
+                                if ui.selectable_label(is_selected, format!("  {}", file_name)).clicked() {
                                     self.selected_file = Some(lock.file_path.clone());
                                     self.selected_symbol = Some("Main Declaration".to_string());
                                     self.load_symbol_history(&lock.file_path, "Main Declaration");
@@ -78,11 +77,11 @@ impl MerkleGraphView {
 
                             if active_locks.is_empty() {
                                 ui.label("No active edit locks. Select indexed symbols below:");
-                                if ui.selectable_label(self.selected_symbol.as_deref() == Some("get_tools"), "  └ 🔧 get_tools()").clicked() {
+                                if ui.selectable_label(self.selected_symbol.as_deref() == Some("get_tools"), "  └ fn get_tools()").clicked() {
                                     self.selected_symbol = Some("get_tools".to_string());
                                     self.load_symbol_history(Path::new("velocity-mcp/src/registry.rs"), "get_tools");
                                 }
-                                if ui.selectable_label(self.selected_symbol.as_deref() == Some("BrowserSession"), "  └ 📦 struct BrowserSession").clicked() {
+                                if ui.selectable_label(self.selected_symbol.as_deref() == Some("BrowserSession"), "  └ struct BrowserSession").clicked() {
                                     self.selected_symbol = Some("BrowserSession".to_string());
                                     self.load_symbol_history(Path::new("velocity-browser/src/session.rs"), "BrowserSession");
                                 }
@@ -108,7 +107,7 @@ impl MerkleGraphView {
                                 } else {
                                     for entry in &self.history_entries {
                                         ui.group(|ui| {
-                                            ui.label(egui::RichText::new(format!("🕒 {}", entry.timestamp_str)).size(10.0).color(Color32::from_rgb(125, 131, 166)));
+                                            ui.label(egui::RichText::new(format!("{}", entry.timestamp_str)).size(10.0).color(Color32::from_rgb(125, 131, 166)));
                                             ui.label(egui::RichText::new(format!("Action: {}", entry.action_kind)).strong());
                                             ui.label(egui::RichText::new(format!("Context: {}", entry.context_rationale)).color(Color32::from_rgb(226, 227, 243)));
                                         });

@@ -25,6 +25,7 @@ pub struct WorkerAttempt {
 #[derive(Debug, Clone)]
 pub struct WorkerResult {
     pub success: bool,
+    #[allow(dead_code)]
     pub task_id: TaskId,
     pub outputs: Vec<String>,
     pub duration: Duration,
@@ -63,6 +64,7 @@ pub enum WorkerThreadEventKind {
 #[derive(Debug, Clone, Default)]
 pub struct WorkerThreadSnapshot {
     pub events: Vec<WorkerThreadEvent>,
+    #[allow(dead_code)]
     pub status_updates: Vec<String>,
     pub transcript: String,
     pub changed_files: Vec<String>,

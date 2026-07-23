@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InterventionDisposition {
     ApplyToRunningAgent,
@@ -10,6 +11,7 @@ pub struct MissionIntervention {
     pub id: u64,
     pub note: String,
     pub status: String,
+    #[allow(dead_code)]
     pub disposition: Option<InterventionDisposition>,
 }
 

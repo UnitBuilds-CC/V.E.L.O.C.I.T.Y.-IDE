@@ -383,7 +383,7 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot, 
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("🔍 Smart Sidebar")
+                egui::RichText::new("Context")
                     .size(12.0)
                     .strong()
                     .color(palette.text),
@@ -414,18 +414,18 @@ pub fn render_smart_sidebar(ui: &mut egui::Ui, snapshot: &SmartSidebarSnapshot, 
             .show(ui, |ui| {
                 for entry in snapshot.state.visible_entries() {
                     let (icon, color, type_name) = match entry.entry_type {
-                        SidebarEntryType::FileReference => ("📄", palette.accent, "File"),
+                        SidebarEntryType::FileReference => ("F", palette.accent, "File"),
                         SidebarEntryType::SymbolDefinition => {
-                            ("🔧", palette.accent.gamma_multiply(0.85), "Symbol")
+                            ("S", palette.accent.gamma_multiply(0.85), "Symbol")
                         }
-                        SidebarEntryType::CodeSuggestion => ("💡", palette.warning, "Suggest"),
+                        SidebarEntryType::CodeSuggestion => ("*", palette.warning, "Suggest"),
                         SidebarEntryType::QuickAction => {
-                            ("⚡", palette.accent.gamma_multiply(1.1), "Action")
+                            (">", palette.accent.gamma_multiply(1.1), "Action")
                         }
-                        SidebarEntryType::ErrorDiagnostic => ("✕", palette.error, "Error"),
-                        SidebarEntryType::WarningDiagnostic => ("⚠", palette.warning, "Warn"),
-                        SidebarEntryType::TodoComment => ("☐", palette.success, "TODO"),
-                        SidebarEntryType::Note => ("📝", palette.text_muted, "Note"),
+                        SidebarEntryType::ErrorDiagnostic => ("x", palette.error, "Error"),
+                        SidebarEntryType::WarningDiagnostic => ("!", palette.warning, "Warn"),
+                        SidebarEntryType::TodoComment => ("-", palette.success, "TODO"),
+                        SidebarEntryType::Note => ("n", palette.text_muted, "Note"),
                     };
 
                     let file = snapshot.state.get_file(entry.file_offset, entry.file_len);

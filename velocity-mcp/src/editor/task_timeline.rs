@@ -378,7 +378,7 @@ pub fn render_mission_activity_feed(
     selected_task_id: Option<u64>,
     max_items: usize,
 ) {
-    ui.label(egui::RichText::new("📜 Mission Activity").strong());
+    ui.label(egui::RichText::new("Mission Activity").strong());
     if snapshot.state.event_count() == 0 {
         ui.label(
             egui::RichText::new("No mission activity recorded yet")
@@ -464,7 +464,7 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("📋 Task Timeline")
+                egui::RichText::new("Task Timeline")
                     .size(12.0)
                     .strong()
                     .color(egui::Color32::from_rgb(226, 227, 243)),

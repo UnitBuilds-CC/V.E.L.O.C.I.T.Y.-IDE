@@ -184,18 +184,18 @@ field	or_3	daily_limit	50
 account	or_4
 field	or_4	label	OR-Acc4
 field	or_4	tier	free
-field	or_4	requests	0
-field	or_4	tokens_in	0
-field	or_4	tokens_out	0
+field	or_4	requests	1
+field	or_4	tokens_in	14453
+field	or_4	tokens_out	881
 field	or_4	exhausted	false
 field	or_4	exhausted_at	-
 field	or_4	daily_limit	50
 account	or_5
 field	or_5	label	OR-Acc5
 field	or_5	tier	free
-field	or_5	requests	1
-field	or_5	tokens_in	4
-field	or_5	tokens_out	350
+field	or_5	requests	2
+field	or_5	tokens_in	14309
+field	or_5	tokens_out	907
 field	or_5	exhausted	false
 field	or_5	exhausted_at	-
 field	or_5	daily_limit	50

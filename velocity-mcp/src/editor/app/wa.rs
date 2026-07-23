@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::editor::orchestrator_panel::OrchestratorTaskSnapshot;
 use crate::automation::AgentTaskKind;
 use super::types::*;

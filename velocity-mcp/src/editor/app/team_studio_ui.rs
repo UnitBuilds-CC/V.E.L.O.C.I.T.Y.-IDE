@@ -10,19 +10,18 @@ impl VelocityApp {
             
             // Header Bar
             ui.horizontal(|ui: &mut egui::Ui| {
-                ui.heading(RichText::new("🧠 Expert Team Studio").strong().color(Color32::from_rgb(130, 180, 255)));
-                ui.label(RichText::new("Configure domained expert teams, models, skill capabilities & workflows").small().color(Color32::GRAY));
+                ui.heading(RichText::new("Team Studio").strong().color(Color32::from_rgb(130, 180, 255)));
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                    if ui.button(RichText::new("💾 Save Teams to Disk").strong()).clicked() {
+                    if ui.button(RichText::new("Save").strong()).clicked() {
                         if save_expert_teams(&self.workspace_root, &self.expert_teams) {
-                            self.status_message = "Expert team configurations saved successfully.".into();
+                            self.status_message = "Teams saved.".into();
                         } else {
-                            self.status_message = "Failed to save expert team configurations.".into();
+                            self.status_message = "Failed to save teams.".into();
                         }
                     }
 
-                    if ui.button("➕ Create New Team").clicked() {
+                    if ui.button("New Team").clicked() {
                         let new_id = format!("team_custom_{}", self.expert_teams.len() + 1);
                         let new_team = ExpertTeam::new(
                             &new_id,
@@ -103,9 +102,9 @@ impl VelocityApp {
                 // COLUMN 1: Member Roster & Visual Topology
                 cols[0].vertical(|ui: &mut egui::Ui| {
                     ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.heading(RichText::new("👥 Team Members & Topology").small().strong());
+                        ui.heading(RichText::new("Team Members & Topology").small().strong());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                            if ui.button("➕ Add Member").clicked() {
+                            if ui.button("Add Member").clicked() {
                                 let active_team = &mut self.expert_teams[self.active_team_index];
                                 let m_id = format!("member_{}", active_team.members.len() + 1);
                                 active_team.members.push(ExpertMember::new(
@@ -147,8 +146,8 @@ impl VelocityApp {
                                         ui.label(RichText::new(format!("({})", member.role)).italics().color(Color32::LIGHT_BLUE));
                                     });
                                     ui.horizontal(|ui: &mut egui::Ui| {
-                                        ui.label(RichText::new(format!("⚡ {}", member.provider.label())).small().color(Color32::GOLD));
-                                        ui.label(RichText::new(format!("🤖 {}", member.model_id)).small().color(Color32::KHAKI));
+                                        ui.label(RichText::new(format!("{}", member.provider.label())).small().color(Color32::GOLD));
+                                        ui.label(RichText::new(format!("{}", member.model_id)).small().color(Color32::KHAKI));
                                     });
                                     ui.horizontal(|ui: &mut egui::Ui| {
                                         ui.label(RichText::new("Scopes:").small().strong());
@@ -168,7 +167,7 @@ impl VelocityApp {
                     ui.add_space(10.0);
 
                     // Topology Diagram Box
-                    ui.label(RichText::new("🕸️ Interactive Delegation Topology").small().strong());
+                    ui.label(RichText::new("Delegation Topology").small().strong());
                     egui::Frame::canvas(ui.style())
                         .fill(Color32::from_rgb(18, 20, 26))
                         .inner_margin(10.0)
@@ -211,7 +210,7 @@ impl VelocityApp {
 
                 // COLUMN 2: Comprehensive Member Editor Menu
                 cols[1].vertical(|ui: &mut egui::Ui| {
-                    ui.heading(RichText::new("⚙️ Expert Member Configuration Menu").small().strong());
+                    ui.heading(RichText::new("Member Configuration").small().strong());
                     ui.separator();
 
                     let active_team = &mut self.expert_teams[self.active_team_index];
@@ -230,7 +229,7 @@ impl VelocityApp {
                                 ui.label(RichText::new("Member ID:").strong());
                                 ui.label(RichText::new(&member_id_display).monospace().color(Color32::GRAY));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                    if can_remove && ui.button(RichText::new("❌ Remove Member").color(Color32::RED)).clicked() {
+                                    if can_remove && ui.button(RichText::new("Remove").color(Color32::RED)).clicked() {
                                         remove_requested = true;
                                     }
                                 });
@@ -275,7 +274,7 @@ impl VelocityApp {
                             ui.add_space(10.0);
 
                             // Domain Scope Patterns
-                            ui.label(RichText::new("📂 Domain Scopes & File Patterns (comma separated):").strong());
+                            ui.label(RichText::new("Domain Scopes & File Patterns (comma separated):").strong());
                             let mut scopes_str = member.scope_patterns.join(", ");
                             if ui.add(egui::TextEdit::singleline(&mut scopes_str).desired_width(420.0)).changed() {
                                 member.scope_patterns = scopes_str
@@ -288,7 +287,7 @@ impl VelocityApp {
                             ui.add_space(10.0);
 
                             // Skill Capabilities Checklist
-                            ui.label(RichText::new("🧰 Assigned Skill Capabilities:").strong());
+                            ui.label(RichText::new("Assigned Skill Capabilities:").strong());
                             ui.horizontal_wrapped(|ui: &mut egui::Ui| {
                                 for skill_name in ["system_tools", "android-cli", "chembl-database", "pymol", "literature-search-arxiv", "quickgo-database"] {
                                     let mut has_skill = member.skills.iter().any(|s| s == skill_name);
@@ -307,7 +306,7 @@ impl VelocityApp {
                             ui.add_space(10.0);
 
                             // System Prompt & Workflow Instructions
-                            ui.label(RichText::new("📜 Member System Prompt & Workflow Instructions:").strong());
+                            ui.label(RichText::new("System Prompt & Workflow Instructions:").strong());
                             ui.add(
                                 egui::TextEdit::multiline(&mut member.workflow_instructions)
                                     .desired_width(450.0)

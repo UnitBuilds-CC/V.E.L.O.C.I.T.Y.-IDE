@@ -65,7 +65,7 @@ impl OrchestratorPanel {
         let policies = registry.policies_for_kind(kind);
         let templates = registry.templates_for_kind(kind);
 
-        ui.collapsing("⚙ Routing policy controls & editor", |ui: &mut egui::Ui| {
+        ui.collapsing("Routing policy controls", |ui: &mut egui::Ui| {
             ui.label(
                 egui::RichText::new(&self.policy_editor.status)
                     .small()

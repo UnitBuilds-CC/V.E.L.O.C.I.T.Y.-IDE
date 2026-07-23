@@ -171,7 +171,7 @@ fn render_account_table(ui: &mut egui::Ui, accounts: &[AccountUsageView], palett
                         ui.label(format!("{} / {}", acct.requests, acct.daily_limit));
                         ui.label(acct.remaining.to_string());
                         ui.label(format!(
-                            "📥 {}  📤 {}",
+                            "In: {}  Out: {}",
                             format_tokens(acct.tokens_in),
                             format_tokens(acct.tokens_out)
                         ));
@@ -235,7 +235,7 @@ pub fn render_usage_compact(
 
     ui.label(
         egui::RichText::new(format!(
-            "📊 {total_remaining}/{total_limit} req · {available} acct"
+            "{total_remaining}/{total_limit} req · {available} acct"
         ))
         .size(11.0)
         .color(color)

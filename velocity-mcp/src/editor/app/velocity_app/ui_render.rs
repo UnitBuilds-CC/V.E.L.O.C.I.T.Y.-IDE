@@ -1,54 +1,15 @@
 use std::path::PathBuf;
 use eframe::egui;
 
-use crate::editor::agent_ui_render::{render_agent_metrics, render_pending_approvals, render_thinking_panel, RenderSnapshot};
+use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
 use crate::editor::task_timeline::render_task_timeline;
 
 use super::super::helpers::*;
 use super::super::render::TabViewerImpl;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
-use crate::editor::theme::WorkspaceProfile;
 
 impl VelocityApp {
-    fn toolbar_profile_actions(
-        profile: WorkspaceProfile,
-    ) -> &'static [(&'static str, fn(&mut VelocityApp))] {
-        match profile {
-            WorkspaceProfile::Coder => &[
-                ("⚙️ Build", VelocityApp::build_active),
-                ("▶ Run", VelocityApp::run_active),
-                ("💬 Chat", |app| app.focus_panel(TabKind::Chat)),
-                ("🔍 Search", |app| app.focus_panel(TabKind::Search)),
-                ("📺 Terminal", |app| app.focus_panel(TabKind::Output)),
-                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
-            ],
-            WorkspaceProfile::AutomationOperator => &[
-                ("🧭 Route", VelocityApp::plan_routed_subagents),
-                ("🎛 Mission", |app| app.focus_panel(TabKind::MissionControl)),
-                ("🧠 Orchestrate", |app| app.focus_panel(TabKind::Orchestrator)),
-                ("📺 Evidence", |app| app.focus_panel(TabKind::Output)),
-                ("🔍 Search", |app| app.focus_panel(TabKind::Search)),
-                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
-            ],
-            WorkspaceProfile::MissionControl => &[
-                ("🧭 Route", VelocityApp::plan_routed_subagents),
-                ("🎛 Mission", |app| app.focus_panel(TabKind::MissionControl)),
-                ("🧠 Orchestrate", |app| app.focus_panel(TabKind::Orchestrator)),
-                ("💬 Chat", |app| app.focus_panel(TabKind::Chat)),
-                ("📺 Evidence", |app| app.focus_panel(TabKind::Output)),
-                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
-            ],
-            WorkspaceProfile::Accessibility => &[
-                ("💬 Chat", |app| app.focus_panel(TabKind::Chat)),
-                ("🎛 Mission", |app| app.focus_panel(TabKind::MissionControl)),
-                ("🔍 Search", |app| app.focus_panel(TabKind::Search)),
-                ("📺 Output", |app| app.focus_panel(TabKind::Output)),
-                ("🎨 Settings", |app| app.focus_panel(TabKind::Settings)),
-            ],
-        }
-    }
-
     pub fn search_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
         let suggested_queries: &[&str] = match self.appearance.profile {
@@ -69,26 +30,14 @@ impl VelocityApp {
             .fill(palette.bg_primary)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.heading("🔍 Search Workspace");
-                    ui.label(
-                        egui::RichText::new("Jump to code, runtime clues, and operator evidence without leaving the current workspace.")
-                            .small()
-                            .color(palette.text_muted),
-                    );
+                    ui.heading("Search");
                     ui.horizontal(|ui| {
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut self.search_query)
-                                .hint_text("Search query...")
-                                .desired_width(ui.available_width() - 80.0),
+                                .hint_text("Search…")
+                                .desired_width(ui.available_width() - 10.0),
                         );
                         if response.changed() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            self.search_hits = crate::editor::search::project_search(
-                                &self.workspace_root,
-                                &self.search_query,
-                                100,
-                            );
-                        }
-                        if ui.button("Search").clicked() {
                             self.search_hits = crate::editor::search::project_search(
                                 &self.workspace_root,
                                 &self.search_query,
@@ -102,57 +51,30 @@ impl VelocityApp {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         if hits.is_empty() {
                             if self.search_query.is_empty() {
-                                ui.group(|ui| {
-                                    ui.label(egui::RichText::new("Start with a focused query").strong());
+                                ui.add_space(8.0);
+                                ui.horizontal_wrapped(|ui| {
                                     ui.label(
-                                        egui::RichText::new(format!(
-                                            "{} mode keeps search tuned for {}.",
-                                            self.appearance.profile.label(),
-                                            self.appearance.profile.focus_label().to_lowercase()
-                                        ))
-                                        .small()
-                                        .color(palette.text_muted),
-                                    );
-                                    ui.add_space(4.0);
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(
-                                            egui::RichText::new("Suggested searches:")
-                                                .small()
-                                                .color(palette.text_muted),
-                                        );
-                                        for query in suggested_queries {
-                                            if ui.small_button(*query).clicked() {
-                                                self.search_query = (*query).to_string();
-                                                self.search_hits = crate::editor::search::project_search(
-                                                    &self.workspace_root,
-                                                    &self.search_query,
-                                                    100,
-                                                );
-                                            }
-                                        }
-                                    });
-                                });
-                            } else {
-                                ui.group(|ui| {
-                                    ui.label(egui::RichText::new("No results found").strong());
-                                    ui.label(
-                                        egui::RichText::new("Try a broader term, drop punctuation, or search for a nearby symbol instead.")
+                                        egui::RichText::new("Try:")
                                             .small()
                                             .color(palette.text_muted),
                                     );
-                                    ui.horizontal_wrapped(|ui| {
-                                        for query in suggested_queries {
-                                            if ui.small_button(format!("Try {}", query)).clicked() {
-                                                self.search_query = (*query).to_string();
-                                                self.search_hits = crate::editor::search::project_search(
-                                                    &self.workspace_root,
-                                                    &self.search_query,
-                                                    100,
-                                                );
-                                            }
+                                    for query in suggested_queries {
+                                        if ui.small_button(*query).clicked() {
+                                            self.search_query = (*query).to_string();
+                                            self.search_hits = crate::editor::search::project_search(
+                                                &self.workspace_root,
+                                                &self.search_query,
+                                                100,
+                                            );
                                         }
-                                    });
+                                    }
                                 });
+                            } else {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new("No results found")
+                                        .color(palette.text_muted),
+                                );
                             }
                         } else {
                             ui.label(
@@ -204,6 +126,12 @@ impl VelocityApp {
                 self.run_active();
             } else if cmd && i.key_pressed(egui::Key::W) {
                 self.close_active_tab();
+            } else if cmd && i.key_pressed(egui::Key::J) {
+                self.toggle_panel(TabKind::Chat);
+            } else if cmd && i.key_pressed(egui::Key::Backtick) {
+                self.toggle_panel(TabKind::Output);
+            } else if cmd && i.key_pressed(egui::Key::E) {
+                self.toggle_left_sidebar();
             }
         });
     }
@@ -245,17 +173,40 @@ impl VelocityApp {
                     egui::ScrollArea::vertical()
                         .max_height(300.0)
                         .show(ui, |ui| {
+                            let mut last_category = "";
                             for (idx, cmd) in commands.iter().enumerate() {
-                                let selected = idx == self.command_palette.selected;
-                                let text = egui::RichText::new(cmd.label).color(if selected {
-                                    ui.visuals().selection.stroke.color
-                                } else {
-                                    ui.visuals().text_color()
-                                });
-                                if ui.selectable_label(selected, text).clicked() {
-                                    (cmd.action)(self);
-                                    self.command_palette.open = false;
+                                if cmd.category != last_category {
+                                    last_category = cmd.category;
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new(cmd.category.to_uppercase())
+                                            .small()
+                                            .strong(),
+                                    );
                                 }
+                                let selected = idx == self.command_palette.selected;
+                                ui.horizontal(|ui| {
+                                    let text = egui::RichText::new(cmd.label).color(if selected {
+                                        ui.visuals().selection.stroke.color
+                                    } else {
+                                        ui.visuals().text_color()
+                                    });
+                                    let resp = ui.selectable_label(selected, text);
+                                    if let Some(shortcut) = cmd.shortcut {
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(
+                                                egui::RichText::new(shortcut)
+                                                    .small()
+                                                    .monospace()
+                                                    .color(ui.visuals().text_color().gamma_multiply(0.5)),
+                                            );
+                                        });
+                                    }
+                                    if resp.clicked() {
+                                        (cmd.action)(self);
+                                        self.command_palette.open = false;
+                                    }
+                                });
                             }
                         });
 
@@ -449,157 +400,84 @@ impl eframe::App for VelocityApp {
                 }
             }
         }
-        let dirty_buffer_count = self.dirty_buffer_count();
         let active_change_preview = self.active_change_preview();
 
         egui::Panel::top("toolbar").show(ui, |ui: &mut egui::Ui| {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui: &mut egui::Ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
+            ui.horizontal(|ui: &mut egui::Ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
 
-                    // Left Cluster: File Menu Dropdown & Profile Mode Selector
-                    ui.menu_button("File 🗁", |ui| {
-                        if ui.button("➕ New File").clicked() {
-                            self.open_editor_stub();
-                            ui.close();
-                        }
-                        if ui.button("📂 Open File…").clicked() {
-                            self.open_file_dialog();
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("💾 Save").clicked() {
-                            self.save_active();
-                            ui.close();
-                        }
-                        if ui.button("💾 Save As…").clicked() {
-                            self.save_active_as();
-                            ui.close();
-                        }
-                        if ui.button("💾 Save All").clicked() {
-                            self.save_all();
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("🔄 Refresh Models").clicked() {
-                            self.refresh_models();
-                            ui.close();
-                        }
-                    });
-
-                    let cur_profile = self.appearance.profile;
-                    ui.menu_button(format!("Mode: {}", cur_profile.label()), |ui| {
-                        if ui.selectable_label(cur_profile == WorkspaceProfile::Coder, "💻 Coder (Code & Chat Focus)").clicked() {
-                            self.apply_profile_layout(WorkspaceProfile::Coder);
-                            ui.close();
-                        }
-                        if ui.selectable_label(cur_profile == WorkspaceProfile::AutomationOperator, "🤖 Automation & QA Operator").clicked() {
-                            self.apply_profile_layout(WorkspaceProfile::AutomationOperator);
-                            ui.close();
-                        }
-                        if ui.selectable_label(cur_profile == WorkspaceProfile::MissionControl, "🎛 Mission Control & Swarm").clicked() {
-                            self.apply_profile_layout(WorkspaceProfile::MissionControl);
-                            ui.close();
-                        }
-                        if ui.selectable_label(cur_profile == WorkspaceProfile::Accessibility, "🎨 Accessibility & Zen Focus").clicked() {
-                            self.apply_profile_layout(WorkspaceProfile::Accessibility);
-                            ui.close();
-                        }
-                    });
-
+                ui.menu_button("File", |ui| {
+                    if ui.button("New File").clicked() {
+                        self.open_editor_stub();
+                        ui.close();
+                    }
+                    if ui.button("Open File…").clicked() {
+                        self.open_file_dialog();
+                        ui.close();
+                    }
                     ui.separator();
-
-                    // Contextual Profile Quick Actions
-                    match self.appearance.profile {
-                        WorkspaceProfile::Coder => {
-                            if ui.button("⚙ Build").clicked() {
-                                self.build_active();
-                            }
-                            if ui.button("▶ Run").clicked() {
-                                self.run_active();
-                            }
-                        }
-                        WorkspaceProfile::AutomationOperator => {
-                            if ui.button("🎥 WA Smoke Test").clicked() {
-                                self.apply_mission_brief_preset(
-                                    super::super::render::desktop_automation_smoke_test_brief(),
-                                    crate::automation::AgentTaskKind::DesktopAutomation,
-                                );
-                            }
-                        }
-                        WorkspaceProfile::MissionControl => {
-                            if ui.button("🧭 Route").clicked() {
-                                self.plan_routed_subagents();
-                            }
-                        }
-                        WorkspaceProfile::Accessibility => {}
+                    if ui.button("Save").clicked() {
+                        self.save_active();
+                        ui.close();
                     }
+                    if ui.button("Save As…").clicked() {
+                        self.save_active_as();
+                        ui.close();
+                    }
+                    if ui.button("Save All").clicked() {
+                        self.save_all();
+                        ui.close();
+                    }
+                });
 
+                ui.separator();
+
+                if ui.button("Build").clicked() {
+                    self.build_active();
+                }
+                if ui.button("Run").clicked() {
+                    self.run_active();
+                }
+                if ui.button("Plan").on_hover_text("Plan routed sub-agents").clicked() {
+                    self.plan_routed_subagents();
+                }
+
+                if !self.pending_approvals.is_empty() {
                     ui.separator();
+                    if ui.button(format!("Approve All ({})", self.pending_approvals.len())).clicked() {
+                        self.approve_all_pending_tools();
+                    }
+                    if ui.button("Decline All").clicked() {
+                        self.reject_all_pending_tools();
+                    }
+                }
 
-                    // Center Cluster: View Navigation Controls
-                    if ui.button("💬 Chat").clicked() {
-                        self.focus_panel(TabKind::Chat);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button(if self.right_sidebar_visible { "◧" } else { "◨" })
+                        .on_hover_text("Toggle history panel")
+                        .clicked()
+                    {
+                        self.toggle_right_sidebar();
                     }
-                    if ui.button("🎛 Mission").clicked() {
-                        self.focus_panel(TabKind::MissionControl);
-                    }
-                    if ui.button("🧠 Orchestrate").clicked() {
-                        self.focus_panel(TabKind::Orchestrator);
-                    }
-                    if ui.button("📊 Usage").clicked() {
-                        self.focus_panel(TabKind::Usage);
-                    }
-                    if ui.button("⚙ Settings").clicked() {
-                        self.focus_panel(TabKind::Settings);
-                    }
-
-                    if !self.pending_approvals.is_empty() {
-                        ui.separator();
-                        if ui.button("✅ Approve All").clicked() {
-                            self.approve_all_pending_tools();
-                        }
-                        if ui.button("🛑 Decline All").clicked() {
-                            self.reject_all_pending_tools();
-                        }
+                    if ui
+                        .small_button(if self.left_sidebar_visible { "◨" } else { "◧" })
+                        .on_hover_text("Toggle sidebar")
+                        .clicked()
+                    {
+                        self.toggle_left_sidebar();
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(if self.right_sidebar_visible { "🧠 Hide history" } else { "🧠 History" })
-                            .clicked()
-                        {
-                            self.toggle_right_sidebar();
-                        }
-                        if ui
-                            .button(if self.left_sidebar_visible { "📁 Hide sidebar" } else { "📁 Sidebar" })
-                            .clicked()
-                        {
-                            self.toggle_left_sidebar();
-                        }
-
-                        ui.separator();
-
-                        if dirty_buffer_count > 0 {
-                            ui.label(
-                                egui::RichText::new(format!("Δ {} unsaved", dirty_buffer_count))
-                                    .strong()
-                                    .color(palette.warning),
-                            );
-                            ui.separator();
-                        }
-
-                        let model_name = if self.selected_model.is_empty() {
-                            "default"
-                        } else {
-                            &self.selected_model
-                        };
-                        ui.label(
-                            egui::RichText::new(format!("⚡ {} / {}", self.provider.label(), model_name))
-                                .small()
-                                .color(palette.accent),
-                        );
-                    });
+                    let model_name = if self.selected_model.is_empty() {
+                        "default"
+                    } else {
+                        &self.selected_model
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("{} / {}", self.provider.label(), model_name))
+                            .small()
+                            .color(palette.accent),
+                    );
                 });
             });
         });
@@ -610,61 +488,36 @@ impl eframe::App for VelocityApp {
                 .default_size(self.left_sidebar_width)
                 .show(ui, |ui: &mut egui::Ui| {
                     self.left_sidebar_width = ui.available_width().max(180.0);
-                    ui.add_space(8.0);
-                    ui.vertical(|ui: &mut egui::Ui| {
-                        // Antigravity 2.0 Top Action: + New Conversation / Mission
-                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new("➕ New Mission")).clicked() {
-                            self.mission_control.brief.clear();
-                            self.focus_panel(TabKind::MissionControl);
-                        }
+                    ui.add_space(6.0);
 
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            let mode_0 = self.left_sidebar_tab == 0;
-                            let mode_1 = self.left_sidebar_tab == 1;
-                            if ui.selectable_label(mode_0, "📁 Files").clicked() {
-                                self.left_sidebar_tab = 0;
-                            }
-                            if ui.selectable_label(mode_1, "📜 Activity").clicked() {
-                                self.left_sidebar_tab = 1;
-                            }
-                        });
-                        ui.separator();
-                        ui.add_space(4.0);
-                            let mut selected_idx =
-                                self.projects.iter().position(|p| p == &self.workspace_root);
-                            let projects = self.projects.clone();
-                            for (idx, proj) in projects.into_iter().enumerate() {
-                                let name = proj
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string();
-                                if ui
-                                    .selectable_value(&mut selected_idx, Some(idx), name)
-                                    .clicked()
-                                {
+                    // Project selector (compact dropdown)
+                    let current_name = self.workspace_root
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let projects = self.projects.clone();
+                    egui::ComboBox::from_id_salt("project_selector")
+                        .selected_text(current_name)
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            for proj in &projects {
+                                let name = proj.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                let is_current = proj == &self.workspace_root;
+                                if ui.selectable_label(is_current, &name).clicked() && !is_current {
                                     let new_path = proj.clone();
                                     if new_path.is_dir() {
                                         self.workspace_root = new_path.clone();
                                         self.reload_workspace_provider_settings();
                                         self.restore_workspace_preferences();
                                         self.apply_appearance(&ctx);
-                                        let _ = self
-                                            .agent_tx
-                                            .send(crate::agent::UiToAgentMessage::SetWorkspace(new_path.clone()));
+                                        let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::SetWorkspace(new_path.clone()));
                                         let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::ApplySessionState {
                                             provider: self.provider,
                                             model: self.selected_model.clone(),
                                             thinking: self.thinking_enabled,
                                         });
-                                        self.status_message = format!(
-                                            "Switched to {:?}",
-                                            proj.file_name().unwrap_or_default()
-                                        );
-                                    } else {
-                                        self.status_message =
-                                            format!("Failed to switch to {:?}", new_path);
+                                        self.status_message = format!("Switched to {:?}", proj.file_name().unwrap_or_default());
                                     }
                                 }
                             }
@@ -672,11 +525,12 @@ impl eframe::App for VelocityApp {
 
                     ui.separator();
 
+                    // Tab selector (single instance)
                     ui.horizontal(|ui| {
-                        if ui.selectable_label(self.left_sidebar_tab == 0, "📁 Files").clicked() {
+                        if ui.selectable_label(self.left_sidebar_tab == 0, "Files").clicked() {
                             self.left_sidebar_tab = 0;
                         }
-                        if ui.selectable_label(self.left_sidebar_tab == 1, "📜 Activity").clicked() {
+                        if ui.selectable_label(self.left_sidebar_tab == 1, "Activity").clicked() {
                             self.left_sidebar_tab = 1;
                         }
                     });
@@ -688,23 +542,18 @@ impl eframe::App for VelocityApp {
                     } else {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             if let Some(tree) = self.file_tree.take() {
-                                let tree_copied = tree.clone();
-                                let root = tree_copied.clone();
-                                
+                                let root = tree.clone();
                                 fn render_tree_node(ui: &mut egui::Ui, node: &FileNode, app: &mut VelocityApp) {
                                     if let Some(children) = &node.children {
                                         for child in children {
                                             if child.is_dir {
-                                                ui.collapsing(format!("📁 {}", child.name), |ui| {
+                                                ui.collapsing(&child.name, |ui| {
                                                     render_tree_node(ui, child, app);
                                                 });
                                             } else {
-                                                ui.horizontal(|ui| {
-                                                    ui.label("📄");
-                                                    if ui.selectable_label(false, &child.name).clicked() {
-                                                        app.open_editor(Some(child.path.clone()));
-                                                    }
-                                                });
+                                                if ui.selectable_label(false, &child.name).clicked() {
+                                                    app.open_editor(Some(child.path.clone()));
+                                                }
                                             }
                                         }
                                     }
@@ -734,110 +583,59 @@ impl eframe::App for VelocityApp {
                 .show(ui, |ui: &mut egui::Ui| {
                     self.right_sidebar_width = ui.available_width().max(220.0);
                     ui.add_space(4.0);
-                    ui.vertical(|ui: &mut egui::Ui| {
-                    ui.label(egui::RichText::new("🧠 SEMANTIC HISTORY").size(12.0).strong().color(palette.accent));
-                    ui.separator();
 
                     self.smart_sidebar.clear();
                     if self.build_errors_count > 0 {
                         self.smart_sidebar.add_diagnostic(0, true, "workspace", 0, 0, "Build errors require attention");
                     }
-                    if !self.search_query.is_empty() {
-                        self.smart_sidebar.add_quick_action(0, "Review search results", &self.search_query, 1);
-                    }
 
+                    // Active changes section
                     if let Some(change_preview) = &active_change_preview {
                         self.smart_sidebar.add_quick_action(0, "Review current changes", &change_preview.file_label, 0);
                         ui.group(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("Δ Active changes: {}", change_preview.file_label))
-                                    .strong()
-                                    .color(palette.warning),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!("+{} / -{} lines", change_preview.added_lines, change_preview.removed_lines))
-                                    .size(10.0)
-                                    .color(palette.text_muted),
-                            );
                             ui.horizontal(|ui| {
-                                if ui.small_button("Save").clicked() {
-                                    self.save_active();
-                                }
-                                if ui.small_button("Revert").clicked() {
-                                    self.revert_active_from_disk();
-                                }
-                                if ui.small_button("Stage").clicked() {
-                                    self.stage_active_file();
-                                }
-                                if ui.small_button("Ask agent").clicked() {
-                                    self.ask_agent_about_active_diff();
-                                }
-                                if ui.small_button("Full diff").clicked() {
-                                    self.show_full_diff = true;
-                                }
+                                ui.label(egui::RichText::new(&change_preview.file_label).strong().color(palette.warning));
+                                ui.label(egui::RichText::new(format!("+{} -{}", change_preview.added_lines, change_preview.removed_lines)).small().color(palette.text_muted));
                             });
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(change_preview.preview.as_str())
-                                    .monospace()
-                                    .size(10.0)
-                                    .color(palette.text),
-                            );
+                            ui.horizontal(|ui| {
+                                if ui.small_button("Save").clicked() { self.save_active(); }
+                                if ui.small_button("Revert").clicked() { self.revert_active_from_disk(); }
+                                if ui.small_button("Stage").clicked() { self.stage_active_file(); }
+                                if ui.small_button("Diff").clicked() { self.show_full_diff = true; }
+                            });
                         });
                         ui.separator();
                     }
 
+                    // Symbol context section
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
-                        self.smart_sidebar.add_quick_action(0, "Inspect semantic history", symbol, 2);
-                        ui.label(egui::RichText::new(format!("Symbol: {}()", symbol)).strong().color(palette.accent));
-                        
-                        let symbol_hash = hash_str(symbol);
-                        ui.label(egui::RichText::new(format!("Hash: {:016x}", symbol_hash)).size(10.0).weak());
+                        ui.label(egui::RichText::new(format!("{}()", symbol)).strong().color(palette.accent));
 
                         if let Ok(sm) = crate::automation::open_workspace_site_map(&self.workspace_root) {
+                            let symbol_hash = hash_str(symbol);
                             let callers = sm.get_callers(symbol_hash);
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new("📞 CALLERS").size(11.0).strong().color(palette.accent));
-                            if callers.is_empty() {
-                                ui.label("No active callers found in graph.");
-                            } else {
-                                for caller in &callers {
-                                    ui.label(format!("• 0x{:016x}", caller));
-                                }
-                            }
-
                             let deps = sm.get_dependencies(symbol_hash);
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new("⚙️ DEPENDENCIES").size(11.0).strong().color(palette.accent));
-                            if deps.is_empty() {
-                                ui.label("No dependencies found.");
-                            } else {
-                                for dep in &deps {
-                                    ui.label(format!("• 0x{:016x}", dep));
-                                }
-                            }
 
-                            let intent_triples = sm.find_triples(Some(symbol_hash), Some(3), None);
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new("💬 AI INTENT & TRANSCRIPTS").size(11.0).strong().color(palette.accent));
-                            if intent_triples.is_empty() {
-                                ui.label("No agent sessions linked to this symbol.");
-                            } else {
-                                for triple in &intent_triples {
-                                    ui.horizontal(|ui| {
-                                        ui.label(format!("• Session: {:016x}", triple.object_hash));
-                                    });
+                            if !callers.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("Callers").small().strong());
+                                for caller in &callers {
+                                    ui.label(egui::RichText::new(format!("  {:016x}", caller)).small().color(palette.text_muted));
                                 }
                             }
-                        } else {
-                            ui.label("SiteMap index offline or empty.");
+                            if !deps.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("Dependencies").small().strong());
+                                for dep in &deps {
+                                    ui.label(egui::RichText::new(format!("  {:016x}", dep)).small().color(palette.text_muted));
+                                }
+                            }
                         }
                     } else {
-                        self.smart_sidebar.add_quick_action(0, "Select a symbol", "Move the cursor to a declaration", 3);
                         ui.vertical_centered(|ui| {
-                            ui.add_space(40.0);
-                            ui.label("Place cursor on a class or function declaration to view its Semantic Blame history.");
+                            ui.add_space(20.0);
+                            ui.label(egui::RichText::new("Place cursor on a symbol to inspect").small().color(palette.text_muted));
                         });
                     }
 
@@ -845,32 +643,18 @@ impl eframe::App for VelocityApp {
                     let sidebar_snapshot = crate::editor::smart_sidebar::SmartSidebarSnapshot::new(&self.smart_sidebar);
                     crate::editor::smart_sidebar::render_smart_sidebar(ui, &sidebar_snapshot, palette);
                 });
-            });
             self.right_sidebar_width = panel_response.response.rect.width().max(220.0);
         }
 
         let branch = get_git_branch(&self.workspace_root);
         let build_ok = self.build_errors_count == 0;
-        let latency_us = crate::ipc::telemetry_share::TELEMETRY_LATENCY_US
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let status_info = if latency_us > 0 {
-            format!(
-                "{} | 🟢 GPU: {} | ⚡ ShMem: {}µs",
-                self.status_message, self.gpu_name, latency_us
-            )
-        } else {
-            format!(
-                "{} | 🟢 GPU: {} | ⚡ ShMem: active",
-                self.status_message, self.gpu_name
-            )
-        };
         crate::editor::status_bar::StatusBar::show(
             ui,
             palette,
             branch.as_deref(),
             cursor_pos,
             build_ok,
-            &status_info,
+            &self.status_message,
         );
 
         egui::CentralPanel::default().show(ui, |ui| {
@@ -882,60 +666,30 @@ impl eframe::App for VelocityApp {
             self.dock_state = Some(dock_state);
         });
 
-        egui::Panel::bottom("agentic_ui_panel")
-            .default_size(120.0)
-            .resizable(true)
-            .show(ui, |ui: &mut egui::Ui| {
-                ui.add_space(4.0);
-
-                {
+        // Only show bottom panel when there's agent activity or pending approvals
+        let has_agent_activity = self.agent_active || !self.pending_approvals.is_empty();
+        if has_agent_activity {
+            egui::Panel::bottom("agentic_ui_panel")
+                .default_size(100.0)
+                .resizable(true)
+                .show(ui, |ui: &mut egui::Ui| {
                     let snapshot = RenderSnapshot::new(&self.agent_ui_state);
-                    ui.vertical(|ui| {
-                        render_agent_metrics(ui, &snapshot);
+                    render_agent_metrics(ui, &snapshot);
+
+                    if !self.pending_approvals.is_empty() {
                         ui.separator();
-                        render_thinking_panel(ui, &snapshot, (226, 227, 243));
-                        render_pending_approvals(ui, &snapshot);
-                    });
-                }
-
-                if !self.pending_approvals.is_empty() {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Direct approval actions")
-                                .size(10.0)
-                                .color(palette.text_muted),
-                        );
-                        if ui.button("Approve all").clicked() {
-                            self.approve_all_pending_tools();
-                        }
-                        if ui.button("Decline all").clicked() {
-                            self.reject_all_pending_tools();
-                        }
-                    });
-
-                    let approval_count = self.pending_approvals.len().min(3);
-                    for idx in 0..approval_count {
-                        let tool_name = self.pending_approvals[idx].1.clone();
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(tool_name.as_str())
-                                    .size(10.0)
-                                    .color(palette.text),
-                            );
-                            if ui.small_button("Approve").clicked() {
-                                self.approve_pending_tool_at(idx);
+                            ui.label(egui::RichText::new(format!("{} pending approvals", self.pending_approvals.len())).small().color(palette.warning));
+                            if ui.small_button("Approve all").clicked() {
+                                self.approve_all_pending_tools();
                             }
-                            if ui.small_button("Decline").clicked() {
-                                self.reject_pending_tool_at(idx);
-                            }
-                            if ui.small_button("Chat").clicked() {
-                                self.toggle_chat();
+                            if ui.small_button("Decline all").clicked() {
+                                self.reject_all_pending_tools();
                             }
                         });
                     }
-                }
-            });
+                });
+        }
 
         self.command_palette_ui(&ctx);
         self.file_dialog_ui(&ctx);

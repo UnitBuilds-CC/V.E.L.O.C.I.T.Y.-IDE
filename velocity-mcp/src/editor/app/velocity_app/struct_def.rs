@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
-use egui_dock::{DockState, NodeIndex};
+use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{AgentToUiMessage, ModelInfo, UiToAgentMessage};
@@ -93,7 +93,9 @@ pub struct VelocityApp {
     pub smart_sidebar: SmartSidebarState,
 
     pub projects: Vec<PathBuf>,
+    #[allow(dead_code)]
     pub show_add_project_ui: bool,
+    #[allow(dead_code)]
     pub new_project_path_input: String,
     pub agent_active: bool,
     pub pending_approvals: Vec<(String, String, serde_json::Value)>,
@@ -110,6 +112,7 @@ pub struct VelocityApp {
     pub pending_save_as_path: Option<PathBuf>,
     pub show_full_diff: bool,
     pub build_errors_count: usize,
+    #[allow(dead_code)]
     pub gpu_name: String,
     pub search_query: String,
     pub search_hits: Vec<crate::editor::search::SearchHit>,
@@ -264,9 +267,9 @@ impl VelocityApp {
 
         let primary_kinds: Vec<TabKind> = match profile {
             WorkspaceProfile::Coder => vec![TabKind::Chat, TabKind::Output],
-            WorkspaceProfile::AutomationOperator => vec![TabKind::Orchestrator, TabKind::MissionControl],
-            WorkspaceProfile::MissionControl => vec![TabKind::MissionControl, TabKind::Chat],
-            WorkspaceProfile::Accessibility => vec![TabKind::Chat, TabKind::Settings],
+            WorkspaceProfile::AutomationOperator => vec![TabKind::Orchestrator, TabKind::Chat, TabKind::Output],
+            WorkspaceProfile::MissionControl => vec![TabKind::MissionControl, TabKind::Chat, TabKind::Output],
+            WorkspaceProfile::Accessibility => vec![TabKind::Chat, TabKind::Output],
         };
 
         for tab in Self::collect_panel_tabs(&self.tabs, &primary_kinds) {
@@ -307,35 +310,22 @@ impl VelocityApp {
 
         match profile {
             WorkspaceProfile::Coder => {
-                push_unique(TabKind::MissionControl, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Search, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Orchestrator, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Settings, &mut tabs, &mut self.tab_counter);
             }
             WorkspaceProfile::AutomationOperator => {
-                push_unique(TabKind::MissionControl, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Orchestrator, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Graph, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Settings, &mut tabs, &mut self.tab_counter);
+                push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
             }
             WorkspaceProfile::MissionControl => {
                 push_unique(TabKind::MissionControl, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Orchestrator, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Usage, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Settings, &mut tabs, &mut self.tab_counter);
             }
             WorkspaceProfile::Accessibility => {
-                push_unique(TabKind::MissionControl, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Chat, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Search, &mut tabs, &mut self.tab_counter);
                 push_unique(TabKind::Output, &mut tabs, &mut self.tab_counter);
-                push_unique(TabKind::Settings, &mut tabs, &mut self.tab_counter);
             }
         }
 

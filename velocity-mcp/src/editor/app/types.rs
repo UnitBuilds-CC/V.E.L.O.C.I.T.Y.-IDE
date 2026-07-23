@@ -24,14 +24,14 @@ impl Tab {
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "untitled".into()),
-            TabKind::Chat => "Agent Chat".into(),
+            TabKind::Chat => "Chat".into(),
             TabKind::Output => "Output".into(),
             TabKind::Orchestrator => "Orchestrator".into(),
-            TabKind::MissionControl => "Mission Control".into(),
-            TabKind::TeamStudio => "🧠 Team Studio".into(),
+            TabKind::MissionControl => "Mission".into(),
+            TabKind::TeamStudio => "Team".into(),
             TabKind::Usage => "Usage".into(),
             TabKind::Search => "Search".into(),
-            TabKind::Graph => "Merkle Graph".into(),
+            TabKind::Graph => "Graph".into(),
             TabKind::Settings => "Settings".into(),
         }
     }
@@ -64,6 +64,8 @@ pub enum TabKind {
 
 pub struct Command {
     pub label: &'static str,
+    pub category: &'static str,
+    pub shortcut: Option<&'static str>,
     pub action: fn(&mut super::VelocityApp),
 }
 
@@ -73,6 +75,7 @@ pub struct CommandPalette {
     pub selected: usize,
 }
 
+#[allow(dead_code)]
 pub struct ActiveChangePreview {
     pub file_label: String,
     pub added_lines: usize,
@@ -81,6 +84,7 @@ pub struct ActiveChangePreview {
     pub full_diff: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopAutomationEvidenceState {
     LiveEvidence,
@@ -112,6 +116,7 @@ impl DesktopAutomationEvidenceState {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationMissionSummary {
     pub task_count: usize,
@@ -121,6 +126,7 @@ pub struct DesktopAutomationMissionSummary {
     pub state_labels: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationSelectedTaskStatus {
     pub state_label: &'static str,
@@ -132,6 +138,7 @@ pub struct DesktopAutomationSelectedTaskStatus {
     pub has_operator_notes: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationSelectedTaskCues {
     pub artifact_lines: Vec<String>,

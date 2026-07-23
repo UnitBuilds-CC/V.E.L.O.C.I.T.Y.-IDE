@@ -109,9 +109,9 @@ impl CodeEditor {
                 }
             };
             let line_num_str = if is_locked {
-                format!("🔒{: >3}\n", i)
+                format!("L{: >3}\n", i)
             } else {
-                format!("  {: >3}\n", i)
+                format!(" {: >3}\n", i)
             };
             gutter_job.append(&line_num_str, 0.0, format);
         }

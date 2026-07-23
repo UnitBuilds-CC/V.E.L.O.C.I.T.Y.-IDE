@@ -64,14 +64,14 @@ fn search_file(root: &Path, path: &Path, query: &str, results: &mut Vec<SearchHi
 
 pub fn icon_for_path(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("rs") => "🦀",
-        Some("toml") => "⚙️",
-        Some("md") => "📝",
-        Some("json") => "📋",
-        Some("py") => "🐍",
-        Some("js" | "ts") => "📜",
-        Some("html" | "css") => "🌐",
-        Some("cpp" | "c" | "h") => "⚙️",
-        _ => "📄",
+        Some("rs") => "rs",
+        Some("toml") => "cf",
+        Some("md") => "md",
+        Some("json") => "{}",
+        Some("py") => "py",
+        Some("js" | "ts") => "js",
+        Some("html" | "css") => "<>",
+        Some("cpp" | "c" | "h") => "c",
+        _ => "f",
     }
 }
