@@ -298,9 +298,20 @@ pub fn build_routed_graph(goal: &str, tasks: &[RoutedSubAgentTask]) -> TaskGraph
             .iter()
             .map(|file| file.display().to_string())
             .collect::<Vec<_>>();
+        let file_label = task
+            .files
+            .first()
+            .and_then(|p| p.file_name())
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let title = if !file_label.is_empty() {
+            format!("{} #{}: {}", task.task_kind.as_str(), idx + 1, file_label)
+        } else {
+            format!("{} #{}", task.task_kind.as_str(), idx + 1)
+        };
         graph.add(
             TaskId(idx as u64 + 2),
-            format!("{} {}", task.task_kind.as_str(), idx + 1),
+            title,
             format!("{}\n{}", task.summary, task.rationale),
             scope,
             vec![],

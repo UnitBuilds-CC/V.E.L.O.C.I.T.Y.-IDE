@@ -12,3 +12,4 @@ pub mod pipeline_nda;
 pub mod site_map;
 pub mod sandbox;
 pub mod tokenizer;
+pub mod wiki;

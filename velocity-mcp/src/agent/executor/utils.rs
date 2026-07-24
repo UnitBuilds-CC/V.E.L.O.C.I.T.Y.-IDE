@@ -278,7 +278,7 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                             let name = tc["function"]["name"].as_str().unwrap_or("unknown");
                             let args = tc["function"]["arguments"].as_str().unwrap_or("{}");
                             if !desc.is_empty() {
-                                desc.push_str("\n");
+                                desc.push('\n');
                             }
                             desc.push_str(&format!(
                                 "[Calling tool '{}' with arguments '{}']",
@@ -349,7 +349,7 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                 let has_parent = m
                     .tool_call_id
                     .as_ref()
-                    .map_or(false, |id| valid_tool_call_ids.contains(id));
+                    .is_some_and(|id| valid_tool_call_ids.contains(id));
                 if !has_parent {
                     let tool_name = m.name.clone().unwrap_or_else(|| "unknown_tool".to_string());
                     m.role = "user".to_string();

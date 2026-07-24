@@ -402,21 +402,13 @@ pub enum WarningLevel {
 
 /// Complete agentic UI state container (all ring buffers, zero allocation)
 #[allow(dead_code)]
+#[derive(Default)]
 pub struct AgentUiState {
     pub thinking: ThinkingPanelState,
     pub approvals: ApprovalManagerState,
     pub metrics: AgentMetricsState,
 }
 
-impl Default for AgentUiState {
-    fn default() -> Self {
-        Self {
-            thinking: ThinkingPanelState::default(),
-            approvals: ApprovalManagerState::default(),
-            metrics: AgentMetricsState::default(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

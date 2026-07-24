@@ -4,12 +4,8 @@ pub struct WebCryptoEngine;
 
 impl WebCryptoEngine {
     pub fn digest_sha256(data: &[u8]) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        data.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
+        // Real SHA-256 (FIPS 180-4) via the from-scratch TLS crypto module.
+        crate::net::tls13::to_hex(&crate::net::tls13::sha256(data))
     }
 
     pub fn get_random_values(len: usize) -> Vec<u8> {

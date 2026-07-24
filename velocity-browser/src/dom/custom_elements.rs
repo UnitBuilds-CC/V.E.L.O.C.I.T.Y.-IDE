@@ -11,6 +11,12 @@ pub struct CustomElementRegistry {
     pub definitions: HashMap<String, CustomElementDefinition>,
 }
 
+impl Default for CustomElementRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CustomElementRegistry {
     pub fn new() -> Self {
         Self { definitions: HashMap::new() }

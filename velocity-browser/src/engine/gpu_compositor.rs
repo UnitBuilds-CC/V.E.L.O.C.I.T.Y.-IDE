@@ -10,6 +10,12 @@ pub struct GpuTileCompositor {
     pub active_layers: Vec<GpuLayer>,
 }
 
+impl Default for GpuTileCompositor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GpuTileCompositor {
     pub fn new() -> Self {
         Self { active_layers: Vec::new() }

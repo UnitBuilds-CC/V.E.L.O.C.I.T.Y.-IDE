@@ -26,6 +26,12 @@ pub struct FileManager {
     pub attached_files: HashMap<String, String>, // input_id -> local_file_path
 }
 
+impl Default for FileManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileManager {
     pub fn new() -> Self {
         Self {

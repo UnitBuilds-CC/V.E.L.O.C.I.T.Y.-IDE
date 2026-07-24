@@ -4,6 +4,7 @@
 //!
 //! Provides a circular buffer of task events with immutable snapshot rendering.
 
+use crate::editor::theme::IdePalette;
 use eframe::egui;
 use std::path::Path;
 use std::time::Instant;
@@ -143,10 +144,10 @@ pub fn serialize_mission_activity_nda(state: &TaskTimelineState) -> String {
 pub fn persist_mission_activity_nda(workspace_root: &Path, state: &TaskTimelineState) {
     let agentic_dir = workspace_root.join(".velocity").join("agentic");
     let _ = std::fs::create_dir_all(&agentic_dir);
-    let _ = std::fs::write(
-        agentic_dir.join("mission_activity.nda"),
-        serialize_mission_activity_nda(state),
-    );
+    let serialized = serialize_mission_activity_nda(state);
+    let bytes = crate::agent::crypto::seal(workspace_root, b"mission_activity", serialized.as_bytes())
+        .unwrap_or_else(|| serialized.into_bytes());
+    let _ = std::fs::write(agentic_dir.join("mission_activity.nda"), bytes);
 }
 
 impl TaskTimelineState {
@@ -377,13 +378,14 @@ pub fn render_mission_activity_feed(
     snapshot: &TaskTimelineSnapshot,
     selected_task_id: Option<u64>,
     max_items: usize,
+    palette: IdePalette,
 ) {
     ui.label(egui::RichText::new("Mission Activity").strong());
     if snapshot.state.event_count() == 0 {
         ui.label(
             egui::RichText::new("No mission activity recorded yet")
                 .small()
-                .color(egui::Color32::from_rgb(125, 131, 166)),
+                .color(palette.text_muted),
         );
         return;
     }
@@ -403,18 +405,18 @@ pub fn render_mission_activity_feed(
         .take(max_items)
     {
         let (icon, color) = match event.event_type {
-            TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
-            TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
-            TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
-            TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
-            TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
-            TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(74, 222, 128)),
-            TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
+            TaskEventType::Started => ("▶", palette.accent),
+            TaskEventType::Completed => ("✓", palette.success),
+            TaskEventType::Failed => ("✕", palette.error),
+            TaskEventType::Cancelled => ("⊘", palette.text_muted),
+            TaskEventType::ToolCall => ("⚙", palette.warning),
+            TaskEventType::ToolResult => ("✓", palette.success),
+            TaskEventType::PhaseChange => ("◆", palette.accent),
             TaskEventType::TokenBudgetUpdate => {
-                ("$", egui::Color32::from_rgb(236, 72, 153))
+                ("$", palette.warning)
             }
-            TaskEventType::SessionMarker => ("║", egui::Color32::from_rgb(59, 130, 246)),
-            TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
+            TaskEventType::SessionMarker => ("║", palette.text_muted),
+            TaskEventType::AgentMarker => ("◉", palette.accent),
         };
         let name = snapshot.state.get_text(event.name_offset, event.name_len);
         let desc = snapshot
@@ -436,7 +438,7 @@ pub fn render_mission_activity_feed(
                 ui.label(
                     egui::RichText::new(format!("— {}", desc))
                         .small()
-                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                        .color(palette.text_muted),
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -446,7 +448,7 @@ pub fn render_mission_activity_feed(
                         event.timestamp_ms as f32 / 1000.0
                     ))
                     .size(9.0)
-                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                    .color(palette.text_muted),
                 );
             });
         });
@@ -455,11 +457,11 @@ pub fn render_mission_activity_feed(
 }
 
 /// Render task timeline panel
-pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) {
+pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot, palette: IdePalette) {
     let frame = egui::Frame::new()
-        .fill(egui::Color32::from_rgb(25, 27, 39))
+        .fill(palette.bg_secondary)
         .inner_margin(8.0)
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(33, 36, 51)));
+        .stroke(egui::Stroke::new(1.0, palette.border));
 
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -467,13 +469,13 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                 egui::RichText::new("Task Timeline")
                     .size(12.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(226, 227, 243)),
+                    .color(palette.text),
             );
             if snapshot.state.event_count() > 0 {
                 ui.label(
                     egui::RichText::new(format!("({})", snapshot.state.event_count()))
                         .size(10.0)
-                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                        .color(palette.text_muted),
                 );
             }
         });
@@ -483,7 +485,7 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
             ui.label(
                 egui::RichText::new("No tasks recorded yet")
                     .size(10.0)
-                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                    .color(palette.text_muted),
             );
             return;
         }
@@ -507,20 +509,20 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                     };
 
                     let (icon, color) = match event.event_type {
-                        TaskEventType::Started => ("▶", egui::Color32::from_rgb(34, 211, 238)),
-                        TaskEventType::Completed => ("✓", egui::Color32::from_rgb(34, 197, 94)),
-                        TaskEventType::Failed => ("✕", egui::Color32::from_rgb(239, 68, 68)),
-                        TaskEventType::Cancelled => ("⊘", egui::Color32::from_rgb(168, 85, 247)),
-                        TaskEventType::ToolCall => ("⚙", egui::Color32::from_rgb(250, 204, 21)),
-                        TaskEventType::ToolResult => ("✓", egui::Color32::from_rgb(34, 197, 94)),
-                        TaskEventType::PhaseChange => ("◆", egui::Color32::from_rgb(168, 85, 247)),
+                        TaskEventType::Started => ("▶", palette.accent),
+                        TaskEventType::Completed => ("✓", palette.success),
+                        TaskEventType::Failed => ("✕", palette.error),
+                        TaskEventType::Cancelled => ("⊘", palette.text_muted),
+                        TaskEventType::ToolCall => ("⚙", palette.warning),
+                        TaskEventType::ToolResult => ("✓", palette.success),
+                        TaskEventType::PhaseChange => ("◆", palette.accent),
                         TaskEventType::TokenBudgetUpdate => {
-                            ("$", egui::Color32::from_rgb(236, 72, 153))
+                            ("$", palette.warning)
                         }
                         TaskEventType::SessionMarker => {
-                            ("║", egui::Color32::from_rgb(59, 130, 246))
+                            ("║", palette.text_muted)
                         }
-                        TaskEventType::AgentMarker => ("◉", egui::Color32::from_rgb(236, 72, 153)),
+                        TaskEventType::AgentMarker => ("◉", palette.accent),
                     };
 
                     let name = snapshot.state.get_text(event.name_offset, event.name_len);
@@ -547,14 +549,14 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                                 .color(if is_marker {
                                     color
                                 } else {
-                                    egui::Color32::from_rgb(226, 227, 243)
+                                    palette.text
                                 }),
                         );
                         if !desc.is_empty() {
                             ui.label(
                                 egui::RichText::new(format!("— {}", desc))
                                     .size(9.0)
-                                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                                    .color(palette.text_muted),
                             );
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -562,13 +564,13 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot) 
                             ui.label(
                                 egui::RichText::new(time_str)
                                     .size(8.0)
-                                    .color(egui::Color32::from_rgb(125, 131, 166)),
+                                    .color(palette.text_muted),
                             );
                             if event.duration_ms > 0 {
                                 ui.label(
                                     egui::RichText::new(format!("({}ms)", event.duration_ms))
                                         .size(8.0)
-                                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                                        .color(palette.text_muted),
                                 );
                             }
                         });
@@ -652,12 +654,18 @@ mod tests {
 
         persist_mission_activity_nda(tmp.path(), &timeline);
 
-        let artifact = std::fs::read_to_string(
+        let raw = std::fs::read(
             tmp.path()
                 .join(".velocity")
                 .join("agentic")
                 .join("mission_activity.nda"),
         )
+        .unwrap();
+        let artifact = String::from_utf8(crate::agent::crypto::open(
+            tmp.path(),
+            b"mission_activity",
+            &raw,
+        ))
         .unwrap();
         assert!(artifact.starts_with("mission-activity version 2\n"));
         assert!(artifact.contains("entry_count 1\n"));

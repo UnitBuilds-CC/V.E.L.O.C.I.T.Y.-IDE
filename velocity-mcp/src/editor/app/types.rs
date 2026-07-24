@@ -32,7 +32,20 @@ impl Tab {
             TabKind::Usage => "Usage".into(),
             TabKind::Search => "Search".into(),
             TabKind::Graph => "Graph".into(),
+            TabKind::Wiki => "Wiki".into(),
             TabKind::Settings => "Settings".into(),
+            TabKind::Flows => "Flows".into(),
+            TabKind::Targets => "Targets".into(),
+            TabKind::Recordings => "Recordings".into(),
+            TabKind::Logs => "Logs".into(),
+            TabKind::Agents => "Agents".into(),
+            TabKind::Queue => "Queue".into(),
+            TabKind::Timeline => "Timeline".into(),
+            TabKind::Metrics => "Metrics".into(),
+            TabKind::Favorites => "Favorites".into(),
+            TabKind::Bookmarks => "Bookmarks".into(),
+            TabKind::AccessibilityAudit => "Audit".into(),
+            TabKind::Terminal => "Terminal".into(),
         }
     }
 
@@ -59,7 +72,21 @@ pub enum TabKind {
     Usage,
     Search,
     Graph,
+    Wiki,
     Settings,
+    // Mode-specific panel tabs
+    Flows,
+    Targets,
+    Recordings,
+    Logs,
+    Agents,
+    Queue,
+    Timeline,
+    Metrics,
+    Favorites,
+    Bookmarks,
+    AccessibilityAudit,
+    Terminal,
 }
 
 pub struct Command {
@@ -67,12 +94,54 @@ pub struct Command {
     pub category: &'static str,
     pub shortcut: Option<&'static str>,
     pub action: fn(&mut super::VelocityApp),
+    /// Which modes this command is available in (empty = all modes).
+    pub modes: &'static [crate::editor::theme::WorkspaceProfile],
 }
 
 pub struct CommandPalette {
     pub open: bool,
     pub query: String,
     pub selected: usize,
+    /// Set when the palette is opened so the search field grabs focus on the
+    /// first frame — you can type immediately without clicking.
+    pub just_opened: bool,
+}
+
+/// Ctrl+P quick-open switcher: fuzzy-search workspace files and jump to them.
+pub struct QuickOpen {
+    pub open: bool,
+    pub query: String,
+    pub selected: usize,
+    /// Set on open so the search field grabs focus immediately.
+    pub just_opened: bool,
+    /// Cached file list (relative paths) gathered when the switcher opens.
+    pub files: Vec<String>,
+    /// Query the cached `filtered` indices were computed for.
+    pub last_query: String,
+    /// `files.len()` when `filtered` was computed (invalidates on repopulation).
+    pub last_file_count: usize,
+    /// Cached indices into `files` matching `last_query` (avoids per-frame cloning).
+    pub filtered: Vec<usize>,
+    /// One-shot: force the scroll view to the selected row (set on keyboard nav).
+    pub scroll_to_selected: bool,
+}
+
+/// Ctrl+Tab most-recently-used tab switcher: hold Ctrl and tap Tab to cycle
+/// open tabs in recency order; release Ctrl to commit.
+pub struct MruSwitcher {
+    pub open: bool,
+    /// Index into `order` of the currently highlighted tab.
+    pub selected: usize,
+    /// Tab ids ordered most-recently-used first.
+    pub order: Vec<TabId>,
+}
+
+/// A restorable cursor position for back/forward navigation (Alt+← / Alt+→).
+#[derive(Clone, Debug)]
+pub struct NavLocation {
+    pub path: PathBuf,
+    /// 1-based line, if known.
+    pub line: Option<usize>,
 }
 
 #[allow(dead_code)]

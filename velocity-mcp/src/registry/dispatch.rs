@@ -3,6 +3,7 @@ use std::error::Error;
 use std::path::Path;
 use super::browser_tools::handle_browser_tool;
 use super::system_tools::handle_system_tool;
+use super::team_tools::handle_team_tool;
 use super::wa_tools::handle_wa_tool;
 
 pub fn call_tool_in_workspace(
@@ -13,6 +14,10 @@ pub fn call_tool_in_workspace(
     let root = root.canonicalize()?;
 
     if let Some(result) = handle_system_tool(&root, name, arguments)? {
+        return Ok(result);
+    }
+
+    if let Some(result) = handle_team_tool(&root, name, arguments)? {
         return Ok(result);
     }
 

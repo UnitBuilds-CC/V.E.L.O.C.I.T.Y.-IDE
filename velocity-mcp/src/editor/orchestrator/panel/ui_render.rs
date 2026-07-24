@@ -55,16 +55,16 @@ impl OrchestratorPanel {
 
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("Tasks: {}", self.graph.tasks.len())).small());
-                    ui.separator();
+                    ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                     ui.label(RichText::new(format!("Phases: {}", plan.phases.len())).small());
-                    ui.separator();
+                    ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                     ui.label(RichText::new(format!("Done: {}", completed_count)).small().color(palette.success));
                     if retryable_blocked > 0 {
-                        ui.separator();
+                        ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                         ui.label(RichText::new(format!("Blocked: {}", retryable_blocked)).small().color(palette.warning));
                     }
                     if !self.running_workers.is_empty() {
-                        ui.separator();
+                        ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                         ui.label(RichText::new(format!("Workers: {}", self.running_workers.len())).small().color(palette.accent));
                     }
                 });
@@ -140,6 +140,7 @@ impl OrchestratorPanel {
                     for (phase_idx, phase) in plan.phases.iter().enumerate() {
                         ui.group(|ui| {
                             ui.label(RichText::new(format!("Phase {}", phase_idx + 1)).small().strong().color(palette.accent));
+                            ui.add_space(2.0);
                             for id in phase {
                                 if let Some(task) = self.graph.tasks.get(id) {
                                     self.render_task_card(ui, task, active_team, palette);
@@ -148,9 +149,25 @@ impl OrchestratorPanel {
                         });
                         ui.add_space(4.0);
                     }
+                } else if self.graph.tasks.is_empty() {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("◇")
+                                .size(28.0)
+                                .color(palette.accent.gamma_multiply(0.7)),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("No tasks yet — route a goal to build the plan")
+                                .color(palette.text_muted),
+                        );
+                    });
+                    ui.add_space(12.0);
                 } else {
                     ui.group(|ui| {
                         ui.label(RichText::new("Tasks").small().strong());
+                        ui.add_space(2.0);
                         for task in self.graph.tasks.values() {
                             self.render_task_card(ui, task, active_team, palette);
                         }
@@ -173,31 +190,42 @@ impl OrchestratorPanel {
             .cloned()
             .unwrap_or(TaskStatus::Pending);
 
-        let (status_text, status_color) = match &status {
-            TaskStatus::Pending => ("Pending", palette.text_muted),
-            TaskStatus::Running => ("Running", palette.accent),
-            TaskStatus::Done(_) => ("Done", palette.success),
-            TaskStatus::Failed(_) => ("Failed", palette.error),
-            TaskStatus::Blocked(_) => ("Blocked", palette.warning),
+        let (status_text, status_color, glyph) = match &status {
+            TaskStatus::Pending => ("Pending", palette.text_muted, "○"),
+            TaskStatus::Running => ("Running", palette.accent, "▷"),
+            TaskStatus::Done(_) => ("Done", palette.success, "✔"),
+            TaskStatus::Failed(_) => ("Failed", palette.error, "✖"),
+            TaskStatus::Blocked(_) => ("Blocked", palette.warning, "◆"),
         };
 
         let assigned_expert = active_team.and_then(|team| team.find_expert_for_task(&task.title, &task.scope));
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("#{}", task.id.0)).monospace().small().color(palette.text_muted));
-            ui.label(RichText::new(&task.title).small().strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(status_text).small().color(status_color));
+        // Card with a subtle fill and a status-tinted border so state reads at a
+        // glance; the leading glyph reinforces it for color-blind users.
+        egui::Frame::new()
+            .fill(palette.bg_secondary.gamma_multiply(0.6))
+            .stroke(Stroke::new(1.0, status_color.gamma_multiply(0.5)))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(glyph).color(status_color));
+                    ui.label(RichText::new(format!("#{}", task.id.0)).monospace().small().color(palette.text_muted));
+                    ui.label(RichText::new(&task.title).small().strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(status_text).small().color(status_color));
+                    });
+                });
+
+                if let Some(expert) = assigned_expert {
+                    ui.label(RichText::new(format!("    Agent: {}", expert.name)).small().color(palette.text_muted));
+                }
+
+                if !task.scope.is_empty() {
+                    ui.label(RichText::new(format!("    Scope: {}", task.scope.join(", "))).small().color(palette.text_muted));
+                }
             });
-        });
-
-        if let Some(expert) = assigned_expert {
-            ui.label(RichText::new(format!("  Agent: {}", expert.name)).small().color(palette.text_muted));
-        }
-
-        if !task.scope.is_empty() {
-            ui.label(RichText::new(format!("  Scope: {}", task.scope.join(", "))).small().color(palette.text_muted));
-        }
+        ui.add_space(4.0);
     }
 
     pub fn draw_task_graph(

@@ -18,12 +18,6 @@ pub struct OrchestratorPanel {
     pub runtime_status: String,
     pub execution_running: bool,
     pub running_workers: HashMap<TaskId, Box<dyn WorkerHandle>>,
-    // Builder form state
-    pub builder_title: String,
-    pub builder_desc: String,
-    pub builder_deps: String,
-    pub builder_scope: String,
-    pub next_task_id: u64,
 }
 
 impl Default for OrchestratorPanel {
@@ -47,11 +41,6 @@ impl OrchestratorPanel {
             runtime_status: "Idle".to_string(),
             execution_running: false,
             running_workers: HashMap::new(),
-            builder_title: String::new(),
-            builder_desc: String::new(),
-            builder_deps: String::new(),
-            builder_scope: String::new(),
-            next_task_id: 10,
         }
     }
 
@@ -256,7 +245,14 @@ impl OrchestratorPanel {
                 model_label,
                 scope: task.scope.clone(),
                 rationale: routed
-                    .map(|task| task.rationale.clone())
+                    .map(|task| {
+                        format!(
+                            "[{} · {}] {}",
+                            task.decomposition_policy_id,
+                            task.decomposition_style.as_str(),
+                            task.rationale
+                        )
+                    })
                     .unwrap_or_default(),
                 outputs,
                 message,

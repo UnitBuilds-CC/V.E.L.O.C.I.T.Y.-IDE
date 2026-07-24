@@ -1,18 +1,44 @@
 use crate::engine::PixelBuffer;
 use crate::nda::NdaTriple;
+use crate::predicates::OCR_OPAQUE_REGION;
 
+/// An opaque visual region detected in a raster buffer.
+///
+/// The engine deliberately does NOT fabricate recognized text: without a real
+/// glyph recognizer it cannot honestly claim to know what a region says. It
+/// reports the region's location and marks it opaque (confidence 0) so the
+/// agent knows "there is something visual here it could not read" rather than
+/// being fed a made-up string. Readable canvas text comes from the 2D display
+/// list (fillText), not from guessing at pixels.
 #[derive(Debug, Clone)]
 pub struct OcrTextBoundingBox {
+    /// Empty for opaque regions. Reserved for a future real recognizer.
     pub text: String,
     pub x: usize,
     pub y: usize,
     pub width: usize,
     pub height: usize,
+    /// Recognition confidence in 0.0..=1.0. Always 0.0 for opaque regions -
+    /// never fabricated.
     pub confidence: f32,
+}
+
+impl OcrTextBoundingBox {
+    /// True when this box carries genuinely recognized text (never the case
+    /// until a real recognizer lands).
+    pub fn is_recognized(&self) -> bool {
+        !self.text.is_empty() && self.confidence > 0.0
+    }
 }
 
 pub struct VelocityOcrEngine {
     pub luminance_threshold: u8,
+}
+
+impl Default for VelocityOcrEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VelocityOcrEngine {
@@ -20,10 +46,11 @@ impl VelocityOcrEngine {
         Self { luminance_threshold: 128 }
     }
 
-    /// Perform V.E.L.O.C.I.T.Y.-OCR rasterizer pixel buffer segmentation and character recognition
+    /// Segment a raster buffer into opaque (dark-pixel) regions. This locates
+    /// *where* visual content is, honestly, without inventing what it says.
     pub fn process_pixel_buffer(&self, buffer: &PixelBuffer) -> Vec<OcrTextBoundingBox> {
-        let mut boxes = Vec::new();
-        let mut in_text = false;
+        let mut regions = Vec::new();
+        let mut in_region = false;
         let mut start_x = 0;
         let mut start_y = 0;
 
@@ -33,48 +60,72 @@ impl VelocityOcrEngine {
                 let lum = ((pixel[0] as u32 + pixel[1] as u32 + pixel[2] as u32) / 3) as u8;
 
                 if lum < self.luminance_threshold {
-                    if !in_text {
-                        in_text = true;
+                    if !in_region {
+                        in_region = true;
                         start_x = x;
                         start_y = y;
                     }
-                } else if in_text {
-                    in_text = false;
-                    boxes.push(OcrTextBoundingBox {
-                        text: format!("VelocityOCR_Region_{}_{}", start_x, start_y),
+                } else if in_region {
+                    in_region = false;
+                    regions.push(OcrTextBoundingBox {
+                        text: String::new(),
                         x: start_x,
                         y: start_y,
                         width: (x - start_x).max(10),
                         height: 20,
-                        confidence: 0.98,
+                        confidence: 0.0,
                     });
                 }
             }
         }
 
-        if boxes.is_empty() {
-            boxes.push(OcrTextBoundingBox {
-                text: "VELOCITY_OCR_CANVAS_TEXT".to_string(),
-                x: 0,
-                y: 0,
-                width: buffer.width,
-                height: 30,
-                confidence: 0.99,
-            });
-        }
-
-        boxes
+        regions
     }
 
+    /// Export opaque regions as NDA triples. Emits `OCR_OPAQUE_REGION` facts
+    /// ("x,y,w,h"); does not emit fabricated recognized-text facts.
     pub fn export_ocr_nda(&self, session_id: &str, boxes: &[OcrTextBoundingBox]) -> Vec<NdaTriple> {
         let mut triples = Vec::new();
         for b in boxes {
             triples.push(NdaTriple::new(
                 session_id,
-                252,
-                &format!("velocity_ocr:{}:{}:{},{},{},{}", b.text, b.confidence, b.x, b.y, b.width, b.height),
+                OCR_OPAQUE_REGION,
+                &format!("{},{},{},{}", b.x, b.y, b.width, b.height),
             ));
         }
         triples
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opaque_regions_carry_no_fabricated_text() {
+        let engine = VelocityOcrEngine::new();
+        let buffer = PixelBuffer::new(100, 100);
+        let regions = engine.process_pixel_buffer(&buffer);
+        for r in &regions {
+            assert!(r.text.is_empty(), "OCR must not fabricate text");
+            assert_eq!(r.confidence, 0.0, "opaque regions must not claim confidence");
+            assert!(!r.is_recognized());
+        }
+    }
+
+    #[test]
+    fn export_uses_opaque_region_predicate() {
+        let engine = VelocityOcrEngine::new();
+        let boxes = vec![OcrTextBoundingBox {
+            text: String::new(),
+            x: 1,
+            y: 2,
+            width: 3,
+            height: 4,
+            confidence: 0.0,
+        }];
+        let triples = engine.export_ocr_nda("session_1", &boxes);
+        assert_eq!(triples.len(), 1);
+        assert_eq!(triples[0].predicate_id, OCR_OPAQUE_REGION);
     }
 }

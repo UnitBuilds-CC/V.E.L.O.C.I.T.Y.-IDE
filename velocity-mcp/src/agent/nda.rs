@@ -102,7 +102,9 @@ pub fn write_sitemap_nda(workspace_root: &std::path::Path) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
     let sitemap_text = generate_sitemap_text(workspace_root);
-    let _ = std::fs::write(sitemap_dir.join("sitemap.nda"), sitemap_text);
+    let bytes = crate::agent::crypto::seal(workspace_root, b"sitemap", sitemap_text.as_bytes())
+        .unwrap_or_else(|| sitemap_text.into_bytes());
+    let _ = std::fs::write(sitemap_dir.join("sitemap.nda"), bytes);
 }
 
 pub fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMessage>> {
@@ -111,6 +113,7 @@ pub fn load_chatlogs_nda(workspace_root: &std::path::Path) -> Option<Vec<ChatMes
         return None;
     }
     let data = std::fs::read(&nda_path).ok()?;
+    let data = crate::agent::crypto::open(workspace_root, b"chatlogs", &data);
     let text = if let Some((_filename, payload)) = unpack_ndav(&data) {
         String::from_utf8_lossy(&payload).to_string()
     } else {
@@ -184,7 +187,7 @@ pub fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
             let value = parts[3];
             let tool_call = tool_calls
                 .entry((message_index, call_index))
-                .or_insert_with(serde_json::Map::new);
+                .or_default();
             match field {
                 "id" | "type" => {
                     tool_call.insert(field.to_string(), Value::String(decode_nda_text(value)));
@@ -410,10 +413,10 @@ pub fn serialize_chatlogs_nda(messages: &[ChatMessage]) -> String {
 pub fn save_chatlogs_nda(workspace_root: &std::path::Path, messages: &[ChatMessage]) {
     let sitemap_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&sitemap_dir);
-    let _ = std::fs::write(
-        sitemap_dir.join("chatlogs.nda"),
-        serialize_chatlogs_nda(messages),
-    );
+    let serialized = serialize_chatlogs_nda(messages);
+    let bytes = crate::agent::crypto::seal(workspace_root, b"chatlogs", serialized.as_bytes())
+        .unwrap_or_else(|| serialized.into_bytes());
+    let _ = std::fs::write(sitemap_dir.join("chatlogs.nda"), bytes);
 }
 
 pub fn append_changelog_nda(workspace_root: &std::path::Path, file_path: &str, action: &str) {
@@ -427,11 +430,18 @@ pub fn append_changelog_nda(workspace_root: &std::path::Path, file_path: &str, a
         .map(|d| d.as_secs())
         .unwrap_or(0);
     entries.push((now, file_path.to_string(), action.to_string()));
-    let _ = std::fs::write(changelog_path, serialize_changelog_nda(&entries));
+    let serialized = serialize_changelog_nda(&entries);
+    let bytes = crate::agent::crypto::seal(workspace_root, b"changelog", serialized.as_bytes())
+        .unwrap_or_else(|| serialized.into_bytes());
+    let _ = std::fs::write(changelog_path, bytes);
 }
 
 pub fn load_changelog_entries(changelog_path: &std::path::Path) -> Vec<(u64, String, String)> {
     let raw = if let Ok(data) = std::fs::read(changelog_path) {
+        let data = match changelog_path.parent().and_then(|p| p.parent()) {
+            Some(root) => crate::agent::crypto::open(root, b"changelog", &data),
+            None => data,
+        };
         if let Some((_filename, payload)) = unpack_ndav(&data) {
             String::from_utf8_lossy(&payload).to_string()
         } else {
@@ -537,7 +547,9 @@ pub fn write_handover_nda(
     ]
     .join("\n")
         + "\n";
-    let _ = std::fs::write(handover_path, payload);
+    let bytes = crate::agent::crypto::seal(workspace_root, b"handover", payload.as_bytes())
+        .unwrap_or_else(|| payload.into_bytes());
+    let _ = std::fs::write(handover_path, bytes);
 }
 
 pub fn write_last_request_artifacts(
@@ -552,18 +564,18 @@ pub fn write_last_request_artifacts(
 ) {
     let velocity_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&velocity_dir);
-    let _ = std::fs::write(
-        velocity_dir.join("last_request.nda"),
-        serialize_last_request_nda(
-            profile,
-            model,
-            provider,
-            thinking,
-            messages,
-            tools,
-            request_body,
-        ),
+    let serialized = serialize_last_request_nda(
+        profile,
+        model,
+        provider,
+        thinking,
+        messages,
+        tools,
+        request_body,
     );
+    let bytes = crate::agent::crypto::seal(workspace_root, b"last_request", serialized.as_bytes())
+        .unwrap_or_else(|| serialized.into_bytes());
+    let _ = std::fs::write(velocity_dir.join("last_request.nda"), bytes);
     let _ = std::fs::write(
         velocity_dir.join("last_request.json"),
         serde_json::to_string_pretty(request_body).unwrap_or_default(),
@@ -874,7 +886,10 @@ pub fn write_workspace_transcript_nda(workspace_root: &std::path::Path, content:
     let velocity_dir = workspace_root.join(".velocity");
     let _ = std::fs::create_dir_all(&velocity_dir);
     let workspace_nda = velocity_dir.join("transcript.nda");
-    let _ = std::fs::write(workspace_nda, serialize_transcript_nda(content));
+    let serialized = serialize_transcript_nda(content);
+    let bytes = crate::agent::crypto::seal(workspace_root, b"transcript", serialized.as_bytes())
+        .unwrap_or_else(|| serialized.into_bytes());
+    let _ = std::fs::write(workspace_nda, bytes);
 }
 
 pub fn convert_jsonl_to_nda(workspace_root: &std::path::Path) {

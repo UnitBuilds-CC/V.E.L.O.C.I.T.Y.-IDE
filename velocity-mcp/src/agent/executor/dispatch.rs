@@ -100,11 +100,10 @@ pub fn execute_openrouter_request<'a>(
                 }
             }
         }
-        if final_res.is_some() || account_exhausted {
-            if final_res.is_some() {
+        if (final_res.is_some() || account_exhausted)
+            && final_res.is_some() {
                 break;
             }
-        }
     }
     (final_res, used_acct)
 }

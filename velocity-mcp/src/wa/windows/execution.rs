@@ -62,8 +62,7 @@ pub fn capture_windows_snapshot_report(
         } else {
             stderr.trim().to_string()
         };
-        return Err(IoError::new(
-            ErrorKind::Other,
+        return Err(IoError::other(
             format!("Windows UIAutomation capture failed: {detail}"),
         )
         .into());
@@ -142,8 +141,7 @@ pub fn execute_windows_action_report(
         } else {
             stderr.trim().to_string()
         };
-        return Err(IoError::new(
-            ErrorKind::Other,
+        return Err(IoError::other(
             format!("Windows UIAutomation action execution failed: {detail}"),
         )
         .into());
@@ -235,8 +233,7 @@ pub fn wait_for_windows_condition_report(
         } else {
             stderr.trim().to_string()
         };
-        return Err(IoError::new(
-            ErrorKind::Other,
+        return Err(IoError::other(
             format!("Windows UIAutomation wait failed: {detail}"),
         )
         .into());

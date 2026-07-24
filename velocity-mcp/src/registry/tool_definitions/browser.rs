@@ -868,5 +868,256 @@ pub fn get_browser_tools() -> Vec<Tool> {
                 "required": ["suiteName"]
             }),
         },
+        Tool {
+            name: "browser_native_navigate".to_string(),
+            description: "Navigate the native pure-Rust browser engine to a URL over HTTPS, load it into the live DOM, and return the readable AOM view plus the NDA delta the navigation produced. Session state (DOM, cookies, storage) persists across native tool calls sharing the same sessionId.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Stable session id identifying the live native browser session." },
+                    "url": { "type": "string", "description": "Absolute URL to navigate to (http/https)." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report (status, delta, view) instead of readable text." }
+                },
+                "required": ["sessionId", "url"]
+            }),
+        },
+        Tool {
+            name: "browser_native_read".to_string(),
+            description: "Read the current live Agentic Object Model of a native browser session: URL, title, and every actionable element with its node id, role, accessible name, value, and actionability score. Use the node ids or role+name here to target native click/type/select/submit actions.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session to read." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON view report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_click".to_string(),
+            description: "Click an element in the live native browser DOM, targeted by node id or by role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "nodeId": { "type": "string", "description": "Target node id (accepts 5 or node_5). If omitted, role/name resolution is used." },
+                    "role": { "type": "string", "description": "Optional AOM role filter (button, link, textbox, ...) used with name." },
+                    "name": { "type": "string", "description": "Accessible name to resolve when nodeId is not given (case-insensitive, exact then substring)." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_type".to_string(),
+            description: "Type text into an input-like element in the live native browser DOM, targeted by node id or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "nodeId": { "type": "string", "description": "Target node id (accepts 5 or node_5). If omitted, role/name resolution is used." },
+                    "role": { "type": "string", "description": "Optional AOM role filter used with name." },
+                    "name": { "type": "string", "description": "Accessible name to resolve when nodeId is not given." },
+                    "text": { "type": "string", "description": "Text to enter into the element's value." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "text"]
+            }),
+        },
+        Tool {
+            name: "browser_native_select".to_string(),
+            description: "Set the selected value of a combobox/select element in the live native browser DOM, targeted by node id or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "nodeId": { "type": "string", "description": "Target node id (accepts 5 or node_5). If omitted, role/name resolution is used." },
+                    "role": { "type": "string", "description": "Optional AOM role filter used with name." },
+                    "name": { "type": "string", "description": "Accessible name to resolve when nodeId is not given." },
+                    "value": { "type": "string", "description": "Value to select." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "value"]
+            }),
+        },
+        Tool {
+            name: "browser_native_submit".to_string(),
+            description: "Submit a form (or form control) in the live native browser DOM, targeted by node id or role + accessible name, and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "nodeId": { "type": "string", "description": "Target node id (accepts 5 or node_5). If omitted, role/name resolution is used." },
+                    "role": { "type": "string", "description": "Optional AOM role filter used with name." },
+                    "name": { "type": "string", "description": "Accessible name to resolve when nodeId is not given." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_scroll".to_string(),
+            description: "Scroll the native browser viewport by a pixel delta and return the resulting NDA delta (layout facts may shift) and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "deltaX": { "type": "integer", "description": "Horizontal scroll delta in pixels (positive = right)." },
+                    "deltaY": { "type": "integer", "description": "Vertical scroll delta in pixels (positive = down). Defaults to 0." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_back".to_string(),
+            description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_forward".to_string(),
+            description: "Navigate the native browser session forward in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_eval".to_string(),
+            description: "Evaluate a JavaScript expression in the live native browser session and return the result alongside the refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "expression": { "type": "string", "description": "JavaScript expression to evaluate." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId", "expression"]
+            }),
+        },
+        // -- Phase 5: Enhanced agent tools --
+        Tool {
+            name: "browser_native_wait_for".to_string(),
+            description: "Poll the live AOM until an element matching the given role and/or accessible name appears (with timeout). Returns the matched node id and refreshed view, or a not-found message.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "role": { "type": "string", "description": "Optional AOM role filter (button, link, textbox, ...)." },
+                    "name": { "type": "string", "description": "Accessible name to wait for (case-insensitive)." },
+                    "timeout": { "type": "integer", "description": "Maximum wait time in milliseconds (default 5000)." },
+                    "compact": { "type": "boolean", "description": "When true, return JSON instead of readable text." }
+                },
+                "required": ["sessionId", "name"]
+            }),
+        },
+        Tool {
+            name: "browser_native_extract".to_string(),
+            description: "Extract content from a DOM element: its text content, innerHTML, outerHTML, or a specific attribute value.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "nodeId": { "type": "string", "description": "Target node id." },
+                    "role": { "type": "string", "description": "Optional AOM role filter for name resolution." },
+                    "name": { "type": "string", "description": "Accessible name for target resolution." },
+                    "what": { "type": "string", "description": "What to extract: 'text', 'html', 'outerHTML', or 'attr:NAME' (default: text)." },
+                    "compact": { "type": "boolean", "description": "When true, return JSON." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_cookies".to_string(),
+            description: "Get, set, or delete cookies for the current session/origin.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id." },
+                    "operation": { "type": "string", "description": "One of: 'get', 'set', 'delete' (default: get)." },
+                    "name": { "type": "string", "description": "Cookie name." },
+                    "value": { "type": "string", "description": "Cookie value (for set)." },
+                    "domain": { "type": "string", "description": "Cookie domain (for set)." }
+                },
+                "required": ["sessionId", "name"]
+            }),
+        },
+        Tool {
+            name: "browser_native_storage".to_string(),
+            description: "Get, set, or clear localStorage/sessionStorage for the current session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id." },
+                    "storageType": { "type": "string", "description": "'local' or 'session' (default: local)." },
+                    "operation": { "type": "string", "description": "One of: 'get', 'set', 'clear' (default: get)." },
+                    "key": { "type": "string", "description": "Storage key." },
+                    "value": { "type": "string", "description": "Storage value (for set)." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_network".to_string(),
+            description: "List recent network requests (fetch/XHR) made during the session with URL, method, status, and resource type.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id." },
+                    "compact": { "type": "boolean", "description": "When true, return JSON array." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_screenshot".to_string(),
+            description: "Serialize the current DOM as a structured text snapshot showing URL, title, DOM node count, and all actionable AOM elements. A semantic representation, not pixels.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_hover".to_string(),
+            description: "Hover an element (fire mouseenter/mouseover events) targeted by node id or role + accessible name.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id." },
+                    "nodeId": { "type": "string", "description": "Target node id." },
+                    "role": { "type": "string", "description": "Optional AOM role filter." },
+                    "name": { "type": "string", "description": "Accessible name for resolution." },
+                    "compact": { "type": "boolean", "description": "When true, return JSON." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_press_key".to_string(),
+            description: "Press a keyboard key (fire keydown/keypress/keyup events) in the session.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id." },
+                    "key": { "type": "string", "description": "Key to press (e.g. 'Enter', 'Escape', 'Tab', 'a')." },
+                    "compact": { "type": "boolean", "description": "When true, return JSON." }
+                },
+                "required": ["sessionId", "key"]
+            }),
+        },
     ]
 }

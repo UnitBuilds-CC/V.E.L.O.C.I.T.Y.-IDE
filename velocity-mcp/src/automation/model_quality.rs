@@ -117,7 +117,7 @@ impl ModelQualityIndex {
                 score: Self::score_model(model, requirements, provider_caps),
                 supports_tools: model.supports_tools,
                 supports_thinking: model.supports_thinking,
-                api_style: model.api_style.clone(),
+                api_style: model.api_style,
             })
             .collect();
         ranked.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.label.cmp(&b.label)));

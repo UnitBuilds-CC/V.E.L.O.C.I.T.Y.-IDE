@@ -66,8 +66,8 @@ pub fn handle_system_tool(
                 .as_str()
                 .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(root, rel_path, false)?;
-            let content = fs::read_to_string(full_path)?;
-            content
+            
+            fs::read_to_string(full_path)?
         }
         "write_file" => {
             let rel_path = arguments["relativeFilePath"]
@@ -637,7 +637,7 @@ fn run_in_dll_sandbox(
     let mut w_cmd_line = to_wstring(&cmd_line_str);
 
     let _ = Command::new("reg")
-        .args(&[
+        .args([
             "add",
             &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id),
             "/f",
@@ -785,7 +785,7 @@ fn run_in_dll_sandbox(
     );
 
     let _ = Command::new("reg")
-        .args(&[
+        .args([
             "delete",
             &format!("HKCU\\Software\\WUIAS_Sandbox\\{}", session_id),
             "/f",

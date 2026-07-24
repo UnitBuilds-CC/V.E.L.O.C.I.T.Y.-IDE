@@ -4,6 +4,12 @@ pub struct MutationBatcher {
     pub pending_mutations: Vec<MutationRecord>,
 }
 
+impl Default for MutationBatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MutationBatcher {
     pub fn new() -> Self {
         Self { pending_mutations: Vec::new() }

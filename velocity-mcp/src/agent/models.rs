@@ -30,6 +30,7 @@ pub enum UiToAgentMessage {
     RunLocalBuild,
     RunLocalRun,
     CancelTask,
+    ReloadTeams,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +150,35 @@ impl AiProvider {
             AiProvider::OpenAI => "OpenAI Direct",
             AiProvider::Anthropic => "Anthropic Claude",
             AiProvider::GoogleVertex => "Google Vertex AI",
+        }
+    }
+
+    /// Stable machine slug used for NDA serialization and tool arguments.
+    pub fn slug(self) -> &'static str {
+        match self {
+            AiProvider::CloudflareWorkersAi => "cloudflare",
+            AiProvider::OpenRouter => "openrouter",
+            AiProvider::AzureOpenAi => "azure",
+            AiProvider::LocalOllama => "ollama",
+            AiProvider::OpenAI => "openai",
+            AiProvider::Anthropic => "anthropic",
+            AiProvider::GoogleVertex => "vertex",
+        }
+    }
+
+    /// Parse a provider from a slug or common alias. Case-insensitive.
+    pub fn from_slug(value: &str) -> Option<AiProvider> {
+        match value.trim().to_lowercase().as_str() {
+            "cloudflare" | "cloudflareworkersai" | "cf" | "workers-ai" => {
+                Some(AiProvider::CloudflareWorkersAi)
+            }
+            "openrouter" | "or" => Some(AiProvider::OpenRouter),
+            "azure" | "azure_openai" | "azureopenai" => Some(AiProvider::AzureOpenAi),
+            "ollama" | "local" | "localollama" => Some(AiProvider::LocalOllama),
+            "openai" | "openai_direct" => Some(AiProvider::OpenAI),
+            "anthropic" | "claude" => Some(AiProvider::Anthropic),
+            "vertex" | "googlevertex" | "google_vertex" | "google" => Some(AiProvider::GoogleVertex),
+            _ => None,
         }
     }
 }

@@ -19,7 +19,7 @@ impl WorktreeIsolationGuard {
         }
 
         let output = Command::new("git")
-            .args(&["worktree", "add", "--detach", worktree_dir.to_str().unwrap_or_default()])
+            .args(["worktree", "add", "--detach", worktree_dir.to_str().unwrap_or_default()])
             .current_dir(original_root)
             .output();
 
@@ -44,7 +44,7 @@ impl WorktreeIsolationGuard {
     pub fn cleanup(&mut self) {
         if self.active {
             let _ = Command::new("git")
-                .args(&["worktree", "remove", "--force", self.worktree_root.to_str().unwrap_or_default()])
+                .args(["worktree", "remove", "--force", self.worktree_root.to_str().unwrap_or_default()])
                 .current_dir(&self.original_root)
                 .output();
             self.active = false;

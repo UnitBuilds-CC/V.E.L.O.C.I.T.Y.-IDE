@@ -452,8 +452,8 @@ pub fn parse_runtime_session_capture_response(
                         })
                     } else {
                         item.as_str().map(|raw| {
-                            let parsed = parse_runtime_session_cookie_value(raw);
-                            parsed
+                            
+                            parse_runtime_session_cookie_value(raw)
                         })
                     }
                 })

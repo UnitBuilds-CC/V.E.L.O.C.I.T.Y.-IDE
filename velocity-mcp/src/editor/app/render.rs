@@ -16,10 +16,28 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
     type Tab = Tab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        tab.title().into()
+        let mut title = tab.title();
+        // Append an unsaved-changes marker for editor tabs with pending edits.
+        if let TabKind::Editor { buffer_id, .. } = &tab.kind {
+            if self
+                .app
+                .buffers
+                .get(buffer_id)
+                .map(|b| b.is_dirty())
+                .unwrap_or(false)
+            {
+                title.push_str("  ●");
+            }
+        }
+        title.into()
     }
 
     fn on_close(&mut self, tab: &mut Self::Tab) -> egui_dock::tab_viewer::OnCloseResponse {
+        // Guard unsaved editor tabs: defer to the confirm dialog instead of closing.
+        if self.app.tab_is_dirty(&tab.id) {
+            self.app.pending_close_tab = Some(tab.id.clone());
+            return egui_dock::tab_viewer::OnCloseResponse::Ignore;
+        }
         self.app.close_tab(&tab.id);
         egui_dock::tab_viewer::OnCloseResponse::Close
     }
@@ -36,6 +54,10 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 .as_deref()
                                 .map(|p| self.app.mediator.get_locks_for_file(p))
                                 .unwrap_or_default();
+                            // Refresh the cached per-line diff (cheap unless the
+                            // buffer changed) so the gutter can show change bars.
+                            buf.refresh_diff_marks();
+                            let diff_marks = buf.diff_marks.clone();
                             editor.show(
                                 ui,
                                 buf.content_mut(),
@@ -43,6 +65,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 self.app.pending_cursor_line,
                                 &locks,
                                 self.app.appearance,
+                                &diff_marks,
                             );
                             if self.app.pending_cursor_line.is_some() {
                                 self.app.pending_cursor_line = None;
@@ -94,12 +117,168 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 self.app.search_panel(ui);
             }
             TabKind::Graph => {
-                self.app
+                let action = self
+                    .app
                     .graph_view
-                    .ui(ui, &self.app.workspace_root, &self.app.mediator);
+                    .ui(ui, &self.app.workspace_root, self.app.palette());
+                if let Some(crate::editor::graph_view::GraphAction::NavigateToSymbol(name)) = action
+                {
+                    self.app.push_nav_location();
+                    self.app.jump_to_symbol_name(&name);
+                }
+            }
+            TabKind::Wiki => {
+                let palette = self.app.palette();
+                let action = self.app.wiki_view.ui(
+                    ui,
+                    &self.app.workspace_root,
+                    &mut self.app.toasts,
+                    palette,
+                );
+                if let Some(crate::editor::wiki_view::WikiAction::GenerateDetail(prompt)) = action {
+                    let _ = self
+                        .app
+                        .agent_tx
+                        .send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
+                    self.app.toggle_panel(TabKind::Chat);
+                    self.app
+                        .toasts
+                        .push(crate::editor::toast::Toast::info(
+                            "Detail request sent to agent — see Chat",
+                        ));
+                }
             }
             TabKind::Settings => {
                 self.settings_panel(ui);
+            }
+            // Mode-specific panel tabs - real content from orchestrator/timeline data
+            _ => {
+                let palette = self.app.palette();
+                let kind_label = tab.title();
+                match &tab.kind {
+                    TabKind::Flows => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("⧉ Automation Flows").size(14.0).strong().color(palette.accent));
+                            ui.add_space(8.0);
+                            let tasks = &self.app.orchestrator.graph.tasks;
+                            if tasks.is_empty() {
+                                ui.label(egui::RichText::new("No flows defined. Create a flow via the Orchestrator panel.").size(11.0).color(palette.text_muted));
+                            } else {
+                                for task in tasks.values() {
+                                    egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {
+                                        ui.label(egui::RichText::new(&task.title).size(11.0).strong().color(palette.text));
+                                        ui.label(egui::RichText::new(&task.description).size(9.0).color(palette.text_muted));
+                                        ui.label(egui::RichText::new(format!("Scope: {} file(s)", task.scope.len())).size(9.0).color(palette.text_muted));
+                                    });
+                                    ui.add_space(4.0);
+                                }
+                            }
+                        });
+                    }
+                    TabKind::Terminal => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new("$ Terminal").monospace().size(11.0).color(palette.accent));
+                            ui.add_space(4.0);
+                            if self.app.command_output.is_empty() {
+                                ui.label(egui::RichText::new("Ready.").monospace().size(10.0).color(palette.text_muted));
+                            } else {
+                                ui.label(egui::RichText::new(&self.app.command_output).monospace().size(10.0).color(palette.text));
+                            }
+                        });
+                    }
+                    TabKind::Logs => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("≣ Execution Logs").size(14.0).strong().color(palette.accent));
+                            ui.add_space(8.0);
+                            let snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.app.task_timeline);
+                            crate::editor::task_timeline::render_task_timeline(ui, &snapshot, palette);
+                        });
+                    }
+                    TabKind::Agents => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("⊙ Agent Roster").size(14.0).strong().color(palette.accent));
+                            ui.add_space(8.0);
+                            let snapshot = self.app.orchestrator.dashboard_snapshot();
+                            if snapshot.tasks.is_empty() {
+                                ui.label(egui::RichText::new("No agents running. Deploy via the toolbar.").size(11.0).color(palette.text_muted));
+                            } else {
+                                for t in &snapshot.tasks {
+                                    let color = match t.status_label.as_str() {
+                                        "Running" => palette.success,
+                                        "Done" => palette.text_muted,
+                                        "Failed" => palette.error,
+                                        _ => palette.warning,
+                                    };
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("●").color(color));
+                                        ui.label(egui::RichText::new(&t.title).size(11.0).color(palette.text));
+                                        ui.label(egui::RichText::new(&t.status_label).size(9.0).color(color));
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    TabKind::Queue => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("⊞ Task Queue").size(14.0).strong().color(palette.accent));
+                            ui.add_space(8.0);
+                            let snapshot = self.app.orchestrator.dashboard_snapshot();
+                            ui.label(egui::RichText::new(format!("{} pending · {} running · {} done · {} failed",
+                                snapshot.pending_tasks, snapshot.running_tasks, snapshot.done_tasks, snapshot.failed_tasks
+                            )).size(10.0).color(palette.text_muted));
+                            ui.add_space(8.0);
+                            for t in &snapshot.tasks {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(format!("#{}", t.id)).size(9.0).color(palette.text_muted));
+                                    ui.label(egui::RichText::new(&t.title).size(10.0).color(palette.text));
+                                    ui.label(egui::RichText::new(&t.status_label).size(9.0).color(palette.accent));
+                                });
+                            }
+                        });
+                    }
+                    TabKind::Timeline => {
+                        let snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.app.task_timeline);
+                        crate::editor::task_timeline::render_task_timeline(ui, &snapshot, palette);
+                    }
+                    TabKind::Metrics => {
+                        let snapshot = self.app.orchestrator.dashboard_snapshot();
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("⊿ Mission Metrics").size(14.0).strong().color(palette.accent));
+                            ui.add_space(8.0);
+                            egui::Grid::new("panel_metrics_grid").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
+                                ui.label(egui::RichText::new("Pending:").size(11.0).color(palette.text_muted));
+                                ui.label(egui::RichText::new(format!("{}", snapshot.pending_tasks)).size(11.0).color(palette.warning));
+                                ui.end_row();
+                                ui.label(egui::RichText::new("Running:").size(11.0).color(palette.text_muted));
+                                ui.label(egui::RichText::new(format!("{}", snapshot.running_tasks)).size(11.0).color(palette.success));
+                                ui.end_row();
+                                ui.label(egui::RichText::new("Done:").size(11.0).color(palette.text_muted));
+                                ui.label(egui::RichText::new(format!("{}", snapshot.done_tasks)).size(11.0).color(palette.text));
+                                ui.end_row();
+                                ui.label(egui::RichText::new("Failed:").size(11.0).color(palette.text_muted));
+                                ui.label(egui::RichText::new(format!("{}", snapshot.failed_tasks)).size(11.0).color(palette.error));
+                                ui.end_row();
+                                ui.label(egui::RichText::new("Active workers:").size(11.0).color(palette.text_muted));
+                                ui.label(egui::RichText::new(format!("{}", snapshot.active_workers)).size(11.0).color(palette.accent));
+                                ui.end_row();
+                            });
+                        });
+                    }
+                    _ => {
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(32.0);
+                            ui.label(egui::RichText::new(&kind_label).size(16.0).strong().color(palette.accent));
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new("Panel active in the current mode.").size(11.0).color(palette.text_muted));
+                        });
+                    }
+                }
             }
         }
     }
@@ -122,6 +301,29 @@ impl<'a> TabViewerImpl<'a> {
                 ("Env fallback", palette.warning)
             };
             ui.label(egui::RichText::new(label).small().color(color));
+        };
+        // At-a-glance configured dot shown right on each provider header, so you
+        // don't have to expand a section to see whether it's set up. The whole
+        // header is tinted by status (green = configured, muted = not).
+        let provider_header = |name: &str, configured: bool| {
+            egui::RichText::new(format!("●  {}", name))
+                .strong()
+                .color(if configured {
+                    palette.success
+                } else {
+                    palette.text_muted
+                })
+        };
+        // Consistent section headers: accent-tinted with breathing room.
+        let section_header = |ui: &mut egui::Ui, title: &str| {
+            ui.add_space(10.0);
+            ui.label(
+                egui::RichText::new(title.to_uppercase())
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
+            ui.add_space(6.0);
         };
         let text_row = |ui: &mut egui::Ui,
                         label: &str,
@@ -147,8 +349,7 @@ impl<'a> TabViewerImpl<'a> {
                     ui.add_space(8.0);
 
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Appearance").strong());
-                        ui.add_space(8.0);
+                        section_header(ui, "Appearance");
 
                         ui.label(egui::RichText::new("Workspace profile").strong());
                         let mut selected_profile = self.app.appearance.profile;
@@ -164,10 +365,11 @@ impl<'a> TabViewerImpl<'a> {
                                 .small()
                                 .color(palette.text_muted),
                         );
+                        // Route through set_work_mode so switching here shares the
+                        // toolbar's per-mode layout memory (snapshot + restore).
                         if selected_profile != self.app.appearance.profile {
-                            self.app.apply_workspace_profile(selected_profile);
+                            self.app.set_work_mode(selected_profile);
                             self.app.apply_appearance(ui.ctx());
-                            self.app.save_workspace_preferences();
                         }
 
                         ui.add_space(8.0);
@@ -236,8 +438,7 @@ impl<'a> TabViewerImpl<'a> {
 
                     ui.add_space(8.0);
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Agent defaults").strong());
-                        ui.add_space(6.0);
+                        section_header(ui, "Agent defaults");
 
                         let mut provider = self.app.provider;
                         let mut selected_model = self.app.selected_model.clone();
@@ -350,10 +551,11 @@ impl<'a> TabViewerImpl<'a> {
 
                     ui.add_space(8.0);
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Providers & credentials").strong());
-                        ui.add_space(8.0);
+                        section_header(ui, "Providers & credentials");
 
-                        egui::CollapsingHeader::new("Cloudflare Workers AI")
+                        egui::CollapsingHeader::new(
+                            provider_header("Cloudflare Workers AI", self.app.provider_settings.cloudflare.is_configured()),
+                        )
                             .default_open(true)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -365,7 +567,9 @@ impl<'a> TabViewerImpl<'a> {
                                 text_row(ui, "Label", &mut self.app.provider_settings.cloudflare.label, "default", false);
                             });
 
-                        egui::CollapsingHeader::new("OpenRouter")
+                        egui::CollapsingHeader::new(
+                            provider_header("OpenRouter", self.app.provider_settings.openrouter.is_configured()),
+                        )
                             .default_open(true)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -376,7 +580,9 @@ impl<'a> TabViewerImpl<'a> {
                                 text_row(ui, "Label", &mut self.app.provider_settings.openrouter.label, "OR-Default", false);
                             });
 
-                        egui::CollapsingHeader::new("Azure OpenAI")
+                        egui::CollapsingHeader::new(
+                            provider_header("Azure OpenAI", self.app.provider_settings.azure_openai.is_configured()),
+                        )
                             .default_open(false)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -390,7 +596,9 @@ impl<'a> TabViewerImpl<'a> {
                                 text_row(ui, "Label", &mut self.app.provider_settings.azure_openai.label, "Azure-Default", false);
                             });
 
-                        egui::CollapsingHeader::new("Local Ollama")
+                        egui::CollapsingHeader::new(
+                            provider_header("Local Ollama", self.app.provider_settings.ollama.is_configured()),
+                        )
                             .default_open(false)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -403,7 +611,14 @@ impl<'a> TabViewerImpl<'a> {
 
                         ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {
-                            if ui.button("Save provider settings").clicked() {
+                            let save = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new("Save provider settings")
+                                        .color(palette.success)
+                                        .strong(),
+                                )
+                            );
+                            if save.on_hover_text("Writes credentials to the workspace provider settings file").clicked() {
                                 self.app.save_provider_settings();
                             }
                             if ui.button("Reload").clicked() {
@@ -420,20 +635,42 @@ impl<'a> TabViewerImpl<'a> {
         let palette = self.app.palette();
         let code_font = self.app.appearance.code_font_id();
         let is_empty = self.app.command_output.trim().is_empty();
+
+        // Human-readable byte size for the output counter (e.g. "12.3 KB").
+        fn human_bytes(n: usize) -> String {
+            const KB: f64 = 1024.0;
+            const MB: f64 = KB * 1024.0;
+            let n = n as f64;
+            if n >= MB {
+                format!("{:.1} MB", n / MB)
+            } else if n >= KB {
+                format!("{:.1} KB", n / KB)
+            } else {
+                format!("{} B", n as usize)
+            }
+        }
+
         egui::Frame::new()
             .inner_margin(egui::Margin::same(10))
             .fill(palette.bg_primary)
             .show(ui, |ui: &mut egui::Ui| {
                 ui.vertical(|ui: &mut egui::Ui| {
                     if is_empty {
-                        ui.add_space(12.0);
+                        ui.add_space(16.0);
                         ui.vertical_centered(|ui| {
                             ui.label(
-                                egui::RichText::new("Terminal output will appear here")
+                                egui::RichText::new("›_")
+                                    .monospace()
+                                    .size(26.0)
+                                    .color(palette.accent.gamma_multiply(0.7)),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new("Run a command below — output appears here")
                                     .color(palette.text_muted),
                             );
                         });
-                        ui.add_space(8.0);
+                        ui.add_space(12.0);
                     }
 
                     let scroll_height = ui.available_height() - 75.0;
@@ -442,14 +679,33 @@ impl<'a> TabViewerImpl<'a> {
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show(ui, |ui: &mut egui::Ui| {
-                            let mut text = self.app.command_output.clone();
-                            ui.add(
-                                egui::TextEdit::multiline(&mut text)
-                                    .code_editor()
-                                    .font(code_font.clone())
-                                    .desired_width(f32::INFINITY)
-                                    .text_color(palette.accent),
-                            );
+                            // Color each line by meaning so output is scannable:
+                            // commands in accent, errors red, warnings amber.
+                            ui.vertical(|ui| {
+                                for line in self.app.command_output.lines() {
+                                    let trimmed = line.trim_start();
+                                    let color = if trimmed.starts_with('>') {
+                                        palette.accent
+                                    } else if trimmed.starts_with("error")
+                                        || trimmed.contains("error:")
+                                        || trimmed.starts_with("Error")
+                                    {
+                                        palette.error
+                                    } else if trimmed.starts_with("warning")
+                                        || trimmed.contains("warning:")
+                                    {
+                                        palette.warning
+                                    } else {
+                                        palette.text
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(if line.is_empty() { " " } else { line })
+                                            .monospace()
+                                            .size(13.0)
+                                            .color(color),
+                                    );
+                                }
+                            });
                         });
 
                     ui.separator();
@@ -482,12 +738,9 @@ impl<'a> TabViewerImpl<'a> {
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui: &mut egui::Ui| {
                                 ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} B",
-                                        self.app.command_output.len()
-                                    ))
-                                    .small()
-                                    .weak(),
+                                    egui::RichText::new(human_bytes(self.app.command_output.len()))
+                                        .small()
+                                        .weak(),
                                 );
                             },
                         );
@@ -508,11 +761,11 @@ impl<'a> TabViewerImpl<'a> {
                             std::thread::spawn(move || {
                                 let mut cmd = if cfg!(target_os = "windows") {
                                     let mut c = std::process::Command::new("cmd");
-                                    c.args(&["/C", &cmd_str]);
+                                    c.args(["/C", &cmd_str]);
                                     c
                                 } else {
                                     let mut c = std::process::Command::new("sh");
-                                    c.args(&["-c", &cmd_str]);
+                                    c.args(["-c", &cmd_str]);
                                     c
                                 };
                                 cmd.current_dir(&workspace_root);
@@ -540,7 +793,7 @@ impl<'a> TabViewerImpl<'a> {
 
         egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("Mission Control");
+                ui.heading(egui::RichText::new("Mission Control").color(palette.accent));
                 ui.add_space(12.0);
                 if ui.selectable_label(self.app.mission_control.active_sub_tab == 0, "Brief").clicked() {
                     self.app.mission_control.active_sub_tab = 0;
@@ -600,15 +853,29 @@ impl<'a> TabViewerImpl<'a> {
                         ui.group(|ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(format!("Plan: {}", snapshot.planning_status)).small());
-                                ui.separator();
+                                ui.label(egui::RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                                 ui.label(egui::RichText::new(format!("Runtime: {}", snapshot.runtime_status)).small());
                             });
                             if let Some(goal) = &snapshot.goal {
                                 ui.label(egui::RichText::new(format!("Goal: {}", goal)).small().color(palette.text_muted));
                             }
                             ui.horizontal_wrapped(|ui| {
+                                if let Some(kind) = &snapshot.task_kind {
+                                    ui.label(egui::RichText::new(format!("Kind: {}", kind)).small().color(palette.text_muted));
+                                    ui.label(egui::RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
+                                }
+                                ui.label(egui::RichText::new(format!("Scope: {}", snapshot.scope_count)).small().color(palette.text_muted));
+                                if snapshot.has_routed_plan {
+                                    ui.label(egui::RichText::new("· Routed plan ready").small().color(palette.success));
+                                }
+                                if snapshot.has_dependency_cycle {
+                                    ui.label(egui::RichText::new("· ⚠ dependency cycle").small().color(palette.warning));
+                                }
+                            });
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(format!("Pending: {}", snapshot.pending_tasks)).small());
                                 ui.label(egui::RichText::new(format!("Running: {}", snapshot.running_tasks)).small().color(palette.accent));
+                                ui.label(egui::RichText::new(format!("Active workers: {}", snapshot.active_workers)).small().color(palette.accent));
                                 ui.label(egui::RichText::new(format!("Done: {}", snapshot.done_tasks)).small().color(palette.success));
                                 if snapshot.failed_tasks > 0 {
                                     ui.label(egui::RichText::new(format!("Failed: {}", snapshot.failed_tasks)).small().color(palette.error));
@@ -623,7 +890,7 @@ impl<'a> TabViewerImpl<'a> {
                         ui.add_space(8.0);
                         ui.group(|ui| {
                             let timeline_snapshot = TaskTimelineSnapshot::new(&self.app.task_timeline);
-                            render_mission_activity_feed(ui, &timeline_snapshot, None, 15);
+                            render_mission_activity_feed(ui, &timeline_snapshot, None, 15, palette);
                         });
 
                     } else {
@@ -648,6 +915,10 @@ impl<'a> TabViewerImpl<'a> {
                                 if !task.scope.is_empty() {
                                     ui.label(egui::RichText::new(format!("Scope: {}", task.scope.join(", "))).small().color(palette.text_muted));
                                 }
+                                if !task.provider_label.is_empty() || !task.model_label.is_empty() {
+                                    let model = if task.model_label.is_empty() { "default" } else { task.model_label.as_str() };
+                                    ui.label(egui::RichText::new(format!("Model: {} / {}", task.provider_label, model)).small().color(palette.text_muted));
+                                }
                                 if task.status_label == "Running" {
                                     ui.add(
                                         egui::TextEdit::multiline(&mut self.app.mission_control.selected_task_note_input)
@@ -669,17 +940,30 @@ impl<'a> TabViewerImpl<'a> {
 
                         // Worker cards
                         if snapshot.tasks.is_empty() {
-                            ui.label(egui::RichText::new("No active workers").small().color(palette.text_muted));
+                            ui.add_space(16.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    egui::RichText::new("◇")
+                                        .size(28.0)
+                                        .color(palette.accent.gamma_multiply(0.7)),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new("No active workers — launch a mission to see them here")
+                                        .color(palette.text_muted),
+                                );
+                            });
+                            ui.add_space(12.0);
                         }
                         for task in &snapshot.tasks {
                             ui.push_id(task.id, |ui| {
                                 let is_selected = self.app.mission_control.selected_task_id == Some(task.id);
-                                let status_color = match task.status_label.as_str() {
-                                    "Done" => palette.success,
-                                    "Running" => palette.accent,
-                                    "Blocked" => palette.warning,
-                                    "Failed" => palette.error,
-                                    _ => palette.text_muted,
+                                let (status_color, glyph) = match task.status_label.as_str() {
+                                    "Done" => (palette.success, "✔"),
+                                    "Running" => (palette.accent, "▷"),
+                                    "Blocked" => (palette.warning, "◆"),
+                                    "Failed" => (palette.error, "✖"),
+                                    _ => (palette.text_muted, "○"),
                                 };
 
                                 egui::Frame::new()
@@ -689,6 +973,7 @@ impl<'a> TabViewerImpl<'a> {
                                     .inner_margin(egui::Margin::same(8))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new(glyph).color(status_color));
                                             ui.label(egui::RichText::new(format!("#{}", task.id)).monospace().small().color(palette.text_muted));
                                             ui.label(egui::RichText::new(&task.title).small().strong());
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -704,6 +989,9 @@ impl<'a> TabViewerImpl<'a> {
                                             }
                                             if ui.small_button("Retry").clicked() {
                                                 self.app.orchestrator.retry_task_action(crate::orchestrator::TaskId(task.id), &self.app.workspace_root, &self.app.mediator);
+                                            }
+                                            if ui.small_button("Reset").clicked() {
+                                                self.app.orchestrator.reset_task_action(crate::orchestrator::TaskId(task.id));
                                             }
                                         });
                                     });
@@ -728,6 +1016,17 @@ impl<'a> TabViewerImpl<'a> {
                                     self.app.next_intervention_id += 1;
                                     self.app.mission_control.queue_intervention(id, note);
                                     self.app.mission_control.intervention_input.clear();
+                                }
+                            }
+                            if !self.app.mission_control.interventions.is_empty() {
+                                ui.add_space(6.0);
+                                ui.separator();
+                                for intervention in self.app.mission_control.interventions.iter().rev() {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(egui::RichText::new(format!("#{}", intervention.id)).monospace().small().color(palette.text_muted));
+                                        ui.label(egui::RichText::new(&intervention.note).small());
+                                        ui.label(egui::RichText::new(format!("— {}", intervention.status)).small().color(palette.text_muted));
+                                    });
                                 }
                             }
                         });

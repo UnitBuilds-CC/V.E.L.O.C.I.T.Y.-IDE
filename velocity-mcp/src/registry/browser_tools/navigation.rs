@@ -14,12 +14,12 @@ pub fn handle_navigation_tool(
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report =
                     crate::editor::browser::crawl_and_sync_sitemap_report(url, &sitemap_path)
-                        .map_err(|e| Box::<dyn Error>::from(e))?;
+                        .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise browser crawl summary: {err}")))?
             } else {
                 crate::editor::browser::crawl_and_sync_sitemap(url, &sitemap_path)
-                    .map_err(|e| Box::<dyn Error>::from(e))?
+                    .map_err(Box::<dyn Error>::from)?
             }
         }
         "browser_runtime_capture" => {
@@ -39,7 +39,7 @@ pub fn handle_navigation_tool(
                     api_base,
                     &sitemap_path,
                 )
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report).map_err(|err| {
                     Box::<dyn Error>::from(format!("serialise browser runtime capture summary: {err}"))
                 })?
@@ -52,7 +52,7 @@ pub fn handle_navigation_tool(
                     api_base,
                     &sitemap_path,
                 )
-                .map_err(|e| Box::<dyn Error>::from(e))?
+                .map_err(Box::<dyn Error>::from)?
             }
         }
         "browser_runtime_visual_capture" => crate::editor::browser::browser_runtime_visual_capture(
@@ -61,7 +61,7 @@ pub fn handle_navigation_tool(
             arguments["apiBase"].as_str(),
             arguments["compact"].as_bool().unwrap_or(false),
         )
-        .map_err(|e| Box::<dyn Error>::from(e))?,
+        .map_err(Box::<dyn Error>::from)?,
         "runtime_create_session" => crate::editor::browser::create_runtime_session(
             root,
             arguments["sessionId"]
@@ -72,7 +72,7 @@ pub fn handle_navigation_tool(
             arguments["apiBase"].as_str(),
             arguments["compact"].as_bool().unwrap_or(false),
         )
-        .map_err(|e| Box::<dyn Error>::from(e))?,
+        .map_err(Box::<dyn Error>::from)?,
         "runtime_get_session" => crate::editor::browser::get_runtime_session(
             root,
             arguments["sessionId"]
@@ -80,7 +80,7 @@ pub fn handle_navigation_tool(
                 .ok_or("sessionId is required")?,
             arguments["compact"].as_bool().unwrap_or(false),
         )
-        .map_err(|e| Box::<dyn Error>::from(e))?,
+        .map_err(Box::<dyn Error>::from)?,
         "runtime_close_session" => crate::editor::browser::close_runtime_session(
             root,
             arguments["sessionId"]
@@ -88,7 +88,7 @@ pub fn handle_navigation_tool(
                 .ok_or("sessionId is required")?,
             arguments["compact"].as_bool().unwrap_or(false),
         )
-        .map_err(|e| Box::<dyn Error>::from(e))?,
+        .map_err(Box::<dyn Error>::from)?,
         "runtime_capture_session" => {
             let sitemap_path = root.join(".velocity").join("site_map");
             crate::editor::browser::capture_runtime_session(
@@ -99,7 +99,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_navigate" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -113,7 +113,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_click" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -128,7 +128,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_js_click" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -142,7 +142,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_evaluate" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -156,7 +156,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_fill" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -174,7 +174,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_submit" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -189,7 +189,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_session_press_key" => {
             let sitemap_path = root.join(".velocity").join("site_map");
@@ -203,7 +203,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["compact"].as_bool().unwrap_or(false),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?
+            .map_err(Box::<dyn Error>::from)?
         }
         "runtime_reseed_auth" => {
             let target_session_id = arguments["targetSessionId"]
@@ -222,7 +222,7 @@ pub fn handle_navigation_tool(
                 &sitemap_path,
                 arguments["waitTimeoutMs"].as_u64(),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
                     Box::<dyn Error>::from(format!("serialise runtime auth reseed report: {err}"))

@@ -2,6 +2,7 @@ pub mod browser_tools;
 pub mod dispatch;
 pub mod parsers;
 pub mod system_tools;
+pub mod team_tools;
 pub mod tool_definitions;
 pub mod types;
 pub mod wa_tools;

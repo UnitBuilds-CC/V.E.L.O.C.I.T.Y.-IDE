@@ -114,8 +114,9 @@ fn writes_plaintext_transcript_nda() {
     let content = b"{\"role\":\"user\"}\n{\"role\":\"assistant\"}\n";
 
     write_workspace_transcript_nda(tmp.path(), content);
+    let raw = std::fs::read(tmp.path().join(".velocity").join("transcript.nda")).unwrap();
     let transcript =
-        std::fs::read_to_string(tmp.path().join(".velocity").join("transcript.nda")).unwrap();
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"transcript", &raw)).unwrap();
     assert!(transcript.starts_with("transcript version 2\n"));
     assert!(transcript.contains("field_count 2\n"));
     assert!(transcript.contains("field\tsource\tjsonl\n"));
@@ -143,8 +144,9 @@ fn writes_plaintext_sitemap_nda() {
     .unwrap();
 
     write_sitemap_nda(tmp.path());
+    let raw = std::fs::read(tmp.path().join(".velocity").join("sitemap.nda")).unwrap();
     let sitemap =
-        std::fs::read_to_string(tmp.path().join(".velocity").join("sitemap.nda")).unwrap();
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"sitemap", &raw)).unwrap();
     assert!(sitemap.starts_with("sitemap version 2\n"));
     assert!(sitemap.contains("entry_count 4\n"));
     assert!(sitemap.contains("\tdir\tsrc\t-"));
@@ -178,8 +180,9 @@ fn writes_plaintext_chatlogs_nda() {
     ];
 
     save_chatlogs_nda(tmp.path(), &messages);
+    let raw = std::fs::read(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
     let chatlogs =
-        std::fs::read_to_string(tmp.path().join(".velocity").join("chatlogs.nda")).unwrap();
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"chatlogs", &raw)).unwrap();
     assert!(chatlogs.starts_with("chatlogs version 3\n"));
     assert!(chatlogs.contains("message_count 2"));
     assert!(chatlogs.contains("field\t0\trole\tassistant"));
@@ -270,8 +273,9 @@ fn loads_legacy_ndav_chatlogs_nda() {
 fn writes_plaintext_handover_nda() {
     let tmp = tempfile::tempdir().unwrap();
     write_handover_nda(tmp.path(), "self_correcting", 7, "compile failed", true);
+    let raw = std::fs::read(tmp.path().join(".velocity").join("handover.nda")).unwrap();
     let handover =
-        std::fs::read_to_string(tmp.path().join(".velocity").join("handover.nda")).unwrap();
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"handover", &raw)).unwrap();
     assert!(handover.starts_with("handover version 2\n"));
     assert!(handover.contains("field_count 4\n"));
     assert!(handover.contains("field\tstate\tself_correcting"));
@@ -285,8 +289,9 @@ fn appends_plaintext_changelog_nda() {
     let tmp = tempfile::tempdir().unwrap();
     append_changelog_nda(tmp.path(), "src/main.rs", "edited");
     append_changelog_nda(tmp.path(), "src/lib.rs", "created");
+    let raw = std::fs::read(tmp.path().join(".velocity").join("changelog.nda")).unwrap();
     let changelog =
-        std::fs::read_to_string(tmp.path().join(".velocity").join("changelog.nda")).unwrap();
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"changelog", &raw)).unwrap();
     assert!(changelog.starts_with("changelog version 2\n"));
     assert!(changelog.contains("entry_count 2\n"));
     assert!(changelog.contains("\tsrc/main.rs\tedited"));
@@ -305,7 +310,9 @@ fn appends_to_legacy_ndav_changelog() {
     .unwrap();
 
     append_changelog_nda(tmp.path(), "src/new.rs", "created");
-    let changelog = std::fs::read_to_string(velocity_dir.join("changelog.nda")).unwrap();
+    let raw = std::fs::read(velocity_dir.join("changelog.nda")).unwrap();
+    let changelog =
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"changelog", &raw)).unwrap();
     assert!(changelog.starts_with("changelog version 2\n"));
     assert!(changelog.contains("entry_count 2\n"));
     assert!(changelog.contains("\tsrc/old.rs\tupdated"));
@@ -422,8 +429,9 @@ fn writes_last_request_artifacts() {
         &request,
     );
 
+    let raw = std::fs::read(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
     let nda =
-        std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
+        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"last_request", &raw)).unwrap();
     let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json"))
         .unwrap();
     assert!(nda.contains("last-request version 3"));

@@ -5,6 +5,12 @@ pub struct WasmV128Vector {
 
 pub struct WasmSimdPipeline;
 
+impl Default for WasmSimdPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WasmSimdPipeline {
     pub fn new() -> Self {
         Self

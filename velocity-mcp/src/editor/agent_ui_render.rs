@@ -4,6 +4,7 @@
 //! from AgentUiState. No mutations occur during render.
 
 use crate::editor::agent_ui_state::*;
+use crate::editor::theme::IdePalette;
 use eframe::egui;
 
 /// Immutable snapshot for rendering (zero-copy reference)
@@ -18,7 +19,7 @@ impl<'a> RenderSnapshot<'a> {
 }
 
 /// Render agent metrics bar (immutable render)
-pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
+pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot, palette: IdePalette) {
     let metrics = &snapshot.state.metrics;
 
     ui.horizontal_wrapped(|ui| {
@@ -74,13 +75,13 @@ pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot) {
                 ui.label(
                     egui::RichText::new("Thinking: ON")
                         .size(10.0)
-                        .color(egui::Color32::from_rgb(168, 85, 247)),
+                        .color(palette.accent),
                 );
             } else {
                 ui.label(
                     egui::RichText::new("Thinking: OFF")
                         .size(10.0)
-                        .color(egui::Color32::from_rgb(125, 131, 166)),
+                        .color(palette.text_muted),
                 );
             }
         });

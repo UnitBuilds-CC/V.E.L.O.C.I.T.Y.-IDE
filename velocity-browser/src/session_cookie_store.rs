@@ -23,6 +23,12 @@ pub struct CookieStore {
     pub cookies: Vec<CookieRecord>,
 }
 
+impl Default for CookieStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CookieStore {
     pub fn new() -> Self {
         Self { cookies: Vec::new() }

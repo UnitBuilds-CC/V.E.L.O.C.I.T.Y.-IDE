@@ -324,6 +324,14 @@ impl VelocityApp {
     }
 
     pub fn update_diagnostics(&mut self) {
+        // Poll at most once per second; reading + parsing the diagnostics file
+        // every rendered frame is wasted I/O while the IDE is idle.
+        if let Some(at) = self.last_diagnostics_poll {
+            if at.elapsed() < std::time::Duration::from_secs(1) {
+                return;
+            }
+        }
+        self.last_diagnostics_poll = Some(std::time::Instant::now());
         let diag = read_latest_diagnostics(&self.workspace_root);
         let count = if diag.success { 0 } else { diag.errors.len() };
         if count != self.build_errors_count {

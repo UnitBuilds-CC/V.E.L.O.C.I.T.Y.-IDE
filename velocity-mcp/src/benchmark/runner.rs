@@ -91,7 +91,8 @@ pub fn run_benchmarks() {
     print!("Running Qwen-3B Layer (INT4) CPU Benchmark...");
     let start_qwen_layer = Instant::now();
     for _ in 0..model_iterations {
-        black_box(bench_qwen_3b_layer_int4(&mut qwen_data));
+        bench_qwen_3b_layer_int4(&mut qwen_data);
+        black_box(());
     }
     let duration_qwen_layer = start_qwen_layer.elapsed();
     let qwen_layer_avg_us = (duration_qwen_layer.as_micros() as f64) / (model_iterations as f64);
@@ -100,7 +101,8 @@ pub fn run_benchmarks() {
     print!("Running BitNet-3B Layer (Ternary) CPU Benchmark...");
     let start_bitnet_layer = Instant::now();
     for _ in 0..model_iterations {
-        black_box(bench_bitnet_3b_layer_ternary(&mut bitnet_data));
+        bench_bitnet_3b_layer_ternary(&mut bitnet_data);
+        black_box(());
     }
     let duration_bitnet_layer = start_bitnet_layer.elapsed();
     let bitnet_layer_avg_us =
@@ -110,7 +112,8 @@ pub fn run_benchmarks() {
     print!("Running BitNet-3B Layer (V.E.L.O.C.I.T.Y. NDA) CPU Benchmark...");
     let start_bitnet_nda = Instant::now();
     for _ in 0..model_iterations {
-        black_box(bench_bitnet_3b_layer_nda(&mut bitnet_data));
+        bench_bitnet_3b_layer_nda(&mut bitnet_data);
+        black_box(());
     }
     let duration_bitnet_nda = start_bitnet_nda.elapsed();
     let bitnet_nda_layer_avg_us =

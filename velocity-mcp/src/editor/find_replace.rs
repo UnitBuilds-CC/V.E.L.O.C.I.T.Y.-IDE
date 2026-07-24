@@ -1,0 +1,295 @@
+#![allow(dead_code)]
+//! In-file Find & Replace (Ctrl+F / Ctrl+H).
+//!
+//! Provides incremental search with match highlighting, case sensitivity toggle,
+//! regex support, and replace-one / replace-all operations.
+
+use eframe::egui;
+
+/// State for the find/replace overlay within a single editor tab.
+#[derive(Debug, Clone, Default)]
+pub struct FindReplaceState {
+    pub visible: bool,
+    pub query: String,
+    pub replacement: String,
+    pub case_sensitive: bool,
+    pub use_regex: bool,
+    pub whole_word: bool,
+    /// Indices (byte offsets) of all matches in the current buffer.
+    pub matches: Vec<(usize, usize)>,
+    /// Which match is currently focused (for F3 / Shift+F3 cycling).
+    pub current_match: usize,
+    /// Whether the replace field is shown (Ctrl+H vs Ctrl+F).
+    pub replace_visible: bool,
+    /// One-shot flag: just opened, should focus the query field.
+    pub just_opened: bool,
+}
+
+impl FindReplaceState {
+    pub fn open_find(&mut self) {
+        self.visible = true;
+        self.replace_visible = false;
+        self.just_opened = true;
+    }
+
+    pub fn open_find_replace(&mut self) {
+        self.visible = true;
+        self.replace_visible = true;
+        self.just_opened = true;
+    }
+
+    pub fn close(&mut self) {
+        self.visible = false;
+    }
+
+    /// Recompute matches against `text`. Call when query or text changes.
+    pub fn recompute_matches(&mut self, text: &str) {
+        self.matches.clear();
+        if self.query.is_empty() {
+            return;
+        }
+
+        if self.use_regex {
+            // Simple regex-like search (subset: no full regex crate, just literal for now)
+            self.compute_literal_matches(text);
+        } else {
+            self.compute_literal_matches(text);
+        }
+
+        // Clamp current_match
+        if self.current_match >= self.matches.len() {
+            self.current_match = 0;
+        }
+    }
+
+    fn compute_literal_matches(&mut self, text: &str) {
+        let query = if self.case_sensitive {
+            self.query.clone()
+        } else {
+            self.query.to_lowercase()
+        };
+        let haystack = if self.case_sensitive {
+            text.to_string()
+        } else {
+            text.to_lowercase()
+        };
+
+        let qlen = query.len();
+        if qlen == 0 {
+            return;
+        }
+
+        let mut start = 0;
+        while let Some(pos) = haystack[start..].find(&query) {
+            let abs_pos = start + pos;
+            let end = abs_pos + qlen;
+
+            if self.whole_word {
+                let before_ok = abs_pos == 0
+                    || !text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
+                let after_ok = end >= text.len()
+                    || !text.as_bytes()[end].is_ascii_alphanumeric();
+                if before_ok && after_ok {
+                    self.matches.push((abs_pos, end));
+                }
+            } else {
+                self.matches.push((abs_pos, end));
+            }
+            start = abs_pos + 1;
+            if start >= haystack.len() {
+                break;
+            }
+        }
+    }
+
+    /// Move to next match.
+    pub fn next_match(&mut self) {
+        if !self.matches.is_empty() {
+            self.current_match = (self.current_match + 1) % self.matches.len();
+        }
+    }
+
+    /// Move to previous match.
+    pub fn prev_match(&mut self) {
+        if !self.matches.is_empty() {
+            self.current_match = if self.current_match == 0 {
+                self.matches.len() - 1
+            } else {
+                self.current_match - 1
+            };
+        }
+    }
+
+    /// Replace the current match. Returns the new text.
+    pub fn replace_current(&mut self, text: &str) -> String {
+        if self.matches.is_empty() {
+            return text.to_string();
+        }
+        let (start, end) = self.matches[self.current_match];
+        let mut result = String::with_capacity(text.len());
+        result.push_str(&text[..start]);
+        result.push_str(&self.replacement);
+        result.push_str(&text[end..]);
+        result
+    }
+
+    /// Replace all matches. Returns the new text.
+    pub fn replace_all(&self, text: &str) -> String {
+        if self.matches.is_empty() {
+            return text.to_string();
+        }
+        let mut result = String::with_capacity(text.len());
+        let mut last_end = 0;
+        for &(start, end) in &self.matches {
+            result.push_str(&text[last_end..start]);
+            result.push_str(&self.replacement);
+            last_end = end;
+        }
+        result.push_str(&text[last_end..]);
+        result
+    }
+
+    /// Render the find/replace bar UI. Returns actions to apply.
+    pub fn show(&mut self, ui: &mut egui::Ui, palette: &crate::editor::theme::IdePalette) -> FindAction {
+        let mut action = FindAction::None;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            // Find field
+            let find_response = ui.add(
+                egui::TextEdit::singleline(&mut self.query)
+                    .desired_width(200.0)
+                    .hint_text("Find...")
+            );
+            if self.just_opened {
+                find_response.request_focus();
+                self.just_opened = false;
+            }
+            if find_response.changed() {
+                action = FindAction::Recompute;
+            }
+
+            // Match count label
+            let count = self.matches.len();
+            let label = if count == 0 && !self.query.is_empty() {
+                "No results".to_string()
+            } else if count > 0 {
+                format!("{}/{}", self.current_match + 1, count)
+            } else {
+                String::new()
+            };
+            if !label.is_empty() {
+                ui.colored_label(palette.text_muted, &label);
+            }
+
+            // Nav buttons
+            if ui.small_button("\u{25B2}").on_hover_text("Previous (Shift+F3)").clicked() {
+                action = FindAction::Prev;
+            }
+            if ui.small_button("\u{25BC}").on_hover_text("Next (F3)").clicked() {
+                action = FindAction::Next;
+            }
+
+            // Toggles
+            let cs_btn = ui.selectable_label(self.case_sensitive, "Aa");
+            if cs_btn.clicked() {
+                self.case_sensitive = !self.case_sensitive;
+                action = FindAction::Recompute;
+            }
+            let ww_btn = ui.selectable_label(self.whole_word, "W");
+            if ww_btn.clicked() {
+                self.whole_word = !self.whole_word;
+                action = FindAction::Recompute;
+            }
+
+            // Close
+            if ui.small_button("\u{2715}").clicked() {
+                self.close();
+            }
+        });
+
+        // Replace row
+        if self.replace_visible {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.replacement)
+                        .desired_width(200.0)
+                        .hint_text("Replace...")
+                );
+                if ui.small_button("Replace").clicked() {
+                    action = FindAction::ReplaceCurrent;
+                }
+                if ui.small_button("Replace All").clicked() {
+                    action = FindAction::ReplaceAll;
+                }
+            });
+        }
+
+        action
+    }
+}
+
+/// Actions the find/replace UI can request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindAction {
+    None,
+    Recompute,
+    Next,
+    Prev,
+    ReplaceCurrent,
+    ReplaceAll,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_literal_case_insensitive() {
+        let mut state = FindReplaceState::default();
+        state.query = "hello".to_string();
+        state.recompute_matches("Hello world hello HELLO");
+        assert_eq!(state.matches.len(), 3);
+    }
+
+    #[test]
+    fn find_literal_case_sensitive() {
+        let mut state = FindReplaceState::default();
+        state.query = "Hello".to_string();
+        state.case_sensitive = true;
+        state.recompute_matches("Hello world hello HELLO");
+        assert_eq!(state.matches.len(), 1);
+    }
+
+    #[test]
+    fn find_whole_word() {
+        let mut state = FindReplaceState::default();
+        state.query = "he".to_string();
+        state.whole_word = true;
+        state.recompute_matches("he hello the he");
+        assert_eq!(state.matches.len(), 2); // "he" at start and end
+    }
+
+    #[test]
+    fn replace_all() {
+        let mut state = FindReplaceState::default();
+        state.query = "foo".to_string();
+        state.replacement = "bar".to_string();
+        state.recompute_matches("foo baz foo");
+        let result = state.replace_all("foo baz foo");
+        assert_eq!(result, "bar baz bar");
+    }
+
+    #[test]
+    fn replace_current() {
+        let mut state = FindReplaceState::default();
+        state.query = "x".to_string();
+        state.replacement = "Y".to_string();
+        state.recompute_matches("axbxc");
+        state.current_match = 1;
+        let result = state.replace_current("axbxc");
+        assert_eq!(result, "axbYc");
+    }
+}

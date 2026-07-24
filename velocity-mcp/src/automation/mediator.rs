@@ -230,6 +230,8 @@ impl MediatorArena {
         locks_guard.get(file_path).cloned().unwrap_or_default()
     }
 
+    /// All currently held locks across every file. Test-only diagnostic.
+    #[cfg(test)]
     pub fn active_locks(&self) -> Vec<EditLock> {
         let locks_guard = self.locks.lock().unwrap();
         locks_guard

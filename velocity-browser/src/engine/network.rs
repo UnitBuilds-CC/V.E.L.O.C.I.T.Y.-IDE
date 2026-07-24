@@ -16,6 +16,12 @@ pub struct NetworkTracker {
     pub downloads: Vec<String>,
 }
 
+impl Default for NetworkTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkTracker {
     pub fn new() -> Self {
         Self {

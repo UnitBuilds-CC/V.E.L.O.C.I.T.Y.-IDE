@@ -4,7 +4,6 @@ pub mod reports;
 pub mod scripts;
 
 pub use execution::*;
-pub use payloads::*;
 pub use reports::*;
 
 #[cfg(test)]
@@ -15,7 +14,7 @@ pub(crate) fn save_windows_capture_report_from_json(
     title_override: Option<&str>,
     json_payload: &str,
 ) -> Result<crate::wa::WaWindowsCaptureReport, Box<dyn std::error::Error>> {
-    let payload = parse_capture_payload(json_payload)?;
+    let payload = payloads::parse_capture_payload(json_payload)?;
     save_windows_capture_payload(root, session_id, snapshot_name, title_override, payload)
 }
 

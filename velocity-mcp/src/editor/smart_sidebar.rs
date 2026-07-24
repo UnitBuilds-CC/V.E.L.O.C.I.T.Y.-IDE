@@ -360,6 +360,36 @@ impl SmartSidebarState {
         self.head = 0;
         self.text_used = 0;
     }
+
+    /// Apply mode-aware filter presets. In Coder mode, show all. In Operator
+    /// mode, prioritize QuickActions and Notes. In Mission mode, show
+    /// errors/warnings. In Accessibility mode, show all at reduced density.
+    pub fn filter_for_mode(&mut self, mode: crate::editor::theme::WorkspaceProfile) {
+        use crate::editor::theme::WorkspaceProfile;
+        // Reset all to true first
+        self.filter_types = [true; 8];
+
+        match mode {
+            WorkspaceProfile::Coder => {
+                // Show: CodeSuggestion, ErrorDiagnostic, WarningDiagnostic, SymbolDefinition
+                // De-prioritize: QuickAction (still visible)
+            }
+            WorkspaceProfile::AutomationOperator => {
+                // Focus on actions and notes, hide symbol defs
+                self.filter_types[SidebarEntryType::SymbolDefinition as usize] = false;
+                self.filter_types[SidebarEntryType::CodeSuggestion as usize] = false;
+            }
+            WorkspaceProfile::MissionControl => {
+                // Focus on errors, warnings, and quick actions
+                self.filter_types[SidebarEntryType::FileReference as usize] = false;
+                self.filter_types[SidebarEntryType::SymbolDefinition as usize] = false;
+                self.filter_types[SidebarEntryType::CodeSuggestion as usize] = false;
+            }
+            WorkspaceProfile::Accessibility => {
+                // Show everything - maximum context for accessibility users
+            }
+        }
+    }
 }
 
 /// Immutable snapshot for rendering

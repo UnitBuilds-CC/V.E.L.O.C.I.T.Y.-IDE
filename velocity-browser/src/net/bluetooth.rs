@@ -9,6 +9,12 @@ pub struct WebBluetoothTransport {
     pub discovered_devices: Vec<BluetoothDevice>,
 }
 
+impl Default for WebBluetoothTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebBluetoothTransport {
     pub fn new() -> Self {
         Self { discovered_devices: Vec::new() }

@@ -25,7 +25,7 @@ pub mod webgpu;
 
 pub use audio::{AudioContextNode, WebAudioEngine};
 pub use canvas::{CanvasElement, CanvasExtractor};
-pub use canvas_context::Canvas2DContext;
+pub use canvas_context::{Canvas2DContext, DrawCommand};
 pub use captcha_solver::{CaptchaSolverEngine, CaptchaType};
 pub use crypto::WebCryptoEngine;
 pub use files::{DownloadStreamArtifact, FileChooserEvent, FileManager};

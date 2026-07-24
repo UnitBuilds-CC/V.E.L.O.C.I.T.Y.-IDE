@@ -21,47 +21,67 @@ pub struct IdePalette {
 
 impl IdePalette {
     pub fn dark() -> Self {
+        // Warm, softened near-black with a faint plum tint for a cozy feel.
         Self {
-            bg_primary: Color32::from_rgb(8, 9, 14),
-            bg_secondary: Color32::from_rgb(17, 18, 26),
-            bg_tertiary: Color32::from_rgb(25, 27, 39),
-            text: Color32::from_rgb(226, 227, 243),
-            text_muted: Color32::from_rgb(125, 131, 166),
-            accent: Color32::from_rgb(168, 85, 247),
-            border: Color32::from_rgb(33, 36, 51),
-            success: Color32::from_rgb(74, 222, 128),
-            warning: Color32::from_rgb(250, 204, 21),
-            error: Color32::from_rgb(248, 113, 113),
+            bg_primary: Color32::from_rgb(22, 22, 28),
+            bg_secondary: Color32::from_rgb(29, 29, 36),
+            bg_tertiary: Color32::from_rgb(38, 38, 47),
+            text: Color32::from_rgb(228, 226, 234),
+            text_muted: Color32::from_rgb(142, 142, 160),
+            accent: Color32::from_rgb(183, 156, 255),
+            border: Color32::from_rgb(47, 47, 58),
+            success: Color32::from_rgb(126, 211, 155),
+            warning: Color32::from_rgb(240, 200, 120),
+            error: Color32::from_rgb(240, 140, 140),
         }
     }
 
     pub fn light() -> Self {
+        // Warm paper tones instead of cold grey for a softer, cozy daylight look.
         Self {
-            bg_primary: Color32::from_rgb(250, 250, 252),
-            bg_secondary: Color32::from_rgb(241, 241, 245),
-            bg_tertiary: Color32::from_rgb(231, 231, 237),
-            text: Color32::from_rgb(28, 28, 34),
-            text_muted: Color32::from_rgb(100, 100, 115),
-            accent: Color32::from_rgb(121, 40, 202),
-            border: Color32::from_rgb(215, 215, 225),
-            success: Color32::from_rgb(22, 163, 74),
-            warning: Color32::from_rgb(202, 138, 4),
-            error: Color32::from_rgb(220, 38, 38),
+            bg_primary: Color32::from_rgb(250, 248, 244),
+            bg_secondary: Color32::from_rgb(243, 240, 233),
+            bg_tertiary: Color32::from_rgb(234, 230, 221),
+            text: Color32::from_rgb(48, 44, 40),
+            text_muted: Color32::from_rgb(122, 114, 106),
+            accent: Color32::from_rgb(140, 92, 204),
+            border: Color32::from_rgb(223, 217, 207),
+            success: Color32::from_rgb(56, 150, 92),
+            warning: Color32::from_rgb(190, 132, 32),
+            error: Color32::from_rgb(202, 74, 62),
         }
     }
 
     pub fn operator() -> Self {
+        // Softened teal-on-slate: still focused, but easier on the eyes.
         Self {
-            bg_primary: Color32::from_rgb(6, 12, 16),
-            bg_secondary: Color32::from_rgb(12, 22, 28),
-            bg_tertiary: Color32::from_rgb(17, 32, 41),
-            text: Color32::from_rgb(223, 238, 242),
-            text_muted: Color32::from_rgb(136, 168, 176),
-            accent: Color32::from_rgb(45, 212, 191),
-            border: Color32::from_rgb(29, 55, 65),
-            success: Color32::from_rgb(74, 222, 128),
-            warning: Color32::from_rgb(251, 191, 36),
-            error: Color32::from_rgb(248, 113, 113),
+            bg_primary: Color32::from_rgb(14, 20, 23),
+            bg_secondary: Color32::from_rgb(20, 28, 32),
+            bg_tertiary: Color32::from_rgb(28, 39, 44),
+            text: Color32::from_rgb(218, 232, 234),
+            text_muted: Color32::from_rgb(142, 168, 173),
+            accent: Color32::from_rgb(94, 214, 197),
+            border: Color32::from_rgb(40, 59, 65),
+            success: Color32::from_rgb(126, 211, 155),
+            warning: Color32::from_rgb(240, 200, 120),
+            error: Color32::from_rgb(240, 140, 140),
+        }
+    }
+
+    pub fn mission() -> Self {
+        // Deep command-deck indigo with a mission-control amber accent —
+        // deliberately distinct from Coder's plum Midnight.
+        Self {
+            bg_primary: Color32::from_rgb(18, 20, 32),
+            bg_secondary: Color32::from_rgb(24, 27, 42),
+            bg_tertiary: Color32::from_rgb(33, 37, 56),
+            text: Color32::from_rgb(224, 227, 240),
+            text_muted: Color32::from_rgb(140, 148, 176),
+            accent: Color32::from_rgb(255, 179, 71),
+            border: Color32::from_rgb(44, 49, 72),
+            success: Color32::from_rgb(126, 211, 155),
+            warning: Color32::from_rgb(240, 200, 120),
+            error: Color32::from_rgb(240, 140, 140),
         }
     }
 
@@ -86,14 +106,16 @@ pub enum ThemeVariant {
     Midnight,
     Daylight,
     Operator,
+    Mission,
     HighContrast,
 }
 
 impl ThemeVariant {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Midnight,
         Self::Daylight,
         Self::Operator,
+        Self::Mission,
         Self::HighContrast,
     ];
 
@@ -102,6 +124,7 @@ impl ThemeVariant {
             Self::Midnight => "Midnight",
             Self::Daylight => "Daylight",
             Self::Operator => "Operator",
+            Self::Mission => "Mission",
             Self::HighContrast => "High Contrast",
         }
     }
@@ -111,6 +134,7 @@ impl ThemeVariant {
             Self::Midnight => IdePalette::dark(),
             Self::Daylight => IdePalette::light(),
             Self::Operator => IdePalette::operator(),
+            Self::Mission => IdePalette::mission(),
             Self::HighContrast => IdePalette::high_contrast(),
         }
     }
@@ -139,7 +163,7 @@ impl Density {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkspaceProfile {
     Coder,
     AutomationOperator,
@@ -164,6 +188,15 @@ impl WorkspaceProfile {
         }
     }
 
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Coder => "Code",
+            Self::AutomationOperator => "Automate",
+            Self::MissionControl => "Mission",
+            Self::Accessibility => "Access",
+        }
+    }
+
     pub fn description(self) -> &'static str {
         match self {
             Self::Coder => "Balanced editor-first default for coding and agent review.",
@@ -179,6 +212,28 @@ impl WorkspaceProfile {
         }
     }
 
+    /// Keyboard shortcut that jumps straight to this mode, surfaced in hovers
+    /// so the switcher is discoverable without opening the command palette.
+    pub fn shortcut_hint(self) -> &'static str {
+        match self {
+            Self::Coder => "Ctrl+1",
+            Self::AutomationOperator => "Ctrl+2",
+            Self::MissionControl => "Ctrl+3",
+            Self::Accessibility => "Ctrl+4",
+        }
+    }
+
+    /// Distinct geometric glyph per mode — reinforces the "night and day"
+    /// identity in the toolbar pills and the status-bar badge. Restricted to
+    /// shapes already known to render in the bundled fonts.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Coder => "◧",
+            Self::AutomationOperator => "▶",
+            Self::MissionControl => "◇",
+            Self::Accessibility => "◌",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -215,7 +270,7 @@ impl AppearanceSettings {
             },
             WorkspaceProfile::MissionControl => Self {
                 profile,
-                theme: ThemeVariant::Midnight,
+                theme: ThemeVariant::Mission,
                 density: Density::Spacious,
                 ui_scale: 1.05,
                 code_scale: 1.0,
@@ -248,25 +303,25 @@ impl AppearanceSettings {
 
     fn item_spacing(self) -> Vec2 {
         match self.density {
-            Density::Compact => Vec2::new(4.0, 4.0),
-            Density::Comfortable => Vec2::new(6.0, 6.0),
-            Density::Spacious => Vec2::new(8.0, 8.0),
+            Density::Compact => Vec2::new(6.0, 5.0),
+            Density::Comfortable => Vec2::new(8.0, 7.0),
+            Density::Spacious => Vec2::new(10.0, 9.0),
         }
     }
 
     fn button_padding(self) -> Vec2 {
         match self.density {
-            Density::Compact => Vec2::new(6.0, 3.0),
-            Density::Comfortable => Vec2::new(8.0, 4.0),
-            Density::Spacious => Vec2::new(10.0, 5.0),
+            Density::Compact => Vec2::new(8.0, 5.0),
+            Density::Comfortable => Vec2::new(11.0, 6.0),
+            Density::Spacious => Vec2::new(13.0, 8.0),
         }
     }
 
     fn window_margin(self) -> i8 {
         match self.density {
-            Density::Compact => 8,
-            Density::Comfortable => 10,
-            Density::Spacious => 12,
+            Density::Compact => 10,
+            Density::Comfortable => 13,
+            Density::Spacious => 16,
         }
     }
 }
@@ -301,36 +356,90 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
     visuals.override_text_color = Some(palette.text);
     visuals.panel_fill = palette.bg_secondary;
     visuals.window_fill = palette.bg_primary;
-    visuals.selection.bg_fill = palette.accent.gamma_multiply(0.25);
-    visuals.selection.stroke.color = palette.text;
+    visuals.selection.bg_fill = palette.accent.gamma_multiply(0.22);
+    visuals.selection.stroke.color = palette.accent;
     visuals.selection.stroke.width = 1.0;
     visuals.window_stroke.color = palette.border;
     visuals.window_stroke.width = 1.0;
     visuals.hyperlink_color = palette.accent;
     visuals.faint_bg_color = palette.bg_secondary;
     visuals.extreme_bg_color = palette.bg_primary;
-    visuals.window_corner_radius = CornerRadius::same(8);
-    visuals.widgets.noninteractive.bg_fill = palette.bg_tertiary;
+
+    // Rounder corners everywhere for a softer, cozier silhouette.
+    visuals.window_corner_radius = CornerRadius::same(12);
+    visuals.menu_corner_radius = CornerRadius::same(10);
+    let widget_radius = CornerRadius::same(8);
+
+    // Soft, diffuse shadows instead of hard edges on floating surfaces.
+    let shadow_color = Color32::from_black_alpha(if appearance.theme.is_dark() { 90 } else { 40 });
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 6],
+        blur: 24,
+        spread: 0,
+        color: shadow_color,
+    };
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: shadow_color,
+    };
+
+    // Declutter: no indent guide lines in trees, filled slider trails.
+    visuals.indent_has_left_vline = false;
+    visuals.slider_trailing_fill = true;
+
+    // Noninteractive surfaces (labels, separators) — keep separators subtle.
+    visuals.widgets.noninteractive.bg_fill = palette.bg_secondary;
+    visuals.widgets.noninteractive.weak_bg_fill = palette.bg_secondary;
+    visuals.widgets.noninteractive.bg_stroke =
+        egui::Stroke::new(1.0, palette.border.gamma_multiply(0.5));
     visuals.widgets.noninteractive.fg_stroke.color = palette.text_muted;
-    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
-    visuals.widgets.inactive.bg_fill = palette.bg_secondary;
+    visuals.widgets.noninteractive.corner_radius = widget_radius;
+
+    // Inactive: transparent-ish buttons that only reveal fill on hover.
+    visuals.widgets.inactive.bg_fill = palette.bg_tertiary;
+    visuals.widgets.inactive.weak_bg_fill = palette.bg_secondary;
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
     visuals.widgets.inactive.fg_stroke.color = palette.text;
-    visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
-    visuals.widgets.active.bg_fill = palette.bg_tertiary;
-    visuals.widgets.active.fg_stroke.color = palette.text;
-    visuals.widgets.active.corner_radius = CornerRadius::same(6);
-    visuals.widgets.hovered.bg_fill = palette.accent.gamma_multiply(0.15);
+    visuals.widgets.inactive.corner_radius = widget_radius;
+
+    // Hover: gentle accent wash.
+    visuals.widgets.hovered.bg_fill = palette.accent.gamma_multiply(0.16);
+    visuals.widgets.hovered.weak_bg_fill = palette.accent.gamma_multiply(0.12);
+    visuals.widgets.hovered.bg_stroke =
+        egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.35));
     visuals.widgets.hovered.fg_stroke.color = palette.text;
-    visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
+    visuals.widgets.hovered.corner_radius = widget_radius;
+
+    // Active/pressed: slightly stronger accent.
+    visuals.widgets.active.bg_fill = palette.accent.gamma_multiply(0.24);
+    visuals.widgets.active.weak_bg_fill = palette.accent.gamma_multiply(0.20);
+    visuals.widgets.active.bg_stroke =
+        egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.5));
+    visuals.widgets.active.fg_stroke.color = palette.text;
+    visuals.widgets.active.corner_radius = widget_radius;
+
+    // Open (combo/menu): match tertiary surface.
     visuals.widgets.open.bg_fill = palette.bg_tertiary;
+    visuals.widgets.open.weak_bg_fill = palette.bg_tertiary;
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, palette.border);
     visuals.widgets.open.fg_stroke.color = palette.text;
-    visuals.widgets.open.corner_radius = CornerRadius::same(6);
+    visuals.widgets.open.corner_radius = widget_radius;
 
     let mut style = Style::default();
     style.visuals = visuals;
     style.spacing.item_spacing = appearance.item_spacing();
     style.spacing.button_padding = appearance.button_padding();
     style.spacing.window_margin = egui::Margin::same(appearance.window_margin());
+    style.spacing.menu_margin = egui::Margin::same(8);
+    style.spacing.indent = 16.0;
+
+    // Slim, unobtrusive scrollbars that only widen on hover.
+    style.spacing.scroll.bar_width = 8.0;
+    style.spacing.scroll.floating = true;
+    style.spacing.scroll.bar_inner_margin = 2.0;
+
     style.text_styles.insert(
         TextStyle::Heading,
         FontId::new(18.0 * appearance.ui_scale, FontFamily::Proportional),

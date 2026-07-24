@@ -4,6 +4,12 @@ pub struct NdaEncoder {
     pub triples: Vec<NdaTriple>,
 }
 
+impl Default for NdaEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NdaEncoder {
     pub fn new() -> Self {
         Self { triples: Vec::new() }
@@ -38,7 +44,7 @@ impl NdaEncoder {
 
     /// Parse a contiguous binary byte stream back into an NdaEncoder
     pub fn from_binary_stream(stream: &[u8]) -> Result<Self, &'static str> {
-        if stream.len() % 18 != 0 {
+        if !stream.len().is_multiple_of(18) {
             return Err("Binary stream length must be a multiple of 18 bytes");
         }
 

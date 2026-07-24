@@ -241,11 +241,10 @@ pub fn run_agent_reasoning_loop(
                         break;
                     }
 
-                    if cleaned.starts_with("data: ") {
-                        let json_part = &cleaned[6..];
+                    if let Some(json_part) = cleaned.strip_prefix("data: ") {
                         if let Ok(parsed) = serde_json::from_str::<Value>(json_part) {
                             if let Some(choices) = parsed["choices"].as_array() {
-                                if let Some(first_choice) = choices.get(0) {
+                                if let Some(first_choice) = choices.first() {
                                     let delta = &first_choice["delta"];
 
                                     if let Some(r) = delta["reasoning_content"]
@@ -440,16 +439,20 @@ pub fn run_agent_reasoning_loop(
                         let mut param_rest = fname_rest;
                         while let Some(ps) = param_rest.find("<parameter=") {
                             let after_ps = &param_rest[ps + "<parameter=".len()..];
-                            let key_end = after_ps.find('>').unwrap_or(after_ps.len());
+                            let key_end = match after_ps.find('>') {
+                                Some(pos) => pos,
+                                None => break,
+                            };
                             let key = after_ps[..key_end].to_string();
-                            let val_start = key_end + 1;
+                            let val_start = (key_end + 1).min(after_ps.len());
                             let val_end = after_ps[val_start..]
                                 .find("</parameter>")
                                 .map(|e| val_start + e)
                                 .unwrap_or(after_ps.len());
                             let val = after_ps[val_start..val_end].trim().to_string();
                             args.insert(key, Value::String(val));
-                            param_rest = &after_ps[val_end..];
+                            let next_slice_start = (val_end + "</parameter>".len()).min(after_ps.len());
+                            param_rest = &after_ps[next_slice_start..];
                         }
                         let call_id = format!("inline_{}", accumulated_tools.len());
                         accumulated_tools.push(ToolCallAccumulator {
@@ -797,38 +800,36 @@ pub fn run_agent_reasoning_loop(
             }
 
             save_chatlogs_nda(workspace_root, message_history);
-        } else {
-            if sitemap_needed {
-                ui_tx
-                    .send(AgentToUiMessage::StatusUpdate(
-                        "Running automatic compilation validation...".to_string(),
-                    ))
-                    .ok();
-                match run_compilation_check(workspace_root) {
-                    Ok(()) => {
-                        write_handover_nda(
-                            workspace_root,
-                            "idle",
-                            loop_count,
-                            "compiler validated",
-                            false,
-                        );
-                        ui_tx
-                            .send(AgentToUiMessage::StatusUpdate(
-                                "Compiler validation succeeded!".to_string(),
-                            ))
-                            .ok();
-                        break;
-                    }
-                    Err(e) => {
-                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Build status: {e}"))).ok();
-                        break;
-                    }
+        } else if sitemap_needed {
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Running automatic compilation validation...".to_string(),
+                ))
+                .ok();
+            match run_compilation_check(workspace_root) {
+                Ok(()) => {
+                    write_handover_nda(
+                        workspace_root,
+                        "idle",
+                        loop_count,
+                        "compiler validated",
+                        false,
+                    );
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(
+                            "Compiler validation succeeded!".to_string(),
+                        ))
+                        .ok();
+                    break;
                 }
-            } else {
-                write_handover_nda(workspace_root, "idle", loop_count, "completed", false);
-                break;
+                Err(e) => {
+                    ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Build status: {e}"))).ok();
+                    break;
+                }
             }
+        } else {
+            write_handover_nda(workspace_root, "idle", loop_count, "completed", false);
+            break;
         }
     }
 

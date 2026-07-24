@@ -47,6 +47,38 @@ fn relative_path(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn workspace_root_of(path: &Path) -> Option<PathBuf> {
+    for ancestor in path.ancestors() {
+        if ancestor.file_name().and_then(|value| value.to_str()) == Some(".velocity") {
+            return ancestor.parent().map(Path::to_path_buf);
+        }
+    }
+    None
+}
+
+/// Read a `.nda` artifact, transparently decrypting an AES-256-GCM envelope when
+/// present and passing legacy plaintext through unchanged.
+fn read_nda_text(path: &Path) -> Result<String, Box<dyn Error>> {
+    let bytes = fs::read(path)?;
+    let plain = match workspace_root_of(path) {
+        Some(root) => crate::agent::crypto::open(&root, b"wa", &bytes),
+        None => bytes,
+    };
+    Ok(String::from_utf8_lossy(&plain).into_owned())
+}
+
+/// Write a `.nda` artifact sealed with AES-256-GCM, falling back to plaintext
+/// only if key material is unavailable (so an artifact is never lost).
+fn write_nda_text(path: &Path, text: &str) -> Result<(), Box<dyn Error>> {
+    let bytes = match workspace_root_of(path) {
+        Some(root) => crate::agent::crypto::seal(&root, b"wa", text.as_bytes())
+            .unwrap_or_else(|| text.as_bytes().to_vec()),
+        None => text.as_bytes().to_vec(),
+    };
+    fs::write(path, bytes)?;
+    Ok(())
+}
+
 fn ensure_velocity_dir(root: &Path, child: &str) -> Result<PathBuf, Box<dyn Error>> {
     let dir = root.join(".velocity").join(child);
     fs::create_dir_all(&dir)?;
@@ -133,7 +165,7 @@ pub fn parse_list_sort_direction(value: Option<&str>) -> Result<WaListSortDirect
 pub fn load_session(root: &Path, session_id: &str) -> Result<WaSession, Box<dyn Error>> {
     let nda_path = session_nda_path(root, session_id)?;
     if nda_path.exists() {
-        return crate::wa::nda::deserialize_session_nda(&fs::read_to_string(&nda_path)?);
+        return crate::wa::nda::deserialize_session_nda(&read_nda_text(&nda_path)?);
     }
     let legacy_path = session_json_legacy_path(root, session_id)?;
     let content = fs::read_to_string(legacy_path)?;
@@ -147,7 +179,7 @@ pub fn load_snapshot(
 ) -> Result<WaSnapshot, Box<dyn Error>> {
     let nda_path = snapshot_nda_path(root, session_id, snapshot_name)?;
     if nda_path.exists() {
-        return crate::wa::nda::deserialize_snapshot_nda(&fs::read_to_string(&nda_path)?);
+        return crate::wa::nda::deserialize_snapshot_nda(&read_nda_text(&nda_path)?);
     }
     let legacy_path = snapshot_json_legacy_path(root, session_id, snapshot_name)?;
     let content = fs::read_to_string(legacy_path)?;
@@ -157,7 +189,7 @@ pub fn load_snapshot(
 pub fn load_script(path: &Path) -> Result<WaScript, Box<dyn Error>> {
     let nda_path = script_nda_path_from_read_path(path);
     if nda_path.exists() {
-        return crate::wa::nda::deserialize_script_nda(&fs::read_to_string(&nda_path)?);
+        return crate::wa::nda::deserialize_script_nda(&read_nda_text(&nda_path)?);
     }
     let content = fs::read_to_string(path)?;
     Ok(serde_json::from_str(&content)?)
@@ -177,7 +209,7 @@ pub fn create_session_report(
         snapshot_count: 0,
     };
     let nda_path = session_nda_path(root, session_id)?;
-    fs::write(&nda_path, crate::wa::nda::serialize_session_nda(&session))?;
+    write_nda_text(&nda_path, &crate::wa::nda::serialize_session_nda(&session))?;
     Ok(WaSessionCreateReport {
         session,
         session_nda_path: relative_path(root, &nda_path),
@@ -210,7 +242,7 @@ pub fn list_sessions(
         if path.extension().and_then(|value| value.to_str()) != Some("nda") {
             continue;
         }
-        let session = crate::wa::nda::deserialize_session_nda(&fs::read_to_string(&path)?)?;
+        let session = crate::wa::nda::deserialize_session_nda(&read_nda_text(&path)?)?;
         if let Some(filter) = session_id_contains {
             if !session.id.to_ascii_lowercase().contains(&filter.to_ascii_lowercase()) {
                 continue;
@@ -254,14 +286,14 @@ pub fn save_snapshot_report(
         nodes,
     };
     let snapshot_nda = snapshot_nda_path(root, session_id, snapshot_name)?;
-    fs::write(&snapshot_nda, crate::wa::nda::serialize_snapshot_nda(&snapshot))?;
+    write_nda_text(&snapshot_nda, &crate::wa::nda::serialize_snapshot_nda(&snapshot))?;
 
     session.updated_at_ms = now_ms();
     session.latest_snapshot_name = Some(snapshot_name.to_string());
     session.latest_snapshot_nda_path = Some(relative_path(root, &snapshot_nda));
     session.snapshot_count = count_session_snapshots(root, session_id)?;
     let session_nda = session_nda_path(root, session_id)?;
-    fs::write(&session_nda, crate::wa::nda::serialize_session_nda(&session))?;
+    write_nda_text(&session_nda, &crate::wa::nda::serialize_session_nda(&session))?;
 
     Ok(WaSnapshotSaveReport {
         snapshot,
@@ -298,7 +330,7 @@ pub fn list_snapshots(
         if path.extension().and_then(|value| value.to_str()) != Some("nda") {
             continue;
         }
-        let snapshot = crate::wa::nda::deserialize_snapshot_nda(&fs::read_to_string(&path)?)?;
+        let snapshot = crate::wa::nda::deserialize_snapshot_nda(&read_nda_text(&path)?)?;
         if let Some(expected_session_id) = session_id {
             if snapshot.session_id != expected_session_id {
                 continue;
@@ -350,7 +382,7 @@ pub fn save_script_report(
         steps,
     };
     let nda_path = script_nda_path(root, name)?;
-    fs::write(&nda_path, crate::wa::nda::serialize_script_nda(&script))?;
+    write_nda_text(&nda_path, &crate::wa::nda::serialize_script_nda(&script))?;
     Ok(WaScriptSaveReport {
         script,
         relative_file_path: relative_path(root, &nda_path),
@@ -385,7 +417,7 @@ pub fn list_scripts(
         if !file_name.ends_with(".wa.nda") {
             continue;
         }
-        let script = crate::wa::nda::deserialize_script_nda(&fs::read_to_string(&path)?)?;
+        let script = crate::wa::nda::deserialize_script_nda(&read_nda_text(&path)?)?;
         if let Some(filter) = script_name_contains {
             if !script.name.to_ascii_lowercase().contains(&filter.to_ascii_lowercase()) {
                 continue;
@@ -412,7 +444,7 @@ pub fn save_run_report(
     report: &WaScriptRunReport,
 ) -> Result<WaRunArtifactReport, Box<dyn Error>> {
     let nda_path = run_nda_path(root, &report.run_id)?;
-    fs::write(&nda_path, crate::wa::nda::serialize_run_nda(report))?;
+    write_nda_text(&nda_path, &crate::wa::nda::serialize_run_nda(report))?;
     Ok(WaRunArtifactReport {
         run: report.clone(),
         relative_file_path: relative_path(root, &nda_path),
@@ -421,7 +453,7 @@ pub fn save_run_report(
 }
 
 pub fn read_run_report(root: &Path, path: &Path) -> Result<WaRunArtifactReport, Box<dyn Error>> {
-    let run = crate::wa::nda::deserialize_run_nda(&fs::read_to_string(path)?)?;
+    let run = crate::wa::nda::deserialize_run_nda(&read_nda_text(path)?)?;
     Ok(WaRunArtifactReport {
         run,
         relative_file_path: relative_path(root, path),
@@ -447,7 +479,7 @@ pub fn list_runs(
         if !file_name.ends_with(".wa-run.nda") {
             continue;
         }
-        let run = crate::wa::nda::deserialize_run_nda(&fs::read_to_string(&path)?)?;
+        let run = crate::wa::nda::deserialize_run_nda(&read_nda_text(&path)?)?;
         if let Some(expected_session_id) = session_id {
             if run.session_id != expected_session_id {
                 continue;

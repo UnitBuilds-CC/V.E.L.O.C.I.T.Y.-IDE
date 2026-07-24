@@ -16,6 +16,12 @@ pub struct WebWorkerPool {
     pub workers: Vec<WorkerThread>,
 }
 
+impl Default for WebWorkerPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebWorkerPool {
     pub fn new() -> Self {
         Self { workers: Vec::new() }

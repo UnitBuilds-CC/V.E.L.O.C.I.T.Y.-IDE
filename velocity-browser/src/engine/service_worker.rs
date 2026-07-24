@@ -20,13 +20,19 @@ pub struct CacheStorageEngine {
     pub caches: HashMap<String, HashMap<String, CachedResponse>>,
 }
 
+impl Default for CacheStorageEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CacheStorageEngine {
     pub fn new() -> Self {
         Self { caches: HashMap::new() }
     }
 
     pub fn put(&mut self, cache_name: &str, url: &str, status: u16, body: &str) {
-        let cache = self.caches.entry(cache_name.to_string()).or_insert_with(HashMap::new);
+        let cache = self.caches.entry(cache_name.to_string()).or_default();
         cache.insert(url.to_string(), CachedResponse {
             url: url.to_string(),
             status,

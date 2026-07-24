@@ -7,8 +7,8 @@ use syntect::highlighting::{self, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
-static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(|| SyntaxSet::load_defaults_newlines());
-static THEME_SET: Lazy<ThemeSet> = Lazy::new(|| ThemeSet::load_defaults());
+static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
 
 pub struct CodeEditor {
     id: egui::Id,
@@ -35,6 +35,7 @@ impl CodeEditor {
         pending_line: Option<usize>,
         active_locks: &[crate::automation::mediator::EditLock],
         appearance: AppearanceSettings,
+        diff_marks: &[u8],
     ) -> Response {
         let extension = path
             .and_then(|p| p.extension())
@@ -95,25 +96,42 @@ impl CodeEditor {
         let mut gutter_job = egui::text::LayoutJob::default();
         for i in 1..=total_rows {
             let is_locked = is_line_locked(i);
-            let format = if is_locked {
+            // Change marker vs. the on-disk baseline (added/modified/removed).
+            let mark = diff_marks.get(i - 1).copied().unwrap_or(0);
+            let (glyph, glyph_color) = match mark {
+                1 => ("▎", palette.success),
+                2 => ("▎", palette.accent),
+                3 => ("▔", palette.error),
+                _ => (" ", palette.text_muted),
+            };
+            gutter_job.append(
+                glyph,
+                0.0,
                 egui::TextFormat {
                     font_id: code_font.clone(),
-                    color: palette.warning,
+                    color: glyph_color,
                     ..Default::default()
-                }
+                },
+            );
+            let num_color = if is_locked {
+                palette.warning
             } else {
-                egui::TextFormat {
-                    font_id: code_font.clone(),
-                    color: palette.text_muted,
-                    ..Default::default()
-                }
+                palette.text_muted
             };
             let line_num_str = if is_locked {
                 format!("L{: >3}\n", i)
             } else {
-                format!(" {: >3}\n", i)
+                format!("{: >3}\n", i)
             };
-            gutter_job.append(&line_num_str, 0.0, format);
+            gutter_job.append(
+                &line_num_str,
+                0.0,
+                egui::TextFormat {
+                    font_id: code_font.clone(),
+                    color: num_color,
+                    ..Default::default()
+                },
+            );
         }
 
         // Wrap the entire editor and gutter in a ScrollArea so they scroll together vertically
@@ -169,5 +187,5 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 #[allow(dead_code)]
 pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
     let mut editor = CodeEditor::default();
-    editor.show(ui, text, None, None, &[], AppearanceSettings::default())
+    editor.show(ui, text, None, None, &[], AppearanceSettings::default(), &[])
 }

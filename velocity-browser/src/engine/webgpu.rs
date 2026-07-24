@@ -8,6 +8,12 @@ pub struct WebGpuComputeEngine {
     pub active_buffers: Vec<WebGpuComputeBuffer>,
 }
 
+impl Default for WebGpuComputeEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebGpuComputeEngine {
     pub fn new() -> Self {
         Self { active_buffers: Vec::new() }

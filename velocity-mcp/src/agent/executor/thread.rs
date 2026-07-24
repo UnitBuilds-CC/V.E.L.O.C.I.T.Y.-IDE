@@ -2,7 +2,9 @@ use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
 use super::loop_runner::run_agent_reasoning_loop;
+use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update};
+use crate::editor::expert_team::{load_expert_teams, ExpertTeam};
 use crate::usage::*;
 use crossbeam_channel::{Receiver, Sender};
 use std::path::PathBuf;
@@ -205,6 +207,7 @@ pub fn run_agent_thread(
         .ok();
 
     let mut deferred_messages: Vec<UiToAgentMessage> = Vec::new();
+    let mut expert_teams: Vec<ExpertTeam> = load_expert_teams(&workspace_root);
 
     while let Ok(msg) = ui_rx.recv() {
         process_ui_message(
@@ -221,6 +224,7 @@ pub fn run_agent_thread(
             &mut model_catalog,
             &mut message_history,
             &mut usage_tracker,
+            &mut expert_teams,
             &ui_rx,
             &ui_tx,
             &mut deferred_messages,
@@ -242,6 +246,7 @@ pub fn run_agent_thread(
                 &mut model_catalog,
                 &mut message_history,
                 &mut usage_tracker,
+                &mut expert_teams,
                 &ui_rx,
                 &ui_tx,
                 &mut deferred_messages,
@@ -264,6 +269,7 @@ fn process_ui_message(
     model_catalog: &mut Vec<ModelInfo>,
     message_history: &mut Vec<ChatMessage>,
     usage_tracker: &mut UsageTracker,
+    expert_teams: &mut Vec<ExpertTeam>,
     ui_rx: &Receiver<UiToAgentMessage>,
     ui_tx: &Sender<AgentToUiMessage>,
     deferred_messages: &mut Vec<UiToAgentMessage>,
@@ -448,6 +454,7 @@ fn process_ui_message(
                 *usage_tracker = UsageTracker::new(workspace_root);
                 send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
                 write_sitemap_nda(workspace_root);
+                *expert_teams = load_expert_teams(workspace_root);
                 *message_history = load_chatlogs_nda(workspace_root).unwrap_or_else(|| {
                     let use_inline = *provider == AiProvider::OpenRouter
                         || !selected_profile.supports_tools;
@@ -501,6 +508,30 @@ fn process_ui_message(
                 .ok();
         }
         UiToAgentMessage::UserPrompt(prompt) => {
+            // Pick up any teams/skills authored via tools in a previous turn so
+            // they become routable immediately.
+            *expert_teams = load_expert_teams(workspace_root);
+            let routed = try_route_team_prompt(
+                &prompt,
+                expert_teams,
+                workspace_root,
+                accounts,
+                or_accounts,
+                azure_accounts,
+                ollama_accounts,
+                *provider,
+                model,
+                *thinking,
+                message_history,
+                usage_tracker,
+                ui_rx,
+                ui_tx,
+                deferred_messages,
+            );
+            if routed {
+                return;
+            }
+
             message_history.push(ChatMessage {
                 role: "user".to_string(),
                 content: prompt,
@@ -527,6 +558,15 @@ fn process_ui_message(
                 ui_tx,
                 deferred_messages,
             );
+        }
+        UiToAgentMessage::ReloadTeams => {
+            *expert_teams = load_expert_teams(workspace_root);
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Reloaded {} expert team(s) from disk.",
+                    expert_teams.len()
+                )))
+                .ok();
         }
         UiToAgentMessage::RunLocalBuild => {
             ui_tx

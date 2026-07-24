@@ -4062,10 +4062,12 @@ dependencies = [
 name = "velocity-browser"
 version = "0.1.0"
 dependencies = [
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",
  "velocity-ide",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

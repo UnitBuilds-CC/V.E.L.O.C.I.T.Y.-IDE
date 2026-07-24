@@ -164,15 +164,14 @@ fn render_header(
         };
         ui.label(egui::RichText::new(label).size(12.0).color(color));
 
-        if state.agent_active {
-            if ui
+        if state.agent_active
+            && ui
                 .small_button("Interrupt")
                 .on_hover_text("Interrupt current agent task")
                 .clicked()
             {
                 let _ = agent_tx.send(UiToAgentMessage::CancelTask);
             }
-        }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
@@ -207,18 +206,26 @@ fn render_messages(ui: &mut egui::Ui, state: &ChatPanelState, palette: IdePalett
 
             if state.messages.is_empty() {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
+                    ui.add_space(48.0);
+                    ui.label(
+                        egui::RichText::new("◇")
+                            .size(30.0)
+                            .color(palette.accent.gamma_multiply(0.7)),
+                    );
+                    ui.add_space(10.0);
                     ui.label(
                         egui::RichText::new("Start a conversation with the agent")
+                            .size(14.0)
                             .color(palette.text_muted)
                             .italics(),
                     );
+                    ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(
                             "Enter to send · Shift+Enter for newline · Ctrl+L to focus",
                         )
                         .small()
-                        .color(palette.text_muted),
+                        .color(palette.text_muted.gamma_multiply(0.8)),
                     );
                 });
                 return;
@@ -341,31 +348,34 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
 
         if line.starts_with("# ") {
             current_list_number = 0;
+            ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(&line[2..])
                     .size(17.0)
                     .strong()
                     .color(palette.accent),
             );
-            ui.add_space(2.0);
+            ui.add_space(4.0);
         } else if line.starts_with("## ") {
             current_list_number = 0;
+            ui.add_space(5.0);
             ui.label(
                 egui::RichText::new(&line[3..])
                     .size(15.5)
                     .strong()
                     .color(palette.text),
             );
-            ui.add_space(2.0);
+            ui.add_space(3.0);
         } else if line.starts_with("### ") {
             current_list_number = 0;
+            ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(&line[4..])
                     .size(14.0)
                     .strong()
                     .color(palette.text),
             );
-            ui.add_space(1.0);
+            ui.add_space(2.0);
         } else if line.starts_with("- ") || line.starts_with("* ") {
             current_list_number = 0;
             ui.horizontal(|ui| {
@@ -392,13 +402,11 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                     );
                     render_inline_markdown(ui, stripped, palette);
                 });
+            } else if !line.trim().is_empty() {
+                current_list_number = 0;
+                render_inline_markdown(ui, line, palette);
             } else {
-                if !line.trim().is_empty() {
-                    current_list_number = 0;
-                    render_inline_markdown(ui, line, palette);
-                } else {
-                    ui.add_space(4.0);
-                }
+                ui.add_space(4.0);
             }
         }
     }
@@ -474,14 +482,16 @@ fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
         }
 
         for (content, is_bold, is_italic, is_code) in parts {
-            let mut rt = egui::RichText::new(content).size(13.5);
+            // Comfortable line-height keeps wrapped paragraphs legible.
+            let mut rt = egui::RichText::new(content).size(14.0).line_height(Some(21.0));
             if is_bold {
                 rt = rt.strong().color(palette.text);
             } else if is_italic {
-                rt = rt.italics();
+                rt = rt.italics().color(palette.text);
             } else if is_code {
                 rt = rt
                     .monospace()
+                    .size(13.0)
                     .color(palette.accent)
                     .background_color(palette.bg_secondary);
             } else {
@@ -496,22 +506,22 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
     let (role_label, bg, border, align, accent) = match msg.role {
         ChatRole::User => (
             "You",
-            palette.accent.gamma_multiply(0.22),
-            palette.accent,
+            palette.accent.gamma_multiply(0.16),
+            palette.accent.gamma_multiply(0.45),
             egui::Align::RIGHT,
             palette.accent,
         ),
         ChatRole::Agent => (
             "Agent",
             palette.bg_secondary,
-            palette.border,
+            palette.border.gamma_multiply(0.6),
             egui::Align::LEFT,
             palette.accent,
         ),
         ChatRole::Thought => (
             "Reasoning",
-            palette.warning.gamma_multiply(0.12),
-            palette.warning.gamma_multiply(0.5),
+            palette.warning.gamma_multiply(0.10),
+            palette.warning.gamma_multiply(0.35),
             egui::Align::LEFT,
             palette.warning,
         ),
@@ -538,8 +548,8 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
         egui::Frame::new()
             .fill(bg)
             .stroke(egui::Stroke::new(1.0, border))
-            .corner_radius(egui::CornerRadius::same(10))
-            .inner_margin(egui::Margin::symmetric(14, 10))
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.set_max_width(ui.available_width() * 0.82);
                 let raw_text = msg.content.trim();
@@ -548,7 +558,8 @@ fn render_message_bubble(ui: &mut egui::Ui, msg: &UiChatMessage, palette: IdePal
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(&text)
-                                .size(12.0)
+                                .size(12.5)
+                                .line_height(Some(19.0))
                                 .color(palette.text_muted)
                                 .italics(),
                         )

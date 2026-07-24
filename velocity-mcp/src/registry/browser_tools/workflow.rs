@@ -35,7 +35,7 @@ pub fn handle_workflow_tool(
                 steps: parsed_steps,
             };
             let report = crate::editor::browser::save_workflow_report(root, &workflow)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise browser workflow save summary: {err}")))?
@@ -49,10 +49,10 @@ pub fn handle_workflow_tool(
                 .ok_or("relativeFilePath is required")?;
             let full_path = crate::registry::system_tools::resolve_workspace_path(root, rel_path, false)?;
             let workflow = crate::editor::browser::load_workflow(&full_path)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::read_workflow_report(&full_path)
-                    .map_err(|e| Box::<dyn Error>::from(e))?;
+                    .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report)?
             } else {
                 serde_json::to_string_pretty(&workflow)?
@@ -62,7 +62,7 @@ pub fn handle_workflow_tool(
             let sort_direction = crate::editor::browser::parse_list_sort_direction(
                 arguments["sortDirection"].as_str(),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let workflows = crate::editor::browser::list_workflows(
                 root,
@@ -71,7 +71,7 @@ pub fn handle_workflow_tool(
                 limit,
                 sort_direction,
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             serde_json::to_string_pretty(&workflows)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise workflows: {err}")))?
         }
@@ -81,7 +81,7 @@ pub fn handle_workflow_tool(
                 .ok_or("relativeFilePath is required")?;
             let full_path = crate::registry::system_tools::resolve_workspace_path(root, rel_path, false)?;
             let workflow = crate::editor::browser::load_workflow(&full_path)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             let sitemap_path = root.join(".velocity").join("site_map");
             let compact = arguments["compact"].as_bool().unwrap_or(false);
             if let Some(session_id) = arguments["sessionId"].as_str() {
@@ -92,7 +92,7 @@ pub fn handle_workflow_tool(
                         &workflow,
                         &sitemap_path,
                     )
-                    .map_err(|e| Box::<dyn Error>::from(e))?;
+                    .map_err(Box::<dyn Error>::from)?;
                     serde_json::to_string_pretty(&report).map_err(|err| {
                         Box::<dyn Error>::from(format!("serialise browser workflow replay summary: {err}"))
                     })?
@@ -103,7 +103,7 @@ pub fn handle_workflow_tool(
                         &workflow,
                         &sitemap_path,
                     )
-                    .map_err(|e| Box::<dyn Error>::from(e))?
+                    .map_err(Box::<dyn Error>::from)?
                 }
             } else if compact {
                 let report = crate::editor::browser::replay_workflow_with_artifacts_report(
@@ -111,7 +111,7 @@ pub fn handle_workflow_tool(
                     &workflow,
                     &sitemap_path,
                 )
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report).map_err(|err| {
                     Box::<dyn Error>::from(format!("serialise browser workflow replay summary: {err}"))
                 })?
@@ -121,14 +121,14 @@ pub fn handle_workflow_tool(
                     &workflow,
                     &sitemap_path,
                 )
-                .map_err(|e| Box::<dyn Error>::from(e))?
+                .map_err(Box::<dyn Error>::from)?
             }
         }
         "browser_list_workflow_runs" => {
             let sort_direction = crate::editor::browser::parse_list_sort_direction(
                 arguments["sortDirection"].as_str(),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let runs = crate::editor::browser::list_workflow_runs(
                 root,
@@ -138,7 +138,7 @@ pub fn handle_workflow_tool(
                 limit,
                 sort_direction,
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             serde_json::to_string_pretty(&runs)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise workflow runs: {err}")))?
         }
@@ -151,14 +151,14 @@ pub fn handle_workflow_tool(
                 .ok_or("sessionId is required")?;
             let report =
                 crate::editor::browser::read_workflow_run(root, workflow_name, session_id)
-                    .map_err(|e| Box::<dyn Error>::from(e))?;
+                    .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let compact = crate::editor::browser::read_workflow_run_report(
                     root,
                     workflow_name,
                     session_id,
                 )
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&compact)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise workflow run summary: {err}")))?
             } else {
@@ -186,7 +186,7 @@ pub fn handle_workflow_tool(
                     .collect(),
             };
             let report = crate::editor::browser::save_workflow_suite_report(root, &suite)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
                     Box::<dyn Error>::from(format!("serialise browser workflow suite save summary: {err}"))
@@ -203,10 +203,10 @@ pub fn handle_workflow_tool(
                 .ok_or("relativeFilePath is required")?;
             let full_path = crate::registry::system_tools::resolve_workspace_path(root, rel_path, false)?;
             let suite = crate::editor::browser::load_workflow_suite(&full_path)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::read_workflow_suite_report(&full_path)
-                    .map_err(|e| Box::<dyn Error>::from(e))?;
+                    .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report)?
             } else {
                 serde_json::to_string_pretty(&suite)?
@@ -216,7 +216,7 @@ pub fn handle_workflow_tool(
             let sort_direction = crate::editor::browser::parse_list_sort_direction(
                 arguments["sortDirection"].as_str(),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let suites = crate::editor::browser::list_workflow_suites(
                 root,
@@ -224,7 +224,7 @@ pub fn handle_workflow_tool(
                 limit,
                 sort_direction,
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             serde_json::to_string_pretty(&suites)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise workflow suites: {err}")))?
         }
@@ -234,25 +234,25 @@ pub fn handle_workflow_tool(
                 .ok_or("relativeFilePath is required")?;
             let full_path = crate::registry::system_tools::resolve_workspace_path(root, rel_path, false)?;
             let suite = crate::editor::browser::load_workflow_suite(&full_path)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report =
                     crate::editor::browser::run_workflow_suite_report(root, &suite, &sitemap_path)
-                        .map_err(|e| Box::<dyn Error>::from(e))?;
+                        .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report).map_err(|err| {
                     Box::<dyn Error>::from(format!("serialise browser workflow suite execution summary: {err}"))
                 })?
             } else {
                 crate::editor::browser::run_workflow_suite(root, &suite, &sitemap_path)
-                    .map_err(|e| Box::<dyn Error>::from(e))?
+                    .map_err(Box::<dyn Error>::from)?
             }
         }
         "browser_list_workflow_suite_runs" => {
             let sort_direction = crate::editor::browser::parse_list_sort_direction(
                 arguments["sortDirection"].as_str(),
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let runs = crate::editor::browser::list_workflow_suite_runs(
                 root,
@@ -260,7 +260,7 @@ pub fn handle_workflow_tool(
                 limit,
                 sort_direction,
             )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            .map_err(Box::<dyn Error>::from)?;
             serde_json::to_string_pretty(&runs)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise workflow suite runs: {err}")))?
         }
@@ -269,11 +269,11 @@ pub fn handle_workflow_tool(
                 .as_str()
                 .ok_or("suiteName is required")?;
             let report = crate::editor::browser::read_workflow_suite_run(root, suite_name)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let compact =
                     crate::editor::browser::read_workflow_suite_run_report(root, suite_name)
-                        .map_err(|e| Box::<dyn Error>::from(e))?;
+                        .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&compact)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise workflow suite run summary: {err}")))?
             } else {

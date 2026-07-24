@@ -11,6 +11,12 @@ pub struct PushNotificationManager {
     pub subscriptions: Vec<PushSubscription>,
 }
 
+impl Default for PushNotificationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PushNotificationManager {
     pub fn new() -> Self {
         Self { subscriptions: Vec::new() }

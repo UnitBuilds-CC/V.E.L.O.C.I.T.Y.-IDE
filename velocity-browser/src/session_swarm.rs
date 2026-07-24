@@ -4,6 +4,12 @@ pub struct SwarmSessionOrchestrator {
     pub swarm_sessions: Vec<BrowserSession>,
 }
 
+impl Default for SwarmSessionOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SwarmSessionOrchestrator {
     pub fn new() -> Self {
         Self {

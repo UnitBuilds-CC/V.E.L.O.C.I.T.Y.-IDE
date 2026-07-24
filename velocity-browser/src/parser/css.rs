@@ -47,14 +47,12 @@ impl CssMatcher {
         }
 
         // ID selector e.g. #id
-        if target_part.starts_with('#') {
-            let id = &target_part[1..];
+        if let Some(id) = target_part.strip_prefix('#') {
             return node.attributes.get("id").map(|s| s.as_str()) == Some(id);
         }
 
         // Class selector e.g. .class
-        if target_part.starts_with('.') {
-            let class = &target_part[1..];
+        if let Some(class) = target_part.strip_prefix('.') {
             if let Some(classes) = node.attributes.get("class") {
                 return classes.split_whitespace().any(|c| c == class);
             }
@@ -109,11 +107,10 @@ impl CssMatcher {
         }
 
         let tag_part = current.split('#').next().unwrap_or(current).split('.').next().unwrap_or(current);
-        if matched && !tag_part.is_empty() {
-            if !node.tag_name.eq_ignore_ascii_case(tag_part) {
+        if matched && !tag_part.is_empty()
+            && !node.tag_name.eq_ignore_ascii_case(tag_part) {
                 matched = false;
             }
-        }
 
         matched
     }

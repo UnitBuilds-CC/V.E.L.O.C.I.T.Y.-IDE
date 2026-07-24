@@ -66,13 +66,12 @@ impl VulkanDriver {
                 }
             }
 
-            if compute_family.is_some() {
-                if selected_device.is_none() || dev_type == vk::PhysicalDeviceType::DISCRETE_GPU {
+            if compute_family.is_some()
+                && (selected_device.is_none() || dev_type == vk::PhysicalDeviceType::DISCRETE_GPU) {
                     selected_device = Some(pd);
                     selected_queue_family = compute_family;
                     selected_device_name = name;
                 }
-            }
         }
 
         let physical_device = selected_device.ok_or("No compute-capable GPU found.")?;

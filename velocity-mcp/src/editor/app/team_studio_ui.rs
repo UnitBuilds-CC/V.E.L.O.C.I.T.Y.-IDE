@@ -1,21 +1,27 @@
-use egui::{Color32, RichText, Sense, Stroke, Vec2};
+use egui::{RichText, Sense, Stroke, Vec2};
 use crate::agent::AiProvider;
 use crate::editor::expert_team::{save_expert_teams, ExpertMember, ExpertTeam};
 use super::velocity_app::VelocityApp;
 
 impl VelocityApp {
     pub fn render_team_studio(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
         ui.vertical(|ui: &mut egui::Ui| {
             ui.add_space(8.0);
             
             // Header Bar
             ui.horizontal(|ui: &mut egui::Ui| {
-                ui.heading(RichText::new("Team Studio").strong().color(Color32::from_rgb(130, 180, 255)));
+                ui.heading(RichText::new("Team Studio").strong().color(palette.accent));
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
                     if ui.button(RichText::new("Save").strong()).clicked() {
                         if save_expert_teams(&self.workspace_root, &self.expert_teams) {
                             self.status_message = "Teams saved.".into();
+                            // Notify the running agent to reload teams from disk
+                            // so routing picks up the edits immediately.
+                            let _ = self
+                                .agent_tx
+                                .send(crate::agent::UiToAgentMessage::ReloadTeams);
                         } else {
                             self.status_message = "Failed to save teams.".into();
                         }
@@ -51,7 +57,16 @@ impl VelocityApp {
             ui.separator();
 
             if self.expert_teams.is_empty() {
-                ui.label("No expert teams available.");
+                ui.add_space(16.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("◇")
+                            .size(28.0)
+                            .color(palette.accent.gamma_multiply(0.7)),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("No expert teams available").color(palette.text_muted));
+                });
                 return;
             }
 
@@ -83,7 +98,7 @@ impl VelocityApp {
             // Active Team Card Editor Header
             let active_team = &mut self.expert_teams[self.active_team_index];
             egui::Frame::group(ui.style())
-                .fill(Color32::from_rgb(25, 28, 35))
+                .fill(palette.bg_secondary)
                 .inner_margin(10.0)
                 .show(ui, |ui: &mut egui::Ui| {
                     ui.horizontal(|ui: &mut egui::Ui| {
@@ -132,9 +147,9 @@ impl VelocityApp {
                         for (m_idx, member) in active_team.members.iter().enumerate() {
                             let is_selected = member.id == selected_id;
                             let frame_color = if is_selected {
-                                Color32::from_rgb(45, 60, 95)
+                                palette.bg_tertiary
                             } else {
-                                Color32::from_rgb(30, 33, 42)
+                                palette.bg_secondary
                             };
 
                             let frame_res = egui::Frame::group(ui.style())
@@ -142,17 +157,17 @@ impl VelocityApp {
                                 .inner_margin(8.0)
                                 .show(ui, |ui: &mut egui::Ui| {
                                     ui.horizontal(|ui: &mut egui::Ui| {
-                                        ui.label(RichText::new(format!("#{} {}", m_idx + 1, member.name)).strong().color(Color32::WHITE));
-                                        ui.label(RichText::new(format!("({})", member.role)).italics().color(Color32::LIGHT_BLUE));
+                                        ui.label(RichText::new(format!("#{} {}", m_idx + 1, member.name)).strong().color(palette.text));
+                                        ui.label(RichText::new(format!("({})", member.role)).italics().color(palette.accent));
                                     });
                                     ui.horizontal(|ui: &mut egui::Ui| {
-                                        ui.label(RichText::new(format!("{}", member.provider.label())).small().color(Color32::GOLD));
-                                        ui.label(RichText::new(format!("{}", member.model_id)).small().color(Color32::KHAKI));
+                                        ui.label(RichText::new(member.provider.label().to_string()).small().color(palette.warning));
+                                        ui.label(RichText::new(member.model_id.to_string()).small().color(palette.text_muted));
                                     });
                                     ui.horizontal(|ui: &mut egui::Ui| {
                                         ui.label(RichText::new("Scopes:").small().strong());
                                         for scope in member.scope_patterns.iter().take(3) {
-                                            ui.label(RichText::new(format!("[{}]", scope)).small().color(Color32::LIGHT_GREEN));
+                                            ui.label(RichText::new(format!("[{}]", scope)).small().color(palette.success));
                                         }
                                     });
                                 });
@@ -169,7 +184,7 @@ impl VelocityApp {
                     // Topology Diagram Box
                     ui.label(RichText::new("Delegation Topology").small().strong());
                     egui::Frame::canvas(ui.style())
-                        .fill(Color32::from_rgb(18, 20, 26))
+                        .fill(palette.bg_primary)
                         .inner_margin(10.0)
                         .show(ui, |ui: &mut egui::Ui| {
                             let (rect, _response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 140.0), Sense::hover());
@@ -186,23 +201,23 @@ impl VelocityApp {
                                 // Connect edges to next member
                                 if i + 1 < member_count {
                                     let next_center = egui::pos2(rect.min.x + (i as f32 + 1.5) * step_x, center_y);
-                                    painter.line_segment([node_center, next_center], Stroke::new(2.0, Color32::from_rgb(70, 100, 160)));
+                                    painter.line_segment([node_center, next_center], Stroke::new(2.0, palette.border));
                                 }
 
                                 let node_color = if Some(&m.id) == self.selected_member_id.as_ref() {
-                                    Color32::from_rgb(90, 140, 240)
+                                    palette.accent
                                 } else {
-                                    Color32::from_rgb(45, 55, 75)
+                                    palette.bg_tertiary
                                 };
 
                                 painter.circle_filled(node_center, 22.0, node_color);
-                                painter.circle_stroke(node_center, 22.0, Stroke::new(1.5, Color32::WHITE));
+                                painter.circle_stroke(node_center, 22.0, Stroke::new(1.5, palette.border));
                                 painter.text(
                                     node_center,
                                     egui::Align2::CENTER_CENTER,
                                     format!("E{}", i + 1),
                                     egui::FontId::proportional(12.0),
-                                    Color32::WHITE,
+                                    palette.text,
                                 );
                             }
                         });
@@ -227,9 +242,9 @@ impl VelocityApp {
                         egui::ScrollArea::vertical().id_salt("member_editor_scroll").show(ui, |ui: &mut egui::Ui| {
                             ui.horizontal(|ui: &mut egui::Ui| {
                                 ui.label(RichText::new("Member ID:").strong());
-                                ui.label(RichText::new(&member_id_display).monospace().color(Color32::GRAY));
+                                ui.label(RichText::new(&member_id_display).monospace().color(palette.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                    if can_remove && ui.button(RichText::new("Remove").color(Color32::RED)).clicked() {
+                                    if can_remove && ui.button(RichText::new("Remove").color(palette.error)).clicked() {
                                         remove_requested = true;
                                     }
                                 });
@@ -320,7 +335,16 @@ impl VelocityApp {
                             self.selected_member_id = None;
                         }
                     } else {
-                        ui.label("Select a member from the left panel to configure.");
+                        ui.add_space(16.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("◌")
+                                    .size(28.0)
+                                    .color(palette.accent.gamma_multiply(0.7)),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Select a member from the left panel to configure").color(palette.text_muted));
+                        });
                     }
                 });
             });

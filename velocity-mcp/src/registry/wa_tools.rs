@@ -15,8 +15,7 @@ pub fn handle_wa_tool(
                 arguments["sessionId"]
                     .as_str()
                     .ok_or("sessionId is required")?,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA session creation summary: {err}")))?
@@ -31,8 +30,7 @@ pub fn handle_wa_tool(
             let session_id = arguments["sessionId"]
                 .as_str()
                 .ok_or("sessionId is required")?;
-            let report = crate::wa::get_session_report(root, session_id)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+            let report = crate::wa::get_session_report(root, session_id)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA session summary: {err}")))?
@@ -43,15 +41,14 @@ pub fn handle_wa_tool(
         }
         "wa_list_sessions" => {
             let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let sessions = crate::wa::list_sessions(
                 root,
                 arguments["sessionIdContains"].as_str(),
                 limit,
                 sort_direction,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             serde_json::to_string_pretty(&sessions)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise WA sessions: {err}")))?
         }
@@ -73,8 +70,7 @@ pub fn handle_wa_tool(
                 arguments["title"].as_str().ok_or("title is required")?,
                 arguments["focusNodeId"].as_str(),
                 nodes,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA snapshot save summary: {err}")))?
@@ -95,8 +91,7 @@ pub fn handle_wa_tool(
             let snapshot_name = arguments["snapshotName"]
                 .as_str()
                 .ok_or("snapshotName is required")?;
-            let report = crate::wa::read_snapshot_report(root, session_id, snapshot_name)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+            let report = crate::wa::read_snapshot_report(root, session_id, snapshot_name)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA snapshot summary: {err}")))?
@@ -122,8 +117,7 @@ pub fn handle_wa_tool(
                 arguments["windowNameContains"].as_str(),
                 max_depth,
                 max_children_per_node,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA Windows capture summary: {err}")))?
@@ -133,7 +127,7 @@ pub fn handle_wa_tool(
         }
         "wa_list_snapshots" => {
             let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let snapshots = crate::wa::list_snapshots(
                 root,
@@ -141,8 +135,7 @@ pub fn handle_wa_tool(
                 arguments["snapshotNameContains"].as_str(),
                 limit,
                 sort_direction,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             serde_json::to_string_pretty(&snapshots)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise WA snapshots: {err}")))?
         }
@@ -157,8 +150,7 @@ pub fn handle_wa_tool(
                 arguments["name"].as_str().ok_or("name is required")?,
                 arguments["startUrl"].as_str(),
                 steps,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script save summary: {err}")))?
@@ -174,8 +166,7 @@ pub fn handle_wa_tool(
                 .as_str()
                 .ok_or("relativeFilePath is required")?;
             let full_path = super::system_tools::resolve_workspace_path(root, rel_path, false)?;
-            let report = crate::wa::read_script_report(root, &full_path)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+            let report = crate::wa::read_script_report(root, &full_path)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script summary: {err}")))?
@@ -186,15 +177,14 @@ pub fn handle_wa_tool(
         }
         "wa_list_scripts" => {
             let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let scripts = crate::wa::list_scripts(
                 root,
                 arguments["scriptNameContains"].as_str(),
                 limit,
                 sort_direction,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             serde_json::to_string_pretty(&scripts)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise WA scripts: {err}")))?
         }
@@ -209,8 +199,7 @@ pub fn handle_wa_tool(
                 arguments["role"].as_str(),
                 arguments["name"].as_str(),
                 arguments["action"].as_str(),
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA selector resolution: {err}")))?
@@ -232,8 +221,7 @@ pub fn handle_wa_tool(
                 arguments["role"].as_str(),
                 arguments["name"].as_str(),
                 arguments["value"].as_str(),
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA action plan: {err}")))?
@@ -255,8 +243,7 @@ pub fn handle_wa_tool(
                 arguments["role"].as_str(),
                 arguments["name"].as_str(),
                 arguments["value"].as_str(),
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA Windows action report: {err}")))?
@@ -280,8 +267,7 @@ pub fn handle_wa_tool(
                 arguments["expectedValue"].as_str(),
                 arguments["timeoutMs"].as_u64().unwrap_or(3000),
                 arguments["pollIntervalMs"].as_u64().unwrap_or(100),
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA Windows wait report: {err}")))?
@@ -302,8 +288,7 @@ pub fn handle_wa_tool(
                 &full_path,
                 arguments["snapshotName"].as_str(),
                 arguments["startStepIndex"].as_u64().map(|v| v as usize),
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script run report: {err}")))?
@@ -316,8 +301,7 @@ pub fn handle_wa_tool(
                 .as_str()
                 .ok_or("relativeFilePath is required")?;
             let full_path = super::system_tools::resolve_workspace_path(root, rel_path, false)?;
-            let report = crate::wa::read_run_report(root, &full_path)
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+            let report = crate::wa::read_run_report(root, &full_path)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA run summary: {err}")))?
@@ -328,7 +312,7 @@ pub fn handle_wa_tool(
         }
         "wa_list_runs" => {
             let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(|e| Box::<dyn Error>::from(e))?;
+                .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let runs = crate::wa::list_runs(
                 root,
@@ -336,8 +320,7 @@ pub fn handle_wa_tool(
                 arguments["scriptNameContains"].as_str(),
                 limit,
                 sort_direction,
-            )
-            .map_err(|e| Box::<dyn Error>::from(e))?;
+            )?;
             serde_json::to_string_pretty(&runs)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise WA runs: {err}")))?
         }

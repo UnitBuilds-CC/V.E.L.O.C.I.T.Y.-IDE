@@ -25,7 +25,7 @@ impl WebRtcTransport {
 
     pub fn set_remote_offer(&mut self, sdp: &str) -> String {
         self.sdp_offer = Some(sdp.to_string());
-        let answer = format!("v=0\r\no=- 12345 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=sendrecv\r\n");
+        let answer = "v=0\r\no=- 12345 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=sendrecv\r\n".to_string();
         self.sdp_answer = Some(answer.clone());
         answer
     }

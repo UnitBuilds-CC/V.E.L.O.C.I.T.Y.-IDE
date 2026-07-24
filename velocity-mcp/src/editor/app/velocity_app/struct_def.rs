@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
+use velocity_ide::site_map::SiteMap;
 
 use crate::agent::{AgentToUiMessage, ModelInfo, UiToAgentMessage};
 use crate::editor::agent_ui_state::AgentUiState;
+use crate::editor::bottom_panel::BottomPanelState;
 use crate::editor::buffer::EditorBuffer;
 use crate::editor::chat_panel::ChatPanelState;
 use crate::editor::mission_control::MissionControlState;
@@ -22,6 +26,14 @@ use super::super::types::*;
 use crate::agent::AiProvider;
 use crate::editor::theme::{apply_theme, AppearanceSettings, IdePalette, WorkspaceProfile};
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ModeLayout {
+    pub left_visible: bool,
+    pub left_width: f32,
+    pub right_visible: bool,
+    pub right_width: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspacePreferences {
     pub appearance: AppearanceSettings,
@@ -35,10 +47,32 @@ pub struct WorkspacePreferences {
     pub left_sidebar_width: f32,
     pub right_sidebar_visible: bool,
     pub right_sidebar_width: f32,
+    /// Per-mode panel arrangement the user has customized, so switching modes
+    /// restores their own layout instead of resetting to defaults every time.
+    #[serde(default)]
+    pub mode_layouts: HashMap<WorkspaceProfile, ModeLayout>,
+    /// Editor file paths that were open last session, restored on launch.
+    #[serde(default)]
+    pub open_tabs: Vec<String>,
+    /// Path of the editor tab that was active last session.
+    #[serde(default)]
+    pub active_tab: Option<String>,
 }
 
 impl WorkspacePreferences {
     pub fn capture(app: &VelocityApp) -> Self {
+        // Refresh the active mode's entry so an un-switched session still
+        // persists the layout the user is currently looking at.
+        let mut mode_layouts = app.mode_layouts.clone();
+        mode_layouts.insert(
+            app.appearance.profile,
+            ModeLayout {
+                left_visible: app.left_sidebar_visible,
+                left_width: app.left_sidebar_width,
+                right_visible: app.right_sidebar_visible,
+                right_width: app.right_sidebar_width,
+            },
+        );
         Self {
             appearance: app.appearance,
             auto_approve: app.auto_approve,
@@ -50,6 +84,19 @@ impl WorkspacePreferences {
             left_sidebar_width: app.left_sidebar_width,
             right_sidebar_visible: app.right_sidebar_visible,
             right_sidebar_width: app.right_sidebar_width,
+            mode_layouts,
+            open_tabs: app
+                .tabs
+                .iter()
+                .filter_map(|t| t.editor_path())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
+            active_tab: app
+                .active_tab
+                .as_ref()
+                .and_then(|id| app.tabs.iter().find(|t| &t.id == id))
+                .and_then(|t| t.editor_path())
+                .map(|p| p.to_string_lossy().to_string()),
         }
     }
 }
@@ -73,6 +120,48 @@ pub struct VelocityApp {
     pub usage_date: String,
 
     pub command_palette: CommandPalette,
+    /// When true, the keybinding cheat-sheet overlay is shown (toggled with F1).
+    pub show_shortcuts: bool,
+    pub quick_open: QuickOpen,
+    pub mru: MruSwitcher,
+    /// Stack of recently closed editor file paths for Ctrl+Shift+T reopen.
+    pub closed_editor_paths: Vec<PathBuf>,
+    /// Ctrl+G go-to-line dialog state.
+    pub goto_line_open: bool,
+    pub goto_line_input: String,
+    pub goto_line_just_opened: bool,
+    /// Ctrl+Shift+O go-to-symbol switcher (sitemap-backed).
+    pub goto_symbol_open: bool,
+    pub goto_symbol_query: String,
+    pub goto_symbol_selected: usize,
+    pub goto_symbol_just_opened: bool,
+    pub goto_symbol_entries: Vec<crate::editor::search::SymbolEntry>,
+    /// Cached workspace symbol index (sitemap-backed), shared by go-to-symbol
+    /// and the clickable callers/dependencies in the symbol context panel.
+    pub workspace_symbols: Vec<crate::editor::search::SymbolEntry>,
+    /// Query the cached go-to-symbol `goto_symbol_filtered` indices were computed for.
+    pub goto_symbol_last_query: String,
+    /// Cached indices into `goto_symbol_entries` (avoids per-frame cloning).
+    pub goto_symbol_filtered: Vec<usize>,
+    /// One-shot: force the go-to-symbol scroll view to the selected row.
+    pub goto_symbol_scroll_to_selected: bool,
+    /// Back/forward navigation history (Alt+← / Alt+→).
+    pub nav_back: Vec<NavLocation>,
+    pub nav_forward: Vec<NavLocation>,
+    /// Cached workspace site map (avoids re-reading index.json every frame).
+    pub cached_site_map: Option<Arc<SiteMap>>,
+    /// When `cached_site_map` was fetched (TTL refresh).
+    pub cached_site_map_at: Option<Instant>,
+    /// Symbol the cached callers/deps below belong to.
+    pub cached_relation_symbol: Option<String>,
+    /// Cached caller names for `cached_relation_symbol`.
+    pub cached_callers: Vec<String>,
+    /// Cached dependency names for `cached_relation_symbol`.
+    pub cached_deps: Vec<String>,
+    /// When diagnostics were last polled (throttles per-frame disk reads).
+    pub last_diagnostics_poll: Option<Instant>,
+    /// Throttle for scanning open buffers for on-disk changes.
+    pub last_external_check: Option<Instant>,
     pub status_message: String,
     pub appearance: AppearanceSettings,
     pub provider_settings: WorkspaceProviderSettings,
@@ -81,6 +170,9 @@ pub struct VelocityApp {
     pub left_sidebar_tab: usize,
     pub right_sidebar_visible: bool,
     pub right_sidebar_width: f32,
+
+    /// Layout the user arranged for each work mode, restored on switch-back.
+    pub mode_layouts: HashMap<WorkspaceProfile, ModeLayout>,
 
     pub tab_counter: u64,
 
@@ -91,6 +183,16 @@ pub struct VelocityApp {
     pub agent_ui_state: AgentUiState,
     pub task_timeline: TTState,
     pub smart_sidebar: SmartSidebarState,
+    pub bottom_panel_state: BottomPanelState,
+
+    /// Pinned favorite files (Accessibility mode).
+    pub favorite_files: Vec<PathBuf>,
+    /// In-file bookmarks (Accessibility mode).
+    pub bookmarks: Vec<crate::editor::sidebar_tabs::BookmarkEntry>,
+    /// Whether the agent is currently recording actions (Operator mode).
+    pub recording_active: bool,
+    /// Saved recording names (Operator mode).
+    pub recordings: Vec<String>,
 
     pub projects: Vec<PathBuf>,
     #[allow(dead_code)]
@@ -110,15 +212,23 @@ pub struct VelocityApp {
 
     pub pending_open_path: Option<PathBuf>,
     pub pending_save_as_path: Option<PathBuf>,
+    /// Tab awaiting an unsaved-changes confirmation before it can close.
+    pub pending_close_tab: Option<TabId>,
     pub show_full_diff: bool,
     pub build_errors_count: usize,
     #[allow(dead_code)]
     pub gpu_name: String,
     pub search_query: String,
     pub search_hits: Vec<crate::editor::search::SearchHit>,
+    /// Replacement text for the workspace find-and-replace panel.
+    pub replace_query: String,
+    /// Debounce timer: when the search query last changed (runs after a pause).
+    pub search_pending_since: Option<Instant>,
     pub pending_cursor_line: Option<usize>,
     pub file_tree: Option<FileNode>,
     pub last_tree_update: std::time::Instant,
+    /// Last observed mtime of the workspace root (skips tree rebuilds when unchanged).
+    pub last_tree_mtime: Option<std::time::SystemTime>,
     pub toasts: crate::editor::toast::ToastQueue,
     pub orchestrator: OrchestratorPanel,
     pub mission_control: MissionControlState,
@@ -126,6 +236,7 @@ pub struct VelocityApp {
 
     pub mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
     pub graph_view: crate::editor::graph_view::MerkleGraphView,
+    pub wiki_view: crate::editor::wiki_view::WikiView,
     pub terminal_rx: Option<std::sync::mpsc::Receiver<String>>,
     pub terminal_input: String,
     pub current_agent_task_id: u32,
@@ -199,10 +310,32 @@ impl VelocityApp {
         self.left_sidebar_width = preferences.left_sidebar_width.max(180.0);
         self.right_sidebar_visible = preferences.right_sidebar_visible;
         self.right_sidebar_width = preferences.right_sidebar_width.max(220.0);
+        self.mode_layouts = preferences.mode_layouts;
         self.chat.auto_approve = self.auto_approve;
         self.chat.show_thoughts = preferences.show_thoughts;
         self.chat.selected_model = self.selected_model.clone();
         self.chat.thinking_enabled = self.thinking_enabled;
+
+        // Reopen last session's editor tabs (open_editor dedupes by path).
+        for tab_path in &preferences.open_tabs {
+            let p = PathBuf::from(tab_path);
+            if p.is_file() {
+                self.open_editor(Some(p));
+            }
+        }
+        if let Some(active) = &preferences.active_tab {
+            let ap = PathBuf::from(active);
+            if let Some(id) = self
+                .tabs
+                .iter()
+                .find(|t| t.editor_path() == Some(&ap))
+                .map(|t| t.id.clone())
+            {
+                self.active_tab = Some(id);
+            }
+        }
+        self.rebuild_dock();
+
         self.status_message = format!("Restored {} workspace", self.appearance.profile.label());
     }
 
@@ -288,6 +421,21 @@ impl VelocityApp {
     pub fn apply_workspace_profile(&mut self, profile: WorkspaceProfile) {
         self.appearance.apply_profile(profile);
 
+        // Tailor the panel arrangement to the work mode so switching feels
+        // like night and day, not just a recolor.
+        let (left_visible, right_visible) = match profile {
+            // Coding: file tree + symbol inspector both in view.
+            WorkspaceProfile::Coder => (true, true),
+            // Automation: lean on the orchestrator/browser, hide the inspector.
+            WorkspaceProfile::AutomationOperator => (true, false),
+            // Mission control: hide the file tree, keep the monitoring rail.
+            WorkspaceProfile::MissionControl => (false, true),
+            // Accessibility: everything visible for maximum context.
+            WorkspaceProfile::Accessibility => (true, true),
+        };
+        self.left_sidebar_visible = left_visible;
+        self.right_sidebar_visible = right_visible;
+
         let mut tabs: Vec<Tab> = self
             .tabs
             .iter()
@@ -342,6 +490,73 @@ impl VelocityApp {
         self.status_message = format!("Applied {} workspace preset", profile.label());
     }
 
+    /// Quick work-mode switch used by the toolbar, shortcuts and command palette:
+    /// re-themes, re-panels, and persists the choice. No-ops if already active.
+    /// Remembers the layout of the mode being left and restores the user's own
+    /// arrangement for the mode being entered (falling back to its defaults).
+    pub fn set_work_mode(&mut self, profile: WorkspaceProfile) {
+        if self.appearance.profile == profile {
+            return;
+        }
+        self.snapshot_mode_layout(self.appearance.profile);
+        self.apply_workspace_profile(profile);
+        self.restore_mode_layout(profile);
+        // Apply mode-specific sidebar filter
+        self.smart_sidebar.filter_for_mode(profile);
+        // Reset bottom panel tab selection for the new mode
+        self.bottom_panel_state.active_tab = 0;
+        self.save_workspace_preferences();
+        self.status_message = format!("Switched to {} mode", profile.label());
+        // Central, self-dismissing confirmation — useful when the switch came
+        // from a keyboard shortcut and the eye isn't on the toolbar pills.
+        self.toasts.push(crate::editor::toast::Toast::info(format!(
+            "{} {} mode",
+            profile.glyph(),
+            profile.label()
+        )));
+    }
+
+    /// Forget the user's custom arrangement for the active mode and restore its
+    /// night-and-day defaults. Exposed via the command palette so a customized
+    /// mode can always be returned to its original layout.
+    pub fn reset_current_mode_layout(&mut self) {
+        let profile = self.appearance.profile;
+        self.mode_layouts.remove(&profile);
+        self.apply_workspace_profile(profile);
+        self.save_workspace_preferences();
+        self.status_message = format!("Reset {} layout to default", profile.label());
+        self.toasts.push(crate::editor::toast::Toast::info(format!(
+            "{} {} layout reset",
+            profile.glyph(),
+            profile.short_label()
+        )));
+    }
+
+    /// Record the current sidebar arrangement under the given mode.
+    fn snapshot_mode_layout(&mut self, profile: WorkspaceProfile) {
+        self.mode_layouts.insert(
+            profile,
+            ModeLayout {
+                left_visible: self.left_sidebar_visible,
+                left_width: self.left_sidebar_width,
+                right_visible: self.right_sidebar_visible,
+                right_width: self.right_sidebar_width,
+            },
+        );
+    }
+
+    /// Restore a previously customized layout for the mode, if one exists.
+    /// When none is stored, the mode's night-and-day defaults (already applied
+    /// by `apply_workspace_profile`) stand.
+    fn restore_mode_layout(&mut self, profile: WorkspaceProfile) {
+        if let Some(layout) = self.mode_layouts.get(&profile).copied() {
+            self.left_sidebar_visible = layout.left_visible;
+            self.left_sidebar_width = layout.left_width.max(180.0);
+            self.right_sidebar_visible = layout.right_visible;
+            self.right_sidebar_width = layout.right_width.max(220.0);
+        }
+    }
+
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         workspace_root: PathBuf,
@@ -394,7 +609,47 @@ impl VelocityApp {
                 open: false,
                 query: String::new(),
                 selected: 0,
+                just_opened: false,
             },
+            show_shortcuts: false,
+            quick_open: QuickOpen {
+                open: false,
+                query: String::new(),
+                selected: 0,
+                just_opened: false,
+                files: Vec::new(),
+                last_query: String::new(),
+                last_file_count: 0,
+                filtered: Vec::new(),
+                scroll_to_selected: false,
+            },
+            mru: MruSwitcher {
+                open: false,
+                selected: 0,
+                order: Vec::new(),
+            },
+            closed_editor_paths: Vec::new(),
+            goto_line_open: false,
+            goto_line_input: String::new(),
+            goto_line_just_opened: false,
+            goto_symbol_open: false,
+            goto_symbol_query: String::new(),
+            goto_symbol_selected: 0,
+            goto_symbol_just_opened: false,
+            goto_symbol_entries: Vec::new(),
+            workspace_symbols: Vec::new(),
+            goto_symbol_last_query: String::new(),
+            goto_symbol_filtered: Vec::new(),
+            goto_symbol_scroll_to_selected: false,
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
+            cached_site_map: None,
+            cached_site_map_at: None,
+            cached_relation_symbol: None,
+            cached_callers: Vec::new(),
+            cached_deps: Vec::new(),
+            last_diagnostics_poll: None,
+            last_external_check: None,
             status_message: String::from("Ready"),
             appearance,
             provider_settings,
@@ -403,6 +658,7 @@ impl VelocityApp {
             left_sidebar_tab: 0,
             right_sidebar_visible: false,
             right_sidebar_width: 280.0,
+            mode_layouts: HashMap::new(),
             tab_counter,
             expert_teams,
             active_team_index: 0,
@@ -410,6 +666,11 @@ impl VelocityApp {
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),
             smart_sidebar: SmartSidebarState::default(),
+            bottom_panel_state: BottomPanelState::default(),
+            favorite_files: Vec::new(),
+            bookmarks: Vec::new(),
+            recording_active: false,
+            recordings: Vec::new(),
             projects,
             show_add_project_ui: false,
             new_project_path_input: String::new(),
@@ -431,6 +692,7 @@ impl VelocityApp {
             provider: AiProvider::CloudflareWorkersAi,
             pending_open_path: None,
             pending_save_as_path: None,
+            pending_close_tab: None,
             show_full_diff: false,
             build_errors_count: 0,
             account_usage: Vec::new(),
@@ -438,9 +700,12 @@ impl VelocityApp {
             gpu_name,
             search_query: String::new(),
             search_hits: Vec::new(),
+            replace_query: String::new(),
+            search_pending_since: None,
             pending_cursor_line: None,
             file_tree: None,
             last_tree_update: std::time::Instant::now(),
+            last_tree_mtime: None,
             toasts: crate::editor::toast::ToastQueue::default(),
             orchestrator: OrchestratorPanel::new(),
             mission_control: MissionControlState::new(),
@@ -462,6 +727,7 @@ impl VelocityApp {
             },
             mediator,
             graph_view: crate::editor::graph_view::MerkleGraphView::new(),
+            wiki_view: crate::editor::wiki_view::WikiView::new(),
             terminal_rx: None,
             terminal_input: String::new(),
             current_agent_task_id: 0,

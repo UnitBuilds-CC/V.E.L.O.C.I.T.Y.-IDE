@@ -37,7 +37,7 @@ fn resolve_snapshot_name(
     })
 }
 
-fn verification_plan<'a>(step: &'a WaScriptStep) -> Option<(&'static str, Option<&'a str>)> {
+fn verification_plan(step: &WaScriptStep) -> Option<(&'static str, Option<&str>)> {
     if step.action.eq_ignore_ascii_case("focus") {
         Some(("focused", None))
     } else if step.action.eq_ignore_ascii_case("type") {

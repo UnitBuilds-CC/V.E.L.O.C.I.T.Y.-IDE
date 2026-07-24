@@ -21,7 +21,7 @@ impl IndexedDbStorage {
     }
 
     pub fn put_item(&mut self, store_name: &str, key: &str, payload_json: &str) {
-        let store = self.object_stores.entry(store_name.to_string()).or_insert_with(Vec::new);
+        let store = self.object_stores.entry(store_name.to_string()).or_default();
         if let Some(existing) = store.iter_mut().find(|r| r.key == key) {
             existing.payload_json = payload_json.to_string();
         } else {

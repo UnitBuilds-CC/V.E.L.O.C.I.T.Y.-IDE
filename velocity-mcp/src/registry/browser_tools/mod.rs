@@ -1,3 +1,4 @@
+pub mod native;
 pub mod navigation;
 pub mod session;
 pub mod workflow;
@@ -12,6 +13,9 @@ pub fn handle_browser_tool(
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
     if let Some(res) = navigation::handle_navigation_tool(root, name, arguments)? {
+        return Ok(Some(res));
+    }
+    if let Some(res) = native::handle_native_tool(root, name, arguments)? {
         return Ok(Some(res));
     }
     if let Some(res) = session::handle_session_tool(root, name, arguments)? {

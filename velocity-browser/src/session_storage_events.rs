@@ -13,6 +13,12 @@ pub struct StorageEventBroadcaster {
     pub history: Vec<StorageEventRecord>,
 }
 
+impl Default for StorageEventBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StorageEventBroadcaster {
     pub fn new() -> Self {
         Self { history: Vec::new() }

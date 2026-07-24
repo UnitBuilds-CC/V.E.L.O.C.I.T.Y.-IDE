@@ -172,12 +172,11 @@ fn stale_routed_plan_blocks_dispatch() {
             model_label: "model".to_string(),
             thinking: false,
             fallback_chain: Vec::new(),
-            instruction_template_id: "template".to_string(),
-            decomposition_policy_id: "policy".to_string(),
-            decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
             execution_contract: String::new(),
             summary: String::new(),
             rationale: String::new(),
+            decomposition_policy_id: String::new(),
+            decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
         }],
     );
 
@@ -259,12 +258,11 @@ fn reconcile_root_completes_after_successful_children() {
             model_label: "model".to_string(),
             thinking: false,
             fallback_chain: Vec::new(),
-            instruction_template_id: "template".to_string(),
-            decomposition_policy_id: "policy".to_string(),
-            decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
             execution_contract: String::new(),
             summary: String::new(),
             rationale: String::new(),
+            decomposition_policy_id: String::new(),
+            decomposition_style: crate::automation::DecompositionStyle::CoupledComponents,
         }],
     );
     let mut registry = OrchestratorRegistry::new(&graph);

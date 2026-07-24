@@ -55,7 +55,8 @@ fn browser_session_wait_protocol_round_trip() {
     let response_url = url.clone();
 
     std::thread::spawn(move || {
-        for idx in 0..2 {
+        let mut idx = 0;
+        loop {
             if let Ok((mut stream, _)) = listener.accept() {
                 let _ = read_http_request(&mut stream);
                 let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
@@ -75,6 +76,9 @@ fn browser_session_wait_protocol_round_trip() {
                 };
                 let _ = stream.write_all(response.as_bytes());
                 let _ = stream.flush();
+                idx += 1;
+            } else {
+                break;
             }
         }
     });
@@ -114,7 +118,8 @@ fn browser_session_wait_storage_round_trip() {
     let url = format!("http://127.0.0.1:{}", port);
 
     std::thread::spawn(move || {
-        for idx in 0..2 {
+        let mut idx = 0;
+        loop {
             if let Ok((mut stream, _)) = listener.accept() {
                 let _ = read_http_request(&mut stream);
                 let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
@@ -133,6 +138,9 @@ fn browser_session_wait_storage_round_trip() {
                 };
                 let _ = stream.write_all(response.as_bytes());
                 let _ = stream.flush();
+                idx += 1;
+            } else {
+                break;
             }
         }
     });
@@ -173,7 +181,8 @@ fn browser_session_wait_stream_complete_round_trip() {
     let response_url = url.clone();
 
     std::thread::spawn(move || {
-        for idx in 0..2 {
+        let mut idx = 0;
+        loop {
             if let Ok((mut stream, _)) = listener.accept() {
                 let _ = read_http_request(&mut stream);
                 let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
@@ -193,6 +202,9 @@ fn browser_session_wait_stream_complete_round_trip() {
                 };
                 let _ = stream.write_all(response.as_bytes());
                 let _ = stream.flush();
+                idx += 1;
+            } else {
+                break;
             }
         }
     });
@@ -347,7 +359,7 @@ fn test_web_navigate_native_parser() {
     let url = format!("http://127.0.0.1:{}/", port);
 
     std::thread::spawn(move || {
-        for _ in 0..2 {
+        loop {
             if let Ok((mut stream, _)) = listener.accept() {
                 let mut buf = [0u8; 1024];
                 let _ = stream.read(&mut buf);
@@ -360,6 +372,8 @@ fn test_web_navigate_native_parser() {
                 );
                 let _ = stream.write_all(response.as_bytes());
                 let _ = stream.flush();
+            } else {
+                break;
             }
         }
     });

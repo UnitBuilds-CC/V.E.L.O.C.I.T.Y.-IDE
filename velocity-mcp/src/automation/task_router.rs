@@ -35,12 +35,11 @@ pub struct RoutedSubAgentTask {
     pub model_label: String,
     pub thinking: bool,
     pub fallback_chain: Vec<RoutedModelRoute>,
-    pub decomposition_policy_id: String,
-    pub decomposition_style: DecompositionStyle,
-    pub instruction_template_id: String,
     pub execution_contract: String,
     pub summary: String,
     pub rationale: String,
+    pub decomposition_policy_id: String,
+    pub decomposition_style: DecompositionStyle,
 }
 
 #[derive(Debug, Clone)]
@@ -85,9 +84,6 @@ impl SiteMapTaskRouter {
                     .first()
                     .cloned()
                     .unwrap_or_else(fallback_route);
-                let instruction_template_id = template
-                    .map(|item| item.id.clone())
-                    .unwrap_or_else(|| "default".to_string());
                 let task_id = format!("subagent-{:02}", idx + 1);
                 let execution_contract = build_execution_contract(
                     &task_id,
@@ -119,12 +115,11 @@ impl SiteMapTaskRouter {
                     model_label: selected.model_label.clone(),
                     thinking: selected.thinking,
                     fallback_chain,
-                    decomposition_policy_id: policy.id.clone(),
-                    decomposition_style: policy.decomposition_style,
-                    instruction_template_id,
                     execution_contract,
                     summary,
                     rationale,
+                    decomposition_policy_id: policy.id.clone(),
+                    decomposition_style: policy.decomposition_style,
                 }
             })
             .collect()

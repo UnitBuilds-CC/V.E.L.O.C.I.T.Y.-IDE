@@ -1,0 +1,28 @@
+{
+  "test_bundles": [
+    {
+      "name": "css_variable_coercion",
+      "target": "parse_custom_property_value",
+      "cases": [
+        {
+          "input": "var(--x, calc(10px + 5%))",
+          "expect": "CoercedValue(Calc(10px + 5%))"
+        },
+        {
+          "input": "var(--y, rgb(255 0 0 / 0.5))",
+          "expect": "CoercedValue(Rgba(255,0,0,0.5))"
+        }
+      ]
+    },
+    {
+      "name": "grid_shorthand_expansion",
+      "target": "parse_grid_template",
+      "cases": [
+        {
+          "input": "repeat(auto-fill, minmax(100px, 1fr))",
+          "expect": "GridTemplate::Repeat(AutoFill, Minmax(100px, 1fr))"
+        }
+      ]
+    }
+  ]
+}
