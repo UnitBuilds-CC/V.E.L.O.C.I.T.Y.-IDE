@@ -279,7 +279,7 @@ fn group_by_module(pages: &[WikiPage]) -> BTreeMap<String, Vec<&WikiPage>> {
     modules
 }
 
-fn slugify_module(name: &str) -> String {
+pub fn slugify_module(name: &str) -> String {
     name.chars().map(|c| {
         if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() }
         else { '-' }

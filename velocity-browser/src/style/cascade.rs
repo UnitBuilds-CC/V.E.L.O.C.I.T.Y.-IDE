@@ -325,23 +325,27 @@ impl TimingFunction {
     }
 }
 
-/// Simple cubic bezier approximation using De Casteljau's algorithm.
+/// Simple cubic bezier approximation using Newton-Raphson iteration.
 fn cubic_bezier(x1: f64, y1: f64, x2: f64, y2: f64, t: f64) -> f64 {
-    // Newton-Raphson to find t for given x, then compute y
-    let mut guess = t;
-    for _ in 0..8 {
-        let cx = 3.0 * x1;
-        let bx = 3.0 * (x2 - x1) - cx;
-        let ax = 1.0 - cx - bx;
-        let current_x = ((ax * guess + bx) * guess + cx) * guess;
-        let dx = (3.0 * ax * guess + 2.0 * bx) * guess + cx;
-        if dx.abs() < 1e-6 { break; }
-        guess -= (current_x - t) / dx;
-    }
+    // Newton-Raphson to find parameter u such that bezier_x(u) = t, then compute bezier_y(u)
+    let cx = 3.0 * x1;
+    let bx = 3.0 * (x2 - x1) - cx;
+    let ax = 1.0 - cx - bx;
     let cy = 3.0 * y1;
     let by = 3.0 * (y2 - y1) - cy;
     let ay = 1.0 - cy - by;
-    ((ay * guess + by) * guess + cy) * guess
+
+    let mut u = t;
+    for _ in 0..16 {
+        let x_u = ((ax * u + bx) * u + cx) * u;
+        let dx_u = (3.0 * ax * u + 2.0 * bx) * u + cx;
+        let err = x_u - t;
+        if err.abs() < 1e-7 { break; }
+        if dx_u.abs() < 1e-9 { break; } // derivative too small, stop
+        u -= err / dx_u;
+        u = u.clamp(0.0, 1.0); // keep within valid range
+    }
+    ((ay * u + by) * u + cy) * u
 }
 
 /// Animation fill mode.

@@ -2,6 +2,7 @@
 
 use crate::site_map::{SiteMap, VcTriple};
 use crate::wiki::{build_wiki, export_markdown};
+use crate::wiki::markdown::slugify_module;
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -147,9 +148,7 @@ fn exports_interlinked_markdown() {
     // Files are now grouped by module directory (e.g., "src" from "src/lib.rs")
     let module = file.split('/').next().unwrap_or("root");
     let module = if module.contains('.') || module.is_empty() { "root" } else { module };
-    let module_slug: String = module.chars().map(|c| {
-        if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }
-    }).collect::<String>().trim_matches('-').to_string();
+    let module_slug = slugify_module(module);
     let file_md = std::fs::read_to_string(out.join("files").join(&module_slug).join(format!("{}.md", file_slug)))
         .expect("file page markdown");
     assert!(file_md.contains("## Defines"));

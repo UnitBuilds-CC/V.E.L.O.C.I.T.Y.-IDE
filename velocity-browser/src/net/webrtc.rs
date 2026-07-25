@@ -246,33 +246,66 @@ impl WebRtcTransport {
     }
 
     /// Set the local description (offer or answer).
-    pub fn set_local_description(&mut self, desc: SessionDescription) {
+    /// Returns Err if the state transition is invalid per the WebRTC spec.
+    pub fn set_local_description(&mut self, desc: SessionDescription) -> Result<(), String> {
         match desc.sdp_type {
             SdpType::Offer => {
+                // Offer can be set when stable or have a remote offer (glare condition)
+                if self.signaling_state != SignalingState::Stable
+                    && self.signaling_state != SignalingState::HaveRemoteOffer
+                {
+                    return Err(format!(
+                        "Cannot set local offer in signaling state {:?}",
+                        self.signaling_state
+                    ));
+                }
                 self.sdp_offer = Some(desc);
                 self.signaling_state = SignalingState::HaveLocalOffer;
             }
             SdpType::Answer | SdpType::Pranswer => {
+                if self.signaling_state != SignalingState::HaveLocalOffer {
+                    return Err(format!(
+                        "Cannot set local answer in signaling state {:?}",
+                        self.signaling_state
+                    ));
+                }
                 self.sdp_answer = Some(desc);
                 self.signaling_state = SignalingState::Stable;
             }
         }
+        Ok(())
     }
 
     /// Set the remote description (offer or answer).
-    pub fn set_remote_description(&mut self, desc: SessionDescription) {
+    /// Returns Err if the state transition is invalid per the WebRTC spec.
+    pub fn set_remote_description(&mut self, desc: SessionDescription) -> Result<(), String> {
         match desc.sdp_type {
             SdpType::Offer => {
+                if self.signaling_state != SignalingState::Stable
+                    && self.signaling_state != SignalingState::HaveLocalOffer
+                {
+                    return Err(format!(
+                        "Cannot set remote offer in signaling state {:?}",
+                        self.signaling_state
+                    ));
+                }
                 self.sdp_offer = Some(desc);
                 self.signaling_state = SignalingState::HaveRemoteOffer;
             }
             SdpType::Answer | SdpType::Pranswer => {
+                if self.signaling_state != SignalingState::HaveRemoteOffer {
+                    return Err(format!(
+                        "Cannot set remote answer in signaling state {:?}",
+                        self.signaling_state
+                    ));
+                }
                 self.sdp_answer = Some(desc);
                 self.signaling_state = SignalingState::Stable;
                 self.connection_state = ConnectionState::Connected;
                 self.ice_connection_state = IceConnectionState::Connected;
             }
         }
+        Ok(())
     }
 
     pub fn add_ice_candidate(&mut self, candidate: &str) {

@@ -341,7 +341,7 @@ pub const LARGE_FILE_THRESHOLD: usize = 10_000; // lines
 #[derive(Debug, Clone)]
 pub struct LineIndex {
     /// Byte offset of each line start within the content.
-    line_starts: Vec<u32>,
+    line_starts: Vec<u64>,
     /// Hash of content when the index was built.
     content_hash: u64,
 }
@@ -349,10 +349,10 @@ pub struct LineIndex {
 impl LineIndex {
     /// Build a line index from content. O(n) but only done once per edit.
     pub fn build(content: &str) -> Self {
-        let mut starts = vec![0u32];
+        let mut starts = vec![0u64];
         for (i, b) in content.bytes().enumerate() {
             if b == b'\n' {
-                starts.push((i + 1) as u32);
+                starts.push((i + 1) as u64);
             }
         }
         Self { line_starts: starts, content_hash: fnv1a(content) }
@@ -389,7 +389,7 @@ impl LineIndex {
 
     /// Convert a byte offset to (line, col) using binary search. O(log n).
     pub fn byte_to_line_col(&self, offset: usize) -> (usize, usize) {
-        match self.line_starts.binary_search(&(offset as u32)) {
+        match self.line_starts.binary_search(&(offset as u64)) {
             Ok(line) => (line, 0),
             Err(line) => {
                 let line = line.saturating_sub(1);

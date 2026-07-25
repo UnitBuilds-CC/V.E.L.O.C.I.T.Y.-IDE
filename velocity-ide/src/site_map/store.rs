@@ -460,6 +460,8 @@ impl SiteMap {
             .unwrap()
             .insert(key, triples.to_vec());
         self.recompute_root();
+        // Auto-invalidate the predicate index since triples have changed
+        self.invalidate_predicate_index();
         Ok(key)
     }
 
@@ -472,6 +474,8 @@ impl SiteMap {
             }
             self.snapshot_triples_cache.lock().unwrap().remove(&key);
             self.recompute_root();
+            // Auto-invalidate the predicate index since triples have changed
+            self.invalidate_predicate_index();
             return Ok(true);
         }
         Ok(false)

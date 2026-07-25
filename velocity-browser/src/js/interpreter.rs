@@ -1930,6 +1930,11 @@ pub fn call_function_with_this(func: &JsValue, args: &[JsValue], _caller_scope: 
         JsValue::NativeFunction(name) => call_native(name, args),
         // AsyncFunction wrapper: call inner function, wrap result in Promise
         JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("AsyncFunction") => {
+            // NOTE: This is a simplified synchronous Promise implementation.
+            // The inner function is called immediately and the result is wrapped
+            // in a resolved/rejected Promise object. Full async support (microtask
+            // queue, .then()/.catch() chaining) requires an event loop and is not
+            // yet implemented.
             if let Some(inner) = map.get("__inner__") {
                 match call_function_with_this(inner, args, _caller_scope, this_val) {
                     Ok(val) => {
@@ -2363,6 +2368,12 @@ pub fn register_module(specifier: &str, exports: HashMap<String, JsValue>) {
     map.insert(specifier.to_string(), exports);
 }
 
+/// Clear all registered modules. Call when modules should be re-evaluated
+/// or to free memory (e.g., between page navigations).
+pub fn clear_module_registry() {
+    *MODULE_REGISTRY.lock().unwrap() = None;
+}
+
 /// Resolve a module import. Returns the module's exports or None if not registered.
 pub fn resolve_module(specifier: &str) -> Option<HashMap<String, JsValue>> {
     let registry = MODULE_REGISTRY.lock().unwrap();
@@ -2446,6 +2457,13 @@ pub fn apply_import(
 // Property access & method calls
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Thread-local recursion guard for Proxy trap invocations.
+/// Prevents infinite loops when a trap handler accesses the same proxy.
+const MAX_PROXY_TRAP_DEPTH: u32 = 8;
+std::thread_local! {
+    static PROXY_TRAP_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
     match obj {
         JsValue::Object(map) => {
@@ -2457,14 +2475,28 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                     if let JsValue::Object(h_map) = h {
                         // Check for get trap in handler
                         if let Some(get_trap) = h_map.get("get") {
+                            // Guard against infinite recursion
+                            let depth = PROXY_TRAP_DEPTH.with(|d| {
+                                let cur = d.get();
+                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                d.set(cur + 1);
+                                cur
+                            });
+                            if depth >= MAX_PROXY_TRAP_DEPTH {
+                                // Recursion limit: fall through to target
+                                return get_property(t, prop);
+                            }
                             // Invoke the trap: handler.get(target, prop)
                             let prop_val = JsValue::String(prop.to_string());
                             // For native function traps, just return the target property
                             if matches!(get_trap, JsValue::NativeFunction(_)) {
+                                PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                                 return get_property(t, prop);
                             }
-                            if let Ok(result) = call_function(get_trap, &[t.clone(), prop_val], &Scope::new_global()) {
-                                return result;
+                            let result = call_function(get_trap, &[t.clone(), prop_val], &Scope::new_global());
+                            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                            if let Ok(val) = result {
+                                return val;
                             }
                         }
                         // Check for has trap (for "in" operator support)
@@ -2513,9 +2545,18 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
             if let Some(JsValue::Object(h_map)) = map.get("__proxy_handler__") {
                 if let Some(set_trap) = h_map.get("set") {
                     if let Some(target) = map.get("__proxy_target__").cloned() {
-                        let prop_val = JsValue::String(prop.to_string());
-                        if let Ok(_) = call_function(set_trap, &[target, prop_val, value.clone()], &Scope::new_global()) {
-                            return true;
+                        // Guard against infinite recursion
+                        let depth_ok = PROXY_TRAP_DEPTH.with(|d| {
+                            let cur = d.get();
+                            if cur >= MAX_PROXY_TRAP_DEPTH { return false; }
+                            d.set(cur + 1);
+                            true
+                        });
+                        if depth_ok {
+                            let prop_val = JsValue::String(prop.to_string());
+                            let ok = call_function(set_trap, &[target, prop_val, value.clone()], &Scope::new_global()).is_ok();
+                            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                            if ok { return true; }
                         }
                     }
                 }
