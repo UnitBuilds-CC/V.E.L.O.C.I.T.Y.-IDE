@@ -5,9 +5,10 @@ use crate::agent::{run_headless_subagent, HeadlessSubAgentProgress, HeadlessSubA
 use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::mediator::MediatorArena;
 use crate::automation::task_router::RoutedModelRoute;
+use crate::editor::continuation_ledger::ContinuationLedger;
 use crossbeam_channel::unbounded;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 use velocity_ide::site_map::SiteMap;
@@ -186,6 +187,7 @@ pub fn execute_live_task(
     let mut final_model_label = assignment.model_label.clone();
 
     for route in routes {
+        let route_start = Instant::now();
         let subagent = run_headless_subagent(HeadlessSubAgentRequest {
             workspace_root: assignment.workspace_root.clone(),
             provider: route.provider,
@@ -276,6 +278,31 @@ pub fn execute_live_task(
                 .map_err(|err| failed_execution(assignment, err))?;
             return Ok(outcome);
         }
+
+        // ─── Continuation Ledger: capture state for cross-model handoff ───
+        // After each failed attempt, build a ledger so the next route in the
+        // fallback chain receives structured context about what was tried,
+        // what partially changed, and what still needs doing.
+        let scope_paths: Vec<PathBuf> = scoped_paths.explicit_files.clone();
+        let ledger = ContinuationLedger::capture(
+            &format!("task-{}", assignment.task.id.0),
+            &assignment.instructions,
+            &format!("{:?}", assignment.task_kind),
+            &scope_paths,
+            &assignment.workspace_root,
+            assignment.planned_site_map_root,
+            &last_transcript,
+            &changed_files,
+            &last_status_updates,
+            &final_provider_label,
+            &final_model_label,
+            &route.model_id,
+            route_start.elapsed(),
+            false,
+        );
+        // Persist ledger for diagnostics and potential manual inspection.
+        let ledger_path = run_dir.join(format!("continuation_ledger_attempt_{}.txt", attempts.len()));
+        let _ = fs::write(&ledger_path, ledger.continuation_prompt());
     }
 
     let cancelled = last_status_updates

@@ -174,6 +174,41 @@ impl PipelineManager {
         }
     }
 
+    /// Create a pipeline manager from a workspace root, auto-detecting build config.
+    pub fn from_workspace(workspace_root: &Path) -> Self {
+        let config = if workspace_root.join("Cargo.toml").exists() {
+            PipelineConfig {
+                name: "Rust Pipeline".into(),
+                build_command: "cargo build --release".into(),
+                test_command: "cargo test".into(),
+                package_command: None,
+                deploy_command: None,
+                deploy_target: "local".into(),
+                auto_deploy_on_success: false,
+                rollback_enabled: true,
+            }
+        } else if workspace_root.join("package.json").exists() {
+            PipelineConfig {
+                name: "Node.js Pipeline".into(),
+                build_command: "npm run build".into(),
+                test_command: "npm test".into(),
+                package_command: Some("npm pack".into()),
+                deploy_command: None,
+                deploy_target: "npm".into(),
+                auto_deploy_on_success: false,
+                rollback_enabled: false,
+            }
+        } else {
+            PipelineConfig::default()
+        };
+        Self::new(workspace_root.to_path_buf(), config)
+    }
+
+    /// Trigger a full pipeline run (convenience wrapper around start()).
+    pub fn trigger_run(&mut self) {
+        let _ = self.start();
+    }
+
     /// Start the pipeline from the build stage.
     pub fn start(&mut self) -> Result<(), String> {
         self.stages = PipelineStage::all().iter().map(|s| StageResult::new(*s)).collect();

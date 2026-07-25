@@ -32,11 +32,27 @@ impl VelocityApp {
             .fill(palette.bg_primary)
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.heading("Search & Replace");
                     ui.horizontal(|ui| {
+                        ui.heading("Search & Replace");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let semantic_label = if self.semantic_search_active { "⊕ Semantic" } else { "⊕ Literal" };
+                            if ui.small_button(egui::RichText::new(semantic_label).size(9.0).color(palette.accent)).clicked() {
+                                self.semantic_search_active = !self.semantic_search_active;
+                                // Build index on first activation
+                                if self.semantic_search_active && self.semantic_index.is_none() {
+                                    self.semantic_index = Some(
+                                        crate::editor::semantic_search::SemanticIndex::build(&self.workspace_root)
+                                    );
+                                    self.toasts.push(crate::editor::toast::Toast::info("Semantic index built"));
+                                }
+                            }
+                        });
+                    });
+                    ui.horizontal(|ui| {
+                        let hint = if self.semantic_search_active { "Semantic search…" } else { "Search…" };
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut self.search_query)
-                                .hint_text("Search…")
+                                .hint_text(hint)
                                 .desired_width(ui.available_width() - 10.0),
                         );
                         if response.changed() {
@@ -45,11 +61,15 @@ impl VelocityApp {
                         }
                         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             self.search_pending_since = None;
-                            self.search_hits = crate::editor::search::project_search(
-                                &self.workspace_root,
-                                &self.search_query,
-                                100,
-                            );
+                            if self.semantic_search_active {
+                                self.run_semantic_search();
+                            } else {
+                                self.search_hits = crate::editor::search::project_search(
+                                    &self.workspace_root,
+                                    &self.search_query,
+                                    100,
+                                );
+                            }
                         }
                     });
                     ui.horizontal(|ui| {
@@ -91,11 +111,15 @@ impl VelocityApp {
                     if let Some(since) = self.search_pending_since {
                         if since.elapsed() >= std::time::Duration::from_millis(250) {
                             self.search_pending_since = None;
-                            self.search_hits = crate::editor::search::project_search(
-                                &self.workspace_root,
-                                &self.search_query,
-                                100,
-                            );
+                            if self.semantic_search_active {
+                                self.run_semantic_search();
+                            } else {
+                                self.search_hits = crate::editor::search::project_search(
+                                    &self.workspace_root,
+                                    &self.search_query,
+                                    100,
+                                );
+                            }
                         } else {
                             ui.ctx()
                                 .request_repaint_after(std::time::Duration::from_millis(120));
@@ -1524,7 +1548,8 @@ impl eframe::App for VelocityApp {
                             "file" => self.open_editor_stub(),
                             "git" => { self.left_sidebar_tab = 2; self.left_sidebar_visible = true; }
                             "settings" => self.toggle_panel(TabKind::Settings),
-                            "deploy" | "resume_all" => self.run_active(),
+                            "deploy" => self.trigger_deploy(),
+                            "resume_all" => self.run_active(),
                             "record" => {
                                 self.recording_active = !self.recording_active;
                                 if self.recording_active {

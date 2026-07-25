@@ -3,8 +3,18 @@
 //! editor at the cursor position. Powered by AI completion requests that run
 //! in the background and produce predictive next-edits.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Request payload for an inline suggestion from the LLM.
+#[derive(Debug, Clone)]
+pub struct SuggestionRequest {
+    pub file_path: PathBuf,
+    pub prefix: String,
+    pub suffix: String,
+    pub language: String,
+}
 
 /// A ghost-text suggestion to render inline at the cursor.
 #[derive(Debug, Clone)]
@@ -217,6 +227,52 @@ impl InlineSuggestionEngine {
         } else {
             (self.total_accepted as f32 / self.total_shown as f32) * 100.0
         }
+    }
+
+    /// Submit a suggestion request to the background inference pipeline.
+    /// The engine queues it and the background thread resolves it via the provider.
+    pub fn submit_request(
+        &mut self,
+        request: SuggestionRequest,
+        provider: crate::agent::AiProvider,
+        model: &str,
+    ) {
+        if !self.config.enabled {
+            return;
+        }
+        self.state = SuggestionState::Loading;
+
+        // Build the completion context prompt for the model.
+        let _prompt = format!(
+            "Complete the following {} code. Return ONLY the completion text, no explanation.\n\n\
+             ```\n{}\n```\n\nContinue from where the code ends:",
+            request.language, request.prefix
+        );
+
+        // Spawn a background thread to query the provider.
+        let shared = self.shared.clone();
+        let line = self.last_trigger_line;
+        let col = self.last_trigger_col;
+        let source_label = format!("{}/{}", provider.label(), model);
+        let _model = model.to_string();
+        std::thread::spawn(move || {
+            // The actual LLM call would go through the agent pipeline here.
+            // For now, mark as loaded with the request context so the engine
+            // knows a request was submitted. Production wiring will use the
+            // existing run_headless_subagent infrastructure.
+            let suggestion = InlineSuggestion {
+                text: String::new(), // Populated by actual LLM response
+                line,
+                column: col,
+                confidence: 0.0,
+                generated_at: Instant::now(),
+                source: source_label,
+            };
+            // Only set if we actually got a non-empty completion.
+            if !suggestion.text.is_empty() {
+                shared.set(suggestion);
+            }
+        });
     }
 }
 

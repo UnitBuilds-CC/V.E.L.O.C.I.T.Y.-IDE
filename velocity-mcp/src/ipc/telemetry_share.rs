@@ -160,7 +160,7 @@ mod tests {
         let path_clone = path.clone();
 
         // Spawn server in a background thread
-        let handle = thread::spawn(move || {
+        let _handle = thread::spawn(move || {
             let mut server = TelemetryServer::open(&path_clone).unwrap();
             server
                 .listen(|req| match req {

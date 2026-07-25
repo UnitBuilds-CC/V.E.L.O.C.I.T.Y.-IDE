@@ -390,7 +390,7 @@ mod tests {
         let arena = MediatorArena::new();
         let temp_dir = TempDir::new().unwrap();
         let workspace_root = temp_dir.path();
-        let mut sm = SiteMap::open(temp_dir.path(), 0).unwrap();
+        let sm = SiteMap::open(temp_dir.path(), 0).unwrap();
 
         let dir_scope = workspace_root.join("src");
         let nested_file = workspace_root.join("src").join("lib.rs");

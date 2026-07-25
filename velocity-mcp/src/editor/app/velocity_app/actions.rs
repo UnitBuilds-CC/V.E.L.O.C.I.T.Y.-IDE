@@ -1020,4 +1020,115 @@ impl VelocityApp {
             ));
         }
     }
+
+    // ─── Semantic Search Integration ─────────────────────────────────────────
+
+    /// Run a semantic (TF-IDF similarity) search and produce SearchHit results.
+    pub fn run_semantic_search(&mut self) {
+        if self.search_query.is_empty() {
+            self.search_hits.clear();
+            return;
+        }
+        // Ensure the index is built.
+        if self.semantic_index.is_none() {
+            self.semantic_index = Some(
+                crate::editor::semantic_search::SemanticIndex::build(&self.workspace_root),
+            );
+        }
+        if let Some(ref index) = self.semantic_index {
+            let hits = index.search(&self.search_query, 50);
+            self.search_hits = hits
+                .into_iter()
+                .map(|h| crate::editor::search::SearchHit {
+                    path: h.path,
+                    line: 1,
+                    text: format!("[{:.0}%] {}", h.score * 100.0, h.preview),
+                })
+                .collect();
+        }
+    }
+
+    // ─── Inline Suggestions LLM Wiring ───────────────────────────────────────
+
+    /// Request an inline ghost-text suggestion from the configured LLM provider.
+    /// Called on cursor pause after debounce timer (see code_editor integration).
+    #[allow(dead_code)]
+    pub fn request_inline_suggestion(&mut self) {
+        use crate::editor::inline_suggestions::SuggestionRequest;
+
+        let (file_path, prefix, suffix, language) = match self.active_tab.as_ref()
+            .and_then(|id| {
+                let path = self.tab_path(id)?.clone();
+                let buf = self.buffers.get(id)?;
+                let content = buf.content().to_string();
+                // Split at roughly the middle or the end (no cursor byte available)
+                // Use the last 500 chars as prefix context
+                let split = content.len().min(2000);
+                let prefix = content[..split].to_string();
+                let suffix = content[split..].to_string();
+                let ext = path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("txt");
+                let language = match ext {
+                    "rs" => "rust",
+                    "py" => "python",
+                    "js" | "jsx" => "javascript",
+                    "ts" | "tsx" => "typescript",
+                    "go" => "go",
+                    "java" => "java",
+                    _ => "plaintext",
+                };
+                Some((path, prefix, suffix, language.to_string()))
+            }) {
+            Some(tuple) => tuple,
+            None => return,
+        };
+
+        let request = SuggestionRequest {
+            file_path,
+            prefix,
+            suffix,
+            language,
+        };
+
+        // Submit to the suggestion engine for async resolution.
+        self.inline_suggestions.submit_request(request, self.provider, &self.selected_model);
+    }
+
+    // ─── Deploy Pipeline UI Integration ──────────────────────────────────────
+
+    /// Initialize the deploy pipeline from workspace configuration.
+    pub fn init_deploy_pipeline(&mut self) {
+        if self.deploy_pipeline.is_none() {
+            self.deploy_pipeline = Some(
+                crate::editor::deploy_pipeline::PipelineManager::from_workspace(&self.workspace_root),
+            );
+        }
+    }
+
+    /// Trigger a full deploy run (build → test → package → deploy).
+    pub fn trigger_deploy(&mut self) {
+        self.init_deploy_pipeline();
+        if let Some(ref mut pipeline) = self.deploy_pipeline {
+            pipeline.trigger_run();
+            self.status_message = "Deploy pipeline started.".into();
+            self.toasts.push(crate::editor::toast::Toast::info("▲ Deploy pipeline running"));
+        }
+    }
+
+    /// Rollback to the previous successful deployment.
+    #[allow(dead_code)]
+    pub fn rollback_deploy(&mut self) {
+        if let Some(ref mut pipeline) = self.deploy_pipeline {
+            match pipeline.rollback() {
+                Ok(()) => {
+                    self.status_message = "Rolled back to previous deployment.".into();
+                    self.toasts.push(crate::editor::toast::Toast::success("Rollback successful"));
+                }
+                Err(e) => {
+                    self.toasts.push(crate::editor::toast::Toast::error(format!("Rollback failed: {}", e)));
+                }
+            }
+        }
+    }
 }

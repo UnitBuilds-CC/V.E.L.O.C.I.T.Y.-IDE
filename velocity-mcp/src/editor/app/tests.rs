@@ -256,8 +256,8 @@ fn desktop_automation_selected_task_cues_surface_artifacts_and_next_step() {
 
 #[test]
 fn mirror_worker_events_into_timeline_appends_only_new_events() {
-    let mut timeline = TTState::default();
-    let mut mission_control = MissionControlState::new();
+    let timeline = TTState::default();
+    let mission_control = MissionControlState::new();
     let first_snapshot = dashboard_snapshot(
         7,
         vec![
@@ -392,6 +392,7 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
         precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
         semantic_index: None,
+semantic_search_active: false,
         inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
         test_generator: crate::editor::test_generator::TestGenerator::default(),
         deploy_pipeline: None,
@@ -568,6 +569,7 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
         precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
         semantic_index: None,
+semantic_search_active: false,
         inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
         test_generator: crate::editor::test_generator::TestGenerator::default(),
         deploy_pipeline: None,

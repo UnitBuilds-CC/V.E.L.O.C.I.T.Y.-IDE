@@ -297,6 +297,8 @@ pub struct VelocityApp {
     /// Semantic code search index (TF-IDF).
     #[allow(dead_code)]
     pub semantic_index: Option<crate::editor::semantic_search::SemanticIndex>,
+    /// Whether semantic search mode is active (vs. literal grep).
+    pub semantic_search_active: bool,
     /// Inline ghost-text suggestion engine.
     #[allow(dead_code)]
     pub inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine,
@@ -823,6 +825,7 @@ impl VelocityApp {
             live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
             precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
             semantic_index: None,
+            semantic_search_active: false,
             inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
             test_generator: crate::editor::test_generator::TestGenerator::default(),
             deploy_pipeline: None,
