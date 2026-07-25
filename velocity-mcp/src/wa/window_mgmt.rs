@@ -3,10 +3,8 @@
 //!
 //! Provides window enumeration, positional control (move, resize, minimize,
 //! maximize, restore, close), z-order management, and window state queries
-//! via Win32 API calls through PowerShell.
+//! via direct Win32 API calls (zero PowerShell overhead).
 
-use std::io::Write;
-use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─── Window Info Model ───────────────────────────────────────────────────────
@@ -90,19 +88,19 @@ pub struct WindowOpResult {
 
 // ─── Window Manager ──────────────────────────────────────────────────────────
 
-/// Manages window enumeration and operations via PowerShell/Win32.
+/// Manages window enumeration and operations via native Win32 API.
 pub struct WindowManager;
 
 impl WindowManager {
     /// Enumerate all visible top-level windows.
     pub fn enumerate_windows() -> Vec<WindowInfo> {
-        if !cfg!(target_os = "windows") {
-            return Vec::new();
+        #[cfg(target_os = "windows")]
+        {
+            enumerate_windows_native()
         }
-        let script = build_enumerate_windows_script();
-        match run_ps_script(&script) {
-            Ok(json) => parse_window_list(&json),
-            Err(_) => Vec::new(),
+        #[cfg(not(target_os = "windows"))]
+        {
+            Vec::new()
         }
     }
 
@@ -141,25 +139,19 @@ impl WindowManager {
 
     /// Apply an operation to a window identified by HWND.
     pub fn apply_operation(hwnd: u64, op: &WindowOperation) -> WindowOpResult {
-        if !cfg!(target_os = "windows") {
-            return WindowOpResult {
+        #[cfg(target_os = "windows")]
+        {
+            apply_operation_native(hwnd, op)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            WindowOpResult {
                 success: false,
                 hwnd,
                 operation: format!("{:?}", op),
                 detail: "Window operations only supported on Windows".to_string(),
                 new_rect: None,
-            };
-        }
-        let script = build_window_op_script(hwnd, op);
-        match run_ps_script(&script) {
-            Ok(json) => parse_window_op_result(hwnd, op, &json),
-            Err(e) => WindowOpResult {
-                success: false,
-                hwnd,
-                operation: format!("{:?}", op),
-                detail: e,
-                new_rect: None,
-            },
+            }
         }
     }
 
@@ -206,240 +198,176 @@ impl WindowManager {
     }
 }
 
-// ─── PowerShell Scripts ──────────────────────────────────────────────────────
+// ─── Native Win32 Implementation ─────────────────────────────────────────────
 
-/// Build a PowerShell script that enumerates all visible top-level windows
-/// and outputs their info as JSON.
-pub fn build_enumerate_windows_script() -> String {
-    r#"
-Add-Type @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Text;
-public class WinEnum {
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int maxCount);
-    [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int maxCount);
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
-    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-}
-'@
-$fgWnd = [WinEnum]::GetForegroundWindow()
-$windows = @()
-$callback = [WinEnum+EnumWindowsProc]{
-    param($hWnd, $lParam)
-    if ([WinEnum]::IsWindowVisible($hWnd) -and [WinEnum]::GetWindowTextLength($hWnd) -gt 0) {
-        $sb = New-Object System.Text.StringBuilder 256
-        [WinEnum]::GetWindowText($hWnd, $sb, 256) | Out-Null
-        $title = $sb.ToString()
-        $sb.Clear() | Out-Null
-        [WinEnum]::GetClassName($hWnd, $sb, 256) | Out-Null
-        $class = $sb.ToString()
-        $pid = 0
-        [WinEnum]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
-        $rect = New-Object WinEnum+RECT
-        [WinEnum]::GetWindowRect($hWnd, [ref]$rect) | Out-Null
-        $state = "normal"
-        if ([WinEnum]::IsIconic($hWnd)) { $state = "minimized" }
-        elseif ([WinEnum]::IsZoomed($hWnd)) { $state = "maximized" }
-        $script:windows += @{
-            hwnd = $hWnd.ToInt64()
-            process_id = $pid
-            title = $title
-            class_name = $class
-            x = $rect.Left; y = $rect.Top
-            width = $rect.Right - $rect.Left
-            height = $rect.Bottom - $rect.Top
-            state = $state
-            is_foreground = ($hWnd -eq $fgWnd)
+#[cfg(target_os = "windows")]
+mod native {
+    use super::*;
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    /// Enumerate all visible top-level windows using EnumWindows.
+    pub fn enumerate_windows_native() -> Vec<WindowInfo> {
+        let mut windows: Vec<WindowInfo> = Vec::new();
+        let fg_hwnd = unsafe { GetForegroundWindow() };
+
+        unsafe {
+            let _ = EnumWindows(
+                Some(enum_windows_callback),
+                LPARAM(&mut windows as *mut Vec<WindowInfo> as isize),
+            );
+        }
+
+        // Mark foreground window
+        let fg_val = fg_hwnd.0 as u64;
+        for w in windows.iter_mut() {
+            w.is_foreground = w.hwnd == fg_val;
+        }
+
+        windows
+    }
+
+    unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let windows = &mut *(lparam.0 as *mut Vec<WindowInfo>);
+
+        // Skip invisible windows
+        if !IsWindowVisible(hwnd).as_bool() {
+            return BOOL(1);
+        }
+
+        // Skip windows with no title
+        let title_len = GetWindowTextLengthW(hwnd);
+        if title_len == 0 {
+            return BOOL(1);
+        }
+
+        // Get title
+        let mut title_buf = vec![0u16; (title_len + 1) as usize];
+        let actual_len = GetWindowTextW(hwnd, &mut title_buf);
+        let title = String::from_utf16_lossy(&title_buf[..actual_len as usize]);
+
+        // Get class name
+        let mut class_buf = vec![0u16; 256];
+        let class_len = GetClassNameW(hwnd, &mut class_buf);
+        let class_name = String::from_utf16_lossy(&class_buf[..class_len as usize]);
+
+        // Get process ID
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+
+        // Get window rect
+        let mut rect = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut rect);
+
+        // Determine state
+        let state = if IsIconic(hwnd).as_bool() {
+            WindowState::Minimized
+        } else if IsZoomed(hwnd).as_bool() {
+            WindowState::Maximized
+        } else {
+            WindowState::Normal
+        };
+
+        windows.push(WindowInfo {
+            hwnd: hwnd.0 as u64,
+            process_id: pid,
+            title,
+            class_name,
+            rect: WindowRect {
+                x: rect.left,
+                y: rect.top,
+                width: (rect.right - rect.left) as u32,
+                height: (rect.bottom - rect.top) as u32,
+            },
+            state,
+            is_foreground: false, // Set later
+            is_top_level: true,
+        });
+
+        BOOL(1) // Continue enumeration
+    }
+
+    /// Apply a window operation using native Win32 calls.
+    pub fn apply_operation_native(hwnd_val: u64, op: &WindowOperation) -> WindowOpResult {
+        let hwnd = HWND(hwnd_val as *mut _);
+        let op_name = format!("{:?}", op);
+
+        let success = unsafe {
+            match op {
+                WindowOperation::Move { x, y } => {
+                    let mut rect = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut rect);
+                    MoveWindow(hwnd, *x, *y, rect.right - rect.left, rect.bottom - rect.top, true).is_ok()
+                }
+                WindowOperation::Resize { width, height } => {
+                    let mut rect = RECT::default();
+                    let _ = GetWindowRect(hwnd, &mut rect);
+                    MoveWindow(hwnd, rect.left, rect.top, *width as i32, *height as i32, true).is_ok()
+                }
+                WindowOperation::MoveResize { x, y, width, height } => {
+                    MoveWindow(hwnd, *x, *y, *width as i32, *height as i32, true).is_ok()
+                }
+                WindowOperation::Minimize => {
+                    ShowWindow(hwnd, SW_MINIMIZE).as_bool()
+                }
+                WindowOperation::Maximize => {
+                    ShowWindow(hwnd, SW_MAXIMIZE).as_bool()
+                }
+                WindowOperation::Restore => {
+                    ShowWindow(hwnd, SW_RESTORE).as_bool()
+                }
+                WindowOperation::Close => {
+                    let _ = SendMessageW(hwnd, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+                    true
+                }
+                WindowOperation::BringToFront => {
+                    SetForegroundWindow(hwnd).as_bool()
+                }
+                WindowOperation::SendToBack => {
+                    SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok()
+                }
+                WindowOperation::SetTopMost(true) => {
+                    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok()
+                }
+                WindowOperation::SetTopMost(false) => {
+                    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok()
+                }
+                WindowOperation::SetOpacity(alpha) => {
+                    // Set WS_EX_LAYERED style
+                    let style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as i32);
+                    SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), *alpha, LWA_ALPHA).is_ok()
+                }
+            }
+        };
+
+        // Get new rect after operation
+        let new_rect = unsafe {
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() {
+                Some(WindowRect {
+                    x: rect.left,
+                    y: rect.top,
+                    width: (rect.right - rect.left) as u32,
+                    height: (rect.bottom - rect.top) as u32,
+                })
+            } else {
+                None
+            }
+        };
+
+        WindowOpResult {
+            success,
+            hwnd: hwnd_val,
+            operation: op_name,
+            detail: "executed via native Win32 API".to_string(),
+            new_rect,
         }
     }
-    return $true
-}
-[WinEnum]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
-ConvertTo-Json $windows -Compress
-"#
-    .to_string()
 }
 
-/// Build a PowerShell script to perform a window operation.
-pub fn build_window_op_script(hwnd: u64, op: &WindowOperation) -> String {
-    let op_code = match op {
-        WindowOperation::Move { x, y } => format!(
-            "[WinOp]::MoveWindow([IntPtr]{}L, {}, {}, 0, 0, $true) | Out-Null",
-            hwnd, x, y
-        ),
-        WindowOperation::Resize { width, height } => format!(
-            "$r = New-Object WinOp+RECT; [WinOp]::GetWindowRect([IntPtr]{}L, [ref]$r) | Out-Null; [WinOp]::MoveWindow([IntPtr]{}L, $r.Left, $r.Top, {}, {}, $true) | Out-Null",
-            hwnd, hwnd, width, height
-        ),
-        WindowOperation::MoveResize { x, y, width, height } => format!(
-            "[WinOp]::MoveWindow([IntPtr]{}L, {}, {}, {}, {}, $true) | Out-Null",
-            hwnd, x, y, width, height
-        ),
-        WindowOperation::Minimize => format!(
-            "[WinOp]::ShowWindow([IntPtr]{}L, 6) | Out-Null", hwnd
-        ),
-        WindowOperation::Maximize => format!(
-            "[WinOp]::ShowWindow([IntPtr]{}L, 3) | Out-Null", hwnd
-        ),
-        WindowOperation::Restore => format!(
-            "[WinOp]::ShowWindow([IntPtr]{}L, 9) | Out-Null", hwnd
-        ),
-        WindowOperation::Close => format!(
-            "[WinOp]::SendMessage([IntPtr]{}L, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null", hwnd
-        ),
-        WindowOperation::BringToFront => format!(
-            "[WinOp]::SetForegroundWindow([IntPtr]{}L) | Out-Null", hwnd
-        ),
-        WindowOperation::SendToBack => format!(
-            "[WinOp]::SetWindowPos([IntPtr]{}L, [IntPtr]1, 0, 0, 0, 0, 0x0013) | Out-Null", hwnd
-        ),
-        WindowOperation::SetTopMost(true) => format!(
-            "[WinOp]::SetWindowPos([IntPtr]{}L, [IntPtr](-1), 0, 0, 0, 0, 0x0013) | Out-Null", hwnd
-        ),
-        WindowOperation::SetTopMost(false) => format!(
-            "[WinOp]::SetWindowPos([IntPtr]{}L, [IntPtr](-2), 0, 0, 0, 0, 0x0013) | Out-Null", hwnd
-        ),
-        WindowOperation::SetOpacity(alpha) => format!(
-            "$style = [WinOp]::GetWindowLong([IntPtr]{}L, -20); [WinOp]::SetWindowLong([IntPtr]{}L, -20, $style -bor 0x80000); [WinOp]::SetLayeredWindowAttributes([IntPtr]{}L, 0, {}, 2) | Out-Null",
-            hwnd, hwnd, hwnd, alpha
-        ),
-    };
-
-    format!(
-        r#"
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class WinOp {{
-    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-    [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    [StructLayout(LayoutKind.Sequential)] public struct RECT {{ public int Left; public int Top; public int Right; public int Bottom; }}
-}}
-'@
-{op_code}
-$r = New-Object WinOp+RECT
-[WinOp]::GetWindowRect([IntPtr]{hwnd}L, [ref]$r) | Out-Null
-$result = @{{ success = $true; hwnd = {hwnd}; x = $r.Left; y = $r.Top; width = $r.Right - $r.Left; height = $r.Bottom - $r.Top }}
-ConvertTo-Json $result -Compress
-"#
-    )
-}
-
-// ─── Runtime Helpers ─────────────────────────────────────────────────────────
-
-fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn parse_window_list(json: &str) -> Vec<WindowInfo> {
-    #[derive(serde::Deserialize)]
-    struct PsWindow {
-        hwnd: Option<i64>,
-        process_id: Option<u32>,
-        title: Option<String>,
-        class_name: Option<String>,
-        x: Option<i32>,
-        y: Option<i32>,
-        width: Option<u32>,
-        height: Option<u32>,
-        state: Option<String>,
-        is_foreground: Option<bool>,
-    }
-    let parsed: Result<Vec<PsWindow>, _> = serde_json::from_str(json);
-    match parsed {
-        Ok(windows) => windows
-            .into_iter()
-            .map(|w| {
-                let state_str = w.state.as_deref().unwrap_or("normal");
-                WindowInfo {
-                    hwnd: w.hwnd.unwrap_or(0) as u64,
-                    process_id: w.process_id.unwrap_or(0),
-                    title: w.title.unwrap_or_default(),
-                    class_name: w.class_name.unwrap_or_default(),
-                    rect: WindowRect {
-                        x: w.x.unwrap_or(0),
-                        y: w.y.unwrap_or(0),
-                        width: w.width.unwrap_or(0),
-                        height: w.height.unwrap_or(0),
-                    },
-                    state: match state_str {
-                        "minimized" => WindowState::Minimized,
-                        "maximized" => WindowState::Maximized,
-                        "hidden" => WindowState::Hidden,
-                        _ => WindowState::Normal,
-                    },
-                    is_foreground: w.is_foreground.unwrap_or(false),
-                    is_top_level: true,
-                }
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
-fn parse_window_op_result(hwnd: u64, op: &WindowOperation, json: &str) -> WindowOpResult {
-    #[derive(serde::Deserialize)]
-    struct PsResult {
-        success: Option<bool>,
-        x: Option<i32>,
-        y: Option<i32>,
-        width: Option<u32>,
-        height: Option<u32>,
-    }
-    match serde_json::from_str::<PsResult>(json) {
-        Ok(r) => WindowOpResult {
-            success: r.success.unwrap_or(true),
-            hwnd,
-            operation: format!("{:?}", op),
-            detail: "executed via PowerShell".to_string(),
-            new_rect: Some(WindowRect {
-                x: r.x.unwrap_or(0),
-                y: r.y.unwrap_or(0),
-                width: r.width.unwrap_or(0),
-                height: r.height.unwrap_or(0),
-            }),
-        },
-        Err(e) => WindowOpResult {
-            success: false,
-            hwnd,
-            operation: format!("{:?}", op),
-            detail: format!("parse error: {e}"),
-            new_rect: None,
-        },
-    }
-}
+#[cfg(target_os = "windows")]
+use native::{apply_operation_native, enumerate_windows_native};
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
@@ -461,38 +389,36 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_script_contains_enumwindows() {
-        let script = build_enumerate_windows_script();
-        assert!(script.contains("EnumWindows"));
-        assert!(script.contains("GetForegroundWindow"));
-        assert!(script.contains("GetWindowRect"));
+    fn window_info_model() {
+        let info = WindowInfo {
+            hwnd: 12345,
+            process_id: 1000,
+            title: "Test Window".to_string(),
+            class_name: "TestClass".to_string(),
+            rect: WindowRect { x: 0, y: 0, width: 800, height: 600 },
+            state: WindowState::Normal,
+            is_foreground: true,
+            is_top_level: true,
+        };
+        assert_eq!(info.hwnd, 12345);
+        assert_eq!(info.rect.width, 800);
     }
 
     #[test]
-    fn window_op_script_move() {
-        let script = build_window_op_script(12345, &WindowOperation::Move { x: 100, y: 200 });
-        assert!(script.contains("MoveWindow"));
-        assert!(script.contains("12345"));
-    }
-
-    #[test]
-    fn window_op_script_maximize() {
-        let script = build_window_op_script(99, &WindowOperation::Maximize);
-        assert!(script.contains("ShowWindow"));
-        assert!(script.contains("3")); // SW_MAXIMIZE = 3
-    }
-
-    #[test]
-    fn window_op_script_close() {
-        let script = build_window_op_script(555, &WindowOperation::Close);
-        assert!(script.contains("SendMessage"));
-        assert!(script.contains("0x0010")); // WM_CLOSE
-    }
-
-    #[test]
-    fn window_op_script_topmost() {
-        let script = build_window_op_script(777, &WindowOperation::SetTopMost(true));
-        assert!(script.contains("SetWindowPos"));
-        assert!(script.contains("-1")); // HWND_TOPMOST
+    fn window_operation_variants() {
+        let ops = vec![
+            WindowOperation::Move { x: 100, y: 200 },
+            WindowOperation::Resize { width: 800, height: 600 },
+            WindowOperation::MoveResize { x: 0, y: 0, width: 1920, height: 1080 },
+            WindowOperation::Minimize,
+            WindowOperation::Maximize,
+            WindowOperation::Restore,
+            WindowOperation::Close,
+            WindowOperation::BringToFront,
+            WindowOperation::SendToBack,
+            WindowOperation::SetTopMost(true),
+            WindowOperation::SetOpacity(128),
+        ];
+        assert_eq!(ops.len(), 11);
     }
 }

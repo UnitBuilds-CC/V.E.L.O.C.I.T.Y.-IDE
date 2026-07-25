@@ -196,6 +196,7 @@ pub fn execute_live_task(
             prompt: assignment.instructions.clone(),
             cancel_rx: Some(cancel_rx.clone()),
             progress: Some(progress.clone()),
+            scoped_files: assignment.scoped_files.clone(),
         });
         last_status_updates = subagent.status_updates.clone();
         last_transcript = subagent.transcript.clone();

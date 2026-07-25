@@ -167,6 +167,74 @@ impl TestGenerator {
             self.analysis.untested_functions.len()
         )
     }
+
+    /// T3c: Ingest symbols from an LSP documentSymbol response.
+    /// Parses the hierarchical symbol tree and extracts function entries
+    /// as TestableFunction items for more accurate test generation.
+    pub fn ingest_lsp_symbols(&mut self, file: &Path, symbols_json: &serde_json::Value) {
+        let mut functions = Vec::new();
+        parse_lsp_symbols_recursive(file, symbols_json, &mut functions);
+
+        // Merge with existing analysis (LSP data takes priority)
+        let test_index: HashMap<String, bool> = self.analysis.untested_functions.iter()
+            .map(|f| (f.name.clone(), f.has_existing_test))
+            .collect();
+
+        for func in &mut functions {
+            func.has_existing_test = test_index.contains_key(&func.name);
+        }
+
+        let total = functions.len();
+        let tested = functions.iter().filter(|f| f.has_existing_test).count();
+        let untested: Vec<_> = functions.into_iter()
+            .filter(|f| !f.has_existing_test)
+            .filter(|f| !self.config.public_only || f.visibility == Visibility::Public)
+            .collect();
+
+        self.analysis = CoverageAnalysis {
+            total_functions: total,
+            tested_functions: tested,
+            untested_functions: untested,
+            coverage_percent: if total == 0 { 100.0 } else { (tested as f32 / total as f32) * 100.0 },
+        };
+    }
+}
+
+/// Recursively parse LSP documentSymbol response into TestableFunction entries.
+/// LSP SymbolKind: 12 = Function, 6 = Method, 9 = Constructor
+fn parse_lsp_symbols_recursive(file: &Path, value: &serde_json::Value, out: &mut Vec<TestableFunction>) {
+    if let Some(arr) = value.as_array() {
+        for sym in arr {
+            let kind = sym["kind"].as_u64().unwrap_or(0);
+            // Function (12), Method (6), Constructor (9)
+            if kind == 12 || kind == 6 || kind == 9 {
+                let name = sym["name"].as_str().unwrap_or("").to_string();
+                let line = sym["location"]["range"]["start"]["line"].as_u64()
+                    .or_else(|| sym["range"]["start"]["line"].as_u64())
+                    .unwrap_or(0) as usize;
+                let detail = sym["detail"].as_str().unwrap_or("").to_string();
+                let visibility = if name.starts_with("pub ") || detail.contains("pub") {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                };
+                if !name.is_empty() {
+                    out.push(TestableFunction {
+                        name: name.clone(),
+                        file: file.to_path_buf(),
+                        line,
+                        signature: detail,
+                        visibility,
+                        has_existing_test: false,
+                    });
+                }
+            }
+            // Recurse into children
+            if let Some(children) = sym.get("children") {
+                parse_lsp_symbols_recursive(file, children, out);
+            }
+        }
+    }
 }
 
 /// Generate a test skeleton for a single function.

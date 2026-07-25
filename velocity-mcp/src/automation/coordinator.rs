@@ -99,6 +99,7 @@ impl WorkspaceCoordinator {
                     model_label: task.model_label.clone(),
                     thinking: task.thinking,
                     fallback_chain: task.fallback_chain.clone(),
+                    scoped_files: None,
                 },
                 self.mediator.clone(),
                 weight_root,

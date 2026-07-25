@@ -104,6 +104,8 @@ pub struct HeadlessSubAgentRequest {
     pub prompt: String,
     pub cancel_rx: Option<Receiver<UiToAgentMessage>>,
     pub progress: Option<Arc<Mutex<HeadlessSubAgentProgress>>>,
+    /// Optional list of files to pre-index for speculative pre-computation.
+    pub scoped_files: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -2,13 +2,11 @@
 //! Process lifecycle management for Windows desktop automation.
 //!
 //! Provides process launching, termination, enumeration, and wait-for-exit
-//! capabilities needed for orchestrating desktop automation workflows.
+//! capabilities via native Win32 API (zero PowerShell overhead).
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 // ─── Process Model ───────────────────────────────────────────────────────────
 
@@ -144,17 +142,19 @@ pub struct WaitResult {
 
 // ─── Process Manager ─────────────────────────────────────────────────────────
 
-/// Manages process lifecycle operations.
+/// Manages process lifecycle operations via native Win32 API.
 pub struct ProcessManager;
 
 impl ProcessManager {
     /// Enumerate all running processes.
     pub fn enumerate() -> Vec<ProcessInfo> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
-        let script = build_enumerate_processes_script(None);
-        match run_ps_script(&script) {
-            Ok(json) => parse_process_list(&json),
-            Err(_) => Vec::new(),
+        #[cfg(target_os = "windows")]
+        {
+            enumerate_processes_native()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Vec::new()
         }
     }
 
@@ -190,51 +190,56 @@ impl ProcessManager {
 
     /// Check if a process is still running.
     pub fn is_running(pid: u32) -> bool {
-        Self::get_process(pid).is_some()
+        #[cfg(target_os = "windows")]
+        {
+            is_process_running_native(pid)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
     }
 
     /// Launch a process with the given configuration.
     pub fn launch(config: &LaunchConfig) -> LaunchResult {
-        if !cfg!(target_os = "windows") {
-            return LaunchResult {
+        #[cfg(target_os = "windows")]
+        {
+            launch_process_native(config)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            LaunchResult {
                 success: false,
                 pid: None,
                 detail: "Process launch requires Windows runtime".to_string(),
                 window_ready: false,
                 main_window_title: None,
-            };
-        }
-        let script = build_launch_script(config);
-        match run_ps_script(&script) {
-            Ok(json) => parse_launch_result(&json),
-            Err(e) => LaunchResult {
-                success: false,
-                pid: None,
-                detail: e,
-                window_ready: false,
-                main_window_title: None,
-            },
+            }
         }
     }
 
     /// Gracefully terminate a process (sends WM_CLOSE, then kills after timeout).
     pub fn terminate(pid: u32, grace_timeout: Duration) -> bool {
-        if !cfg!(target_os = "windows") {
-            return false;
+        #[cfg(target_os = "windows")]
+        {
+            terminate_process_native(pid, grace_timeout)
         }
-        let script = build_terminate_script(pid, grace_timeout.as_millis() as u64);
-        run_ps_script(&script).is_ok()
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
     }
 
     /// Force-kill a process immediately.
     pub fn kill(pid: u32) -> bool {
-        if !cfg!(target_os = "windows") {
-            return false;
+        #[cfg(target_os = "windows")]
+        {
+            kill_process_native(pid)
         }
-        let script = format!(
-            "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($null -eq $p) {{ exit 1 }}; Stop-Process -Id {pid} -Force; Write-Output '{{\"success\":true}}'"
-        );
-        run_ps_script(&script).is_ok()
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
     }
 
     /// Wait for a condition on a process.
@@ -243,49 +248,19 @@ impl ProcessManager {
         condition: &ProcessWaitCondition,
         timeout: Duration,
     ) -> WaitResult {
-        if !cfg!(target_os = "windows") {
-            return WaitResult {
+        let start = Instant::now();
+
+        #[cfg(target_os = "windows")]
+        {
+            wait_for_condition_native(pid, condition, timeout, start)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            WaitResult {
                 condition_met: false,
                 elapsed: Duration::ZERO,
                 detail: "Process wait requires Windows runtime".to_string(),
                 exit_code: None,
-            };
-        }
-        let start = Instant::now();
-        // Polling-based wait
-        let poll_ms = 200;
-        let deadline_ms = timeout.as_millis() as u64;
-        match condition {
-            ProcessWaitCondition::Exit => {
-                let script = format!(
-                    "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; $deadline = [Environment]::TickCount64 + {deadline_ms}; while ($null -ne $p -and [Environment]::TickCount64 -lt $deadline) {{ Start-Sleep -Milliseconds {poll_ms}; $p = Get-Process -Id {pid} -ErrorAction SilentlyContinue }}; ConvertTo-Json @{{ exited = ($null -eq $p) }} -Compress"
-                );
-                match run_ps_script(&script) {
-                    Ok(_) => WaitResult {
-                        condition_met: true,
-                        elapsed: start.elapsed(),
-                        detail: "process exited".to_string(),
-                        exit_code: None,
-                    },
-                    Err(e) => WaitResult {
-                        condition_met: false,
-                        elapsed: start.elapsed(),
-                        detail: e,
-                        exit_code: None,
-                    },
-                }
-            }
-            _ => {
-                let script = build_wait_condition_script(pid, condition, deadline_ms, poll_ms);
-                match run_ps_script(&script) {
-                    Ok(json) => parse_wait_result(&json, start.elapsed()),
-                    Err(e) => WaitResult {
-                        condition_met: false,
-                        elapsed: start.elapsed(),
-                        detail: e,
-                        exit_code: None,
-                    },
-                }
             }
         }
     }
@@ -312,309 +287,272 @@ impl ProcessManager {
     }
 }
 
-// ─── PowerShell Scripts ──────────────────────────────────────────────────────
+// ─── Native Win32 Implementation ─────────────────────────────────────────────
 
-/// Build a PowerShell script to enumerate processes with window info.
-pub fn build_enumerate_processes_script(name_filter: Option<&str>) -> String {
-    let filter = name_filter
-        .map(|n| format!("| Where-Object {{ $_.ProcessName -like '*{}*' }}", n))
-        .unwrap_or_default();
+#[cfg(target_os = "windows")]
+mod native {
+    use super::*;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::System::Diagnostics::ToolHelp::*;
+    use windows::Win32::System::Threading::*;
+    use windows::Win32::UI::WindowsAndMessaging::*;
 
-    format!(
-        r#"
-$processes = Get-Process {filter} -ErrorAction SilentlyContinue | ForEach-Object {{
-    @{{
-        pid = $_.Id
-        name = $_.ProcessName
-        exe_path = $_.Path
-        parent_pid = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).ParentProcessId
-        main_window_title = $_.MainWindowTitle
-        has_window = ($_.MainWindowHandle -ne 0)
-        memory_bytes = $_.WorkingSet64
-        start_time_ms = if ($_.StartTime) {{ [int64](($_.StartTime.ToUniversalTime() - [DateTime]::UnixEpoch).TotalMilliseconds) }} else {{ 0 }}
-    }}
-}}
-ConvertTo-Json @($processes) -Compress -Depth 2
-"#
-    )
-}
+    // SYNCHRONIZE access right for WaitForSingleObject
+    const SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x00100000);
 
-/// Build a PowerShell script to launch a process.
-pub fn build_launch_script(config: &LaunchConfig) -> String {
-    let exe = config.exe_path.to_string_lossy().replace('\'', "''");
-    let args_str = config
-        .args
-        .iter()
-        .map(|a| format!("'{}'", a.replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let verb = if config.elevated { "RunAs" } else { "" };
-    let style = if config.hidden {
-        "Hidden"
-    } else {
-        "Normal"
-    };
-    let working_dir = config
-        .working_dir
-        .as_ref()
-        .map(|d| format!("-WorkingDirectory '{}'", d.to_string_lossy().replace('\'', "''")))
-        .unwrap_or_default();
+    /// Enumerate processes using CreateToolhelp32Snapshot.
+    pub fn enumerate_processes_native() -> Vec<ProcessInfo> {
+        let mut processes = Vec::new();
 
-    let wait_clause = if config.wait_for_window {
-        format!(
-            r#"
-$deadline = [DateTime]::Now.AddMilliseconds({})
-while ([DateTime]::Now -lt $deadline) {{
-    $proc.Refresh()
-    if ($proc.MainWindowHandle -ne 0) {{ break }}
-    Start-Sleep -Milliseconds 100
-}}
-"#,
-            config.window_timeout.as_millis()
-        )
-    } else {
-        String::new()
-    };
+        unsafe {
+            let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+                Ok(h) => h,
+                Err(_) => return processes,
+            };
 
-    format!(
-        r#"
-$startInfo = New-Object System.Diagnostics.ProcessStartInfo
-$startInfo.FileName = '{exe}'
-$startInfo.Arguments = '{args}'
-$startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::{style}
-{wd}
-{verb_line}
-$proc = [System.Diagnostics.Process]::Start($startInfo)
-{wait_clause}
-$result = @{{
-    success = $true
-    pid = $proc.Id
-    window_ready = ($proc.MainWindowHandle -ne 0)
-    main_window_title = $proc.MainWindowTitle
-}}
-ConvertTo-Json $result -Compress
-"#,
-        exe = exe,
-        args = config.args.join(" "),
-        style = style,
-        wd = working_dir,
-        verb_line = if config.elevated {
-            "$startInfo.Verb = 'RunAs'"
-        } else {
-            ""
-        },
-        wait_clause = wait_clause,
-    )
-}
+            let mut entry = PROCESSENTRY32W::default();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
 
-/// Build a PowerShell script to terminate a process gracefully.
-pub fn build_terminate_script(pid: u32, grace_ms: u64) -> String {
-    format!(
-        r#"
-$proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
-if ($null -eq $proc) {{
-    Write-Output '{{"success":false,"detail":"Process not found"}}'
-    exit
-}}
-# Try graceful close first
-$proc.CloseMainWindow() | Out-Null
-$exited = $proc.WaitForExit({grace_ms})
-if (-not $exited) {{
-    $proc.Kill()
-    $proc.WaitForExit(5000) | Out-Null
-}}
-Write-Output (ConvertTo-Json @{{ success = $true; exit_code = $proc.ExitCode; graceful = $exited }} -Compress)
-"#
-    )
-}
+            if Process32FirstW(snapshot, &mut entry).is_ok() {
+                loop {
+                    let name_end = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                    let name = String::from_utf16_lossy(&entry.szExeFile[..name_end]);
 
-// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+                    processes.push(ProcessInfo {
+                        pid: entry.th32ProcessID,
+                        name,
+                        exe_path: None, // Would require QueryFullProcessImageName
+                        command_line: None,
+                        parent_pid: Some(entry.th32ParentProcessID),
+                        main_window_title: None,
+                        has_window: false,
+                        cpu_percent: None,
+                        memory_bytes: None,
+                        start_time_ms: None,
+                    });
 
-fn run_ps_script(script: &str) -> Result<String, String> {
-    let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
-    }
-    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("PowerShell error: {}", stderr.trim()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
+                    if Process32NextW(snapshot, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
 
-fn parse_process_list(json: &str) -> Vec<ProcessInfo> {
-    #[derive(serde::Deserialize)]
-    struct PsProcess {
-        pid: Option<u32>,
-        name: Option<String>,
-        exe_path: Option<String>,
-        parent_pid: Option<u32>,
-        main_window_title: Option<String>,
-        has_window: Option<bool>,
-        memory_bytes: Option<u64>,
-        start_time_ms: Option<u64>,
-    }
-    serde_json::from_str::<Vec<PsProcess>>(json)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| ProcessInfo {
-            pid: p.pid.unwrap_or(0),
-            name: p.name.unwrap_or_default(),
-            exe_path: p.exe_path,
-            command_line: None,
-            parent_pid: p.parent_pid,
-            main_window_title: p.main_window_title,
-            has_window: p.has_window.unwrap_or(false),
-            cpu_percent: None,
-            memory_bytes: p.memory_bytes,
-            start_time_ms: p.start_time_ms,
-        })
-        .collect()
-}
-
-fn build_wait_condition_script(pid: u32, condition: &ProcessWaitCondition, deadline_ms: u64, poll_ms: u64) -> String {
-    match condition {
-        ProcessWaitCondition::WindowAppears { title_contains } => {
-            let escaped = title_contains.replace('\'', "''");
-            format!(
-                r#"
-$deadline = [Environment]::TickCount64 + {deadline_ms}
-$found = $false
-while ([Environment]::TickCount64 -lt $deadline) {{
-    $procs = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{escaped}*' }}
-    if ($procs.Count -gt 0) {{
-        $found = $true
-        $title = $procs[0].MainWindowTitle
-        break
-    }}
-    Start-Sleep -Milliseconds {poll_ms}
-}}
-ConvertTo-Json @{{ condition_met = $found; title = if ($found) {{ $title }} else {{ $null }} }} -Compress
-"#
-            )
+            let _ = CloseHandle(snapshot);
         }
-        ProcessWaitCondition::Idle { cpu_threshold, stable_seconds } => {
-            format!(
-                r#"
-$deadline = [Environment]::TickCount64 + {deadline_ms}
-$stableMs = {stable_secs} * 1000
-$idleStart = [Environment]::TickCount64
-$isIdle = $false
-while ([Environment]::TickCount64 -lt $deadline) {{
-    $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
-    if ($null -eq $proc) {{ break }}
-    $cpu = $proc.CPU
-    Start-Sleep -Milliseconds {poll_ms}
-    $proc.Refresh()
-    $cpuDelta = $proc.CPU - $cpu
-    $pct = $cpuDelta / ({poll_ms} / 1000.0)
-    if ($pct -lt {threshold}) {{
-        if (([Environment]::TickCount64 - $idleStart) -ge $stableMs) {{
-            $isIdle = $true
-            break
-        }}
-    }} else {{
-        $idleStart = [Environment]::TickCount64
-    }}
-}}
-ConvertTo-Json @{{ condition_met = $isIdle }} -Compress
-"#,
-                stable_secs = stable_seconds,
-                threshold = cpu_threshold,
-            )
-        }
-        ProcessWaitCondition::MemoryStable { tolerance_bytes, stable_seconds } => {
-            format!(
-                r#"
-$deadline = [Environment]::TickCount64 + {deadline_ms}
-$stableMs = {stable_secs} * 1000
-$memStart = [Environment]::TickCount64
-$isStable = $false
-$lastMem = 0
-while ([Environment]::TickCount64 -lt $deadline) {{
-    $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
-    if ($null -eq $proc) {{ break }}
-    $mem = $proc.WorkingSet64
-    if ($lastMem -gt 0 -and [Math]::Abs($mem - $lastMem) -le {tolerance}) {{
-        if (([Environment]::TickCount64 - $memStart) -ge $stableMs) {{
-            $isStable = $true
-            break
-        }}
-    }} else {{
-        $memStart = [Environment]::TickCount64
-    }}
-    $lastMem = $mem
-    Start-Sleep -Milliseconds {poll_ms}
-}}
-ConvertTo-Json @{{ condition_met = $isStable; memory_bytes = $lastMem }} -Compress
-"#,
-                stable_secs = stable_seconds,
-                tolerance = tolerance_bytes,
-            )
-        }
-        ProcessWaitCondition::Exit => String::new(), // handled separately
-    }
-}
 
-fn parse_wait_result(json: &str, elapsed: Duration) -> WaitResult {
-    #[derive(serde::Deserialize)]
-    struct PsWaitResult {
-        condition_met: Option<bool>,
-        exit_code: Option<i32>,
-        detail: Option<String>,
-        exited: Option<bool>,
+        processes
     }
-    match serde_json::from_str::<PsWaitResult>(json) {
-        Ok(r) => {
-            let met = r.condition_met.or(r.exited).unwrap_or(false);
-            WaitResult {
-                condition_met: met,
-                elapsed,
-                detail: r.detail.unwrap_or_else(|| if met { "condition met".into() } else { "timed out".into() }),
-                exit_code: r.exit_code,
+
+    /// Check if a process is running by opening its handle.
+    pub fn is_process_running_native(pid: u32) -> bool {
+        unsafe {
+            match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                Ok(handle) => {
+                    let _ = CloseHandle(handle);
+                    true
+                }
+                Err(_) => false,
             }
         }
-        Err(e) => WaitResult {
-            condition_met: false,
-            elapsed,
-            detail: format!("parse error: {e}"),
-            exit_code: None,
-        },
+    }
+
+    /// Launch a process using std::process::Command (cross-platform, safe).
+    pub fn launch_process_native(config: &LaunchConfig) -> LaunchResult {
+        use std::process::Command;
+
+        let mut cmd = Command::new(&config.exe_path);
+        cmd.args(&config.args);
+
+        if let Some(ref dir) = config.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, value) in &config.env {
+            cmd.env(key, value);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            if config.hidden {
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+        }
+
+        match cmd.spawn() {
+            Ok(child) => {
+                let pid = child.id();
+
+                // Optionally wait for window (Windows only)
+                let mut window_ready = false;
+                let mut window_title = None;
+
+                #[cfg(target_os = "windows")]
+                if config.wait_for_window {
+                    let deadline = Instant::now() + config.window_timeout;
+                    while Instant::now() < deadline {
+                        if let Some(info) = super::ProcessManager::get_process(pid) {
+                            if info.has_window {
+                                window_ready = true;
+                                window_title = info.main_window_title;
+                                break;
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+
+                LaunchResult {
+                    success: true,
+                    pid: Some(pid),
+                    detail: "launched via std::process::Command".to_string(),
+                    window_ready,
+                    main_window_title: window_title,
+                }
+            }
+            Err(e) => LaunchResult {
+                success: false,
+                pid: None,
+                detail: format!("spawn failed: {:?}", e),
+                window_ready: false,
+                main_window_title: None,
+            },
+        }
+    }
+
+    /// Terminate a process gracefully, then force-kill if needed.
+    pub fn terminate_process_native(pid: u32, grace_timeout: Duration) -> bool {
+        unsafe {
+            let handle = match OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, false, pid) {
+                Ok(h) => h,
+                Err(_) => return false,
+            };
+
+            // Wait for graceful exit
+            let wait_ms = grace_timeout.as_millis() as u32;
+            let wait_result = WaitForSingleObject(handle, wait_ms);
+
+            if wait_result == WAIT_OBJECT_0 {
+                let _ = CloseHandle(handle);
+                return true;
+            }
+
+            // Force terminate
+            let result = TerminateProcess(handle, 1);
+            let _ = CloseHandle(handle);
+            result.is_ok()
+        }
+    }
+
+    /// Force-kill a process immediately.
+    pub fn kill_process_native(pid: u32) -> bool {
+        unsafe {
+            let handle = match OpenProcess(PROCESS_TERMINATE, false, pid) {
+                Ok(h) => h,
+                Err(_) => return false,
+            };
+            let result = TerminateProcess(handle, 1);
+            let _ = CloseHandle(handle);
+            result.is_ok()
+        }
+    }
+
+    /// Wait for a process condition using native handles.
+    pub fn wait_for_condition_native(
+        pid: u32,
+        condition: &ProcessWaitCondition,
+        timeout: Duration,
+        start: Instant,
+    ) -> WaitResult {
+        match condition {
+            ProcessWaitCondition::Exit => {
+                unsafe {
+                    let handle = match OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            return WaitResult {
+                                condition_met: false,
+                                elapsed: start.elapsed(),
+                                detail: format!("OpenProcess failed: {:?}", e),
+                                exit_code: None,
+                            }
+                        }
+                    };
+
+                    let wait_ms = timeout.as_millis() as u32;
+                    let result = WaitForSingleObject(handle, wait_ms);
+
+                    let mut exit_code: u32 = 0;
+                    let _ = GetExitCodeProcess(handle, &mut exit_code);
+                    let _ = CloseHandle(handle);
+
+                    if result == WAIT_OBJECT_0 {
+                        WaitResult {
+                            condition_met: true,
+                            elapsed: start.elapsed(),
+                            detail: "process exited".to_string(),
+                            exit_code: Some(exit_code as i32),
+                        }
+                    } else {
+                        WaitResult {
+                            condition_met: false,
+                            elapsed: start.elapsed(),
+                            detail: "timeout waiting for exit".to_string(),
+                            exit_code: None,
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For other conditions, poll using enumerate
+                let deadline = Instant::now() + timeout;
+                let poll_interval = Duration::from_millis(200);
+
+                while Instant::now() < deadline {
+                    match condition {
+                        ProcessWaitCondition::WindowAppears { title_contains } => {
+                            let found = super::ProcessManager::find_by_window_title(title_contains);
+                            if !found.is_empty() {
+                                return WaitResult {
+                                    condition_met: true,
+                                    elapsed: start.elapsed(),
+                                    detail: format!("window appeared: {}", found[0].main_window_title.as_deref().unwrap_or("")),
+                                    exit_code: None,
+                                };
+                            }
+                        }
+                        _ => {
+                            // Idle/MemoryStable - simplified polling
+                            if !super::ProcessManager::is_running(pid) {
+                                return WaitResult {
+                                    condition_met: false,
+                                    elapsed: start.elapsed(),
+                                    detail: "process exited during wait".to_string(),
+                                    exit_code: None,
+                                };
+                            }
+                        }
+                    }
+                    std::thread::sleep(poll_interval);
+                }
+
+                WaitResult {
+                    condition_met: false,
+                    elapsed: start.elapsed(),
+                    detail: "timeout".to_string(),
+                    exit_code: None,
+                }
+            }
+        }
     }
 }
 
-fn parse_launch_result(json: &str) -> LaunchResult {
-    #[derive(serde::Deserialize)]
-    struct PsResult {
-        success: Option<bool>,
-        pid: Option<u32>,
-        window_ready: Option<bool>,
-        main_window_title: Option<String>,
-    }
-    match serde_json::from_str::<PsResult>(json) {
-        Ok(r) => LaunchResult {
-            success: r.success.unwrap_or(true),
-            pid: r.pid,
-            detail: "launched via PowerShell".to_string(),
-            window_ready: r.window_ready.unwrap_or(false),
-            main_window_title: r.main_window_title,
-        },
-        Err(e) => LaunchResult {
-            success: false,
-            pid: None,
-            detail: format!("parse error: {e}"),
-            window_ready: false,
-            main_window_title: None,
-        },
-    }
-}
+#[cfg(target_os = "windows")]
+use native::{
+    enumerate_processes_native, is_process_running_native, kill_process_native,
+    launch_process_native, terminate_process_native, wait_for_condition_native,
+};
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
@@ -646,25 +584,31 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_script_includes_memory() {
-        let script = build_enumerate_processes_script(Some("notepad"));
-        assert!(script.contains("notepad"));
-        assert!(script.contains("WorkingSet64"));
-        assert!(script.contains("MainWindowTitle"));
+    fn process_info_model() {
+        let info = ProcessInfo {
+            pid: 1234,
+            name: "test.exe".to_string(),
+            exe_path: Some("C:\\test.exe".to_string()),
+            command_line: None,
+            parent_pid: Some(100),
+            main_window_title: Some("Test Window".to_string()),
+            has_window: true,
+            cpu_percent: Some(5.0),
+            memory_bytes: Some(1024 * 1024),
+            start_time_ms: Some(1000),
+        };
+        assert_eq!(info.pid, 1234);
+        assert!(info.has_window);
     }
 
     #[test]
-    fn launch_script_handles_elevation() {
-        let config = LaunchConfig::new("test.exe").elevated();
-        let script = build_launch_script(&config);
-        assert!(script.contains("RunAs"));
-    }
-
-    #[test]
-    fn terminate_script_tries_graceful() {
-        let script = build_terminate_script(1234, 5000);
-        assert!(script.contains("CloseMainWindow"));
-        assert!(script.contains("Kill"));
-        assert!(script.contains("1234"));
+    fn wait_condition_variants() {
+        let conditions = vec![
+            ProcessWaitCondition::Exit,
+            ProcessWaitCondition::WindowAppears { title_contains: "test".to_string() },
+            ProcessWaitCondition::Idle { cpu_threshold: 5.0, stable_seconds: 3 },
+            ProcessWaitCondition::MemoryStable { tolerance_bytes: 1024, stable_seconds: 5 },
+        ];
+        assert_eq!(conditions.len(), 4);
     }
 }

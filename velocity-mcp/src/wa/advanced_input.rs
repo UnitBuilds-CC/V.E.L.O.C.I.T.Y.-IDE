@@ -410,39 +410,175 @@ pub struct InputExecutionResult {
 
 /// Execute an input sequence by running the generated PowerShell script.
 pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
-    if !cfg!(target_os = "windows") {
+    // T3d: Prefer native SendInput on Windows (no PowerShell overhead)
+    #[cfg(target_os = "windows")]
+    {
+        return execute_sequence_native(sequence);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
         return InputExecutionResult {
             success: false,
             events_sent: 0,
             detail: "Input execution requires Windows runtime".to_string(),
         };
     }
-    let script = build_input_sequence_script(sequence);
-    match run_ps_script(&script) {
-        Ok(json) => {
-            #[derive(serde::Deserialize)]
-            struct PsResult {
-                success: Option<bool>,
-                events: Option<usize>,
+}
+
+/// T3d: Native Win32 SendInput execution — zero PowerShell overhead.
+/// Uses user32.dll SendInput for mouse and keyboard injection.
+#[cfg(target_os = "windows")]
+pub fn execute_sequence_native(sequence: &InputSequence) -> InputExecutionResult {
+    let mut events_sent = 0usize;
+
+    for event in &sequence.events {
+        match event {
+            InputEvent::MouseMove { x, y, absolute: _ } => {
+                native_set_cursor_pos(*x, *y);
+                events_sent += 1;
             }
-            match serde_json::from_str::<PsResult>(&json) {
-                Ok(r) => InputExecutionResult {
-                    success: r.success.unwrap_or(true),
-                    events_sent: r.events.unwrap_or(sequence.events.len()),
-                    detail: format!("Executed {} events via SendInput", sequence.events.len()),
-                },
-                Err(e) => InputExecutionResult {
-                    success: false,
-                    events_sent: 0,
-                    detail: format!("Parse error: {e}"),
-                },
+            InputEvent::MouseClick { button, x, y } => {
+                native_set_cursor_pos(*x, *y);
+                let (down, up) = native_mouse_button_flags(button);
+                native_send_mouse(down, 0);
+                native_send_mouse(up, 0);
+                events_sent += 1;
+            }
+            InputEvent::MouseDoubleClick { button, x, y } => {
+                native_set_cursor_pos(*x, *y);
+                let (down, up) = native_mouse_button_flags(button);
+                native_send_mouse(down, 0);
+                native_send_mouse(up, 0);
+                std::thread::sleep(Duration::from_millis(50));
+                native_send_mouse(down, 0);
+                native_send_mouse(up, 0);
+                events_sent += 1;
+            }
+            InputEvent::MouseDown { button } => {
+                let (down, _) = native_mouse_button_flags(button);
+                native_send_mouse(down, 0);
+                events_sent += 1;
+            }
+            InputEvent::MouseUp { button } => {
+                let (_, up) = native_mouse_button_flags(button);
+                native_send_mouse(up, 0);
+                events_sent += 1;
+            }
+            InputEvent::Scroll(scroll) => {
+                if scroll.vertical != 0 {
+                    native_send_mouse(0x0800, (scroll.vertical * 120) as u32); // MOUSEEVENTF_WHEEL
+                }
+                if scroll.horizontal != 0 {
+                    native_send_mouse(0x1000, (scroll.horizontal * 120) as u32); // MOUSEEVENTF_HWHEEL
+                }
+                events_sent += 1;
+            }
+            InputEvent::KeyDown { vk_code } => {
+                native_send_key(*vk_code, false);
+                events_sent += 1;
+            }
+            InputEvent::KeyUp { vk_code } => {
+                native_send_key(*vk_code, true);
+                events_sent += 1;
+            }
+            InputEvent::KeyPress { vk_code } => {
+                native_send_key(*vk_code, false);
+                std::thread::sleep(Duration::from_millis(20));
+                native_send_key(*vk_code, true);
+                events_sent += 1;
+            }
+            InputEvent::TypeText { text } => {
+                for ch in text.chars() {
+                    let vk = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(ch as u16) };
+                    let vk_code = (vk & 0xFF) as u16;
+                    let shift_needed = (vk >> 8) & 1 != 0;
+                    if shift_needed {
+                        native_send_key(0x10, false);
+                    }
+                    native_send_key(vk_code, false);
+                    std::thread::sleep(Duration::from_millis(10));
+                    native_send_key(vk_code, true);
+                    if shift_needed {
+                        native_send_key(0x10, true);
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                events_sent += 1;
+            }
+            InputEvent::Combo(combo) => {
+                for modifier in &combo.modifiers {
+                    for vk in modifier_vk_codes(*modifier) {
+                        native_send_key(vk, false);
+                    }
+                }
+                if let Some(vk) = vk_code_from_name(&combo.key) {
+                    native_send_key(vk, false);
+                    std::thread::sleep(Duration::from_millis(20));
+                    native_send_key(vk, true);
+                }
+                for modifier in combo.modifiers.iter().rev() {
+                    for vk in modifier_vk_codes(*modifier).iter().rev() {
+                        native_send_key(*vk, true);
+                    }
+                }
+                events_sent += 1;
+            }
+            InputEvent::Wait { ms } => {
+                std::thread::sleep(Duration::from_millis(*ms));
+                events_sent += 1;
             }
         }
-        Err(e) => InputExecutionResult {
-            success: false,
-            events_sent: 0,
-            detail: e,
-        },
+    }
+
+    InputExecutionResult {
+        success: true,
+        events_sent,
+        detail: format!("Executed {} events via native SendInput", events_sent),
+    }
+}
+
+// ─── Native Win32 FFI helpers (T3d) ─────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+fn native_mouse_button_flags(button: &MouseButton) -> (u32, u32) {
+    match button {
+        MouseButton::Left => (0x0002, 0x0004),     // LEFTDOWN, LEFTUP
+        MouseButton::Right => (0x0008, 0x0010),    // RIGHTDOWN, RIGHTUP
+        MouseButton::Middle => (0x0020, 0x0040),   // MIDDLEDOWN, MIDDLEUP
+        _ => (0x0002, 0x0004),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_set_cursor_pos(x: i32, y: i32) {
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetCursorPos(x, y);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_send_mouse(flags: u32, data: u32) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    unsafe {
+        let mut input = INPUT::default();
+        input.r#type = INPUT_MOUSE;
+        input.Anonymous.mi.dwFlags = MOUSE_EVENT_FLAGS(flags);
+        input.Anonymous.mi.mouseData = data;
+        SendInput(&mut [input], std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn native_send_key(vk_code: u16, key_up: bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    unsafe {
+        let mut input = INPUT::default();
+        input.r#type = INPUT_KEYBOARD;
+        input.Anonymous.ki.wVk = VIRTUAL_KEY(vk_code);
+        if key_up {
+            input.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+        }
+        SendInput(&mut [input], std::mem::size_of::<INPUT>() as i32);
     }
 }
 

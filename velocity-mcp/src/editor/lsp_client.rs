@@ -296,6 +296,15 @@ impl LspServer {
         }))
     }
 
+    /// T3c: Request document symbols (outline of all functions, structs, etc.)
+    /// Used by the test generator to discover testable functions via LSP.
+    pub fn document_symbol(&mut self, path: &Path) -> Result<i64, String> {
+        let uri = path_to_uri(path);
+        self.send_request("textDocument/documentSymbol", serde_json::json!({
+            "textDocument": { "uri": uri }
+        }))
+    }
+
     /// Shutdown the server gracefully.
     pub fn shutdown(&mut self) -> Result<(), String> {
         let _ = self.send_request("shutdown", Value::Null);

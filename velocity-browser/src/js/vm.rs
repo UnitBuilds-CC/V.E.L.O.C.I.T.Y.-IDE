@@ -18,6 +18,11 @@ pub enum JsValue {
         closure: ScopeRef,
     },
     NativeFunction(String),
+    /// ES6 Proxy: intercepts property access on `target` using `handler` traps.
+    Proxy {
+        target: Box<JsValue>,
+        handler: Box<JsValue>,
+    },
 }
 
 impl PartialEq for JsValue {
@@ -31,6 +36,7 @@ impl PartialEq for JsValue {
             (JsValue::Array(a), JsValue::Array(b)) => a == b,
             (JsValue::Object(a), JsValue::Object(b)) => a == b,
             (JsValue::NativeFunction(a), JsValue::NativeFunction(b)) => a == b,
+            (JsValue::Proxy { target: a, .. }, JsValue::Proxy { target: b, .. }) => a == b,
             _ => false,
         }
     }

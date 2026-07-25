@@ -310,6 +310,7 @@ impl OrchestratorPanel {
                             model_label: routed_task.model_label.clone(),
                             thinking: routed_task.thinking,
                             fallback_chain: routed_task.fallback_chain.clone(),
+                            scoped_files: None,
                         },
                         mediator.clone(),
                         weight_root,

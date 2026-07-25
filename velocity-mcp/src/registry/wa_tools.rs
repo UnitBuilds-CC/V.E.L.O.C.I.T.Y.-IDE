@@ -326,24 +326,29 @@ pub fn handle_wa_tool(
         }
         // ─── Clipboard ───────────────────────────────────────────────────────────
         "wa_clipboard_read" => {
-            let format = arguments["format"].as_str().unwrap_or("auto");
-            let _script = crate::wa::clipboard::build_read_clipboard_script();
-            format!("{{\"format\":\"{}\",\"script_ready\":true,\"note\":\"Execute via wa_execute_ps to get live clipboard\"}}", format)
+            let state = crate::wa::clipboard::ClipboardManager::read();
+            let content_str = match &state.content {
+                crate::wa::clipboard::ClipboardContent::Text(t) => format!("\"{}\"", t.replace('"', "\\\"").chars().take(500).collect::<String>()),
+                crate::wa::clipboard::ClipboardContent::Files(f) => format!("{:?}", f),
+                _ => "null".to_string(),
+            };
+            format!("{{\"sequence\":{},\"formats\":{:?},\"content\":{}}}",
+                state.sequence_number, state.available_formats, content_str)
         }
         "wa_clipboard_write" => {
             if let Some(text) = arguments["text"].as_str() {
-                let _script = crate::wa::clipboard::build_write_text_script(text);
-                format!("{{\"action\":\"write_text\",\"length\":{}}}", text.len())
+                let result = crate::wa::clipboard::ClipboardManager::write_text(text);
+                format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail)
             } else if let Some(html) = arguments["html"].as_str() {
-                let _script = crate::wa::clipboard::build_write_html_script(html, None);
-                format!("{{\"action\":\"write_html\",\"length\":{}}}", html.len())
+                let result = crate::wa::clipboard::ClipboardManager::write_html(html, None);
+                format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail)
             } else {
                 "{\"error\":\"provide text, html, or files\"}".to_string()
             }
         }
         "wa_clipboard_clear" => {
-            let _script = crate::wa::clipboard::build_clear_clipboard_script();
-            "{\"action\":\"clear\",\"ready\":true}".to_string()
+            let result = crate::wa::clipboard::ClipboardManager::clear();
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail)
         }
         // ─── Process Management ───────────────────────────────────────────────────
         "wa_process_launch" => {
@@ -367,13 +372,28 @@ pub fn handle_wa_tool(
         }
         "wa_process_list" => {
             let filter = arguments["nameContains"].as_str();
-            let _script = crate::wa::process_mgmt::build_enumerate_processes_script(filter);
-            format!("{{\"script_ready\":true,\"filter\":\"{}\"}}", filter.unwrap_or("*"))
+            let processes = crate::wa::process_mgmt::ProcessManager::enumerate();
+            let filtered: Vec<_> = if let Some(f) = filter {
+                processes.into_iter().filter(|p| p.name.to_lowercase().contains(&f.to_lowercase())).collect()
+            } else {
+                processes
+            };
+            serde_json::to_string(&filtered.iter().map(|p| serde_json::json!({
+                "pid": p.pid,
+                "name": p.name,
+                "has_window": p.has_window,
+            })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string())
         }
         // ─── Window Management ────────────────────────────────────────────────────
         "wa_window_list" => {
-            let _script = crate::wa::window_mgmt::build_enumerate_windows_script();
-            "{\"script_ready\":true,\"action\":\"enumerate_windows\"}".to_string()
+            let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
+            serde_json::to_string(&windows.iter().map(|w| serde_json::json!({
+                "hwnd": w.hwnd,
+                "title": w.title,
+                "class_name": w.class_name,
+                "pid": w.process_id,
+                "is_foreground": w.is_foreground,
+            })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string())
         }
         "wa_window_action" => {
             let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;

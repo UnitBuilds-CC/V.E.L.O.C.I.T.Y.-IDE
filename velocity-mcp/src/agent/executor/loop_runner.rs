@@ -1,4 +1,5 @@
 use super::super::checkpoint::CheckpointManager;
+use super::super::coordination::CoordinationBus;
 use super::super::memory_store::PersistentMemory;
 use super::super::models::*;
 use super::super::nda::*;
@@ -34,6 +35,7 @@ pub fn run_agent_reasoning_loop(
     progress: Option<&Arc<Mutex<HeadlessSubAgentProgress>>>,
     ui_tx: &Sender<AgentToUiMessage>,
     deferred_messages: &mut Vec<UiToAgentMessage>,
+    coordination_bus: &CoordinationBus,
 ) {
     let mut sitemap_needed = false;
     let mut loop_count: usize = 0;
@@ -49,6 +51,11 @@ pub fn run_agent_reasoning_loop(
 
     // Phase 3: Persistent memory for cross-session learning
     let mut memory = PersistentMemory::open(workspace_root);
+
+    // T2b: LSP-gated writes — track files written this session to prevent
+    // repeated overwrites when build diagnostics report errors.
+    let lsp_written_files: Arc<Mutex<std::collections::HashSet<PathBuf>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
 
     let registered_tools = registry::get_tools();
     let cf_tools: Vec<Value> = registered_tools
@@ -77,6 +84,36 @@ pub fn run_agent_reasoning_loop(
                 loop_count
             )))
             .ok();
+
+        // T1a: Inject recalled memories into system prompt for context-aware planning
+        if !memory.is_empty() {
+            let last_user_msg = message_history
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            if !last_user_msg.is_empty() {
+                let hits = memory.recall(&last_user_msg, 3);
+                if !hits.is_empty() {
+                    let recall_block: String = hits
+                        .iter()
+                        .map(|h| format!("- [{}] {}", h.entry.key, h.entry.content))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if let Some(sys_msg) = message_history.iter_mut().find(|m| m.role == "system") {
+                        // Remove any previous recall block before appending new one
+                        if let Some(idx) = sys_msg.content.find("\n\n## Recalled Context") {
+                            sys_msg.content.truncate(idx);
+                        }
+                        sys_msg.content.push_str(&format!(
+                            "\n\n## Recalled Context (from past sessions)\n{}",
+                            recall_block
+                        ));
+                    }
+                }
+            }
+        }
 
         let compressed_history = compress_history(message_history, current_profile.supports_tools);
 
@@ -692,11 +729,15 @@ pub fn run_agent_reasoning_loop(
             }
 
             let mut handles = Vec::new();
+            let bus_clone = coordination_bus.clone();
+            let lsp_written_clone = lsp_written_files.clone();
 
             for (call_id, tool_name, _original_arguments) in tool_specs {
                 let approval = resolved_approvals.get(&call_id).cloned().flatten();
                 let workspace_root_clone = workspace_root.clone();
                 let ui_tx_clone = ui_tx.clone();
+                let bus = bus_clone.clone();
+                let lsp_written = lsp_written_clone.clone();
 
                 let handle = std::thread::spawn(move || {
                     let (tool_result, file_buffer_update, changelog_entry) =
@@ -706,6 +747,63 @@ pub fn run_agent_reasoning_loop(
                                     tool_name: tool_name.clone(),
                                 })
                                 .ok();
+
+                            // T1b: Claim file via coordination bus before writing
+                            let file_to_lock: Option<PathBuf> = match tool_name.as_str() {
+                                "write_file" | "apply_diff" | "delete_file" => {
+                                    approved_args["relativeFilePath"]
+                                        .as_str()
+                                        .or_else(|| approved_args["path"].as_str())
+                                        .map(|p| workspace_root_clone.join(p))
+                                }
+                                _ => None,
+                            };
+                            if let Some(ref lock_path) = file_to_lock {
+                                if !bus.claim_file("primary", lock_path) {
+                                    return (
+                                        call_id,
+                                        tool_name,
+                                        format!("Error: File '{}' is locked by another agent.", lock_path.display()),
+                                        None,
+                                        None,
+                                    );
+                                }
+                            }
+
+                            // T2b: LSP gate — if this file was already written this session
+                            // and build diagnostics still report errors referencing it,
+                            // block the write to force the agent to fix errors first.
+                            if let Some(ref lock_path) = file_to_lock {
+                                if lsp_written.lock().unwrap().contains(lock_path) {
+                                    let diag = crate::automation::read_latest_diagnostics(&workspace_root_clone);
+                                    if !diag.success {
+                                        let file_str = lock_path.display().to_string();
+                                        let rel_str = lock_path.strip_prefix(&workspace_root_clone)
+                                            .map(|p| p.display().to_string())
+                                            .unwrap_or_default();
+                                        let has_file_errors = diag.errors.iter().any(|e| {
+                                            e.contains(&file_str) || e.contains(&rel_str)
+                                        });
+                                        if has_file_errors {
+                                            let relevant: Vec<&String> = diag.errors.iter()
+                                                .filter(|e| e.contains(&file_str) || e.contains(&rel_str))
+                                                .take(5).collect();
+                                            return (
+                                                call_id,
+                                                tool_name,
+                                                format!(
+                                                    "BLOCKED: '{}' has unresolved compilation errors from your previous write. \
+                                                    Fix these errors before writing again:\n{}",
+                                                    rel_str,
+                                                    relevant.iter().map(|e| format!("  {}", e)).collect::<Vec<_>>().join("\n")
+                                                ),
+                                                None,
+                                                None,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
 
                             let mut file_buffer_update = None;
                             let mut changelog_entry = None;
@@ -732,6 +830,15 @@ pub fn run_agent_reasoning_loop(
                                 }
                                 Err(e) => format!("Error executing tool: {:?}", e),
                             };
+
+                            // T1b: Release file lock after execution
+                            if let Some(ref lock_path) = file_to_lock {
+                                bus.release_file("primary", lock_path);
+                                // T2b: Track written files for LSP gating
+                                if matches!(tool_name.as_str(), "write_file" | "apply_diff") {
+                                    lsp_written.lock().unwrap().insert(lock_path.clone());
+                                }
+                            }
 
                             ui_tx_clone
                                 .send(AgentToUiMessage::ToolExecutionFinished {

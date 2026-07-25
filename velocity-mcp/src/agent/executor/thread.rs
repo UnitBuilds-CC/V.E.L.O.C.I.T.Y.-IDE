@@ -233,6 +233,7 @@ pub fn run_agent_thread(
             &ui_rx,
             &ui_tx,
             &mut deferred_messages,
+            &coordination_bus,
         );
 
         while !deferred_messages.is_empty() {
@@ -255,6 +256,7 @@ pub fn run_agent_thread(
                 &ui_rx,
                 &ui_tx,
                 &mut deferred_messages,
+                &coordination_bus,
             );
         }
     }
@@ -278,6 +280,7 @@ fn process_ui_message(
     ui_rx: &Receiver<UiToAgentMessage>,
     ui_tx: &Sender<AgentToUiMessage>,
     deferred_messages: &mut Vec<UiToAgentMessage>,
+    coordination_bus: &CoordinationBus,
 ) {
     match msg {
         UiToAgentMessage::RefreshModels => {
@@ -562,6 +565,7 @@ fn process_ui_message(
                 None,
                 ui_tx,
                 deferred_messages,
+                coordination_bus,
             );
         }
         UiToAgentMessage::ReloadTeams => {

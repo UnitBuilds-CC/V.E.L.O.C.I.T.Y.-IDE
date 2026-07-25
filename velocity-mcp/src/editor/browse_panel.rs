@@ -137,6 +137,7 @@ impl BrowseState {
             prompt,
             cancel_rx: None,
             progress: Some(progress),
+            scoped_files: None,
         };
 
         std::thread::spawn(move || {

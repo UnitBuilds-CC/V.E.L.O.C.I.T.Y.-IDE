@@ -2,8 +2,14 @@
 //! Voice-to-Task: processes speech commands into actionable IDE tasks.
 //! Provides intent parsing, command mapping, and a voice command registry
 //! that bridges natural language to IDE actions.
+//!
+//! T3a: Windows Speech API wiring — continuous recognition via System.Speech.Recognition
+//! running in a background process, feeding transcriptions into the command parser.
 
 use std::collections::HashMap;
+use std::io::BufRead;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// A parsed voice command with intent and parameters.
@@ -317,6 +323,137 @@ impl VoiceInputState {
     /// Toggle listening state.
     pub fn toggle_listening(&mut self) {
         self.listening = !self.listening;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T3a: Windows Speech API Recognition Engine
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Background speech recognition engine using Windows System.Speech.Recognition.
+/// Spawns a PowerShell process that continuously recognizes speech and emits
+/// transcriptions line-by-line to stdout, which we read via a background thread.
+pub struct VoiceRecognitionEngine {
+    running: Arc<AtomicBool>,
+    /// Channel receiver for recognized phrases from the background reader.
+    phrase_rx: crossbeam_channel::Receiver<String>,
+    /// Handle to the reader thread.
+    reader_handle: Option<std::thread::JoinHandle<()>>,
+    /// The child process handle (PowerShell running SAPI).
+    child: Option<std::process::Child>,
+}
+
+impl VoiceRecognitionEngine {
+    /// Create a new engine (does not start recognition).
+    pub fn new() -> Self {
+        let (_tx, rx) = crossbeam_channel::unbounded();
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            phrase_rx: rx,
+            reader_handle: None,
+            child: None,
+        }
+    }
+
+    /// Start continuous speech recognition.
+    /// Spawns a PowerShell process using System.Speech.Recognition for dictation.
+    pub fn start(&mut self) -> Result<(), String> {
+        if self.running.load(Ordering::SeqCst) {
+            return Ok(()); // Already running
+        }
+
+        let (tx, rx) = crossbeam_channel::unbounded::<String>();
+        self.phrase_rx = rx;
+
+        // PowerShell script that uses System.Speech.Recognition for continuous dictation
+        let ps_script = r#"
+Add-Type -AssemblyName System.Speech
+$recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine
+$recognizer.SetInputToDefaultAudioDevice()
+$grammar = New-Object System.Speech.Recognition.DictationGrammar
+$recognizer.LoadGrammar($grammar)
+$recognizer.SpeechRecognized += { param($s, $e) Write-Output $e.Result.Text }
+$recognizer.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple)
+while ($true) { Start-Sleep -Milliseconds 100 }
+"#;
+
+        let child = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to start speech recognizer: {}", e))?;
+
+        self.child = Some(child);
+        self.running.store(true, Ordering::SeqCst);
+
+        // Spawn reader thread that reads stdout lines from the PowerShell process
+        let running_flag = self.running.clone();
+        if let Some(ref mut child) = self.child {
+            if let Some(stdout) = child.stdout.take() {
+                let handle = std::thread::spawn(move || {
+                    let reader = std::io::BufReader::new(stdout);
+                    for line in reader.lines() {
+                        if !running_flag.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        if let Ok(text) = line {
+                            let trimmed = text.trim().to_string();
+                            if !trimmed.is_empty() {
+                                let _ = tx.send(trimmed);
+                            }
+                        }
+                    }
+                });
+                self.reader_handle = Some(handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Stop speech recognition and clean up.
+    pub fn stop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Some(ref mut child) = self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.child = None;
+        if let Some(handle) = self.reader_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    /// Check if recognition is active.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Drain all pending recognized phrases (non-blocking).
+    pub fn drain_phrases(&self) -> Vec<String> {
+        let mut phrases = Vec::new();
+        while let Ok(phrase) = self.phrase_rx.try_recv() {
+            phrases.push(phrase);
+        }
+        phrases
+    }
+
+    /// Poll for a single recognized phrase (non-blocking).
+    pub fn try_recv_phrase(&self) -> Option<String> {
+        self.phrase_rx.try_recv().ok()
+    }
+}
+
+impl Default for VoiceRecognitionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for VoiceRecognitionEngine {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

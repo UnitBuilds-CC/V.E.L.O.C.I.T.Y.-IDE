@@ -185,6 +185,8 @@ pub struct WorkerAssignment {
     pub model_label: String,
     pub thinking: bool,
     pub fallback_chain: Vec<RoutedModelRoute>,
+    /// Optional list of files to pre-index for speculative pre-computation.
+    pub scoped_files: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone)]

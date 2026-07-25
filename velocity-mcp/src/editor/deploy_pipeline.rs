@@ -365,6 +365,74 @@ impl PipelineManager {
     pub fn total_duration_ms(&self) -> u64 {
         self.stages.iter().filter_map(|s| s.duration_ms).sum()
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // T3b: Git push + CI trigger wiring
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Git push: stage all changes, commit with message, and push to remote.
+    /// Returns the push output on success.
+    pub fn git_push(&self, commit_message: &str, remote: &str, branch: &str) -> Result<String, String> {
+        // Stage all changes
+        run_command("git add -A", &self.workspace_root)?;
+
+        // Commit
+        let commit_cmd = format!("git commit -m \"{}\"", commit_message.replace('"', "\\\""));
+        let commit_out = run_command(&commit_cmd, &self.workspace_root)?;
+
+        // Push to remote
+        let push_cmd = format!("git push {} {}", remote, branch);
+        let push_out = run_command(&push_cmd, &self.workspace_root)?;
+
+        Ok(format!("{}\n{}", commit_out, push_out))
+    }
+
+    /// Trigger a CI pipeline via GitHub Actions workflow_dispatch.
+    /// Requires `gh` CLI to be available.
+    pub fn trigger_ci_github(&self, workflow: &str, ref_branch: &str) -> Result<String, String> {
+        let cmd = format!("gh workflow run {} --ref {}", workflow, ref_branch);
+        run_command(&cmd, &self.workspace_root)
+    }
+
+    /// Trigger a CI pipeline via a generic webhook URL (e.g., GitLab, Jenkins).
+    /// Uses `curl` to POST to the webhook.
+    pub fn trigger_ci_webhook(&self, webhook_url: &str, payload: &str) -> Result<String, String> {
+        let cmd = format!(
+            "curl -s -X POST -H \"Content-Type: application/json\" -d \"{}\" {}",
+            payload.replace('"', "\\\""),
+            webhook_url
+        );
+        run_command(&cmd, &self.workspace_root)
+    }
+
+    /// Full deploy flow: build → test → git push → trigger CI.
+    /// This is the one-click "ship it" pipeline.
+    pub fn ship_it(&mut self, commit_message: &str, remote: &str, branch: &str, ci_workflow: Option<&str>) -> Result<String, String> {
+        // Run build + test first
+        self.start()?;
+
+        // Check all stages passed
+        let all_passed = self.stages.iter()
+            .all(|s| matches!(s.status, StageStatus::Passed | StageStatus::Skipped));
+        if !all_passed {
+            return Err("Pipeline stages did not pass — aborting ship".into());
+        }
+
+        // Git push
+        let push_out = self.git_push(commit_message, remote, branch)?;
+
+        // Trigger CI if configured
+        let ci_out = if let Some(workflow) = ci_workflow {
+            match self.trigger_ci_github(workflow, branch) {
+                Ok(out) => format!("\nCI triggered: {}", out),
+                Err(e) => format!("\nCI trigger failed (non-fatal): {}", e),
+            }
+        } else {
+            String::new()
+        };
+
+        Ok(format!("Shipped successfully!\n{}{}", push_out, ci_out))
+    }
 }
 
 /// Run a shell command and capture output.

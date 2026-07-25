@@ -1705,14 +1705,13 @@ fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
             }
         }
         Some("Proxy") => {
-            // new Proxy(target, handler) - create a proxy object
+            // new Proxy(target, handler) - create a proxy with trap interception
             let target = evaluated_args.first().cloned().unwrap_or(JsValue::Object(HashMap::new()));
             let handler = evaluated_args.get(1).cloned().unwrap_or(JsValue::Object(HashMap::new()));
-            let mut map = HashMap::new();
-            map.insert("__type__".to_string(), JsValue::String("Proxy".to_string()));
-            map.insert("__proxy_target__".to_string(), target);
-            map.insert("__proxy_handler__".to_string(), handler);
-            Ok(JsValue::Object(map))
+            Ok(JsValue::Proxy {
+                target: Box::new(target),
+                handler: Box::new(handler),
+            })
         }
         Some("URL") => {
             let url_str = evaluated_args.first().map(to_string).unwrap_or_default();
@@ -2322,7 +2321,7 @@ fn json_stringify(val: &JsValue) -> String {
             let entries: Vec<String> = map.iter().map(|(k, v)| format!("\"{}\":{}", k, json_stringify(v))).collect();
             format!("{{{}}}", entries.join(","))
         }
-        JsValue::Function { .. } | JsValue::NativeFunction(_) => "null".to_string(),
+        JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
     }
 }
 
@@ -2527,6 +2526,32 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
             if prop == "length" { return JsValue::Number(arr.len() as f64); }
             if let Ok(i) = prop.parse::<usize>() { return arr.get(i).cloned().unwrap_or(JsValue::Undefined); }
             JsValue::Undefined
+        }
+        JsValue::Proxy { target, handler } => {
+            // Phase 7: Native Proxy variant — intercept property access via handler.get trap
+            let depth = PROXY_TRAP_DEPTH.with(|d| {
+                let cur = d.get();
+                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                d.set(cur + 1);
+                cur
+            });
+            if depth >= MAX_PROXY_TRAP_DEPTH {
+                return get_property(target, prop);
+            }
+            if let JsValue::Object(h_map) = handler.as_ref() {
+                if let Some(get_trap) = h_map.get("get") {
+                    if !matches!(get_trap, JsValue::NativeFunction(_)) {
+                        let prop_val = JsValue::String(prop.to_string());
+                        let result = call_function(get_trap, &[(**target).clone(), prop_val], &Scope::new_global());
+                        PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                        if let Ok(val) = result {
+                            return val;
+                        }
+                    }
+                }
+            }
+            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            get_property(target, prop)
         }
         JsValue::String(s) => {
             if prop == "length" { return JsValue::Number(s.len() as f64); }
@@ -2949,7 +2974,7 @@ pub fn to_boolean(v: &JsValue) -> bool {
         JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
         JsValue::String(s) => !s.is_empty(),
         JsValue::Null | JsValue::Undefined => false,
-        JsValue::Array(_) | JsValue::Object(_) | JsValue::Function { .. } | JsValue::NativeFunction(_) => true,
+        JsValue::Array(_) | JsValue::Object(_) | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => true,
     }
 }
 
@@ -2964,6 +2989,7 @@ pub fn to_string(v: &JsValue) -> String {
         JsValue::Object(_) => "[object Object]".to_string(),
         JsValue::Function { name, .. } => format!("function {}() {{ [native code] }}", name.as_deref().unwrap_or("anonymous")),
         JsValue::NativeFunction(n) => format!("function {}() {{ [native code] }}", n),
+        JsValue::Proxy { .. } => "[object Proxy]".to_string(),
     }
 }
 
@@ -2981,7 +3007,7 @@ pub fn typeof_str(v: &JsValue) -> &'static str {
         JsValue::Number(_) => "number",
         JsValue::String(_) => "string",
         JsValue::Function { .. } | JsValue::NativeFunction(_) => "function",
-        JsValue::Array(_) | JsValue::Object(_) => "object",
+        JsValue::Array(_) | JsValue::Object(_) | JsValue::Proxy { .. } => "object",
     }
 }
 
@@ -3399,22 +3425,24 @@ mod tests {
 
     #[test]
     fn proxy_construction() {
-        assert_eq!(eval_full("
+        let result = eval_full("
             var target = { x: 42 };
             var handler = {};
             var p = new Proxy(target, handler);
             p
-        "), JsValue::Object({
-            let mut m = HashMap::new();
-            m.insert("__type__".to_string(), JsValue::String("Proxy".to_string()));
-            m.insert("__proxy_target__".to_string(), JsValue::Object({
-                let mut t = HashMap::new();
-                t.insert("x".to_string(), JsValue::Number(42.0));
-                t
-            }));
-            m.insert("__proxy_handler__".to_string(), JsValue::Object(HashMap::new()));
-            m
-        }));
+        ");
+        // Phase 7: Proxy is now a native JsValue::Proxy variant
+        match &result {
+            JsValue::Proxy { target, handler } => {
+                assert_eq!(**target, JsValue::Object({
+                    let mut t = HashMap::new();
+                    t.insert("x".to_string(), JsValue::Number(42.0));
+                    t
+                }));
+                assert_eq!(**handler, JsValue::Object(HashMap::new()));
+            }
+            _ => panic!("Expected JsValue::Proxy, got {:?}", result),
+        }
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use super::super::coordination::CoordinationBus;
 use super::super::models::*;
 use super::super::provider::{default_model_info, enrich_model_profile, openrouter_api_key};
 use super::loop_runner::run_agent_reasoning_loop;
@@ -301,6 +302,7 @@ pub fn try_route_team_prompt(
         None,
         ui_tx,
         deferred_messages,
+        &CoordinationBus::new(),
     );
 
     true

@@ -187,6 +187,7 @@ mod tests {
                 thinking: false,
                 score: 7,
             }],
+            scoped_files: None,
         };
 
         write_execution_contract_artifacts(workspace.path(), &assignment).unwrap();

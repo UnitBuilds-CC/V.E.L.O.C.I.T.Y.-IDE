@@ -1,7 +1,9 @@
+use super::super::coordination::CoordinationBus;
 use super::super::models::*;
 use super::super::provider::*;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::utils::build_inline_tool_docs;
+use crate::editor::speculative_precomp::precompute_files;
 use crate::usage::{
     load_accounts, load_azure_accounts, load_local_ollama_accounts, load_openrouter_accounts,
     UsageTracker,
@@ -35,6 +37,15 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     };
     let thinking = request.thinking && selected_profile.supports_thinking;
 
+    // T2a: Speculative pre-computation - pre-index scoped files before agent runs
+    let scoped_files = request.scoped_files.clone().unwrap_or_default();
+    let precomp_context = if !scoped_files.is_empty() {
+        let precomp_result = precompute_files(&request.workspace_root, &scoped_files);
+        format!("\n\n## Pre-indexed Workspace Context\n{}", precomp_result.context_summary())
+    } else {
+        String::new()
+    };
+
     let use_inline_tools =
         request.provider == AiProvider::OpenRouter || !selected_profile.supports_tools;
     let mut message_history = vec![ChatMessage {
@@ -42,8 +53,9 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         content: format!(
             "You are Antigravity, a high-performance agent running directly in V.E.L.O.C.I.T.Y.-IDE. \
             You have access to local workspace files and execution sandboxes via tools. \
-            Help the user program the workspace. Always output concise, correct, and high-quality responses.{}",
-            if use_inline_tools { build_inline_tool_docs() } else { String::new() }
+            Help the user program the workspace. Always output concise, correct, and high-quality responses.{}{}",
+            if use_inline_tools { build_inline_tool_docs() } else { String::new() },
+            precomp_context
         ),
         name: None,
         tool_call_id: None,
@@ -176,6 +188,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         progress.as_ref(),
         &agent_event_tx,
         &mut Vec::new(),
+        &CoordinationBus::new(),
     );
 
     drop(agent_event_tx);

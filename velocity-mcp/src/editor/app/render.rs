@@ -865,6 +865,9 @@ impl<'a> TabViewerImpl<'a> {
                 if ui.selectable_label(self.app.mission_control.active_sub_tab == 1, "Workers").clicked() {
                     self.app.mission_control.active_sub_tab = 1;
                 }
+                if ui.selectable_label(self.app.mission_control.active_sub_tab == 2, "Live").clicked() {
+                    self.app.mission_control.active_sub_tab = 2;
+                }
             });
             ui.separator();
             ui.add_space(6.0);
@@ -957,7 +960,7 @@ impl<'a> TabViewerImpl<'a> {
                             render_mission_activity_feed(ui, &timeline_snapshot, None, 15, palette);
                         });
 
-                    } else {
+                    } else if self.app.mission_control.active_sub_tab == 1 {
                         // Workers tab
                         let selected_task = self.app.mission_control.selected_task_id
                             .and_then(|id| snapshot.tasks.iter().find(|t| t.id == id));
@@ -1092,6 +1095,139 @@ impl<'a> TabViewerImpl<'a> {
                                         ui.label(egui::RichText::new(format!("— {}", intervention.status)).small().color(palette.text_muted));
                                     });
                                 }
+                            }
+                        });
+                    } else {
+                        // T2c: Live multi-agent monitoring tab
+                        let running_tasks: Vec<&crate::editor::orchestrator_panel::OrchestratorTaskSnapshot> =
+                            snapshot.tasks.iter().filter(|t| t.status_label == "Running").collect();
+
+                        if running_tasks.is_empty() {
+                            ui.add_space(16.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new("⚡").size(28.0).color(palette.accent.gamma_multiply(0.7)));
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new("No agents running — launch a mission to see live telemetry").color(palette.text_muted));
+                            });
+                            ui.add_space(12.0);
+                        } else {
+                            // Live agent cards with real-time telemetry
+                            ui.label(egui::RichText::new(format!("Active Agents: {}", running_tasks.len())).strong().color(palette.accent));
+                            ui.add_space(6.0);
+
+                            for task in &running_tasks {
+                                ui.push_id(format!("live_{}", task.id), |ui| {
+                                    egui::Frame::new()
+                                        .fill(palette.bg_secondary)
+                                        .stroke(egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.5)))
+                                        .corner_radius(egui::CornerRadius::same(6))
+                                        .inner_margin(egui::Margin::same(8))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("▷").color(palette.accent));
+                                                ui.label(egui::RichText::new(format!("#{} {}", task.id, task.title)).small().strong());
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if !task.model_label.is_empty() {
+                                                        ui.label(egui::RichText::new(&task.model_label).small().color(palette.text_muted));
+                                                    }
+                                                });
+                                            });
+
+                                            if let Some(thread) = &task.live_thread {
+                                                // Current tool (last ToolStarted without matching ToolFinished)
+                                                let mut current_tool: Option<&str> = None;
+                                                let mut last_status: Option<&str> = None;
+                                                for ev in thread.events.iter().rev() {
+                                                    match ev.kind {
+                                                        crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => {
+                                                            if current_tool.is_none() {
+                                                                current_tool = Some(ev.message.as_str());
+                                                            }
+                                                        }
+                                                        crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => {
+                                                            // tool finished, keep looking for an active one
+                                                        }
+                                                        crate::orchestrator::worker::WorkerThreadEventKind::Status => {
+                                                            if last_status.is_none() {
+                                                                last_status = Some(ev.message.as_str());
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    if current_tool.is_some() && last_status.is_some() {
+                                                        break;
+                                                    }
+                                                }
+
+                                                ui.horizontal(|ui| {
+                                                    if let Some(tool) = current_tool {
+                                                        ui.label(egui::RichText::new(format!("⚙ {}", tool)).small().color(palette.warning));
+                                                    } else {
+                                                        ui.label(egui::RichText::new("⚙ thinking…").small().color(palette.text_muted));
+                                                    }
+                                                });
+
+                                                if let Some(status) = last_status {
+                                                    let truncated = if status.len() > 120 { &status[..120] } else { status };
+                                                    ui.label(egui::RichText::new(truncated).small().color(palette.text_muted));
+                                                }
+
+                                                // Files changed
+                                                if !thread.changed_files.is_empty() {
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        ui.label(egui::RichText::new("Files:").small().color(palette.text_muted));
+                                                        for f in thread.changed_files.iter().take(5) {
+                                                            ui.label(egui::RichText::new(f).small().monospace().color(palette.success));
+                                                        }
+                                                        if thread.changed_files.len() > 5 {
+                                                            ui.label(egui::RichText::new(format!("+{}", thread.changed_files.len() - 5)).small().color(palette.text_muted));
+                                                        }
+                                                    });
+                                                }
+
+                                                // Event count
+                                                ui.label(egui::RichText::new(format!("{} events · {} notes", thread.events.len(), thread.operator_notes.len())).small().color(palette.text_muted.gamma_multiply(0.7)));
+                                            } else {
+                                                ui.label(egui::RichText::new("Spawning…").small().color(palette.text_muted));
+                                            }
+                                        });
+                                    ui.add_space(4.0);
+                                });
+                            }
+                        }
+
+                        // Global event feed (latest events across all workers)
+                        ui.add_space(8.0);
+                        ui.group(|ui| {
+                            ui.label(egui::RichText::new("Live Event Feed").small().strong());
+                            ui.separator();
+                            let mut all_events: Vec<(u64, &crate::orchestrator::worker::WorkerThreadEvent)> = Vec::new();
+                            for task in &snapshot.tasks {
+                                if let Some(thread) = &task.live_thread {
+                                    for ev in thread.events.iter().rev().take(5) {
+                                        all_events.push((task.id, ev));
+                                    }
+                                }
+                            }
+                            // Show most recent events (already in reverse order per worker)
+                            for (task_id, ev) in all_events.iter().take(20) {
+                                let (icon, color) = match ev.kind {
+                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => ("⚙", palette.warning),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => ("✔", palette.success),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::Status => ("○", palette.text_muted),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::FileChange => ("△", palette.accent),
+                                    crate::orchestrator::worker::WorkerThreadEventKind::OperatorNote => ("✉", palette.accent),
+                                    _ => ("·", palette.text_muted),
+                                };
+                                let msg = if ev.message.len() > 100 { &ev.message[..100] } else { &ev.message };
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(icon).small().color(color));
+                                    ui.label(egui::RichText::new(format!("[#{}]", task_id)).small().monospace().color(palette.text_muted));
+                                    ui.label(egui::RichText::new(msg).small());
+                                });
+                            }
+                            if all_events.is_empty() {
+                                ui.label(egui::RichText::new("No events yet").small().color(palette.text_muted));
                             }
                         });
                     }
