@@ -1,44 +1,62 @@
-# MCP Tool Registry & Execution Subsystem
+# MCP Tool Registry
 
-The `velocity-mcp` crate hosts a Model Context Protocol (MCP) server that exposes native tools to AI agents. The registry (`velocity-mcp/src/registry/`) handles tool registration, schema generation, argument validation, and invocation dispatch.
+The `velocity-mcp` crate hosts a Model Context Protocol (MCP) server that exposes native tools to AI agents. The registry handles tool registration, schema generation, argument validation, and invocation dispatch.
 
----
-
-## 🛠️ Tool Category Inventory
-
-### 1. System & Developer Tools (`system_tools.rs`)
-- **`read_file`**: Read file contents with support for partial line slicing and character offset byte limits.
-- **`write_to_file`**: Create new files or overwrite existing files safely.
-- **`replace_file_content`**: Perform single contiguous block string replacements.
-- **`multi_replace_file_content`**: Execute non-contiguous multi-chunk edits in a single atomic pass.
-- **`run_command`**: Execute terminal shell commands (`powershell`, `bash`) with background task support.
-- **`list_dir`**: List directory contents recursively with byte sizes and child counts.
-- **`grep_search`**: Ripgrep-powered pattern search within files and directories.
-
-### 2. Agentic Browser Tools (`browser_tools/`)
-- **`browser_navigate`**: Navigate to a specified URL.
-- **`browser_click`**: Click an element using element ID or selector.
-- **`browser_type`**: Input text into form controls or editable areas.
-- **`browser_get_aom`**: Extract the compact Accessible Object Model (AOM) tree.
-- **`browser_take_screenshot`**: Capture full page or node screenshots.
-- **`browser_workflow_record` / `browser_workflow_play`**: Record and playback browser interaction workflows.
-
-### 3. Team & Agent Orchestration Tools (`team_tools.rs`)
-- **`create_expert_team`**: Define a specialized subagent team with designated roles, system prompts, and tool access permissions.
-- **`list_expert_teams`**: Query active agent teams and workspace router configuration.
-- **`create_skill_file`**: Package a completed workflow into a reusable skill file (`.skill.md`).
-
-### 4. Windows Automation Tools (`wa_tools.rs`)
-- **`wa_click`**: Synthesize Windows UI element click.
-- **`wa_type`**: Send text keystrokes to active Windows window.
-- **`wa_capture`**: Capture UI automation window hierarchy and screenshot.
-- **`wa_run_script`**: Execute scripted desktop macro sequences.
+> For full tool inventory and dispatch architecture, see [velocity-mcp: Tool Registry & Windows Automation](../architecture/tool_registry_wa.md).
 
 ---
 
-## ⚡ Dispatch Engine (`dispatch.rs`)
+## Quick Reference
 
-1. **Tool Identification**: Matches incoming tool call names against registered tool definitions (`tool_definitions/`).
-2. **Schema & Argument Validation**: Validates JSON payloads against expected arguments.
-3. **Execution**: Dispatches tool invocations asynchronously to dedicated thread pools or process handlers.
-4. **Result Packaging**: Formats response payloads, error strings, and NDA artifacts back to the calling agent.
+### Module Structure
+
+```
+registry/
+├── mod.rs              # Public API: call_tool(), get_tools()
+├── dispatch.rs         # call_tool_in_workspace() dispatch
+├── parsers.rs          # Argument parsing helpers
+├── types.rs            # Tool definition types
+├── tool_definitions/   # JSON Schema tool definitions
+├── system_tools.rs     # File, search, terminal tools
+├── browser_tools/      # Web navigation, AOM, screenshots
+├── team_tools.rs       # Team creation, expert management
+├── wa_tools.rs         # Windows automation tools
+└── tests/              # Per-category test suites
+```
+
+### Tool Categories
+
+| Category | Module | Tools |
+|----------|--------|-------|
+| System | `system_tools.rs` | `read_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`, `run_command`, `list_dir`, `grep_search` |
+| Browser | `browser_tools/` | `browser_navigate`, `browser_click`, `browser_type`, `browser_get_aom`, `browser_take_screenshot`, `browser_workflow_record`, `browser_workflow_play` |
+| Team | `team_tools.rs` | `create_expert_team`, `list_expert_teams`, `create_skill_file` |
+| Windows Automation | `wa_tools.rs` | `wa_click`, `wa_type`, `wa_capture`, `wa_run_script` |
+
+### Dispatch Flow
+
+```
+1. Agent sends tool call (name + JSON arguments)
+       │
+       ▼
+2. call_tool_in_workspace() matches name against get_tools() definitions
+       │
+       ▼
+3. Argument validation against JSON Schema
+       │
+       ▼
+4. Route to handler: system_tools / browser_tools / team_tools / wa_tools
+       │
+       ▼
+5. Execute with workspace path sandboxing
+       │
+       ▼
+6. Return JSON result string
+```
+
+---
+
+## See Also
+
+- [Tool Registry & Windows Automation Architecture](../architecture/tool_registry_wa.md) — Full dispatch details
+- [Agent Loop & Orchestrator](../architecture/velocity_mcp.md) — How tools are called by the agent

@@ -109,5 +109,88 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["relativeFilePath"]
             }),
         },
+        // ── Agent Checkpointing ─────────────────────────────────────────────
+        Tool {
+            name: "agent_checkpoint_create".to_string(),
+            description: "Create a workspace checkpoint (git-based snapshot) before making changes. Allows restoring to this point later.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Human-readable label for this checkpoint (e.g. 'before refactor')." }
+                },
+                "required": ["label"]
+            }),
+        },
+        Tool {
+            name: "agent_checkpoint_restore".to_string(),
+            description: "Restore the workspace to a previously created checkpoint. Reverts all file changes made after that checkpoint.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "checkpointId": { "type": "integer", "description": "The ID of the checkpoint to restore to. Use agent_checkpoint_list to see available IDs." }
+                },
+                "required": ["checkpointId"]
+            }),
+        },
+        Tool {
+            name: "agent_checkpoint_list".to_string(),
+            description: "List all available workspace checkpoints with their IDs, labels, and creation times.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": []
+            }),
+        },
+        // ── Agent Memory ────────────────────────────────────────────────────
+        Tool {
+            name: "agent_memory_remember".to_string(),
+            description: "Store a persistent memory that the agent can recall in future sessions. Use for strategies, facts, and learned patterns.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Unique key for this memory (e.g. 'site:github:login_flow')." },
+                    "content": { "type": "string", "description": "The content to remember." },
+                    "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for filtering (e.g. ['web', 'auth'])." },
+                    "score": { "type": "number", "description": "Initial importance score 0.0-1.0. Default 0.5." }
+                },
+                "required": ["key", "content"]
+            }),
+        },
+        Tool {
+            name: "agent_memory_recall".to_string(),
+            description: "Recall memories relevant to a query using semantic similarity. Returns the most relevant stored memories.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query to find relevant memories." },
+                    "limit": { "type": "integer", "description": "Maximum number of results to return. Default 5." }
+                },
+                "required": ["query"]
+            }),
+        },
+        Tool {
+            name: "agent_memory_forget".to_string(),
+            description: "Remove a specific memory by its key. Use to clean up outdated or incorrect memories.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "The key of the memory to remove." }
+                },
+                "required": ["key"]
+            }),
+        },
+        // ── Test Generation ─────────────────────────────────────────────────
+        Tool {
+            name: "code_generate_tests".to_string(),
+            description: "Generate test scaffolding for source code. Analyzes function signatures and produces test stubs with edge cases.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source": { "type": "string", "description": "Source code to generate tests for." },
+                    "language": { "type": "string", "description": "Programming language (rust, typescript, python)." }
+                },
+                "required": ["source", "language"]
+            }),
+        },
     ]
 }

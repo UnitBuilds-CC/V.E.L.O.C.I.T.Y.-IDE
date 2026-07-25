@@ -1,5 +1,8 @@
+pub mod checkpoint;
+pub mod coordination;
 pub mod crypto;
 pub mod executor;
+pub mod memory_store;
 pub mod models;
 pub mod nda;
 pub mod provider;

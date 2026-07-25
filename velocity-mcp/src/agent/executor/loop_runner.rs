@@ -1,3 +1,5 @@
+use super::super::checkpoint::CheckpointManager;
+use super::super::memory_store::PersistentMemory;
 use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
@@ -41,6 +43,12 @@ pub fn run_agent_reasoning_loop(
     let mut current_profile = profile.clone();
     let mut current_thinking = thinking && current_profile.supports_thinking;
     let mut fallback_attempts: usize = 0;
+
+    // Phase 2: Workspace checkpointing for safe, reversible tool operations
+    let mut checkpoint_mgr = CheckpointManager::new(workspace_root);
+
+    // Phase 3: Persistent memory for cross-session learning
+    let mut memory = PersistentMemory::open(workspace_root);
 
     let registered_tools = registry::get_tools();
     let cf_tools: Vec<Value> = registered_tools
@@ -668,6 +676,21 @@ pub fn run_agent_reasoning_loop(
                 }
             }
 
+            // Phase 2: Checkpoint before file-modifying tool batch
+            let file_modifying = ["write_file", "delete_file", "run_command", "apply_diff"];
+            let has_file_mod = tool_specs.iter().any(|(_, name, _)| file_modifying.contains(&name.as_str()));
+            if has_file_mod && checkpoint_mgr.enabled {
+                let label = format!("before tool batch (loop {})", loop_count);
+                if let Some(cp_id) = checkpoint_mgr.checkpoint(&label) {
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Checkpoint #{} created: {}",
+                            cp_id, label
+                        )))
+                        .ok();
+                }
+            }
+
             let mut handles = Vec::new();
 
             for (call_id, tool_name, _original_arguments) in tool_specs {
@@ -754,10 +777,26 @@ pub fn run_agent_reasoning_loop(
             {
                 if tool_result.contains("Error executing tool") {
                     any_error = true;
+                    // Phase 3: Penalize failed strategy
+                    let mem_key = format!("tool:{}:error", tool_name);
+                    memory.reinforce(&mem_key, -0.1);
                 } else if tool_result.contains("rejected by the user") {
                     any_rejected = true;
                 } else {
                     any_success = true;
+                    // Phase 3: Remember successful tool usage
+                    let mem_key = format!("tool:{}:success", tool_name);
+                    let summary = if tool_result.len() > 200 {
+                        &tool_result[..200]
+                    } else {
+                        &tool_result
+                    };
+                    memory.remember(
+                        &mem_key,
+                        &format!("{} -> {}", tool_name, summary),
+                        &["tool", "success"],
+                        0.8,
+                    );
                 }
 
                 if let Some((path, content)) = file_buffer_update {
@@ -834,6 +873,20 @@ pub fn run_agent_reasoning_loop(
     }
 
     save_chatlogs_nda(workspace_root, message_history);
+
+    // Phase 3: Persist memory to disk
+    let _ = memory.save();
+
+    // Phase 2: Report checkpoint status
+    let cp_count = checkpoint_mgr.count();
+    if cp_count > 0 {
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(format!(
+                "Session complete. {} checkpoint(s) available for restore.",
+                cp_count
+            )))
+            .ok();
+    }
 
     if sitemap_needed {
         write_sitemap_nda(workspace_root);
