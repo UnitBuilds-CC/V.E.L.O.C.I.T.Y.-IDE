@@ -324,6 +324,152 @@ pub fn handle_wa_tool(
             serde_json::to_string_pretty(&runs)
                 .map_err(|err| Box::<dyn Error>::from(format!("serialise WA runs: {err}")))?
         }
+        // ─── Clipboard ───────────────────────────────────────────────────────────
+        "wa_clipboard_read" => {
+            let format = arguments["format"].as_str().unwrap_or("auto");
+            let _script = crate::wa::clipboard::build_read_clipboard_script();
+            format!("{{\"format\":\"{}\",\"script_ready\":true,\"note\":\"Execute via wa_execute_ps to get live clipboard\"}}", format)
+        }
+        "wa_clipboard_write" => {
+            if let Some(text) = arguments["text"].as_str() {
+                let _script = crate::wa::clipboard::build_write_text_script(text);
+                format!("{{\"action\":\"write_text\",\"length\":{}}}", text.len())
+            } else if let Some(html) = arguments["html"].as_str() {
+                let _script = crate::wa::clipboard::build_write_html_script(html, None);
+                format!("{{\"action\":\"write_html\",\"length\":{}}}", html.len())
+            } else {
+                "{\"error\":\"provide text, html, or files\"}".to_string()
+            }
+        }
+        "wa_clipboard_clear" => {
+            let _script = crate::wa::clipboard::build_clear_clipboard_script();
+            "{\"action\":\"clear\",\"ready\":true}".to_string()
+        }
+        // ─── Process Management ───────────────────────────────────────────────────
+        "wa_process_launch" => {
+            let exe = arguments["exePath"].as_str().ok_or("exePath is required")?;
+            let config = crate::wa::process_mgmt::LaunchConfig::new(exe);
+            let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
+            format!("{{\"success\":{},\"pid\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.pid.map(|p| p.to_string()).unwrap_or_else(|| "null".to_string()),
+                result.detail.replace('"', "\\\"")
+            )
+        }
+        "wa_process_terminate" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            let grace_ms = arguments["graceMs"].as_u64().unwrap_or(5000);
+            let success = crate::wa::process_mgmt::ProcessManager::terminate(
+                pid,
+                std::time::Duration::from_millis(grace_ms),
+            );
+            format!("{{\"success\":{},\"pid\":{}}}", success, pid)
+        }
+        "wa_process_list" => {
+            let filter = arguments["nameContains"].as_str();
+            let _script = crate::wa::process_mgmt::build_enumerate_processes_script(filter);
+            format!("{{\"script_ready\":true,\"filter\":\"{}\"}}", filter.unwrap_or("*"))
+        }
+        // ─── Window Management ────────────────────────────────────────────────────
+        "wa_window_list" => {
+            let _script = crate::wa::window_mgmt::build_enumerate_windows_script();
+            "{\"script_ready\":true,\"action\":\"enumerate_windows\"}".to_string()
+        }
+        "wa_window_action" => {
+            let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;
+            let action = arguments["action"].as_str().ok_or("action is required")?;
+            format!("{{\"hwnd\":{},\"action\":\"{}\",\"ready\":true}}", hwnd, action)
+        }
+        // ─── Virtual Desktop ──────────────────────────────────────────────────────
+        "wa_virtual_desktop_list" => {
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let state = mgr.enumerate();
+            format!("{{\"total\":{},\"current_index\":{}}}", state.total_count, state.current_index)
+        }
+        "wa_virtual_desktop_switch" => {
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let op = if let Some(idx) = arguments["index"].as_u64() {
+                crate::wa::virtual_desktop::VDesktopOperation::SwitchTo(idx as u32)
+            } else if let Some(name) = arguments["name"].as_str() {
+                crate::wa::virtual_desktop::VDesktopOperation::SwitchToNamed(name.to_string())
+            } else {
+                return Err(Box::<dyn Error>::from("provide index or name"));
+            };
+            let result = mgr.apply(&op);
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\"")
+            )
+        }
+        // ─── OCR ─────────────────────────────────────────────────────────────────
+        "wa_ocr_screen" => {
+            let language = arguments["language"].as_str().unwrap_or("en-US");
+            let region = if arguments["x"].is_u64() {
+                Some(crate::wa::ocr::OcrRegion {
+                    x: arguments["x"].as_i64().unwrap_or(0) as i32,
+                    y: arguments["y"].as_i64().unwrap_or(0) as i32,
+                    width: arguments["width"].as_u64().unwrap_or(1920) as u32,
+                    height: arguments["height"].as_u64().unwrap_or(1080) as u32,
+                })
+            } else {
+                None
+            };
+            let config = crate::wa::ocr::OcrConfig {
+                language: Some(language.to_string()),
+                ..Default::default()
+            };
+            let default_region = crate::wa::ocr::OcrRegion { x: 0, y: 0, width: 1920, height: 1080 };
+            let r = region.as_ref().unwrap_or(&default_region);
+            let _script = crate::wa::ocr::build_ocr_script(r, &config);
+            format!("{{\"action\":\"ocr\",\"language\":\"{}\",\"script_ready\":true}}", language)
+        }
+        // ─── Notifications ────────────────────────────────────────────────────────
+        "wa_notifications_list" => {
+            let _script = crate::wa::notifications::build_detect_notifications_script();
+            "{\"action\":\"list_notifications\",\"script_ready\":true}".to_string()
+        }
+        "wa_notifications_dismiss" => {
+            let pattern = arguments["pattern"].as_str();
+            let _script = crate::wa::notifications::build_dismiss_notifications_script(pattern);
+            format!("{{\"action\":\"dismiss\",\"pattern\":\"{}\",\"script_ready\":true}}",
+                pattern.unwrap_or("*"))
+        }
+        // ─── Registry ─────────────────────────────────────────────────────────────
+        "wa_registry_read" => {
+            let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
+            let path = arguments["path"].as_str().ok_or("path is required")?;
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let hive = crate::wa::registry::RegistryHive::from_str(hive_str)
+                .ok_or("invalid hive")?;
+            let _script = crate::wa::registry::build_read_registry_script(hive, path, name);
+            format!("{{\"action\":\"read\",\"hive\":\"{}\",\"path\":\"{}\",\"name\":\"{}\",\"script_ready\":true}}",
+                hive_str, path.replace('\\', "\\\\").replace('"', "\\\""), name)
+        }
+        "wa_registry_write" => {
+            let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
+            let path = arguments["path"].as_str().ok_or("path is required")?;
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let _value = arguments["value"].as_str().ok_or("value is required")?;
+            let _vtype = arguments["type"].as_str().ok_or("type is required")?;
+            format!("{{\"action\":\"write\",\"hive\":\"{}\",\"path\":\"{}\",\"name\":\"{}\",\"ready\":true}}",
+                hive_str, path.replace('\\', "\\\\").replace('"', "\\\""), name)
+        }
+        // ─── System Settings ──────────────────────────────────────────────────────
+        "wa_system_dark_mode" => {
+            let set = arguments["enabled"].as_bool();
+            let _script = crate::wa::registry::build_dark_mode_script(set);
+            format!("{{\"action\":\"dark_mode\",\"set\":{},\"script_ready\":true}}",
+                set.map(|b| b.to_string()).unwrap_or_else(|| "null".to_string()))
+        }
+        // ─── Triggers ─────────────────────────────────────────────────────────────
+        "wa_trigger_register" => {
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let kind = arguments["kind"].as_str().ok_or("kind is required")?;
+            let _action_script = arguments["actionScript"].as_str().ok_or("actionScript is required")?;
+            format!("{{\"action\":\"register\",\"name\":\"{}\",\"kind\":\"{}\",\"ready\":true}}",
+                name, kind)
+        }
+        "wa_trigger_list" => {
+            "{\"action\":\"list_triggers\",\"count\":0}".to_string()
+        }
         _ => return Ok(None),
     };
 

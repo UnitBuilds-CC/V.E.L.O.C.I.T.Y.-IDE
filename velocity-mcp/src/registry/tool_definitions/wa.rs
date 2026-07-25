@@ -282,5 +282,220 @@ pub fn get_wa_tools() -> Vec<Tool> {
                 }
             }),
         },
+        // ─── Clipboard Tools ─────────────────────────────────────────────────────
+        Tool {
+            name: "wa_clipboard_read".to_string(),
+            description: "Read the current Windows clipboard content (text, HTML, files, or image detection).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "format": { "type": "string", "enum": ["text", "html", "files", "auto"], "description": "Clipboard format to read. Defaults to auto." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_clipboard_write".to_string(),
+            description: "Write content to the Windows clipboard.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "Text content to write to clipboard." },
+                    "html": { "type": "string", "description": "HTML content to write to clipboard." },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "File paths to place on clipboard." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_clipboard_clear".to_string(),
+            description: "Clear the Windows clipboard.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        // ─── Process Management Tools ────────────────────────────────────────────
+        Tool {
+            name: "wa_process_launch".to_string(),
+            description: "Launch a Windows process with optional arguments, working directory, and elevation.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "exePath": { "type": "string", "description": "Path to executable." },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Command line arguments." },
+                    "workingDir": { "type": "string", "description": "Working directory." },
+                    "hidden": { "type": "boolean", "description": "Start hidden (no window)." },
+                    "elevated": { "type": "boolean", "description": "Run as administrator." },
+                    "waitForWindow": { "type": "boolean", "description": "Wait for main window to appear." }
+                },
+                "required": ["exePath"]
+            }),
+        },
+        Tool {
+            name: "wa_process_terminate".to_string(),
+            description: "Gracefully terminate a Windows process by PID.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "Process ID to terminate." },
+                    "graceMs": { "type": "integer", "description": "Grace period in ms before force kill. Defaults to 5000." }
+                },
+                "required": ["pid"]
+            }),
+        },
+        Tool {
+            name: "wa_process_list".to_string(),
+            description: "List running Windows processes, optionally filtered by name.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "nameContains": { "type": "string", "description": "Optional case-insensitive process name filter." },
+                    "limit": { "type": "integer", "description": "Max results to return." }
+                }
+            }),
+        },
+        // ─── Window Management Tools ─────────────────────────────────────────────
+        Tool {
+            name: "wa_window_list".to_string(),
+            description: "List visible desktop windows with titles, positions, and states.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "titleContains": { "type": "string", "description": "Optional title substring filter." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_window_action".to_string(),
+            description: "Perform a window operation (move, resize, minimize, maximize, close, focus, topmost).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hwnd": { "type": "integer", "description": "Window handle." },
+                    "action": { "type": "string", "enum": ["move", "resize", "minimize", "maximize", "restore", "close", "focus", "topmost"], "description": "Operation to perform." },
+                    "x": { "type": "integer", "description": "X position (for move)." },
+                    "y": { "type": "integer", "description": "Y position (for move)." },
+                    "width": { "type": "integer", "description": "Width (for resize)." },
+                    "height": { "type": "integer", "description": "Height (for resize)." }
+                },
+                "required": ["hwnd", "action"]
+            }),
+        },
+        // ─── Virtual Desktop Tools ───────────────────────────────────────────────
+        Tool {
+            name: "wa_virtual_desktop_list".to_string(),
+            description: "List all Windows virtual desktops.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_virtual_desktop_switch".to_string(),
+            description: "Switch to a virtual desktop by index or name.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "index": { "type": "integer", "description": "Desktop index (0-based)." },
+                    "name": { "type": "string", "description": "Desktop name (Windows 11)." }
+                }
+            }),
+        },
+        // ─── OCR Tools ───────────────────────────────────────────────────────────
+        Tool {
+            name: "wa_ocr_screen".to_string(),
+            description: "Perform OCR text recognition on a screen region or full screen.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "x": { "type": "integer", "description": "Region X offset (pixels)." },
+                    "y": { "type": "integer", "description": "Region Y offset (pixels)." },
+                    "width": { "type": "integer", "description": "Region width." },
+                    "height": { "type": "integer", "description": "Region height." },
+                    "language": { "type": "string", "description": "OCR language tag (e.g. en-US). Defaults to system language." }
+                }
+            }),
+        },
+        // ─── Notification Tools ──────────────────────────────────────────────────
+        Tool {
+            name: "wa_notifications_list".to_string(),
+            description: "List currently visible Windows toast notifications.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "wa_notifications_dismiss".to_string(),
+            description: "Dismiss visible Windows notifications, optionally filtered by pattern.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Optional wildcard pattern to match notification title/body." }
+                }
+            }),
+        },
+        // ─── Registry Tools ──────────────────────────────────────────────────────
+        Tool {
+            name: "wa_registry_read".to_string(),
+            description: "Read a Windows registry value.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hive": { "type": "string", "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"], "description": "Registry hive." },
+                    "path": { "type": "string", "description": "Registry key path." },
+                    "name": { "type": "string", "description": "Value name." }
+                },
+                "required": ["hive", "path", "name"]
+            }),
+        },
+        Tool {
+            name: "wa_registry_write".to_string(),
+            description: "Write a Windows registry value.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hive": { "type": "string", "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"], "description": "Registry hive." },
+                    "path": { "type": "string", "description": "Registry key path." },
+                    "name": { "type": "string", "description": "Value name." },
+                    "value": { "type": "string", "description": "Value to write." },
+                    "type": { "type": "string", "enum": ["String", "DWord", "QWord", "ExpandString", "Binary", "MultiString"], "description": "Registry value type." }
+                },
+                "required": ["hive", "path", "name", "value", "type"]
+            }),
+        },
+        // ─── System Settings Tools ───────────────────────────────────────────────
+        Tool {
+            name: "wa_system_dark_mode".to_string(),
+            description: "Get or toggle Windows dark mode.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean", "description": "Set dark mode. Omit to just query current state." }
+                }
+            }),
+        },
+        // ─── Trigger Tools ───────────────────────────────────────────────────────
+        Tool {
+            name: "wa_trigger_register".to_string(),
+            description: "Register a new automation trigger (file watch, window appears, idle detect, etc.).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Trigger name." },
+                    "kind": { "type": "string", "enum": ["file_watch", "window_appears", "window_closes", "process_starts", "process_exits", "clipboard_changed", "system_idle", "delay", "interval"], "description": "Trigger type." },
+                    "target": { "type": "string", "description": "Target path/title/name depending on kind." },
+                    "actionScript": { "type": "string", "description": "PowerShell script to execute when triggered." }
+                },
+                "required": ["name", "kind", "actionScript"]
+            }),
+        },
+        Tool {
+            name: "wa_trigger_list".to_string(),
+            description: "List all registered automation triggers.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
     ]
 }

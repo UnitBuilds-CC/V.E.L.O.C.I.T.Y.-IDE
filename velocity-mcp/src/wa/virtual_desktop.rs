@@ -5,6 +5,8 @@
 //! Windows virtual desktops via the IVirtualDesktopManager COM interface
 //! through PowerShell.
 
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─── Virtual Desktop Model ───────────────────────────────────────────────────
@@ -102,7 +104,16 @@ impl VirtualDesktopManager {
 
     /// Enumerate all virtual desktops (refreshes cache).
     pub fn enumerate(&mut self) -> &VirtualDesktopState {
-        // On non-Windows or when COM fails, return a single-desktop fallback.
+        if cfg!(target_os = "windows") {
+            let script = build_enumerate_desktops_script();
+            if let Ok(json) = run_ps_script(&script) {
+                if let Some(state) = parse_enumerate_result(&json) {
+                    self.cached_state = Some(state);
+                    return self.cached_state.as_ref().unwrap();
+                }
+            }
+        }
+        // Fallback: single desktop
         self.cached_state = Some(VirtualDesktopState {
             desktops: vec![VirtualDesktop {
                 id: "default".to_string(),
@@ -120,11 +131,50 @@ impl VirtualDesktopManager {
 
     /// Apply an operation.
     pub fn apply(&mut self, op: &VDesktopOperation) -> VDesktopOpResult {
-        VDesktopOpResult {
-            success: false,
-            operation: format!("{:?}", op),
-            detail: "Virtual desktop operations require Windows 10/11".to_string(),
-            new_state: self.cached_state.clone(),
+        if !cfg!(target_os = "windows") {
+            return VDesktopOpResult {
+                success: false,
+                operation: format!("{:?}", op),
+                detail: "Virtual desktop operations require Windows 10/11".to_string(),
+                new_state: self.cached_state.clone(),
+            };
+        }
+        let script = match op {
+            VDesktopOperation::SwitchTo(idx) => build_switch_desktop_script(*idx),
+            VDesktopOperation::SwitchToNamed(name) => {
+                // Resolve name to index via enumeration then switch
+                self.enumerate();
+                let idx = self.cached_state.as_ref()
+                    .and_then(|s| s.by_name(name))
+                    .map(|d| d.index)
+                    .unwrap_or(0);
+                build_switch_desktop_script(idx)
+            }
+            _ => {
+                return VDesktopOpResult {
+                    success: false,
+                    operation: format!("{:?}", op),
+                    detail: "Operation not yet wired to PowerShell".to_string(),
+                    new_state: self.cached_state.clone(),
+                };
+            }
+        };
+        match run_ps_script(&script) {
+            Ok(_) => {
+                self.enumerate();
+                VDesktopOpResult {
+                    success: true,
+                    operation: format!("{:?}", op),
+                    detail: "executed via PowerShell".to_string(),
+                    new_state: self.cached_state.clone(),
+                }
+            }
+            Err(e) => VDesktopOpResult {
+                success: false,
+                operation: format!("{:?}", op),
+                detail: e,
+                new_state: self.cached_state.clone(),
+            },
         }
     }
 
@@ -237,6 +287,62 @@ for ($i = 0; $i -lt $steps; $i++) {{
 Write-Output (ConvertTo-Json @{{ success = $true; from = $currentIdx; to = $targetIdx; steps = $steps }} -Compress)
 "#
     )
+}
+
+// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
+    #[derive(serde::Deserialize)]
+    struct PsDesktop {
+        id: Option<String>,
+        name: Option<String>,
+        index: Option<u32>,
+        is_current: Option<bool>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PsResult {
+        desktops: Option<Vec<PsDesktop>>,
+        current_index: Option<u32>,
+        total_count: Option<u32>,
+    }
+    let r: PsResult = serde_json::from_str(json).ok()?;
+    let desktops: Vec<VirtualDesktop> = r.desktops?
+        .into_iter()
+        .map(|d| VirtualDesktop {
+            id: d.id.unwrap_or_default(),
+            name: d.name,
+            index: d.index.unwrap_or(0),
+            is_current: d.is_current.unwrap_or(false),
+            window_count: None,
+        })
+        .collect();
+    let total = r.total_count.unwrap_or(desktops.len() as u32);
+    let current_index = r.current_index.unwrap_or(0);
+    Some(VirtualDesktopState {
+        desktops,
+        current_index,
+        total_count: total,
+        supports_named_desktops: true,
+    })
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

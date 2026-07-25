@@ -5,7 +5,8 @@
 //! maximize, restore, close), z-order management, and window state queries
 //! via Win32 API calls through PowerShell.
 
-use std::path::Path;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─── Window Info Model ───────────────────────────────────────────────────────
@@ -135,12 +136,25 @@ impl WindowManager {
 
     /// Apply an operation to a window identified by HWND.
     pub fn apply_operation(hwnd: u64, op: &WindowOperation) -> WindowOpResult {
-        WindowOpResult {
-            success: false,
-            hwnd,
-            operation: format!("{:?}", op),
-            detail: "Not implemented on this platform".to_string(),
-            new_rect: None,
+        if !cfg!(target_os = "windows") {
+            return WindowOpResult {
+                success: false,
+                hwnd,
+                operation: format!("{:?}", op),
+                detail: "Window operations only supported on Windows".to_string(),
+                new_rect: None,
+            };
+        }
+        let script = build_window_op_script(hwnd, op);
+        match run_ps_script(&script) {
+            Ok(json) => parse_window_op_result(hwnd, op, &json),
+            Err(e) => WindowOpResult {
+                success: false,
+                hwnd,
+                operation: format!("{:?}", op),
+                detail: e,
+                new_rect: None,
+            },
         }
     }
 
@@ -321,6 +335,59 @@ $result = @{{ success = $true; hwnd = {hwnd}; x = $r.Left; y = $r.Top; width = $
 ConvertTo-Json $result -Compress
 "#
     )
+}
+
+// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_window_op_result(hwnd: u64, op: &WindowOperation, json: &str) -> WindowOpResult {
+    #[derive(serde::Deserialize)]
+    struct PsResult {
+        success: Option<bool>,
+        x: Option<i32>,
+        y: Option<i32>,
+        width: Option<u32>,
+        height: Option<u32>,
+    }
+    match serde_json::from_str::<PsResult>(json) {
+        Ok(r) => WindowOpResult {
+            success: r.success.unwrap_or(true),
+            hwnd,
+            operation: format!("{:?}", op),
+            detail: "executed via PowerShell".to_string(),
+            new_rect: Some(WindowRect {
+                x: r.x.unwrap_or(0),
+                y: r.y.unwrap_or(0),
+                width: r.width.unwrap_or(0),
+                height: r.height.unwrap_or(0),
+            }),
+        },
+        Err(e) => WindowOpResult {
+            success: false,
+            hwnd,
+            operation: format!("{:?}", op),
+            detail: format!("parse error: {e}"),
+            new_rect: None,
+        },
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

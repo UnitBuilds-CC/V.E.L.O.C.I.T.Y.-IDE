@@ -5,7 +5,9 @@
 //! capabilities needed for orchestrating desktop automation workflows.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // ─── Process Model ───────────────────────────────────────────────────────────
@@ -187,26 +189,47 @@ impl ProcessManager {
     }
 
     /// Launch a process with the given configuration.
-    pub fn launch(_config: &LaunchConfig) -> LaunchResult {
-        LaunchResult {
-            success: false,
-            pid: None,
-            detail: "Process launch requires Windows runtime".to_string(),
-            window_ready: false,
-            main_window_title: None,
+    pub fn launch(config: &LaunchConfig) -> LaunchResult {
+        if !cfg!(target_os = "windows") {
+            return LaunchResult {
+                success: false,
+                pid: None,
+                detail: "Process launch requires Windows runtime".to_string(),
+                window_ready: false,
+                main_window_title: None,
+            };
+        }
+        let script = build_launch_script(config);
+        match run_ps_script(&script) {
+            Ok(json) => parse_launch_result(&json),
+            Err(e) => LaunchResult {
+                success: false,
+                pid: None,
+                detail: e,
+                window_ready: false,
+                main_window_title: None,
+            },
         }
     }
 
     /// Gracefully terminate a process (sends WM_CLOSE, then kills after timeout).
     pub fn terminate(pid: u32, grace_timeout: Duration) -> bool {
-        let _ = (pid, grace_timeout);
-        false
+        if !cfg!(target_os = "windows") {
+            return false;
+        }
+        let script = build_terminate_script(pid, grace_timeout.as_millis() as u64);
+        run_ps_script(&script).is_ok()
     }
 
     /// Force-kill a process immediately.
     pub fn kill(pid: u32) -> bool {
-        let _ = pid;
-        false
+        if !cfg!(target_os = "windows") {
+            return false;
+        }
+        let script = format!(
+            "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($null -eq $p) {{ exit 1 }}; Stop-Process -Id {pid} -Force; Write-Output '{{\"success\":true}}'"
+        );
+        run_ps_script(&script).is_ok()
     }
 
     /// Wait for a condition on a process.
@@ -215,12 +238,44 @@ impl ProcessManager {
         condition: &ProcessWaitCondition,
         timeout: Duration,
     ) -> WaitResult {
-        let _ = (pid, condition, timeout);
-        WaitResult {
-            condition_met: false,
-            elapsed: Duration::ZERO,
-            detail: "Process wait requires Windows runtime".to_string(),
-            exit_code: None,
+        if !cfg!(target_os = "windows") {
+            return WaitResult {
+                condition_met: false,
+                elapsed: Duration::ZERO,
+                detail: "Process wait requires Windows runtime".to_string(),
+                exit_code: None,
+            };
+        }
+        let start = Instant::now();
+        // Polling-based wait
+        let poll_ms = 200;
+        let deadline_ms = timeout.as_millis() as u64;
+        match condition {
+            ProcessWaitCondition::Exit => {
+                let script = format!(
+                    "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; $deadline = [Environment]::TickCount64 + {deadline_ms}; while ($null -ne $p -and [Environment]::TickCount64 -lt $deadline) {{ Start-Sleep -Milliseconds {poll_ms}; $p = Get-Process -Id {pid} -ErrorAction SilentlyContinue }}; ConvertTo-Json @{{ exited = ($null -eq $p) }} -Compress"
+                );
+                match run_ps_script(&script) {
+                    Ok(_) => WaitResult {
+                        condition_met: true,
+                        elapsed: start.elapsed(),
+                        detail: "process exited".to_string(),
+                        exit_code: None,
+                    },
+                    Err(e) => WaitResult {
+                        condition_met: false,
+                        elapsed: start.elapsed(),
+                        detail: e,
+                        exit_code: None,
+                    },
+                }
+            }
+            _ => WaitResult {
+                condition_met: false,
+                elapsed: start.elapsed(),
+                detail: "condition type not yet wired".to_string(),
+                exit_code: None,
+            },
         }
     }
 
@@ -360,6 +415,53 @@ if (-not $exited) {{
 Write-Output (ConvertTo-Json @{{ success = $true; exit_code = $proc.ExitCode; graceful = $exited }} -Compress)
 "#
     )
+}
+
+// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_launch_result(json: &str) -> LaunchResult {
+    #[derive(serde::Deserialize)]
+    struct PsResult {
+        success: Option<bool>,
+        pid: Option<u32>,
+        window_ready: Option<bool>,
+        main_window_title: Option<String>,
+    }
+    match serde_json::from_str::<PsResult>(json) {
+        Ok(r) => LaunchResult {
+            success: r.success.unwrap_or(true),
+            pid: r.pid,
+            detail: "launched via PowerShell".to_string(),
+            window_ready: r.window_ready.unwrap_or(false),
+            main_window_title: r.main_window_title,
+        },
+        Err(e) => LaunchResult {
+            success: false,
+            pid: None,
+            detail: format!("parse error: {e}"),
+            window_ready: false,
+            main_window_title: None,
+        },
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
