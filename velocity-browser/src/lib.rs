@@ -28,7 +28,7 @@ pub use dom::{CustomElementDefinition, CustomElementRegistry, DomTree, FormDataS
 pub use engine::*;
 pub use js::{JsEventListener, JsEventLoopScheduler, JsValue, JsVirtualMachine, PointerEvent, ScheduledTask, SyntheticEventDispatcher, TaskKind, WasmInterpreter, WasmSimdPipeline, WasmV128Vector, WasmValue, WebWorkerPool, WorkerMessage, WorkerThread};
 pub use layout::{AlignItems, DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutEngine, GridTrack, GridTrackSolver, JustifyContent, LayoutBox, LayoutEngine2D, ParallelLayoutEngine};
-pub use net::{BluetoothDevice, HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, QuicConnection, QuicStream, TlsFingerprintRotator, TlsJa3Profile, TlsState, WebBluetoothTransport, WebRtcTransport, WsFrame};
+pub use net::{BluetoothDevice, HttpClient, HttpResponse, IceCandidateState, InspectorServer, NativeTlsStream, NativeWsClient, ProxyResolver, ProxyType, QuicConnection, QuicStream, TlsFingerprintRotator, TlsJa3Profile, TlsState, WebBluetoothTransport, WebRtcTransport, SignalingState, ConnectionState, IceConnectionState, SdpType, SessionDescription, DataChannel, DataChannelState, MediaStreamTrack, TrackKind, TrackState, IceServer, RtcConfiguration, BundlePolicy, WsFrame};
 pub use nda::{NdaDictionary, NdaDocument, NdaFact, NdaObject, NdaTriple};
 pub use parser::{CssMatcher, FastCssParser, FastCssRuleBitmask, HtmlParser, Html5Tokenizer, StreamJitToken, StreamJitTokenizer};
 pub use session::{BrowserSession, Cookie};
@@ -40,4 +40,4 @@ pub use session_storage::SessionStorageDisk;
 pub use session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
 pub use session_storage_quota::{StorageQuotaEstimate, StorageQuotaManager};
 pub use session_swarm::SwarmSessionOrchestrator;
-pub use style::{CssRule, FontShaperEngine, GlyphMetric, ScopedCssMatcher, Specificity, StyleCascader};
+pub use style::{CssRule, CssAnimation, KeyframesRule, KeyframeStop, AnimationInstance, AnimationState, FillMode, AnimationDirection, PlayState, TimingFunction, StepPosition, FontShaperEngine, GlyphMetric, ScopedCssMatcher, Specificity, StyleCascader};

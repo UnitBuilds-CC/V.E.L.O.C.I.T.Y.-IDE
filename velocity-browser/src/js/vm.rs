@@ -184,6 +184,18 @@ impl JsVirtualMachine {
             navigator.insert("onLine".to_string(), JsValue::Boolean(true));
             s.locals.insert("navigator".to_string(), JsValue::Object(navigator));
 
+            // Reflect (methods dispatched via call_native)
+            let mut reflect = HashMap::new();
+            reflect.insert("get".to_string(), JsValue::NativeFunction("Reflect.get".into()));
+            reflect.insert("set".to_string(), JsValue::NativeFunction("Reflect.set".into()));
+            reflect.insert("has".to_string(), JsValue::NativeFunction("Reflect.has".into()));
+            reflect.insert("deleteProperty".to_string(), JsValue::NativeFunction("Reflect.deleteProperty".into()));
+            reflect.insert("ownKeys".to_string(), JsValue::NativeFunction("Reflect.ownKeys".into()));
+            reflect.insert("getOwnPropertyDescriptor".to_string(), JsValue::NativeFunction("Reflect.getOwnPropertyDescriptor".into()));
+            reflect.insert("apply".to_string(), JsValue::NativeFunction("Reflect.apply".into()));
+            reflect.insert("construct".to_string(), JsValue::NativeFunction("Reflect.construct".into()));
+            s.locals.insert("Reflect".to_string(), JsValue::Object(reflect));
+
             // history
             let mut history = HashMap::new();
             history.insert("length".to_string(), JsValue::Number(1.0));

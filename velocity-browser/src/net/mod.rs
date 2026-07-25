@@ -22,4 +22,4 @@ pub use inspector::InspectorServer;
 pub use tls::{NativeTlsStream, ProxyResolver, ProxyType, TlsState};
 pub use tls_fingerprint::{TlsFingerprintRotator, TlsJa3Profile};
 pub use tls_handshake::{Tls13Handshake, HandshakeState};
-pub use webrtc::{IceCandidateState, WebRtcTransport};
+pub use webrtc::{IceCandidateState, WebRtcTransport, SignalingState, ConnectionState, IceConnectionState, SdpType, SessionDescription, DataChannel, DataChannelState, MediaStreamTrack, TrackKind, TrackState, IceServer, RtcConfiguration, BundlePolicy};

@@ -1471,10 +1471,13 @@ impl eframe::App for VelocityApp {
                 let editor_id = egui::Id::new("code_editor");
                 if let Some(state) = egui::widgets::text_edit::TextEditState::load(&ctx, editor_id) {
                     if let Some(cursor_range) = state.cursor.char_range() {
+                        let char_idx = cursor_range.primary.index.into();
                         cursor_pos = Some(get_cursor_pos(
                             buf.content(),
-                            cursor_range.primary.index.into(),
+                            char_idx,
                         ));
+                        // Update current cursor line
+                        self.current_cursor_line = cursor_pos.unwrap().0;
                     }
                 }
             }

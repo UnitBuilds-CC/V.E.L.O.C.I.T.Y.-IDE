@@ -130,8 +130,8 @@ fn exports_interlinked_markdown() {
 
     let model = build_wiki(&sm);
     let count = export_markdown(&model, &out).expect("export");
-    // index + 1 file page + 1 symbol page
-    assert_eq!(count, 3);
+    // index + 1 file page + 1 symbol page + symbol_index + graph
+    assert_eq!(count, 5);
 
     let index = std::fs::read_to_string(out.join("index.md")).expect("index.md");
     assert!(index.contains("# Project Wiki"));
@@ -144,7 +144,13 @@ fn exports_interlinked_markdown() {
         .find(|p| p.title == file)
         .map(|p| p.slug.clone())
         .unwrap();
-    let file_md = std::fs::read_to_string(out.join("files").join(format!("{}.md", file_slug)))
+    // Files are now grouped by module directory (e.g., "src" from "src/lib.rs")
+    let module = file.split('/').next().unwrap_or("root");
+    let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+    let module_slug: String = module.chars().map(|c| {
+        if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }
+    }).collect::<String>().trim_matches('-').to_string();
+    let file_md = std::fs::read_to_string(out.join("files").join(&module_slug).join(format!("{}.md", file_slug)))
         .expect("file page markdown");
     assert!(file_md.contains("## Defines"));
     // The defined symbol should be cross-linked to its own page.

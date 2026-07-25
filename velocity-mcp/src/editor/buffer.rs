@@ -327,6 +327,140 @@ fn cheap_line_diff(old: &[&str], new: &[&str]) -> Vec<u8> {
     marks
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Large File Optimizations
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Threshold above which a buffer is considered "large" and gets special
+/// treatment (line windowing, deferred syntax highlighting).
+pub const LARGE_FILE_THRESHOLD: usize = 10_000; // lines
+
+/// A cached line index for fast line-based operations on large files.
+/// Instead of scanning the full content string each time, we cache
+/// byte offsets of each line start.
+#[derive(Debug, Clone)]
+pub struct LineIndex {
+    /// Byte offset of each line start within the content.
+    line_starts: Vec<u32>,
+    /// Hash of content when the index was built.
+    content_hash: u64,
+}
+
+impl LineIndex {
+    /// Build a line index from content. O(n) but only done once per edit.
+    pub fn build(content: &str) -> Self {
+        let mut starts = vec![0u32];
+        for (i, b) in content.bytes().enumerate() {
+            if b == b'\n' {
+                starts.push((i + 1) as u32);
+            }
+        }
+        Self { line_starts: starts, content_hash: fnv1a(content) }
+    }
+
+    /// Check if the index is still valid for the given content.
+    pub fn is_valid(&self, content: &str) -> bool {
+        self.content_hash == fnv1a(content)
+    }
+
+    /// Total number of lines.
+    pub fn line_count(&self) -> usize {
+        self.line_starts.len()
+    }
+
+    /// Get the byte range of a line (0-indexed).
+    pub fn line_range(&self, line: usize, content_len: usize) -> Option<(usize, usize)> {
+        if line >= self.line_starts.len() { return None; }
+        let start = self.line_starts[line] as usize;
+        let end = if line + 1 < self.line_starts.len() {
+            self.line_starts[line + 1] as usize
+        } else {
+            content_len
+        };
+        Some((start, end))
+    }
+
+    /// Get the content of a specific line without trailing newline.
+    pub fn line_content<'a>(&self, line: usize, content: &'a str) -> Option<&'a str> {
+        let (start, end) = self.line_range(line, content.len())?;
+        let text = &content[start..end];
+        Some(text.trim_end_matches('\n').trim_end_matches('\r'))
+    }
+
+    /// Convert a byte offset to (line, col) using binary search. O(log n).
+    pub fn byte_to_line_col(&self, offset: usize) -> (usize, usize) {
+        match self.line_starts.binary_search(&(offset as u32)) {
+            Ok(line) => (line, 0),
+            Err(line) => {
+                let line = line.saturating_sub(1);
+                let col = offset - self.line_starts[line] as usize;
+                (line, col)
+            }
+        }
+    }
+
+    /// Convert (line, col) to byte offset. O(1).
+    pub fn line_col_to_byte(&self, line: usize, col: usize) -> usize {
+        if line >= self.line_starts.len() {
+            return self.line_starts.last().copied().unwrap_or(0) as usize;
+        }
+        self.line_starts[line] as usize + col
+    }
+}
+
+/// A visible window of lines for virtual scrolling.
+/// Only the lines in the viewport are rendered, dramatically reducing
+/// the cost of displaying large files.
+#[derive(Debug, Clone)]
+pub struct LineWindow {
+    pub first_visible: usize,
+    pub visible_count: usize,
+    total_lines: usize,
+}
+
+impl LineWindow {
+    pub fn new(total_lines: usize, viewport_height: usize) -> Self {
+        Self {
+            first_visible: 0,
+            visible_count: viewport_height.min(total_lines),
+            total_lines,
+        }
+    }
+
+    /// Scroll to make a specific line visible, keeping it centered if possible.
+    pub fn scroll_to(&mut self, line: usize) {
+        if line >= self.total_lines { return; }
+        let half = self.visible_count / 2;
+        self.first_visible = if line > half { line - half } else { 0 };
+        if self.first_visible + self.visible_count > self.total_lines {
+            self.first_visible = self.total_lines.saturating_sub(self.visible_count);
+        }
+    }
+
+    /// Check if a line is within the visible window.
+    pub fn is_visible(&self, line: usize) -> bool {
+        line >= self.first_visible && line < self.first_visible + self.visible_count
+    }
+
+    /// Get the range of visible lines.
+    pub fn visible_range(&self) -> std::ops::Range<usize> {
+        self.first_visible..(self.first_visible + self.visible_count).min(self.total_lines)
+    }
+
+    /// Update the viewport height (e.g., when the window is resized).
+    pub fn set_viewport_height(&mut self, height: usize) {
+        self.visible_count = height.min(self.total_lines);
+    }
+
+    /// Update total line count after content changes.
+    pub fn set_total_lines(&mut self, count: usize) {
+        self.total_lines = count;
+        if self.first_visible + self.visible_count > count {
+            self.first_visible = count.saturating_sub(self.visible_count);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +500,56 @@ mod tests {
         let mut b = EditorBuffer::new(Some(PathBuf::from("f.rs")), "a\nb".to_string());
         b.refresh_diff_marks();
         assert!(b.diff_marks.iter().all(|m| *m == 0));
+    }
+
+    #[test]
+    fn line_index_build_and_query() {
+        let content = "hello\nworld\nfoo";
+        let idx = LineIndex::build(content);
+        assert_eq!(idx.line_count(), 3);
+        assert_eq!(idx.line_content(0, content), Some("hello"));
+        assert_eq!(idx.line_content(1, content), Some("world"));
+        assert_eq!(idx.line_content(2, content), Some("foo"));
+        assert_eq!(idx.line_content(3, content), None);
+    }
+
+    #[test]
+    fn line_index_byte_to_line_col() {
+        let content = "ab\ncd\nef";
+        let idx = LineIndex::build(content);
+        assert_eq!(idx.byte_to_line_col(0), (0, 0)); // 'a'
+        assert_eq!(idx.byte_to_line_col(1), (0, 1)); // 'b'
+        assert_eq!(idx.byte_to_line_col(3), (1, 0)); // 'c'
+        assert_eq!(idx.byte_to_line_col(6), (2, 0)); // 'e'
+    }
+
+    #[test]
+    fn line_index_line_col_to_byte() {
+        let content = "ab\ncd\nef";
+        let idx = LineIndex::build(content);
+        assert_eq!(idx.line_col_to_byte(0, 0), 0);
+        assert_eq!(idx.line_col_to_byte(1, 0), 3);
+        assert_eq!(idx.line_col_to_byte(2, 1), 7);
+    }
+
+    #[test]
+    fn line_window_scroll() {
+        let mut win = LineWindow::new(100, 10);
+        assert_eq!(win.first_visible, 0);
+        assert!(win.is_visible(0));
+        assert!(win.is_visible(9));
+        assert!(!win.is_visible(10));
+
+        win.scroll_to(50);
+        assert!(win.is_visible(50));
+        assert!(!win.is_visible(0));
+    }
+
+    #[test]
+    fn line_window_visible_range() {
+        let mut win = LineWindow::new(100, 10);
+        assert_eq!(win.visible_range(), 0..10);
+        win.scroll_to(95);
+        assert_eq!(win.visible_range(), 90..100);
     }
 }

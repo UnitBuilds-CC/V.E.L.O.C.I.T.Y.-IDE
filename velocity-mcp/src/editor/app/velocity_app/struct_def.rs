@@ -231,6 +231,8 @@ pub struct VelocityApp {
     /// Debounce timer: when the search query last changed (runs after a pause).
     pub search_pending_since: Option<Instant>,
     pub pending_cursor_line: Option<usize>,
+    /// Current cursor line in the active editor (updated during rendering).
+    pub current_cursor_line: usize,
     pub file_tree: Option<FileNode>,
     pub last_tree_update: std::time::Instant,
     /// Last observed mtime of the workspace root (skips tree rebuilds when unchanged).
@@ -772,6 +774,7 @@ impl VelocityApp {
             replace_query: String::new(),
             search_pending_since: None,
             pending_cursor_line: None,
+            current_cursor_line: 0,
             file_tree: None,
             last_tree_update: std::time::Instant::now(),
             last_tree_mtime: None,

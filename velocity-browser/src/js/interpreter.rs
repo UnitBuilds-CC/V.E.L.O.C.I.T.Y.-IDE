@@ -194,6 +194,8 @@ pub enum Stmt {
     Export { declaration: Option<Box<Stmt>>, default_expr: Option<Expr>, named: Vec<String> },
     /// Generator function: function* name() { yield ... }
     GeneratorDecl { name: String, params: Vec<String>, body: Box<Stmt> },
+    /// Async function: async function name() { ... } — wraps return in Promise.
+    AsyncFunctionDecl { name: String, params: Vec<String>, body: Box<Stmt> },
     /// Labeled statement: label: stmt (we skip the label)
     Labeled { label: String, body: Box<Stmt> },
 }
@@ -304,10 +306,14 @@ impl Parser {
             Token::Import => self.parse_import(),
             Token::Export => self.parse_export(),
             Token::Async => {
-                // async function => treat as regular function
+                // async function => AsyncFunctionDecl
                 self.advance();
                 if self.at(&Token::Function) {
-                    self.parse_function_decl()
+                    self.advance();
+                    let name = match self.advance() { Token::Ident(n) => n, t => return Err(format!("expected function name, got {:?}", t)) };
+                    let params = self.parse_params()?;
+                    let body = Box::new(self.parse_block()?);
+                    Ok(Stmt::AsyncFunctionDecl { name, params, body })
                 } else {
                     // async arrow handled in expression parsing
                     let e = self.parse_expr()?; self.eat(&Token::Semi); Ok(Stmt::Expr(e))
@@ -1175,16 +1181,36 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             Scope::declare(scope, name, func);
             Ok(JsValue::Undefined)
         }
+        Stmt::AsyncFunctionDecl { name, params, body } => {
+            // Async functions wrap their return value in a resolved Promise.
+            let func = JsValue::Function {
+                name: Some(name.clone()),
+                params: params.clone(),
+                body: (**body).clone(),
+                closure: scope.clone(),
+            };
+            // Tag the function so calls know to wrap the result in a Promise
+            let mut wrapper_map = HashMap::new();
+            wrapper_map.insert("__type__".to_string(), JsValue::String("AsyncFunction".to_string()));
+            wrapper_map.insert("__inner__".to_string(), func);
+            let async_fn = JsValue::Object(wrapper_map);
+            Scope::declare(scope, name, async_fn);
+            Ok(JsValue::Undefined)
+        }
         Stmt::ClassDecl { name, parent, methods } => {
             eval_class_decl(name, parent, methods, scope);
             Ok(JsValue::Undefined)
         }
-        Stmt::Import { specifiers, .. } => {
-            // In standalone mode, imports just declare bindings as undefined.
-            // The module loader (script_runner) will populate them before execution.
-            for spec in specifiers {
-                if Scope::resolve(scope, &spec.local).is_none() {
-                    Scope::declare(scope, &spec.local, JsValue::Undefined);
+        Stmt::Import { specifiers, source } => {
+            // Try to resolve from the module registry first
+            if let Ok(()) = apply_import(specifiers, source, scope) {
+                // Successfully imported from registry
+            } else {
+                // Fallback: declare bindings as undefined for standalone mode
+                for spec in specifiers {
+                    if Scope::resolve(scope, &spec.local).is_none() {
+                        Scope::declare(scope, &spec.local, JsValue::Undefined);
+                    }
                 }
             }
             Ok(JsValue::Undefined)
@@ -1481,7 +1507,9 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "Math.trunc" | "Math.sign" | "Math.log" | "Math.pow" | "Math.max" | "Math.min" | "Math.random" |
                 "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
                 "String.fromCharCode" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
-                "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" => {
+                "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" |
+                "Reflect.get" | "Reflect.set" | "Reflect.has" | "Reflect.deleteProperty" |
+                "Reflect.ownKeys" | "Reflect.getOwnPropertyDescriptor" | "Reflect.apply" | "Reflect.construct" => {
                     return call_native(&native_name, &evaluated_args);
                 }
                 _ => {}
@@ -1900,6 +1928,28 @@ pub fn call_function_with_this(func: &JsValue, args: &[JsValue], _caller_scope: 
             }
         }
         JsValue::NativeFunction(name) => call_native(name, args),
+        // AsyncFunction wrapper: call inner function, wrap result in Promise
+        JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("AsyncFunction") => {
+            if let Some(inner) = map.get("__inner__") {
+                match call_function_with_this(inner, args, _caller_scope, this_val) {
+                    Ok(val) => {
+                        let mut promise = HashMap::new();
+                        promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                        promise.insert("__resolved__".to_string(), val);
+                        Ok(JsValue::Object(promise))
+                    }
+                    Err(Signal::Throw(reason)) => {
+                        let mut promise = HashMap::new();
+                        promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                        promise.insert("__rejected__".to_string(), reason);
+                        Ok(JsValue::Object(promise))
+                    }
+                    Err(other) => Err(other),
+                }
+            } else {
+                Ok(JsValue::Undefined)
+            }
+        }
         _ => Ok(JsValue::Undefined),
     }
 }
@@ -2138,6 +2188,85 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             map.insert("__resolved__".to_string(), JsValue::Array(results));
             JsValue::Object(map)
         }
+        // Reflect methods
+        "Reflect.get" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            get_property(&target, &prop)
+        }
+        "Reflect.set" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            let value = args.get(2).cloned().unwrap_or(JsValue::Undefined);
+            let mut t = target;
+            JsValue::Boolean(set_property(&mut t, &prop, value))
+        }
+        "Reflect.has" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            match &target {
+                JsValue::Object(map) => JsValue::Boolean(map.contains_key(&prop)),
+                _ => JsValue::Boolean(false),
+            }
+        }
+        "Reflect.deleteProperty" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            match &target {
+                JsValue::Object(map) => JsValue::Boolean(map.contains_key(&prop)),
+                _ => JsValue::Boolean(false),
+            }
+        }
+        "Reflect.ownKeys" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            match &target {
+                JsValue::Object(map) => {
+                    let keys: Vec<JsValue> = map.keys()
+                        .filter(|k| !k.starts_with("__"))
+                        .map(|k| JsValue::String(k.clone()))
+                        .collect();
+                    JsValue::Array(keys)
+                }
+                _ => JsValue::Array(Vec::new()),
+            }
+        }
+        "Reflect.getOwnPropertyDescriptor" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            match &target {
+                JsValue::Object(map) => {
+                    if let Some(val) = map.get(&prop) {
+                        let mut desc = HashMap::new();
+                        desc.insert("value".to_string(), val.clone());
+                        desc.insert("writable".to_string(), JsValue::Boolean(true));
+                        desc.insert("enumerable".to_string(), JsValue::Boolean(true));
+                        desc.insert("configurable".to_string(), JsValue::Boolean(true));
+                        JsValue::Object(desc)
+                    } else {
+                        JsValue::Undefined
+                    }
+                }
+                _ => JsValue::Undefined,
+            }
+        }
+        "Reflect.apply" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let this_arg = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+            let call_args = match args.get(2) {
+                Some(JsValue::Array(a)) => a.clone(),
+                _ => Vec::new(),
+            };
+            call_function_with_this(&target, &call_args, &Scope::new_global(), Some(this_arg)).unwrap_or(JsValue::Undefined)
+        }
+        "Reflect.construct" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let call_args = match args.get(1) {
+                Some(JsValue::Array(a)) => a.clone(),
+                _ => Vec::new(),
+            };
+            // Simplified: call as regular function (full ctor needs new-target)
+            call_function(&target, &call_args, &Scope::new_global()).unwrap_or(JsValue::Undefined)
+        }
         _ => JsValue::Undefined,
     })
 }
@@ -2218,12 +2347,139 @@ fn decode_uri_component(s: &str) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ES Module Registry
+// ═══════════════════════════════════════════════════════════════════════════
+
+use std::sync::Mutex;
+
+/// Global module registry for ES module imports.
+/// Maps module specifier -> exported bindings (name -> value).
+static MODULE_REGISTRY: Mutex<Option<HashMap<String, HashMap<String, JsValue>>>> = Mutex::new(None);
+
+/// Register a module's exports in the global registry.
+pub fn register_module(specifier: &str, exports: HashMap<String, JsValue>) {
+    let mut registry = MODULE_REGISTRY.lock().unwrap();
+    let map = registry.get_or_insert_with(HashMap::new);
+    map.insert(specifier.to_string(), exports);
+}
+
+/// Resolve a module import. Returns the module's exports or None if not registered.
+pub fn resolve_module(specifier: &str) -> Option<HashMap<String, JsValue>> {
+    let registry = MODULE_REGISTRY.lock().unwrap();
+    registry.as_ref().and_then(|map| map.get(specifier).cloned())
+}
+
+/// Evaluate a module source and register its exports.
+/// Supports `export const/let/var/function`, `export default`, and `export { ... }`.
+pub fn evaluate_module(specifier: &str, source: &str) -> Result<HashMap<String, JsValue>, String> {
+    let tokens = lex(source)?;
+    let mut parser = Parser::new(tokens);
+    let block = parser.parse_block()?;
+    let stmts = match block {
+        Stmt::Block(stmts) => stmts,
+        other => vec![other],
+    };
+    let scope = Scope::new_global();
+    let mut exports = HashMap::new();
+
+    for stmt in &stmts {
+        match stmt {
+            Stmt::Export { declaration, default_expr, named } => {
+                if let Some(decl) = declaration {
+                    let _ = eval_stmt(decl, &scope);
+                    match decl.as_ref() {
+                        Stmt::VarDecl { name, .. } => {
+                            if let Some(val) = Scope::resolve(&scope, name) {
+                                exports.insert(name.clone(), val);
+                            }
+                        }
+                        Stmt::FunctionDecl { name, .. } | Stmt::AsyncFunctionDecl { name, .. } => {
+                            if let Some(val) = Scope::resolve(&scope, name) {
+                                exports.insert(name.clone(), val);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(expr) = default_expr {
+                    if let Ok(val) = eval_expr_node(expr, &scope) {
+                        exports.insert("default".to_string(), val);
+                    }
+                }
+                for name in named {
+                    if let Some(val) = Scope::resolve(&scope, name) {
+                        exports.insert(name.clone(), val);
+                    }
+                }
+            }
+            _ => { let _ = eval_stmt(stmt, &scope); }
+        }
+    }
+
+    register_module(specifier, exports.clone());
+    Ok(exports)
+}
+
+/// Apply an import statement: resolve the module and bind specifiers into scope.
+pub fn apply_import(
+    specifiers: &[ImportSpecifier],
+    source: &str,
+    scope: &ScopeRef,
+) -> Result<(), String> {
+    let module_exports = match resolve_module(source) {
+        Some(exports) => exports,
+        None => return Ok(()), // Module not yet loaded; silently skip
+    };
+    for spec in specifiers {
+        let value = if spec.imported == "*" {
+            // import * as name from 'module'
+            JsValue::Object(module_exports.clone())
+        } else {
+            module_exports.get(&spec.imported).cloned().unwrap_or(JsValue::Undefined)
+        };
+        Scope::declare(scope, &spec.local, value);
+    }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Property access & method calls
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
     match obj {
         JsValue::Object(map) => {
+            // Proxy get trap: forward property access through handler
+            if map.get("__type__").map(to_string).as_deref() == Some("Proxy") {
+                let target = map.get("__proxy_target__");
+                let handler = map.get("__proxy_handler__");
+                if let (Some(t), Some(h)) = (target, handler) {
+                    if let JsValue::Object(h_map) = h {
+                        // Check for get trap in handler
+                        if let Some(get_trap) = h_map.get("get") {
+                            // Invoke the trap: handler.get(target, prop)
+                            let prop_val = JsValue::String(prop.to_string());
+                            // For native function traps, just return the target property
+                            if matches!(get_trap, JsValue::NativeFunction(_)) {
+                                return get_property(t, prop);
+                            }
+                            if let Ok(result) = call_function(get_trap, &[t.clone(), prop_val], &Scope::new_global()) {
+                                return result;
+                            }
+                        }
+                        // Check for has trap (for "in" operator support)
+                        if prop == "__has__" {
+                            if let Some(has_trap) = h_map.get("has") {
+                                if matches!(has_trap, JsValue::NativeFunction(_)) {
+                                    return JsValue::Boolean(true);
+                                }
+                            }
+                        }
+                    }
+                    // Fallback: forward to target
+                    return get_property(t, prop);
+                }
+            }
             if let Some(val) = map.get(prop) { return val.clone(); }
             // Walk __proto__ chain
             let mut proto = map.get("__proto__");
@@ -2246,6 +2502,33 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
             JsValue::Undefined
         }
         _ => JsValue::Undefined,
+    }
+}
+
+/// Set a property on an object, respecting Proxy set traps.
+pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
+    if let JsValue::Object(map) = obj {
+        // Proxy set trap
+        if map.get("__type__").map(to_string).as_deref() == Some("Proxy") {
+            if let Some(JsValue::Object(h_map)) = map.get("__proxy_handler__") {
+                if let Some(set_trap) = h_map.get("set") {
+                    if let Some(target) = map.get("__proxy_target__").cloned() {
+                        let prop_val = JsValue::String(prop.to_string());
+                        if let Ok(_) = call_function(set_trap, &[target, prop_val, value.clone()], &Scope::new_global()) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Forward to target
+            if let Some(target) = map.get_mut("__proxy_target__") {
+                return set_property(target, prop, value);
+            }
+        }
+        map.insert(prop.to_string(), value);
+        true
+    } else {
+        false
     }
 }
 

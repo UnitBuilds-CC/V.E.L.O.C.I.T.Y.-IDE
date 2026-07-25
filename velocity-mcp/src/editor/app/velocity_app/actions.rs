@@ -814,8 +814,8 @@ impl VelocityApp {
     pub fn toggle_breakpoint_current_line(&mut self) {
         if let Some(id) = &self.active_tab {
             if let Some(buf) = self.buffers.get_mut(id) {
-                // Use line 1 as fallback; in a real impl we'd track cursor line
-                let line = 1_usize; // TODO: track cursor line from TextEditState
+                // Use tracked cursor line (updated during rendering)
+                let line = self.current_cursor_line;
                 if let Some(pos) = buf.breakpoints.iter().position(|&l| l == line) {
                     buf.breakpoints.remove(pos);
                 } else {

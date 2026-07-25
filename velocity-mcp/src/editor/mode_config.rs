@@ -217,6 +217,249 @@ impl ModeConfig for AccessMode {
         BottomPanelLayout::Tabbed(vec!["Audit Results", "Keyboard Nav Map", "Chat"])
     }
     fn priority_categories(&self) -> &[&'static str] { ACCESS_PRIORITY_CATEGORIES }
+    fn hidden_categories(&self) -> &[&'static str] { &["Build"] }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Accessibility Features
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Screen reader simulation mode: reads UI elements in tab order.
+pub struct ScreenReaderSim {
+    pub enabled: bool,
+    pub focus_index: usize,
+    pub elements: Vec<A11yElement>,
+    pub speech_buffer: Vec<String>,
+}
+
+/// An accessibility tree element for screen reader navigation.
+#[derive(Clone, Debug)]
+pub struct A11yElement {
+    pub role: A11yRole,
+    pub name: String,
+    pub value: Option<String>,
+    pub description: Option<String>,
+    pub bounds: (f32, f32, f32, f32), // x, y, w, h
+    pub focusable: bool,
+    pub children: Vec<A11yElement>,
+}
+
+/// ARIA roles for accessibility tree elements.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum A11yRole {
+    Alert,
+    Button,
+    Checkbox,
+    Dialog,
+    Document,
+    Form,
+    Heading,
+    Image,
+    Link,
+    List,
+    ListItem,
+    Menu,
+    MenuItem,
+    Navigation,
+    None,
+    ProgressBar,
+    Radio,
+    Region,
+    Search,
+    Slider,
+    StatusBar,
+    Tab,
+    TabList,
+    TabPanel,
+    TextBox,
+    Toolbar,
+    Tree,
+    TreeItem,
+    Window,
+}
+
+impl A11yRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Alert => "alert", Self::Button => "button", Self::Checkbox => "checkbox",
+            Self::Dialog => "dialog", Self::Document => "document", Self::Form => "form",
+            Self::Heading => "heading", Self::Image => "img", Self::Link => "link",
+            Self::List => "list", Self::ListItem => "listitem", Self::Menu => "menu",
+            Self::MenuItem => "menuitem", Self::Navigation => "navigation", Self::None => "none",
+            Self::ProgressBar => "progressbar", Self::Radio => "radio", Self::Region => "region",
+            Self::Search => "search", Self::Slider => "slider", Self::StatusBar => "statusbar",
+            Self::Tab => "tab", Self::TabList => "tablist", Self::TabPanel => "tabpanel",
+            Self::TextBox => "textbox", Self::Toolbar => "toolbar", Self::Tree => "tree",
+            Self::TreeItem => "treeitem", Self::Window => "window",
+        }
+    }
+}
+
+impl ScreenReaderSim {
+    pub fn new() -> Self {
+        Self { enabled: false, focus_index: 0, elements: Vec::new(), speech_buffer: Vec::new() }
+    }
+
+    /// Flatten the accessibility tree into a list of focusable elements.
+    pub fn flatten_focusable(elements: &[A11yElement]) -> Vec<&A11yElement> {
+        let mut result = Vec::new();
+        for el in elements {
+            if el.focusable { result.push(el); }
+            result.extend(Self::flatten_focusable(&el.children));
+        }
+        result
+    }
+
+    /// Move focus to the next element and announce it.
+    pub fn focus_next(&mut self) -> Option<String> {
+        let focusable = Self::flatten_focusable(&self.elements);
+        if focusable.is_empty() { return None; }
+        self.focus_index = (self.focus_index + 1) % focusable.len();
+        let el = focusable[self.focus_index];
+        let announcement = self.announce(el);
+        self.speech_buffer.push(announcement.clone());
+        Some(announcement)
+    }
+
+    /// Move focus to the previous element and announce it.
+    pub fn focus_prev(&mut self) -> Option<String> {
+        let focusable = Self::flatten_focusable(&self.elements);
+        if focusable.is_empty() { return None; }
+        if self.focus_index == 0 {
+            self.focus_index = focusable.len() - 1;
+        } else {
+            self.focus_index -= 1;
+        }
+        let el = focusable[self.focus_index];
+        let announcement = self.announce(el);
+        self.speech_buffer.push(announcement.clone());
+        Some(announcement)
+    }
+
+    /// Generate the speech announcement for an element.
+    fn announce(&self, el: &A11yElement) -> String {
+        let mut parts = Vec::new();
+        parts.push(el.name.clone());
+        parts.push(el.role.as_str().to_string());
+        if let Some(val) = &el.value {
+            parts.push(format!("value: {}", val));
+        }
+        if let Some(desc) = &el.description {
+            parts.push(desc.clone());
+        }
+        parts.join(", ")
+    }
+
+    /// Get the currently focused element.
+    pub fn focused_element(&self) -> Option<&A11yElement> {
+        let focusable = Self::flatten_focusable(&self.elements);
+        focusable.get(self.focus_index).copied()
+    }
+}
+
+/// High contrast theme palette for accessibility mode.
+pub struct HighContrastPalette {
+    pub background: [u8; 3],
+    pub foreground: [u8; 3],
+    pub selection_bg: [u8; 3],
+    pub selection_fg: [u8; 3],
+    pub cursor: [u8; 3],
+    pub line_number: [u8; 3],
+    pub error: [u8; 3],
+    pub warning: [u8; 3],
+    pub info: [u8; 3],
+    pub focus_ring: [u8; 3],
+}
+
+impl HighContrastPalette {
+    /// Pure black background with white text — maximum contrast ratio (21:1).
+    pub fn dark() -> Self {
+        Self {
+            background: [0, 0, 0],
+            foreground: [255, 255, 255],
+            selection_bg: [0, 120, 215],
+            selection_fg: [255, 255, 255],
+            cursor: [255, 255, 0],
+            line_number: [160, 160, 160],
+            error: [255, 80, 80],
+            warning: [255, 200, 0],
+            info: [80, 200, 255],
+            focus_ring: [255, 255, 0],
+        }
+    }
+
+    /// Pure white background with black text.
+    pub fn light() -> Self {
+        Self {
+            background: [255, 255, 255],
+            foreground: [0, 0, 0],
+            selection_bg: [0, 120, 215],
+            selection_fg: [255, 255, 255],
+            cursor: [0, 0, 0],
+            line_number: [100, 100, 100],
+            error: [200, 0, 0],
+            warning: [180, 120, 0],
+            info: [0, 80, 180],
+            focus_ring: [0, 0, 255],
+        }
+    }
+
+    /// Compute the WCAG contrast ratio between two colors.
+    pub fn contrast_ratio(a: [u8; 3], b: [u8; 3]) -> f64 {
+        let lum_a = relative_luminance(a);
+        let lum_b = relative_luminance(b);
+        let (lighter, darker) = if lum_a > lum_b { (lum_a, lum_b) } else { (lum_b, lum_a) };
+        (lighter + 0.05) / (darker + 0.05)
+    }
+}
+
+/// WCAG 2.1 relative luminance calculation.
+fn relative_luminance(rgb: [u8; 3]) -> f64 {
+    let srgb = rgb.map(|c| {
+        let s = c as f64 / 255.0;
+        if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    });
+    0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2]
+}
+
+/// Keyboard navigation map: maps key combos to actions.
+pub struct KeyboardNavMap {
+    pub bindings: Vec<KeyBinding>,
+}
+
+pub struct KeyBinding {
+    pub key: String,
+    pub modifiers: Vec<String>,
+    pub action: String,
+    pub description: String,
+}
+
+impl KeyboardNavMap {
+    /// Default accessibility-focused keyboard navigation bindings.
+    pub fn default_a11y_bindings() -> Self {
+        Self {
+            bindings: vec![
+                KeyBinding { key: "Tab".into(), modifiers: vec![], action: "focus_next".into(), description: "Move to next focusable element".into() },
+                KeyBinding { key: "Tab".into(), modifiers: vec!["Shift".into()], action: "focus_prev".into(), description: "Move to previous focusable element".into() },
+                KeyBinding { key: "Enter".into(), modifiers: vec![], action: "activate".into(), description: "Activate focused element".into() },
+                KeyBinding { key: "Space".into(), modifiers: vec![], action: "toggle".into(), description: "Toggle focused checkbox/button".into() },
+                KeyBinding { key: "Escape".into(), modifiers: vec![], action: "dismiss".into(), description: "Close dialog or clear focus".into() },
+                KeyBinding { key: "F6".into(), modifiers: vec![], action: "next_panel".into(), description: "Move to next panel region".into() },
+                KeyBinding { key: "F6".into(), modifiers: vec!["Shift".into()], action: "prev_panel".into(), description: "Move to previous panel region".into() },
+                KeyBinding { key: "F10".into(), modifiers: vec![], action: "context_menu".into(), description: "Open context menu for focused element".into() },
+                KeyBinding { key: "/".into(), modifiers: vec!["Ctrl".into()], action: "search".into(), description: "Focus search field".into() },
+                KeyBinding { key: "G".into(), modifiers: vec!["Ctrl".into()], action: "go_to_line".into(), description: "Go to line number".into() },
+            ],
+        }
+    }
+
+    /// Find the binding for a key combo.
+    pub fn lookup(&self, key: &str, modifiers: &[&str]) -> Option<&KeyBinding> {
+        self.bindings.iter().find(|b| {
+            b.key == key && b.modifiers.len() == modifiers.len()
+                && b.modifiers.iter().all(|m| modifiers.contains(&m.as_str()))
+        })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

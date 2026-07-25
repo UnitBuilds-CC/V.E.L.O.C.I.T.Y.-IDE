@@ -38,6 +38,9 @@ pub struct SiteMap {
     node_triples_cache: Mutex<HashMap<u64, Vec<VcTriple>>>,
     /// In-RAM dictionary for registered strings.
     string_dict: Mutex<HashMap<u64, String>>,
+    /// Predicate index: predicate_id -> list of triples with that predicate.
+    /// Built lazily on first query and invalidated when snapshots change.
+    predicate_index: Mutex<Option<HashMap<u16, Vec<VcTriple>>>>,
 }
 
 impl SiteMap {
@@ -72,6 +75,7 @@ impl SiteMap {
             snapshot_triples_cache: Mutex::new(HashMap::new()),
             node_triples_cache: Mutex::new(HashMap::new()),
             string_dict: Mutex::new(HashMap::new()),
+            predicate_index: Mutex::new(None),
         })
     }
 
@@ -737,22 +741,64 @@ impl SiteMap {
             .into_iter()
             .filter(|t| {
                 if let Some(s) = subject {
-                    if t.subject_hash != s {
-                        return false;
-                    }
+                    if t.subject_hash != s { return false; }
                 }
                 if let Some(p) = predicate {
-                    if t.predicate_id != p {
-                        return false;
-                    }
+                    if t.predicate_id != p { return false; }
                 }
                 if let Some(o) = object {
-                    if t.object_hash != o {
-                        return false;
-                    }
+                    if t.object_hash != o { return false; }
                 }
                 true
             })
+            .collect()
+    }
+
+    /// Build the predicate index lazily. Returns a reference to the indexed triples
+    /// for a specific predicate, avoiding a full scan of all triples.
+    pub fn find_live_by_predicate(&self, predicate_id: u16) -> Vec<VcTriple> {
+        // Check if the index is already built
+        {
+            let idx = self.predicate_index.lock().unwrap();
+            if let Some(index) = idx.as_ref() {
+                if let Some(triples) = index.get(&predicate_id) {
+                    return triples.clone();
+                }
+                return Vec::new();
+            }
+        }
+        // Build the index from all live triples
+        let all = self.collect_live_snapshot_triples();
+        let mut index: HashMap<u16, Vec<VcTriple>> = HashMap::new();
+        for triple in &all {
+            index.entry(triple.predicate_id).or_default().push(triple.clone());
+        }
+        let result = index.get(&predicate_id).cloned().unwrap_or_default();
+        *self.predicate_index.lock().unwrap() = Some(index);
+        result
+    }
+
+    /// Invalidate the predicate index (call when snapshots are updated).
+    pub fn invalidate_predicate_index(&self) {
+        *self.predicate_index.lock().unwrap() = None;
+    }
+
+    /// Batch query: find all triples matching any of the given subject hashes.
+    /// More efficient than calling find_live_triples in a loop.
+    pub fn find_live_by_subjects(&self, subjects: &[u64]) -> Vec<VcTriple> {
+        let subject_set: std::collections::HashSet<u64> = subjects.iter().cloned().collect();
+        self.collect_live_snapshot_triples()
+            .into_iter()
+            .filter(|t| subject_set.contains(&t.subject_hash))
+            .collect()
+    }
+
+    /// Batch query: find all triples matching any of the given object hashes.
+    pub fn find_live_by_objects(&self, objects: &[u64]) -> Vec<VcTriple> {
+        let object_set: std::collections::HashSet<u64> = objects.iter().cloned().collect();
+        self.collect_live_snapshot_triples()
+            .into_iter()
+            .filter(|t| object_set.contains(&t.object_hash))
             .collect()
     }
 
