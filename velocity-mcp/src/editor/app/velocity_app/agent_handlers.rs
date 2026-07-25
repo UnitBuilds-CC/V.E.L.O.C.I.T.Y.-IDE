@@ -332,6 +332,43 @@ impl VelocityApp {
             }
         }
         self.last_diagnostics_poll = Some(std::time::Instant::now());
+
+        // Poll LSP servers for incoming diagnostics from language servers
+        if let Some(ref mut lsp) = self.lsp_manager {
+            lsp.poll_notifications();
+            // If LSP has diagnostics, use those (they're more accurate/real-time)
+            if !lsp.diagnostics.is_empty() {
+                let errors: Vec<String> = lsp.diagnostics.iter()
+                    .filter(|d| d.severity == crate::editor::lsp_client::DiagnosticSeverity::Error && !d.message.is_empty())
+                    .map(|d| format!("{}:{}:{}: {}", d.file.display(), d.line + 1, d.col + 1, d.message))
+                    .collect();
+                let warnings: Vec<String> = lsp.diagnostics.iter()
+                    .filter(|d| d.severity == crate::editor::lsp_client::DiagnosticSeverity::Warning && !d.message.is_empty())
+                    .map(|d| format!("{}:{}:{}: {}", d.file.display(), d.line + 1, d.col + 1, d.message))
+                    .collect();
+                self.bottom_panel_state.error_count = errors.len();
+                self.bottom_panel_state.warning_count = warnings.len();
+                self.bottom_panel_state.diagnostic_messages = errors.iter()
+                    .chain(warnings.iter())
+                    .take(50)
+                    .cloned()
+                    .collect();
+                let count = errors.len();
+                if count != self.build_errors_count {
+                    if count == 0 {
+                        self.toasts.push(crate::editor::toast::Toast::success("No LSP errors"));
+                    } else {
+                        self.toasts.push(crate::editor::toast::Toast::error(format!(
+                            "LSP: {} error(s)", count
+                        )));
+                    }
+                    self.build_errors_count = count;
+                }
+                return;
+            }
+        }
+
+        // Fallback: read build diagnostics from file
         let diag = read_latest_diagnostics(&self.workspace_root);
         let count = if diag.success { 0 } else { diag.errors.len() };
         if count != self.build_errors_count {
@@ -346,6 +383,14 @@ impl VelocityApp {
             }
             self.build_errors_count = count;
         }
+        // Sync diagnostics into bottom panel Problems tab
+        self.bottom_panel_state.error_count = diag.errors.len();
+        self.bottom_panel_state.warning_count = diag.warnings.len();
+        self.bottom_panel_state.diagnostic_messages = diag.errors.iter()
+            .chain(diag.warnings.iter())
+            .take(50)
+            .cloned()
+            .collect();
     }
 
     pub fn handle_terminal_messages(&mut self) {
@@ -463,6 +508,20 @@ impl VelocityApp {
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Running;
                     self.agent_ui_state.metrics.tool_call_count += 1;
+
+                    // Auto-checkpoint on first file-modifying tool in a session
+                    if self.agent_ui_state.metrics.tool_call_count == 1 {
+                        let label = format!("Before agent: {}", tool_name);
+                        match self.checkpoint_manager.create_checkpoint(&label) {
+                            Ok(_) => {
+                                self.toasts.push(crate::editor::toast::Toast::info(
+                                    format!("\u{1F4BE} Checkpoint: {}", label),
+                                ));
+                            }
+                            Err(_) => {} // Clean workspace or no git — skip silently
+                        }
+                    }
+
                     if self.current_agent_task_id == 0 {
                         self.current_agent_task_id =
                             self.task_timeline
@@ -543,6 +602,9 @@ impl VelocityApp {
                         self.current_agent_task_id = 0;
                         timeline_dirty = true;
                     }
+
+                    // Persist agent memory after session (save any accumulated state)
+                    self.agent_memory.save_all();
 
                     self.status_message = "Agent finished".into();
                     self.agent_active = false;

@@ -556,6 +556,8 @@ impl VelocityApp {
                                 "Saved {filename}"
                             )));
                     }
+                    // Refresh git status after save
+                    self.refresh_git_status();
                     true
                 }
                 Err(e) => {
@@ -804,5 +806,218 @@ impl VelocityApp {
         self.right_sidebar_visible = true;
         self.right_sidebar_width = 280.0;
         self.save_workspace_preferences();
+    }
+
+    // ─── IDE Feature Helpers ───────────────────────────────────────────────
+
+    /// Toggle breakpoint on the current cursor line.
+    pub fn toggle_breakpoint_current_line(&mut self) {
+        if let Some(id) = &self.active_tab {
+            if let Some(buf) = self.buffers.get_mut(id) {
+                // Use line 1 as fallback; in a real impl we'd track cursor line
+                let line = 1_usize; // TODO: track cursor line from TextEditState
+                if let Some(pos) = buf.breakpoints.iter().position(|&l| l == line) {
+                    buf.breakpoints.remove(pos);
+                } else {
+                    buf.breakpoints.push(line);
+                }
+            }
+        }
+    }
+
+    /// Trigger code completion at cursor position.
+    pub fn trigger_completion(&mut self) {
+        let active_id = self.active_tab.clone();
+        if let Some(id) = active_id {
+            if let Some(buf) = self.buffers.get(&id) {
+                // Get the word prefix before cursor (simple heuristic: last word chars)
+                let content = &buf.content;
+                let prefix = content
+                    .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("");
+
+                // Build completion items from sitemap symbols
+                let items = crate::editor::completion::CompletionState::compute_items(
+                    prefix,
+                    &self.workspace_symbols,
+                );
+                self.completion_state.show(items);
+            }
+        }
+    }
+
+    /// Get the find/replace state for the active buffer (for rendering).
+    #[allow(dead_code)]
+    pub fn active_find_replace(&self) -> Option<&crate::editor::find_replace::FindReplaceState> {
+        self.active_tab.as_ref()
+            .and_then(|id| self.buffers.get(id))
+            .map(|buf| &buf.find_replace)
+    }
+
+    /// Get git status for the workspace.
+    pub fn refresh_git_status(&mut self) {
+        self.git_state = crate::editor::git_ui::GitState::from_workspace(&self.workspace_root);
+    }
+
+    /// Render the debug panel (call stack, variables, watches, toolbar).
+    pub fn render_debug_panel(&mut self, ui: &mut eframe::egui::Ui, palette: crate::editor::theme::IdePalette) {
+        use eframe::egui;
+        use crate::editor::debugger::DebugState;
+
+        let state = self.dap_client.as_ref().map(|d| d.state).unwrap_or(DebugState::Inactive);
+
+        // Debug toolbar
+        ui.horizontal(|ui| {
+            let state_label = match state {
+                DebugState::Inactive => "Inactive",
+                DebugState::Starting => "Starting",
+                DebugState::Running => "Running",
+                DebugState::Paused => "Paused",
+                DebugState::Stopped => "Stopped",
+            };
+            ui.label(egui::RichText::new(format!("\u{1F41E} {}", state_label)).size(10.0).color(match state {
+                DebugState::Running => palette.success,
+                DebugState::Paused => palette.warning,
+                DebugState::Stopped => palette.error,
+                _ => palette.text_muted,
+            }));
+
+            ui.add_space(8.0);
+            let can_continue = state == DebugState::Paused;
+            let can_step = state == DebugState::Paused;
+            let can_stop = state == DebugState::Running || state == DebugState::Paused;
+
+            if ui.add_enabled(can_continue, egui::Button::new("\u{25B6} Continue")).clicked() {
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.continue_execution();
+                }
+            }
+            if ui.add_enabled(can_step, egui::Button::new("\u{23ED} Step Over")).clicked() {
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.step_over();
+                }
+            }
+            if ui.add_enabled(can_step, egui::Button::new("\u{2B07} Step Into")).clicked() {
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.step_into();
+                }
+            }
+            if ui.add_enabled(can_step, egui::Button::new("\u{2B06} Step Out")).clicked() {
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.step_out();
+                }
+            }
+            if ui.add_enabled(can_stop, egui::Button::new("\u{23F9} Stop").fill(palette.error)).clicked() {
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.stop();
+                }
+            }
+        });
+        ui.separator();
+
+        if state == DebugState::Inactive {
+            ui.label(egui::RichText::new("No active debug session. Press F5 to start debugging.").size(9.0).color(palette.text_muted));
+            return;
+        }
+
+        // Split: Call Stack | Variables | Watches
+        ui.columns(3, |cols| {
+            // Call Stack
+            cols[0].label(egui::RichText::new("Call Stack").size(9.0).strong().color(palette.accent));
+            if let Some(dap) = &self.dap_client {
+                for frame in &dap.stack_frames {
+                    let file = frame.file.as_ref()
+                        .map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    cols[0].label(egui::RichText::new(format!("  {} ({}:{})", frame.name, file, frame.line))
+                        .monospace().size(9.0).color(palette.text));
+                }
+                if dap.stack_frames.is_empty() {
+                    cols[0].label(egui::RichText::new("  (no frames)").size(9.0).color(palette.text_muted));
+                }
+            }
+
+            // Variables
+            cols[1].label(egui::RichText::new("Variables").size(9.0).strong().color(palette.accent));
+            if let Some(dap) = &self.dap_client {
+                for var in &dap.variables {
+                    let type_hint = var.type_name.as_deref().unwrap_or("");
+                    cols[1].label(egui::RichText::new(format!("  {} = {} {}", var.name, var.value, type_hint))
+                        .monospace().size(9.0).color(palette.text));
+                }
+                if dap.variables.is_empty() {
+                    cols[1].label(egui::RichText::new("  (no variables)").size(9.0).color(palette.text_muted));
+                }
+            }
+
+            // Watches
+            cols[2].label(egui::RichText::new("Watches").size(9.0).strong().color(palette.accent));
+            if let Some(dap) = &self.dap_client {
+                for watch in &dap.watches {
+                    let result = watch.result.as_deref().unwrap_or("<not evaluated>");
+                    cols[2].label(egui::RichText::new(format!("  {} = {}", watch.expression, result))
+                        .monospace().size(9.0).color(palette.text));
+                }
+                if dap.watches.is_empty() {
+                    cols[2].label(egui::RichText::new("  (no watches)").size(9.0).color(palette.text_muted));
+                }
+            }
+        });
+    }
+
+    /// Launch a debug session. Auto-detects the debug adapter based on project type.
+    pub fn launch_debug_session(&mut self) {
+        use crate::editor::debugger::{DapClient, LaunchConfig};
+
+        // Determine the binary to debug based on workspace type
+        let cargo_toml = self.workspace_root.join("Cargo.toml");
+        if cargo_toml.exists() {
+            // Rust project — look for the target binary
+            let target_dir = self.workspace_root.join("target").join("debug");
+            let project_name = self.workspace_root
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .replace('-', "_");
+
+            let binary = if cfg!(target_os = "windows") {
+                target_dir.join(format!("{}.exe", project_name))
+            } else {
+                target_dir.join(&project_name)
+            };
+
+            if !binary.exists() {
+                self.status_message = format!("Debug: binary not found at {}. Run 'cargo build' first.", binary.display());
+                self.toasts.push(crate::editor::toast::Toast::error(
+                    "Build project before debugging (cargo build)",
+                ));
+                return;
+            }
+
+            let config = LaunchConfig::rust_debug(&binary, &self.workspace_root);
+            let mut dap = DapClient::new();
+            match dap.launch(&config) {
+                Ok(()) => {
+                    self.dap_client = Some(dap);
+                    self.status_message = "Debug: session started".to_string();
+                    self.toasts.push(crate::editor::toast::Toast::success("Debug session launched"));
+                    // Open debug tab in bottom panel
+                    self.bottom_panel_state.collapsed = false;
+                    self.bottom_panel_state.active_tab = 2; // Debug tab
+                }
+                Err(e) => {
+                    self.status_message = format!("Debug: failed to launch — {}", e);
+                    self.toasts.push(crate::editor::toast::Toast::error(
+                        format!("Debug launch failed: {}", e),
+                    ));
+                }
+            }
+        } else {
+            self.status_message = "Debug: no supported project found (Cargo.toml)".to_string();
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "No debuggable project detected. Only Rust (codelldb) is supported currently.",
+            ));
+        }
     }
 }

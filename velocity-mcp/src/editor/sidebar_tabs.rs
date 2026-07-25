@@ -37,6 +37,9 @@ pub enum SidebarTab {
     Favorites,
     Bookmarks,
     AccessibilityAudit,
+
+    // Cross-mode utility
+    Browse,
 }
 
 impl SidebarTab {
@@ -58,6 +61,7 @@ impl SidebarTab {
             Self::Favorites => "Favorites",
             Self::Bookmarks => "Bookmarks",
             Self::AccessibilityAudit => "Audit",
+            Self::Browse => "Browse",
         }
     }
 
@@ -79,6 +83,7 @@ impl SidebarTab {
             Self::Favorites => "★",
             Self::Bookmarks => "⊛",
             Self::AccessibilityAudit => "♿",
+            Self::Browse => "⊕",
         }
     }
 }

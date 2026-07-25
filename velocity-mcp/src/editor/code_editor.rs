@@ -1,4 +1,5 @@
 use crate::editor::theme::AppearanceSettings;
+use crate::editor::bracket_match::find_matching_bracket;
 use eframe::egui;
 use eframe::egui::{Color32, Response, TextEdit, TextFormat};
 use once_cell::sync::Lazy;
@@ -9,6 +10,22 @@ use syntect::util::LinesWithEndings;
 
 static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
+
+/// Editor rendering options for enhanced features.
+#[derive(Default)]
+pub struct EditorOptions {
+    /// Cursor byte offset for bracket matching.
+    pub cursor_offset: usize,
+    /// Diagnostics to render as squiggles (line, severity: 1=error, 2=warning).
+    pub diagnostic_lines: Vec<(usize, u8)>,
+    /// Breakpoint lines (1-based).
+    pub breakpoints: Vec<usize>,
+    /// Code fold state reference.
+    pub collapsed_lines: Vec<usize>,
+    /// Whether word wrap is enabled.
+    #[allow(dead_code)]
+    pub word_wrap: bool,
+}
 
 pub struct CodeEditor {
     id: egui::Id,
@@ -36,6 +53,21 @@ impl CodeEditor {
         active_locks: &[crate::automation::mediator::EditLock],
         appearance: AppearanceSettings,
         diff_marks: &[u8],
+    ) -> Response {
+        self.show_enhanced(ui, text, path, pending_line, active_locks, appearance, diff_marks, &EditorOptions::default())
+    }
+
+    /// Enhanced show with bracket matching, folding, breakpoints, diagnostics.
+    pub fn show_enhanced(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &mut String,
+        path: Option<&std::path::Path>,
+        pending_line: Option<usize>,
+        active_locks: &[crate::automation::mediator::EditLock],
+        appearance: AppearanceSettings,
+        diff_marks: &[u8],
+        options: &EditorOptions,
     ) -> Response {
         let extension = path
             .and_then(|p| p.extension())
@@ -93,16 +125,57 @@ impl CodeEditor {
         };
 
         let total_rows = text.lines().count().max(1);
+        let bracket_match = find_matching_bracket(text, options.cursor_offset);
         let mut gutter_job = egui::text::LayoutJob::default();
         for i in 1..=total_rows {
             let is_locked = is_line_locked(i);
+            let is_collapsed = options.collapsed_lines.contains(&(i - 1));
+            let has_breakpoint = options.breakpoints.contains(&i);
+            let has_diagnostic = options.diagnostic_lines.iter().find(|(l, _)| *l == i);
+
+            // Breakpoint margin (red dot or empty)
+            let bp_glyph = if has_breakpoint { "●" } else { " " };
+            let bp_color = if has_breakpoint { palette.error } else { palette.text_muted };
+            gutter_job.append(
+                bp_glyph,
+                0.0,
+                egui::TextFormat {
+                    font_id: code_font.clone(),
+                    color: bp_color,
+                    ..Default::default()
+                },
+            );
+
+            // Fold toggle
+            let fold_glyph = if is_collapsed { "▶" } else { " " };
+            gutter_job.append(
+                fold_glyph,
+                0.0,
+                egui::TextFormat {
+                    font_id: code_font.clone(),
+                    color: palette.text_muted,
+                    ..Default::default()
+                },
+            );
+
             // Change marker vs. the on-disk baseline (added/modified/removed).
             let mark = diff_marks.get(i - 1).copied().unwrap_or(0);
             let (glyph, glyph_color) = match mark {
                 1 => ("▎", palette.success),
                 2 => ("▎", palette.accent),
                 3 => ("▔", palette.error),
-                _ => (" ", palette.text_muted),
+                _ => {
+                    // Diagnostic marker in gutter if no diff mark
+                    if let Some((_, severity)) = has_diagnostic {
+                        match severity {
+                            1 => ("●", palette.error),
+                            2 => ("●", palette.warning),
+                            _ => (" ", palette.text_muted),
+                        }
+                    } else {
+                        (" ", palette.text_muted)
+                    }
+                }
             };
             gutter_job.append(
                 glyph,
@@ -156,6 +229,20 @@ impl CodeEditor {
         });
 
         let response = scroll_output.inner;
+
+        // Bracket match highlight hint (shown as a subtle bar below editor)
+        if let Some(bm) = bracket_match {
+            let open_line = text[..bm.open_offset].lines().count();
+            let close_line = text[..bm.close_offset].lines().count();
+            if open_line != close_line {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        palette.accent.gamma_multiply(0.7),
+                        format!("Bracket match: line {} ↔ line {}", open_line, close_line),
+                    );
+                });
+            }
+        }
 
         if let Some(target_line) = pending_line {
             let mut char_idx = 0;

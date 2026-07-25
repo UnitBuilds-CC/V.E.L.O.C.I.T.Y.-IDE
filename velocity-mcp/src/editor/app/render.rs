@@ -49,26 +49,106 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     egui::Frame::new().inner_margin(egui::Margin::same(4)).show(
                         ui,
                         |ui: &mut egui::Ui| {
-                            let mut editor = CodeEditor::new("code_editor");
-                            let locks = path
-                                .as_deref()
-                                .map(|p| self.app.mediator.get_locks_for_file(p))
-                                .unwrap_or_default();
-                            // Refresh the cached per-line diff (cheap unless the
-                            // buffer changed) so the gutter can show change bars.
-                            buf.refresh_diff_marks();
-                            let diff_marks = buf.diff_marks.clone();
-                            editor.show(
-                                ui,
-                                buf.content_mut(),
-                                path.as_deref(),
-                                self.app.pending_cursor_line,
-                                &locks,
-                                self.app.appearance,
-                                &diff_marks,
-                            );
-                            if self.app.pending_cursor_line.is_some() {
-                                self.app.pending_cursor_line = None;
+                            // Breadcrumbs bar
+                            if self.app.show_breadcrumbs {
+                                if let Some(file_path) = path.as_deref() {
+                                    let segments = crate::editor::breadcrumbs::build_breadcrumbs(
+                                        &self.app.workspace_root,
+                                        file_path,
+                                        None,
+                                    );
+                                    ui.horizontal(|ui| {
+                                        for (i, seg) in segments.iter().enumerate() {
+                                            if i > 0 {
+                                                ui.label(">");
+                                            }
+                                            let _ = ui.small_button(&seg.label);
+                                        }
+                                    });
+                                    ui.separator();
+                                }
+                            }
+
+                            // Find/Replace overlay
+                            if buf.find_replace.visible {
+                                let palette = self.app.appearance.palette();
+                                crate::editor::find_replace::render_find_replace(
+                                    ui,
+                                    &mut buf.find_replace,
+                                    &buf.content,
+                                    palette,
+                                );
+                            }
+
+                            // Main editor area with optional minimap
+                            ui.horizontal_top(|ui| {
+                                // Editor
+                                let editor_width = if self.app.show_minimap {
+                                    ui.available_width() - self.app.minimap_config.width - 8.0
+                                } else {
+                                    ui.available_width()
+                                };
+                                ui.allocate_ui(egui::Vec2::new(editor_width, ui.available_height()), |ui| {
+                                    let mut editor = CodeEditor::new("code_editor");
+                                    let locks = path
+                                        .as_deref()
+                                        .map(|p| self.app.mediator.get_locks_for_file(p))
+                                        .unwrap_or_default();
+                                    buf.refresh_diff_marks();
+                                    let diff_marks = buf.diff_marks.clone();
+                                    let options = crate::editor::code_editor::EditorOptions {
+                                        cursor_offset: 0,
+                                        diagnostic_lines: self.app.diagnostics.lines_for_file(
+                                            path.as_deref().unwrap_or(std::path::Path::new(""))
+                                        ),
+                                        breakpoints: buf.breakpoints.clone(),
+                                        collapsed_lines: buf.fold_state.collapsed_lines(),
+                                        word_wrap: self.app.word_wrap,
+                                    };
+                                    editor.show_enhanced(
+                                        ui,
+                                        buf.content_mut(),
+                                        path.as_deref(),
+                                        self.app.pending_cursor_line,
+                                        &locks,
+                                        self.app.appearance,
+                                        &diff_marks,
+                                        &options,
+                                    );
+                                    if self.app.pending_cursor_line.is_some() {
+                                        self.app.pending_cursor_line = None;
+                                    }
+                                });
+
+                                // Minimap
+                                if self.app.show_minimap {
+                                    let palette = self.app.appearance.palette();
+                                    let highlights: Vec<crate::editor::minimap::MinimapHighlight> = buf.breakpoints.iter()
+                                        .map(|&line| crate::editor::minimap::MinimapHighlight {
+                                            line,
+                                            color: palette.error,
+                                        })
+                                        .collect();
+                                    crate::editor::minimap::render_minimap(
+                                        ui,
+                                        &buf.content,
+                                        self.app.minimap_config,
+                                        0, // viewport_start_line
+                                        30, // viewport_end_line
+                                        &highlights,
+                                        &palette,
+                                    );
+                                }
+                            });
+
+                            // Completion popup
+                            if self.app.completion_state.active {
+                                let palette = self.app.appearance.palette();
+                                crate::editor::completion::render_completion_popup(
+                                    ui,
+                                    &self.app.completion_state,
+                                    palette,
+                                );
                             }
                         },
                     );

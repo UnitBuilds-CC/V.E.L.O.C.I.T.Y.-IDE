@@ -3,6 +3,8 @@
 //! keywords, and local identifiers.
 
 use std::path::Path;
+use eframe::egui;
+use crate::editor::theme::IdePalette;
 
 /// A single completion item.
 #[derive(Debug, Clone)]
@@ -58,6 +60,22 @@ pub struct CompletionState {
 }
 
 impl CompletionState {
+    /// Convenience: compute completion items from sitemap symbols matching a prefix.
+    pub fn compute_items(
+        prefix: &str,
+        workspace_symbols: &[crate::editor::search::SymbolEntry],
+    ) -> Vec<CompletionItem> {
+        from_sitemap_symbols(workspace_symbols, prefix)
+    }
+
+    /// Show the completion popup with the given items.
+    pub fn show(&mut self, items: Vec<CompletionItem>) {
+        self.active = true;
+        self.items = items;
+        self.selected = 0;
+        self.refilter();
+    }
+
     pub fn open(&mut self, prefix: String, prefix_start: usize, items: Vec<CompletionItem>) {
         self.active = true;
         self.prefix = prefix;
@@ -224,6 +242,46 @@ pub fn extension_from_path(path: Option<&Path>) -> &str {
     path.and_then(|p| p.extension())
         .and_then(|e| e.to_str())
         .unwrap_or("txt")
+}
+
+/// Render the completion popup below the editor.
+pub fn render_completion_popup(
+    ui: &mut egui::Ui,
+    state: &CompletionState,
+    palette: IdePalette,
+) {
+    if state.filtered.is_empty() {
+        return;
+    }
+    egui::Frame::new()
+        .fill(palette.bg_secondary)
+        .inner_margin(egui::Margin::same(4))
+        .stroke(egui::Stroke::new(1.0, palette.border))
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for (idx, &item_idx) in state.filtered.iter().enumerate().take(15) {
+                        if let Some(item) = state.items.get(item_idx) {
+                            let is_selected = idx == state.selected;
+                            let bg = if is_selected {
+                                palette.accent.gamma_multiply(0.15)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+                            egui::Frame::new().fill(bg).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(palette.accent, item.kind.icon());
+                                    ui.label(&item.label);
+                                    if let Some(detail) = &item.detail {
+                                        ui.colored_label(palette.text_muted, detail);
+                                    }
+                                });
+                            });
+                        }
+                    }
+                });
+        });
 }
 
 #[cfg(test)]

@@ -37,6 +37,25 @@ pub struct BottomPanelState {
     pub split_ratio: f32,
     pub panel_height: f32,
     pub collapsed: bool,
+    /// Terminal output buffer (from PTY or command execution).
+    pub terminal_output: String,
+    /// Terminal input line.
+    pub terminal_input: String,
+    /// Diagnostics error count (synced from DiagnosticsState).
+    pub error_count: usize,
+    /// Diagnostics warning count.
+    pub warning_count: usize,
+    /// Diagnostic messages for the Problems tab.
+    pub diagnostic_messages: Vec<String>,
+    /// Checkpoint restore/discard action requested by UI.
+    pub checkpoint_action: Option<CheckpointAction>,
+}
+
+/// Actions that the checkpoint UI can request (processed by VelocityApp).
+#[derive(Debug, Clone)]
+pub enum CheckpointAction {
+    Restore(usize),
+    Discard(usize),
 }
 
 impl Default for BottomPanelState {
@@ -45,7 +64,13 @@ impl Default for BottomPanelState {
             active_tab: 0,
             split_ratio: 0.55,
             panel_height: 240.0,
-            collapsed: false,
+            collapsed: true,
+            terminal_output: String::new(),
+            terminal_input: String::new(),
+            error_count: 0,
+            warning_count: 0,
+            diagnostic_messages: Vec::new(),
+            checkpoint_action: None,
         }
     }
 }
@@ -118,11 +143,45 @@ fn render_tabbed_bottom(
     egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
         match active_label {
             "Terminal" => {
+                // Real terminal rendering: show buffer lines
                 ui.label(egui::RichText::new("$ ").monospace().size(10.0).color(palette.accent));
-                ui.label(egui::RichText::new("Terminal session ready. Output will appear here.").monospace().size(9.0).color(palette.text_muted));
+                // Terminal state is passed from the UI layer — for now show the
+                // command output stored in the bottom panel state.
+                if !state.terminal_output.is_empty() {
+                    ui.label(egui::RichText::new(&state.terminal_output).monospace().size(9.0).color(palette.text));
+                } else {
+                    ui.label(egui::RichText::new("Terminal ready. Press Ctrl+` to focus.").monospace().size(9.0).color(palette.text_muted));
+                }
+                // Input line
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(">").monospace().size(10.0).color(palette.accent));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.terminal_input)
+                            .font(egui::FontId::monospace(9.0))
+                            .desired_width(ui.available_width())
+                    );
+                });
             }
             "Problems" => {
-                ui.label(egui::RichText::new("No problems detected in workspace.").size(9.0).color(palette.success));
+                // Real diagnostics from state
+                let error_count = state.error_count;
+                let warning_count = state.warning_count;
+                if error_count == 0 && warning_count == 0 {
+                    ui.label(egui::RichText::new("No problems detected in workspace.").size(9.0).color(palette.success));
+                } else {
+                    ui.horizontal(|ui| {
+                        if error_count > 0 {
+                            ui.colored_label(palette.error, format!("\u{2716} {} error(s)", error_count));
+                        }
+                        if warning_count > 0 {
+                            ui.colored_label(palette.warning, format!("\u{26A0} {} warning(s)", warning_count));
+                        }
+                    });
+                    // Show individual diagnostics
+                    for msg in &state.diagnostic_messages {
+                        ui.label(egui::RichText::new(msg).monospace().size(9.0).color(palette.text));
+                    }
+                }
             }
             "Output" => {
                 ui.label(egui::RichText::new("Build/run output will appear here.").size(9.0).color(palette.text_muted));
@@ -136,6 +195,9 @@ fn render_tabbed_bottom(
             "Keyboard Nav Map" => {
                 ui.label(egui::RichText::new("Tab order and focus trap analysis.").size(9.0).color(palette.text_muted));
                 ui.label(egui::RichText::new("Navigate the page with Tab to build the map.").size(9.0).color(palette.text_muted));
+            }
+            "Checkpoints" => {
+                render_checkpoints_tab(ui, state, palette);
             }
             _ => {
                 ui.label(egui::RichText::new(format!("[{}]", active_label)).size(9.0).color(palette.text_muted));
@@ -279,14 +341,37 @@ fn render_dashboard_bottom_impl(
     });
 }
 
+/// Render checkpoint list with restore/discard buttons.
+/// Checkpoint data is injected by VelocityApp before render (via a Vec stored
+/// in BottomPanelState or passed separately).
+pub fn render_checkpoints_tab(
+    ui: &mut egui::Ui,
+    _state: &mut BottomPanelState,
+    palette: IdePalette,
+) {
+    // Checkpoint list is rendered from data injected by VelocityApp
+    // (the tab just reads the stored checkpoint_labels and emits actions)
+    ui.label(egui::RichText::new("\u{1F4BE} Workspace Checkpoints").size(10.0).strong().color(palette.accent));
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(
+        "Checkpoints are created automatically before agent tool executions. \
+         Restore to undo agent changes."
+    ).size(9.0).color(palette.text_muted));
+    ui.add_space(4.0);
+    // The actual checkpoint list is rendered by VelocityApp's ui_render since
+    // it needs access to checkpoint_manager. Here we just provide placeholder UI
+    // that the app layer replaces with real data.
+    ui.label(egui::RichText::new("(Checkpoints rendered by app layer)").size(9.0).color(palette.text_muted));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn default_state_is_expanded() {
+    fn default_state_is_collapsed() {
         let state = BottomPanelState::default();
-        assert!(!state.collapsed);
+        assert!(state.collapsed);
         assert_eq!(state.active_tab, 0);
     }
 

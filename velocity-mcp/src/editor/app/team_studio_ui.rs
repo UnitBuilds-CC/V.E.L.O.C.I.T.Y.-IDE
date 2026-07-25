@@ -1,352 +1,268 @@
-use egui::{RichText, Sense, Stroke, Vec2};
-use crate::agent::AiProvider;
-use crate::editor::expert_team::{save_expert_teams, ExpertMember, ExpertTeam};
+use eframe::egui;
+use egui::RichText;
+use crate::editor::expert_team::{load_expert_teams, save_expert_teams};
 use super::velocity_app::VelocityApp;
 
 impl VelocityApp {
     pub fn render_team_studio(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
-        ui.vertical(|ui: &mut egui::Ui| {
-            ui.add_space(8.0);
-            
-            // Header Bar
-            ui.horizontal(|ui: &mut egui::Ui| {
-                ui.heading(RichText::new("Team Studio").strong().color(palette.accent));
-                
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                    if ui.button(RichText::new("Save").strong()).clicked() {
-                        if save_expert_teams(&self.workspace_root, &self.expert_teams) {
-                            self.status_message = "Teams saved.".into();
-                            // Notify the running agent to reload teams from disk
-                            // so routing picks up the edits immediately.
-                            let _ = self
-                                .agent_tx
-                                .send(crate::agent::UiToAgentMessage::ReloadTeams);
-                        } else {
-                            self.status_message = "Failed to save teams.".into();
-                        }
-                    }
 
-                    if ui.button("New Team").clicked() {
-                        let new_id = format!("team_custom_{}", self.expert_teams.len() + 1);
-                        let new_team = ExpertTeam::new(
-                            &new_id,
-                            "Custom Expert Team",
-                            "User defined multi-agent expert team.",
-                            vec![
-                                ExpertMember::new(
-                                    "member_lead",
-                                    "Team Lead",
-                                    "Lead Architect",
-                                    AiProvider::CloudflareWorkersAi,
-                                    "@cf/moonshotai/kimi-k2.7-code",
-                                    vec!["system_tools"],
-                                    vec!["src/"],
-                                    "Lead task decomposition and high-level architecture execution.",
-                                ),
-                            ],
-                            false,
-                        );
-                        self.expert_teams.push(new_team);
-                        self.active_team_index = self.expert_teams.len() - 1;
-                        self.selected_member_id = None;
+        // Poll the team builder chat for progress updates
+        let should_reload = self.team_builder_chat.poll();
+        if should_reload {
+            self.expert_teams = load_expert_teams(&self.workspace_root);
+        }
+
+        ui.vertical(|ui| {
+            ui.add_space(6.0);
+
+            // Header
+            ui.horizontal(|ui| {
+                ui.heading(RichText::new("Teams").strong().color(palette.accent));
+                ui.label(RichText::new(format!("{} team(s)", self.expert_teams.len())).small().color(palette.text_muted));
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(RichText::new("Reload").small()).clicked() {
+                        self.expert_teams = load_expert_teams(&self.workspace_root);
+                        self.team_gallery_expanded = None;
                     }
                 });
             });
-
             ui.separator();
 
-            if self.expert_teams.is_empty() {
-                ui.add_space(16.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        RichText::new("◇")
-                            .size(28.0)
-                            .color(palette.accent.gamma_multiply(0.7)),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("No expert teams available").color(palette.text_muted));
-                });
-                return;
-            }
+            // Split: Gallery (top 60%) | Builder Chat (bottom 40%)
+            let available_height = ui.available_height();
+            let gallery_height = (available_height * 0.58).max(200.0);
 
-            if self.active_team_index >= self.expert_teams.len() {
-                self.active_team_index = 0;
-            }
+            // ═══════════════════════════════════════════════════════════════
+            // GALLERY SECTION
+            // ═══════════════════════════════════════════════════════════════
+            ui.allocate_ui(egui::Vec2::new(ui.available_width(), gallery_height), |ui| {
+                egui::ScrollArea::vertical().id_salt("team_gallery_scroll").show(ui, |ui| {
+                    let teams_snapshot: Vec<(String, String, usize, bool)> = self.expert_teams.iter()
+                        .map(|t| (t.name.clone(), t.description.clone(), t.members.len(), t.is_preset))
+                        .collect();
 
-            // Team Selector Tabs / Buttons
-            ui.horizontal(|ui: &mut egui::Ui| {
-                ui.label(RichText::new("Active Preset Team:").strong());
-                for (idx, team) in self.expert_teams.iter().enumerate() {
-                    let is_selected = idx == self.active_team_index;
-                    let text = if team.is_preset {
-                        format!("⭐ {}", team.name)
-                    } else {
-                        team.name.clone()
-                    };
+                    for (idx, (name, description, member_count, is_preset)) in teams_snapshot.iter().enumerate() {
+                        let is_expanded = self.team_gallery_expanded == Some(idx);
 
-                    let btn = ui.selectable_label(is_selected, text);
-                    if btn.clicked() {
-                        self.active_team_index = idx;
-                        self.selected_member_id = None;
+                        // Team Card
+                        let card_fill = if is_expanded { palette.bg_tertiary } else { palette.bg_secondary };
+                        let card_response = egui::Frame::new()
+                            .fill(card_fill)
+                            .corner_radius(8.0)
+                            .inner_margin(12.0)
+                            .stroke(egui::Stroke::new(
+                                if is_expanded { 1.5 } else { 0.5 },
+                                if is_expanded { palette.accent } else { palette.border },
+                            ))
+                            .show(ui, |ui| {
+                                // Card Header
+                                ui.horizontal(|ui| {
+                                    if *is_preset {
+                                        ui.label(RichText::new("\u{2B50}").size(12.0));
+                                    }
+                                    ui.label(RichText::new(name).strong().size(13.0).color(palette.text));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(format!("{} members", member_count))
+                                            .size(9.0).color(palette.text_muted));
+                                        if !is_preset {
+                                            if ui.small_button(RichText::new("\u{2715}").size(9.0).color(palette.error)).clicked() {
+                                                self.expert_teams.remove(idx);
+                                                let _ = save_expert_teams(&self.workspace_root, &self.expert_teams);
+                                                self.team_gallery_expanded = None;
+                                                let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::ReloadTeams);
+                                                return;
+                                            }
+                                        }
+                                    });
+                                });
+
+                                // Description
+                                if !description.is_empty() {
+                                    ui.label(RichText::new(description).size(10.0).color(palette.text_muted));
+                                }
+
+                                // Expanded: show member cards
+                                if is_expanded {
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(4.0);
+
+                                    let team = &self.expert_teams[idx];
+                                    ui.horizontal_wrapped(|ui| {
+                                        for member in &team.members {
+                                            egui::Frame::new()
+                                                .fill(palette.bg_primary)
+                                                .corner_radius(6.0)
+                                                .inner_margin(8.0)
+                                                .stroke(egui::Stroke::new(0.5, palette.border))
+                                                .show(ui, |ui| {
+                                                    ui.set_min_width(160.0);
+                                                    ui.set_max_width(200.0);
+
+                                                    // Member name + role
+                                                    ui.label(RichText::new(&member.name).strong().size(11.0).color(palette.text));
+                                                    ui.label(RichText::new(&member.role).size(9.0).color(palette.accent));
+
+                                                    // Provider + Model pill
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(RichText::new(member.provider.label())
+                                                            .size(8.0).color(palette.warning));
+                                                    });
+                                                    let model_display = if member.model_id.len() > 24 {
+                                                        format!("{}...", &member.model_id[..24])
+                                                    } else {
+                                                        member.model_id.clone()
+                                                    };
+                                                    ui.label(RichText::new(model_display).monospace().size(8.0).color(palette.text_muted));
+
+                                                    // Skills
+                                                    if !member.skills.is_empty() {
+                                                        ui.horizontal_wrapped(|ui| {
+                                                            ui.label(RichText::new("Skills:").size(8.0).color(palette.text_muted));
+                                                            for skill in member.skills.iter().take(3) {
+                                                                ui.label(RichText::new(skill).size(8.0).color(palette.success));
+                                                            }
+                                                            if member.skills.len() > 3 {
+                                                                ui.label(RichText::new(format!("+{}", member.skills.len() - 3)).size(8.0).color(palette.text_muted));
+                                                            }
+                                                        });
+                                                    }
+
+                                                    // Workflow instructions excerpt
+                                                    if !member.workflow_instructions.is_empty() {
+                                                        let excerpt: String = member.workflow_instructions
+                                                            .lines()
+                                                            .take(2)
+                                                            .collect::<Vec<_>>()
+                                                            .join(" ");
+                                                        let excerpt = if excerpt.len() > 80 {
+                                                            format!("{}...", &excerpt[..80])
+                                                        } else {
+                                                            excerpt
+                                                        };
+                                                        ui.label(RichText::new(excerpt).size(8.0).italics().color(palette.text_muted));
+                                                    }
+                                                });
+                                        }
+                                    });
+
+                                    // Usage hint
+                                    ui.add_space(4.0);
+                                    let slug = self.expert_teams[idx].slug();
+                                    ui.label(RichText::new(format!("Use: @{} <task>  or  \"send it to the {} team\"", slug, name))
+                                        .monospace().size(9.0).color(palette.accent));
+                                }
+                            });
+
+                        // Click to expand/collapse
+                        if card_response.response.interact(egui::Sense::click()).clicked() {
+                            if is_expanded {
+                                self.team_gallery_expanded = None;
+                            } else {
+                                self.team_gallery_expanded = Some(idx);
+                            }
+                        }
+
+                        ui.add_space(4.0);
                     }
-                }
+
+                    if self.expert_teams.is_empty() {
+                        ui.add_space(20.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("\u{25C7}").size(28.0).color(palette.text_muted));
+                            ui.label(RichText::new("No teams yet. Describe one below to create it.").color(palette.text_muted));
+                        });
+                    }
+                });
             });
 
-            ui.add_space(4.0);
+            // ═══════════════════════════════════════════════════════════════
+            // TEAM BUILDER CHAT SECTION
+            // ═══════════════════════════════════════════════════════════════
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("\u{1F4AC} Team Builder").size(11.0).strong().color(palette.accent));
+                if self.team_builder_chat.waiting {
+                    ui.label(RichText::new("thinking...").size(9.0).color(palette.warning));
+                }
+            });
+            ui.add_space(2.0);
 
-            // Active Team Card Editor Header
-            let active_team = &mut self.expert_teams[self.active_team_index];
-            egui::Frame::group(ui.style())
-                .fill(palette.bg_secondary)
-                .inner_margin(10.0)
-                .show(ui, |ui: &mut egui::Ui| {
-                    ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.label(RichText::new("Team Name:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut active_team.name).desired_width(220.0));
-                        ui.add_space(15.0);
-                        ui.label(RichText::new("Description:").strong());
-                        ui.add(egui::TextEdit::singleline(&mut active_team.description).desired_width(450.0));
-                    });
-                });
-
-            ui.add_space(8.0);
-
-            // Main 2-Column Split: Member List / Flow (Left) vs Comprehensive Member Editor (Right)
-            ui.columns(2, |cols| {
-                // COLUMN 1: Member Roster & Visual Topology
-                cols[0].vertical(|ui: &mut egui::Ui| {
-                    ui.horizontal(|ui: &mut egui::Ui| {
-                        ui.heading(RichText::new("Team Members & Topology").small().strong());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                            if ui.button("Add Member").clicked() {
-                                let active_team = &mut self.expert_teams[self.active_team_index];
-                                let m_id = format!("member_{}", active_team.members.len() + 1);
-                                active_team.members.push(ExpertMember::new(
-                                    &m_id,
-                                    "New Specialist",
-                                    "Domain Specialist",
-                                    AiProvider::OpenRouter,
-                                    "anthropic/claude-3.5-sonnet",
-                                    vec!["system_tools"],
-                                    vec!["src/"],
-                                    "Focus on domain-specific module changes.",
-                                ));
-                            }
-                        });
-                    });
-
-                    ui.separator();
-
-                    let active_team = &self.expert_teams[self.active_team_index];
-                    let selected_id = self.selected_member_id.clone().unwrap_or_else(|| {
-                        active_team.members.first().map(|m| m.id.clone()).unwrap_or_default()
-                    });
-
-                    egui::ScrollArea::vertical().id_salt("team_members_scroll").max_height(400.0).show(ui, |ui: &mut egui::Ui| {
-                        for (m_idx, member) in active_team.members.iter().enumerate() {
-                            let is_selected = member.id == selected_id;
-                            let frame_color = if is_selected {
-                                palette.bg_tertiary
-                            } else {
-                                palette.bg_secondary
-                            };
-
-                            let frame_res = egui::Frame::group(ui.style())
-                                .fill(frame_color)
-                                .inner_margin(8.0)
-                                .show(ui, |ui: &mut egui::Ui| {
-                                    ui.horizontal(|ui: &mut egui::Ui| {
-                                        ui.label(RichText::new(format!("#{} {}", m_idx + 1, member.name)).strong().color(palette.text));
-                                        ui.label(RichText::new(format!("({})", member.role)).italics().color(palette.accent));
-                                    });
-                                    ui.horizontal(|ui: &mut egui::Ui| {
-                                        ui.label(RichText::new(member.provider.label().to_string()).small().color(palette.warning));
-                                        ui.label(RichText::new(member.model_id.to_string()).small().color(palette.text_muted));
-                                    });
-                                    ui.horizontal(|ui: &mut egui::Ui| {
-                                        ui.label(RichText::new("Scopes:").small().strong());
-                                        for scope in member.scope_patterns.iter().take(3) {
-                                            ui.label(RichText::new(format!("[{}]", scope)).small().color(palette.success));
-                                        }
-                                    });
+            // Chat messages area
+            let chat_height = ui.available_height() - 34.0; // Reserve space for input
+            egui::ScrollArea::vertical()
+                .id_salt("team_builder_chat_scroll")
+                .max_height(chat_height.max(60.0))
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for msg in &self.team_builder_chat.messages {
+                        match msg.role.as_str() {
+                            "user" => {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    egui::Frame::new()
+                                        .fill(palette.accent.gamma_multiply(0.15))
+                                        .corner_radius(6.0)
+                                        .inner_margin(6.0)
+                                        .show(ui, |ui| {
+                                            ui.set_max_width(ui.available_width() * 0.75);
+                                            ui.label(RichText::new(&msg.content).size(10.0).color(palette.text));
+                                        });
                                 });
-
-                            if frame_res.response.interact(Sense::click()).clicked() {
-                                self.selected_member_id = Some(member.id.clone());
                             }
-                            ui.add_space(4.0);
-                        }
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Topology Diagram Box
-                    ui.label(RichText::new("Delegation Topology").small().strong());
-                    egui::Frame::canvas(ui.style())
-                        .fill(palette.bg_primary)
-                        .inner_margin(10.0)
-                        .show(ui, |ui: &mut egui::Ui| {
-                            let (rect, _response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 140.0), Sense::hover());
-                            let painter = ui.painter_at(rect);
-
-                            let member_count = active_team.members.len().max(1);
-                            let step_x = rect.width() / (member_count as f32);
-
-                            for (i, m) in active_team.members.iter().enumerate() {
-                                let center_x = rect.min.x + (i as f32 + 0.5) * step_x;
-                                let center_y = rect.min.y + 70.0;
-                                let node_center = egui::pos2(center_x, center_y);
-
-                                // Connect edges to next member
-                                if i + 1 < member_count {
-                                    let next_center = egui::pos2(rect.min.x + (i as f32 + 1.5) * step_x, center_y);
-                                    painter.line_segment([node_center, next_center], Stroke::new(2.0, palette.border));
-                                }
-
-                                let node_color = if Some(&m.id) == self.selected_member_id.as_ref() {
-                                    palette.accent
-                                } else {
-                                    palette.bg_tertiary
-                                };
-
-                                painter.circle_filled(node_center, 22.0, node_color);
-                                painter.circle_stroke(node_center, 22.0, Stroke::new(1.5, palette.border));
-                                painter.text(
-                                    node_center,
-                                    egui::Align2::CENTER_CENTER,
-                                    format!("E{}", i + 1),
-                                    egui::FontId::proportional(12.0),
-                                    palette.text,
-                                );
-                            }
-                        });
-                });
-
-                // COLUMN 2: Comprehensive Member Editor Menu
-                cols[1].vertical(|ui: &mut egui::Ui| {
-                    ui.heading(RichText::new("Member Configuration").small().strong());
-                    ui.separator();
-
-                    let active_team = &mut self.expert_teams[self.active_team_index];
-                    let sel_id = self.selected_member_id.clone().unwrap_or_else(|| {
-                        active_team.members.first().map(|m| m.id.clone()).unwrap_or_default()
-                    });
-
-                    if let Some(m_idx) = active_team.members.iter().position(|m| m.id == sel_id) {
-                        let can_remove = active_team.members.len() > 1;
-                        let mut remove_requested = false;
-                        let member = &mut active_team.members[m_idx];
-                        let member_id_display = member.id.clone();
-
-                        egui::ScrollArea::vertical().id_salt("member_editor_scroll").show(ui, |ui: &mut egui::Ui| {
-                            ui.horizontal(|ui: &mut egui::Ui| {
-                                ui.label(RichText::new("Member ID:").strong());
-                                ui.label(RichText::new(&member_id_display).monospace().color(palette.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                    if can_remove && ui.button(RichText::new("Remove").color(palette.error)).clicked() {
-                                        remove_requested = true;
-                                    }
-                                });
-                            });
-
-                            ui.add_space(6.0);
-
-                            ui.horizontal(|ui: &mut egui::Ui| {
-                                ui.label(RichText::new("Member Name:").strong());
-                                ui.add(egui::TextEdit::singleline(&mut member.name).desired_width(180.0));
-                                ui.add_space(10.0);
-                                ui.label(RichText::new("Role Title:").strong());
-                                ui.add(egui::TextEdit::singleline(&mut member.role).desired_width(180.0));
-                            });
-
-                            ui.add_space(8.0);
-
-                            // Provider & Model
-                            ui.horizontal(|ui: &mut egui::Ui| {
-                                ui.label(RichText::new("AI Provider:").strong());
-                                egui::ComboBox::from_id_salt(format!("prov_cb_{}", member_id_display))
-                                    .selected_text(member.provider.label())
-                                    .show_ui(ui, |ui: &mut egui::Ui| {
-                                        for p in [
-                                            AiProvider::CloudflareWorkersAi,
-                                            AiProvider::OpenRouter,
-                                            AiProvider::OpenAI,
-                                            AiProvider::Anthropic,
-                                            AiProvider::GoogleVertex,
-                                            AiProvider::AzureOpenAi,
-                                            AiProvider::LocalOllama,
-                                        ] {
-                                            ui.selectable_value(&mut member.provider, p, p.label());
-                                        }
+                            "assistant" => {
+                                egui::Frame::new()
+                                    .fill(palette.bg_secondary)
+                                    .corner_radius(6.0)
+                                    .inner_margin(6.0)
+                                    .show(ui, |ui| {
+                                        ui.set_max_width(ui.available_width() * 0.85);
+                                        ui.label(RichText::new(&msg.content).size(10.0).color(palette.text));
                                     });
-
-                                ui.add_space(10.0);
-                                ui.label(RichText::new("Model ID:").strong());
-                                ui.add(egui::TextEdit::singleline(&mut member.model_id).desired_width(200.0));
-                            });
-
-                            ui.add_space(10.0);
-
-                            // Domain Scope Patterns
-                            ui.label(RichText::new("Domain Scopes & File Patterns (comma separated):").strong());
-                            let mut scopes_str = member.scope_patterns.join(", ");
-                            if ui.add(egui::TextEdit::singleline(&mut scopes_str).desired_width(420.0)).changed() {
-                                member.scope_patterns = scopes_str
-                                    .split(',')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
                             }
-
-                            ui.add_space(10.0);
-
-                            // Skill Capabilities Checklist
-                            ui.label(RichText::new("Assigned Skill Capabilities:").strong());
-                            ui.horizontal_wrapped(|ui: &mut egui::Ui| {
-                                for skill_name in ["system_tools", "android-cli", "chembl-database", "pymol", "literature-search-arxiv", "quickgo-database"] {
-                                    let mut has_skill = member.skills.iter().any(|s| s == skill_name);
-                                    if ui.checkbox(&mut has_skill, skill_name).changed() {
-                                        if has_skill {
-                                            if !member.skills.contains(&skill_name.to_string()) {
-                                                member.skills.push(skill_name.to_string());
-                                            }
-                                        } else {
-                                            member.skills.retain(|s| s != skill_name);
-                                        }
-                                    }
-                                }
-                            });
-
-                            ui.add_space(10.0);
-
-                            // System Prompt & Workflow Instructions
-                            ui.label(RichText::new("System Prompt & Workflow Instructions:").strong());
-                            ui.add(
-                                egui::TextEdit::multiline(&mut member.workflow_instructions)
-                                    .desired_width(450.0)
-                                    .desired_rows(6)
-                                    .font(egui::TextStyle::Monospace),
-                            );
-                        });
-
-                        if remove_requested {
-                            active_team.members.remove(m_idx);
-                            self.selected_member_id = None;
+                            "streaming" => {
+                                egui::Frame::new()
+                                    .fill(palette.bg_tertiary)
+                                    .corner_radius(6.0)
+                                    .inner_margin(6.0)
+                                    .stroke(egui::Stroke::new(0.5, palette.accent))
+                                    .show(ui, |ui| {
+                                        ui.set_max_width(ui.available_width() * 0.85);
+                                        ui.label(RichText::new(&msg.content).size(10.0).color(palette.text));
+                                        ui.label(RichText::new("\u{2588}").size(10.0).color(palette.accent));
+                                    });
+                            }
+                            "status" => {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("\u{2022} {}", msg.content)).size(9.0).italics().color(palette.text_muted));
+                                });
+                            }
+                            _ => {}
                         }
-                    } else {
-                        ui.add_space(16.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(
-                                RichText::new("◌")
-                                    .size(28.0)
-                                    .color(palette.accent.gamma_multiply(0.7)),
-                            );
-                            ui.add_space(6.0);
-                            ui.label(RichText::new("Select a member from the left panel to configure").color(palette.text_muted));
-                        });
+                        ui.add_space(3.0);
                     }
                 });
+
+            // Input bar
+            ui.horizontal(|ui| {
+                let input_resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.team_builder_chat.input)
+                        .hint_text("Describe a team to create...")
+                        .desired_width(ui.available_width() - 60.0)
+                );
+                let enter_pressed = input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let send_clicked = ui.add_enabled(
+                    !self.team_builder_chat.waiting && !self.team_builder_chat.input.trim().is_empty(),
+                    egui::Button::new(RichText::new("Send").size(10.0)),
+                ).clicked();
+
+                if (enter_pressed || send_clicked) && !self.team_builder_chat.waiting && !self.team_builder_chat.input.trim().is_empty() {
+                    let ws = self.workspace_root.clone();
+                    let provider = self.provider;
+                    let model = self.selected_model.clone();
+                    self.team_builder_chat.send(&ws, provider, &model);
+                }
             });
         });
     }

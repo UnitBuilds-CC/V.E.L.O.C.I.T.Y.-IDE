@@ -96,6 +96,11 @@ impl FoldState {
             .map(|r| r.end_line - r.start_line)
             .unwrap_or(0)
     }
+
+    /// Get the list of start_lines that are currently collapsed.
+    pub fn collapsed_lines(&self) -> Vec<usize> {
+        self.collapsed.iter().copied().collect()
+    }
 }
 
 /// Detect foldable regions using indentation and bracket analysis.

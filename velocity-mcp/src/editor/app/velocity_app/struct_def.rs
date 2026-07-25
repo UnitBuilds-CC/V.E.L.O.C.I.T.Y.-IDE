@@ -178,7 +178,13 @@ pub struct VelocityApp {
 
     pub expert_teams: Vec<crate::editor::expert_team::ExpertTeam>,
     pub active_team_index: usize,
+    #[allow(dead_code)]
     pub selected_member_id: Option<String>,
+
+    /// Which team card is currently expanded in the gallery (None = all collapsed).
+    pub team_gallery_expanded: Option<usize>,
+    /// Chat state for the team builder sub-chat.
+    pub team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat,
 
     pub agent_ui_state: AgentUiState,
     pub task_timeline: TTState,
@@ -244,6 +250,65 @@ pub struct VelocityApp {
     #[allow(dead_code)]
     pub chat_input: String,
     pub chat_history: String,
+
+    // ─── IDE Feature Integration State ────────────────────────────────────────
+    /// Code completion popup state.
+    pub completion_state: crate::editor::completion::CompletionState,
+    /// LSP client manager.
+    pub lsp_manager: Option<crate::editor::lsp_client::LspManager>,
+    /// Aggregated diagnostics from LSP.
+    pub diagnostics: crate::editor::diagnostics::DiagnosticsState,
+    /// Interactive terminal emulator state.
+    pub terminal_state: crate::editor::terminal::TerminalState,
+    /// Whether the terminal shell process has been spawned.
+    pub terminal_spawned: bool,
+    /// Debugger (DAP) session state.
+    pub dap_client: Option<crate::editor::debugger::DapClient>,
+    /// Configurable keybinding config.
+    pub keybindings_config: crate::editor::keybindings::KeybindingsConfig,
+    /// Git integration state.
+    pub git_state: crate::editor::git_ui::GitState,
+    /// Extension registry.
+    #[allow(dead_code)]
+    pub extension_registry: crate::editor::extensions::ExtensionRegistry,
+    /// Minimap configuration.
+    pub minimap_config: crate::editor::minimap::MinimapConfig,
+    /// Snippet collection.
+    pub snippet_collection: crate::editor::snippets::SnippetCollection,
+    /// Whether to show minimap in editor.
+    pub show_minimap: bool,
+    /// Whether to show breadcrumbs above editor.
+    pub show_breadcrumbs: bool,
+    /// Whether word wrap is enabled.
+    #[allow(dead_code)]
+    pub word_wrap: bool,
+    /// Browse panel state (web research sidebar).
+    pub browse_state: crate::editor::browse_panel::BrowseState,
+    /// Workspace checkpoint manager (git-stash rollback).
+    pub checkpoint_manager: crate::editor::checkpoint::CheckpointManager,
+    /// Persistent per-member agent knowledge store.
+    pub agent_memory: crate::editor::agent_memory::AgentMemoryManager,
+    /// Live multi-agent orchestration activity feed and progress.
+    #[allow(dead_code)]
+    pub live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState,
+    /// Speculative pre-computation cache for agent workers.
+    #[allow(dead_code)]
+    pub precomp_cache: crate::editor::speculative_precomp::PrecomputationCache,
+    /// Semantic code search index (TF-IDF).
+    #[allow(dead_code)]
+    pub semantic_index: Option<crate::editor::semantic_search::SemanticIndex>,
+    /// Inline ghost-text suggestion engine.
+    #[allow(dead_code)]
+    pub inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine,
+    /// Auto-generated test coverage analyzer.
+    #[allow(dead_code)]
+    pub test_generator: crate::editor::test_generator::TestGenerator,
+    /// Build/test/deploy pipeline manager.
+    #[allow(dead_code)]
+    pub deploy_pipeline: Option<crate::editor::deploy_pipeline::PipelineManager>,
+    /// Voice-to-task input state.
+    #[allow(dead_code)]
+    pub voice_input: crate::editor::voice_commands::VoiceInputState,
 }
 
 impl VelocityApp {
@@ -597,7 +662,7 @@ impl VelocityApp {
         let mut app = Self {
             agent_tx,
             agent_rx,
-            workspace_root,
+            workspace_root: workspace_root.clone(),
             tabs: tabs.clone(),
             active_tab: Some(chat.id.clone()),
             buffers: HashMap::new(),
@@ -663,6 +728,8 @@ impl VelocityApp {
             expert_teams,
             active_team_index: 0,
             selected_member_id: None,
+            team_gallery_expanded: None,
+            team_builder_chat: crate::editor::team_builder_chat::TeamBuilderChat::default(),
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),
             smart_sidebar: SmartSidebarState::default(),
@@ -731,6 +798,35 @@ impl VelocityApp {
             terminal_rx: None,
             terminal_input: String::new(),
             current_agent_task_id: 0,
+            // IDE Feature Integration
+            completion_state: crate::editor::completion::CompletionState::default(),
+            lsp_manager: None,
+            diagnostics: crate::editor::diagnostics::DiagnosticsState::default(),
+            terminal_state: crate::editor::terminal::TerminalState::new(80, 24),
+            terminal_spawned: false,
+            dap_client: None,
+            keybindings_config: crate::editor::keybindings::KeybindingsConfig::default(),
+            git_state: crate::editor::git_ui::GitState::default(),
+            extension_registry: crate::editor::extensions::ExtensionRegistry::default(),
+            minimap_config: crate::editor::minimap::MinimapConfig::default(),
+            snippet_collection: crate::editor::snippets::SnippetCollection::default(),
+            show_minimap: true,
+            show_breadcrumbs: true,
+            word_wrap: false,
+            browse_state: crate::editor::browse_panel::BrowseState::default(),
+            checkpoint_manager: crate::editor::checkpoint::CheckpointManager::new(&workspace_root),
+            agent_memory: {
+                let mut mgr = crate::editor::agent_memory::AgentMemoryManager::new(&workspace_root);
+                mgr.load_all();
+                mgr
+            },
+            live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
+            precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
+            semantic_index: None,
+            inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
+            test_generator: crate::editor::test_generator::TestGenerator::default(),
+            deploy_pipeline: None,
+            voice_input: crate::editor::voice_commands::VoiceInputState::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);
@@ -745,6 +841,15 @@ impl VelocityApp {
             thinking: app.thinking_enabled,
         });
         app.save_workspace_preferences();
+        // Initialize LSP manager (auto-detect language servers)
+        app.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(&app.workspace_root));
+        // Initialize git state
+        app.git_state.refresh(&app.workspace_root);
+        // Load keybindings from workspace config
+        app.keybindings_config = crate::editor::keybindings::KeybindingsConfig::load(&app.workspace_root);
+        // Load snippets
+        let snippets_path = app.workspace_root.join(".velocity").join("snippets.json");
+        app.snippet_collection = crate::editor::snippets::SnippetCollection::load_from_file(&snippets_path);
         app
     }
 }

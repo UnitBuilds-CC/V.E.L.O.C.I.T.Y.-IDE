@@ -13,6 +13,7 @@ use super::struct_def::VelocityApp;
 impl VelocityApp {
     pub fn search_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
+        ui.set_max_width(ui.available_width());
         let suggested_queries: &[&str] = match self.appearance.profile {
             crate::editor::theme::WorkspaceProfile::Coder => &["TODO", "fn ", "struct "],
             crate::editor::theme::WorkspaceProfile::AutomationOperator => {
@@ -103,7 +104,8 @@ impl VelocityApp {
                     ui.separator();
 
                     let hits = self.search_hits.clone();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_width(ui.available_width()).show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
                         if hits.is_empty() {
                             if self.search_query.is_empty() {
                                 ui.add_space(8.0);
@@ -155,13 +157,188 @@ impl VelocityApp {
                                             self.pending_cursor_line = Some(hit.line);
                                         }
                                     });
-                                    ui.label(egui::RichText::new(&hit.text).monospace().size(12.0));
+                                    let truncated = if hit.text.len() > 80 { format!("{}…", &hit.text[..80]) } else { hit.text.clone() };
+                                    ui.label(egui::RichText::new(truncated).monospace().size(11.0));
                                 });
                             }
                         }
                     });
                 });
             });
+    }
+
+    pub fn browse_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        ui.set_max_width(ui.available_width());
+
+        // Poll for progress updates
+        self.browse_state.poll();
+
+        egui::Frame::new()
+            .inner_margin(egui::Margin::same(10))
+            .fill(palette.bg_primary)
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.heading(egui::RichText::new("\u{1F310} Browse").size(14.0).color(palette.accent));
+                    ui.add_space(4.0);
+
+                    // URL input (optional)
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("URL").size(9.0).color(palette.text_muted));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.browse_state.url_input)
+                                .hint_text("https://... (optional)")
+                                .desired_width(ui.available_width() - 4.0)
+                        );
+                    });
+
+                    // Query input + send
+                    ui.horizontal(|ui| {
+                        let input_resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.browse_state.input)
+                                .hint_text("Ask a question...")
+                                .desired_width(ui.available_width() - 50.0)
+                        );
+                        let enter = input_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let send = ui.add_enabled(
+                            !self.browse_state.waiting && !self.browse_state.input.trim().is_empty(),
+                            egui::Button::new(egui::RichText::new("Go").size(10.0)),
+                        ).clicked();
+
+                        if (enter || send) && !self.browse_state.waiting && !self.browse_state.input.trim().is_empty() {
+                            let ws = self.workspace_root.clone();
+                            let provider = self.provider;
+                            let model = self.selected_model.clone();
+                            self.browse_state.send(&ws, provider, &model);
+                        }
+                    });
+
+                    if self.browse_state.waiting {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(egui::RichText::new("Browsing...").size(9.0).color(palette.warning));
+                        });
+                    }
+
+                    ui.separator();
+
+                    // Messages area
+                    egui::ScrollArea::vertical()
+                        .id_salt("browse_panel_scroll")
+                        .stick_to_bottom(true)
+                        .max_width(ui.available_width())
+                        .show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
+                            for msg in &self.browse_state.messages {
+                                match msg.role.as_str() {
+                                    "user" => {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(egui::RichText::new("\u{25B6}").size(9.0).color(palette.accent));
+                                            ui.label(egui::RichText::new(&msg.content).size(10.0).strong().color(palette.text));
+                                        });
+                                    }
+                                    "assistant" => {
+                                        egui::Frame::new()
+                                            .fill(palette.bg_secondary)
+                                            .corner_radius(6.0)
+                                            .inner_margin(6.0)
+                                            .show(ui, |ui| {
+                                                ui.set_max_width(ui.available_width());
+                                                ui.label(egui::RichText::new(&msg.content).size(10.0).color(palette.text));
+                                            });
+                                    }
+                                    "streaming" => {
+                                        egui::Frame::new()
+                                            .fill(palette.bg_tertiary)
+                                            .corner_radius(6.0)
+                                            .inner_margin(6.0)
+                                            .stroke(egui::Stroke::new(0.5, palette.accent))
+                                            .show(ui, |ui| {
+                                                ui.set_max_width(ui.available_width());
+                                                ui.label(egui::RichText::new(&msg.content).size(10.0).color(palette.text));
+                                                ui.label(egui::RichText::new("\u{2588}").size(10.0).color(palette.accent));
+                                            });
+                                    }
+                                    "status" => {
+                                        ui.label(egui::RichText::new(format!("  \u{2022} {}", msg.content)).size(9.0).italics().color(palette.text_muted));
+                                    }
+                                    _ => {}
+                                }
+                                ui.add_space(3.0);
+                            }
+                        });
+                });
+            });
+    }
+
+    /// Render checkpoint list in the bottom panel Checkpoints tab.
+    #[allow(dead_code)]
+    pub fn render_checkpoints(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        ui.label(egui::RichText::new("\u{1F4BE} Workspace Checkpoints").size(10.0).strong().color(palette.accent));
+        ui.add_space(4.0);
+
+        if !self.checkpoint_manager.enabled {
+            ui.label(egui::RichText::new("Checkpointing disabled (no .git repository)").size(9.0).color(palette.text_muted));
+            return;
+        }
+
+        if self.checkpoint_manager.checkpoints.is_empty() {
+            ui.label(egui::RichText::new("No checkpoints yet. They are created automatically before agent operations.").size(9.0).color(palette.text_muted));
+            return;
+        }
+
+        let mut action: Option<crate::editor::bottom_panel::CheckpointAction> = None;
+        for (idx, cp) in self.checkpoint_manager.checkpoints.iter().enumerate() {
+            egui::Frame::new()
+                .fill(palette.bg_secondary)
+                .corner_radius(4.0)
+                .inner_margin(6.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&cp.label).size(10.0).strong().color(palette.text));
+                        ui.label(egui::RichText::new(format!("{} file(s)", cp.files_changed)).size(9.0).color(palette.text_muted));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button(egui::RichText::new("\u{2716} Discard").size(9.0).color(palette.error)).clicked() {
+                                action = Some(crate::editor::bottom_panel::CheckpointAction::Discard(idx));
+                            }
+                            if ui.small_button(egui::RichText::new("\u{21A9} Restore").size(9.0).color(palette.success)).clicked() {
+                                action = Some(crate::editor::bottom_panel::CheckpointAction::Restore(idx));
+                            }
+                        });
+                    });
+                });
+            ui.add_space(2.0);
+        }
+
+        // Process the action
+        if let Some(act) = action {
+            match act {
+                crate::editor::bottom_panel::CheckpointAction::Restore(idx) => {
+                    match self.checkpoint_manager.restore_checkpoint(idx) {
+                        Ok(label) => {
+                            self.toasts.push(crate::editor::toast::Toast::success(format!("Restored: {}", label)));
+                            self.status_message = format!("Checkpoint restored: {}", label);
+                            // Refresh git state and reload buffers
+                            self.git_state.refresh(&self.workspace_root);
+                        }
+                        Err(e) => {
+                            self.toasts.push(crate::editor::toast::Toast::error(format!("Restore failed: {}", e)));
+                        }
+                    }
+                }
+                crate::editor::bottom_panel::CheckpointAction::Discard(idx) => {
+                    match self.checkpoint_manager.discard_checkpoint(idx) {
+                        Ok(label) => {
+                            self.toasts.push(crate::editor::toast::Toast::info(format!("Discarded: {}", label)));
+                        }
+                        Err(e) => {
+                            self.toasts.push(crate::editor::toast::Toast::error(format!("Discard failed: {}", e)));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
@@ -209,7 +386,11 @@ impl VelocityApp {
             } else if cmd && i.key_pressed(egui::Key::J) {
                 self.toggle_panel(TabKind::Chat);
             } else if cmd && i.key_pressed(egui::Key::Backtick) {
-                self.toggle_panel(TabKind::Output);
+                // Toggle bottom panel (Terminal)
+                self.bottom_panel_state.collapsed = !self.bottom_panel_state.collapsed;
+                if !self.bottom_panel_state.collapsed {
+                    self.bottom_panel_state.active_tab = 0; // Switch to Terminal
+                }
             } else if cmd && i.key_pressed(egui::Key::E) {
                 self.toggle_left_sidebar();
             } else if cmd && i.key_pressed(egui::Key::PageDown) {
@@ -224,6 +405,75 @@ impl VelocityApp {
                 self.set_work_mode(crate::editor::theme::WorkspaceProfile::MissionControl);
             } else if cmd && i.key_pressed(egui::Key::Num4) {
                 self.set_work_mode(crate::editor::theme::WorkspaceProfile::Accessibility);
+            }
+            // ─── IDE Editor Shortcuts ───
+            else if cmd && i.key_pressed(egui::Key::F) {
+                // Find in current buffer
+                if let Some(id) = &self.active_tab {
+                    if let Some(buf) = self.buffers.get_mut(id) {
+                        buf.find_replace.open_find();
+                    }
+                }
+            } else if cmd && i.key_pressed(egui::Key::H) {
+                // Find & Replace
+                if let Some(id) = &self.active_tab {
+                    if let Some(buf) = self.buffers.get_mut(id) {
+                        buf.find_replace.open_find_replace();
+                    }
+                }
+            } else if cmd && i.key_pressed(egui::Key::Z) && shift {
+                // Redo
+                if let Some(id) = &self.active_tab {
+                    if let Some(buf) = self.buffers.get_mut(id) {
+                        buf.redo();
+                    }
+                }
+            } else if cmd && i.key_pressed(egui::Key::Z) {
+                // Undo
+                if let Some(id) = &self.active_tab {
+                    if let Some(buf) = self.buffers.get_mut(id) {
+                        buf.undo();
+                    }
+                }
+            } else if i.key_pressed(egui::Key::Escape) {
+                // Close find/replace if open
+                if let Some(id) = &self.active_tab {
+                    if let Some(buf) = self.buffers.get_mut(id) {
+                        if buf.find_replace.visible {
+                            buf.find_replace.close();
+                        }
+                    }
+                }
+            } else if i.key_pressed(egui::Key::F5) {
+                // Start/Continue debugging
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.continue_execution();
+                } else {
+                    // Launch a new debug session
+                    self.launch_debug_session();
+                }
+            } else if i.key_pressed(egui::Key::F9) {
+                // Toggle breakpoint at current line
+                self.toggle_breakpoint_current_line();
+            } else if i.key_pressed(egui::Key::F10) {
+                // Step over
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.step_over();
+                }
+            } else if i.key_pressed(egui::Key::F11) {
+                // Step into
+                if let Some(dap) = &mut self.dap_client {
+                    let _ = dap.step_into();
+                }
+            } else if cmd && i.key_pressed(egui::Key::Space) {
+                // Trigger completion
+                self.trigger_completion();
+            } else if cmd && shift && i.key_pressed(egui::Key::M) {
+                // Toggle minimap
+                self.show_minimap = !self.show_minimap;
+            } else if i.modifiers.alt && i.key_pressed(egui::Key::Z) {
+                // Toggle word wrap
+                self.word_wrap = !self.word_wrap;
             }
         });
     }
@@ -1159,6 +1409,11 @@ impl eframe::App for VelocityApp {
         self.handle_global_shortcuts(&ctx);
         self.mru_overlay_ui(&ctx);
         self.update_diagnostics();
+        // Sync diagnostics counts to bottom panel
+        self.bottom_panel_state.error_count = self.diagnostics.error_count();
+        self.bottom_panel_state.warning_count = self.diagnostics.warning_count();
+        // Sync terminal output
+        self.bottom_panel_state.terminal_output = self.command_output.clone();
 
         // Poll open buffers for external on-disk changes (throttled ~2s).
         let external_due = self
@@ -1457,7 +1712,10 @@ impl eframe::App for VelocityApp {
                 .resizable(true)
                 .default_size(self.left_sidebar_width)
                 .show(ui, |ui: &mut egui::Ui| {
-                    self.left_sidebar_width = ui.available_width().max(180.0);
+                    // Clamp sidebar width to prevent runaway expansion
+                    let w = ui.available_width().clamp(180.0, 420.0);
+                    ui.set_max_width(w);
+                    self.left_sidebar_width = w;
                     ui.add_space(6.0);
 
                     // Project selector (compact dropdown)
@@ -1547,10 +1805,14 @@ impl eframe::App for VelocityApp {
                             render_task_timeline(ui, &timeline_snapshot, palette);
                         }
                         Some(ST::Git) => {
-                            let branch = super::super::helpers::get_git_branch(&self.workspace_root);
-                            let changed: Vec<PathBuf> = self.buffers.iter()
-                                .filter(|(_, buf)| buf.is_dirty())
-                                .filter_map(|(id, _)| self.tab_path(id).cloned())
+                            // Use the full git state
+                            let branch = if self.git_state.branch.is_empty() {
+                                super::super::helpers::get_git_branch(&self.workspace_root)
+                            } else {
+                                Some(self.git_state.branch.clone())
+                            };
+                            let changed: Vec<PathBuf> = self.git_state.entries.iter()
+                                .map(|e| e.path.clone())
                                 .collect();
                             let data = crate::editor::sidebar_tabs::GitTabData {
                                 branch: branch.as_deref(),
@@ -1560,9 +1822,30 @@ impl eframe::App for VelocityApp {
                             if let Some(file) = crate::editor::sidebar_tabs::render_git_content(ui, &data, palette) {
                                 self.open_editor(Some(file));
                             }
+                            // Commit UI
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.git_state.commit_message)
+                                        .hint_text("Commit message…")
+                                        .desired_width(ui.available_width() - 60.0),
+                                );
+                                if ui.small_button("Commit").clicked() && !self.git_state.commit_message.is_empty() {
+                                    let root = self.workspace_root.clone();
+                                    let _ = self.git_state.commit(&root);
+                                }
+                            });
+                            // Refresh button
+                            if ui.small_button("↻ Refresh").clicked() {
+                                let root = self.workspace_root.clone();
+                                self.git_state.refresh(&root);
+                            }
                         }
                         Some(ST::Search) => {
                             self.search_panel(ui);
+                        }
+                        Some(ST::Browse) => {
+                            self.browse_panel(ui);
                         }
                         Some(ST::Flows) => {
                             let flows: Vec<crate::editor::sidebar_tabs::FlowEntry> = self.orchestrator
@@ -1696,7 +1979,7 @@ impl eframe::App for VelocityApp {
                         }
                     }
                 });
-            self.left_sidebar_width = panel_response.response.rect.width().max(180.0);
+            self.left_sidebar_width = panel_response.response.rect.width().clamp(180.0, 420.0);
         }
 
         if self.right_sidebar_visible {
@@ -1869,27 +2152,112 @@ impl eframe::App for VelocityApp {
             self.dock_state = Some(dock_state);
         });
 
-        // Only show bottom panel when there's agent activity or pending approvals
-        let has_agent_activity = self.agent_active || !self.pending_approvals.is_empty();
-        if has_agent_activity {
-            egui::Panel::bottom("agentic_ui_panel")
-                .default_size(100.0)
+        // ─── Bottom Panel: Terminal | Problems | Debug | Output ───
+        if !self.bottom_panel_state.collapsed {
+            egui::Panel::bottom("ide_bottom_panel")
+                .default_size(self.bottom_panel_state.panel_height)
                 .resizable(true)
                 .show(ui, |ui: &mut egui::Ui| {
-                    let snapshot = RenderSnapshot::new(&self.agent_ui_state);
-                    render_agent_metrics(ui, &snapshot, palette);
-
-                    if !self.pending_approvals.is_empty() {
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(format!("{} pending approvals", self.pending_approvals.len())).small().color(palette.warning));
-                            if ui.small_button("Approve all").clicked() {
-                                self.approve_all_pending_tools();
+                    self.bottom_panel_state.panel_height = ui.available_height().max(80.0);
+                    // Tab strip
+                    let tab_labels = ["Terminal", "Problems", "Debug", "Output"];
+                    ui.horizontal(|ui| {
+                        for (i, label) in tab_labels.iter().enumerate() {
+                            let is_active = i == self.bottom_panel_state.active_tab;
+                            let mut text = egui::RichText::new(*label).size(10.0);
+                            text = if is_active {
+                                text.color(palette.accent).strong()
+                            } else {
+                                text.color(palette.text_muted)
+                            };
+                            // Badge for problems
+                            let display = if i == 1 && (self.bottom_panel_state.error_count > 0 || self.bottom_panel_state.warning_count > 0) {
+                                format!("{} ({}/{})", label, self.bottom_panel_state.error_count, self.bottom_panel_state.warning_count)
+                            } else {
+                                label.to_string()
+                            };
+                            let text_with_badge = if i == 1 && (self.bottom_panel_state.error_count > 0 || self.bottom_panel_state.warning_count > 0) {
+                                egui::RichText::new(display).size(10.0).color(if is_active { palette.accent } else { palette.text_muted })
+                            } else {
+                                text
+                            };
+                            if ui.selectable_label(is_active, text_with_badge).clicked() {
+                                self.bottom_panel_state.active_tab = i;
                             }
-                            if ui.small_button("Decline all").clicked() {
-                                self.reject_all_pending_tools();
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button(egui::RichText::new("\u{2715}").size(9.0).color(palette.text_muted)).clicked() {
+                                self.bottom_panel_state.collapsed = true;
                             }
                         });
+                    });
+                    ui.separator();
+
+                    match self.bottom_panel_state.active_tab {
+                        0 => {
+                            // Terminal tab - use real TerminalState
+                            if !self.terminal_spawned {
+                                self.terminal_state.spawn_shell();
+                                self.terminal_spawned = true;
+                            }
+                            self.terminal_state.show(ui, &palette);
+                        }
+                        1 => {
+                            // Problems tab
+                            egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                let ec = self.bottom_panel_state.error_count;
+                                let wc = self.bottom_panel_state.warning_count;
+                                if ec == 0 && wc == 0 {
+                                    ui.label(egui::RichText::new("No problems detected.").size(10.0).color(palette.success));
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        if ec > 0 {
+                                            ui.colored_label(palette.error, format!("\u{2716} {} error(s)", ec));
+                                        }
+                                        if wc > 0 {
+                                            ui.colored_label(palette.warning, format!("\u{26A0} {} warning(s)", wc));
+                                        }
+                                    });
+                                    for msg in &self.bottom_panel_state.diagnostic_messages {
+                                        ui.label(egui::RichText::new(msg).monospace().size(9.0).color(palette.text));
+                                    }
+                                }
+                            });
+                        }
+                        2 => {
+                            // Debug tab
+                            self.render_debug_panel(ui, palette);
+                        }
+                        3 => {
+                            // Output tab - agent metrics
+                            let has_agent_activity = self.agent_active || !self.pending_approvals.is_empty();
+                            if has_agent_activity {
+                                let snapshot = RenderSnapshot::new(&self.agent_ui_state);
+                                render_agent_metrics(ui, &snapshot, palette);
+                                if !self.pending_approvals.is_empty() {
+                                    ui.separator();
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(format!("{} pending approvals", self.pending_approvals.len())).small().color(palette.warning));
+                                        if ui.small_button("Approve all").clicked() {
+                                            self.approve_all_pending_tools();
+                                        }
+                                        if ui.small_button("Decline all").clicked() {
+                                            self.reject_all_pending_tools();
+                                        }
+                                    });
+                                }
+                            } else {
+                                // Show build/command output
+                                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                    if !self.command_output.is_empty() {
+                                        ui.label(egui::RichText::new(&self.command_output).monospace().size(9.0).color(palette.text));
+                                    } else {
+                                        ui.label(egui::RichText::new("Build output will appear here.").size(9.0).color(palette.text_muted));
+                                    }
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 });
         }

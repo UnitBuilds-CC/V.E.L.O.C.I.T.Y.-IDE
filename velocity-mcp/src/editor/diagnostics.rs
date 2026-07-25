@@ -53,6 +53,23 @@ impl DiagnosticsState {
         self.items.iter().filter(|d| &d.file == path).collect()
     }
 
+    /// Get (line, severity_u8) pairs for the gutter display in a specific file.
+    /// severity: 1=error, 2=warning, 3=info, 4=hint
+    pub fn lines_for_file(&self, path: &std::path::Path) -> Vec<(usize, u8)> {
+        self.items.iter()
+            .filter(|d| d.file == path)
+            .map(|d| {
+                let sev = match d.severity {
+                    DiagnosticSeverity::Error => 1u8,
+                    DiagnosticSeverity::Warning => 2,
+                    DiagnosticSeverity::Info => 3,
+                    DiagnosticSeverity::Hint => 4,
+                };
+                (d.line + 1, sev) // convert 0-based to 1-based
+            })
+            .collect()
+    }
+
     /// Render the problems panel.
     pub fn show_panel(&mut self, ui: &mut egui::Ui, palette: &crate::editor::theme::IdePalette) -> Option<DiagnosticAction> {
         let mut action = None;

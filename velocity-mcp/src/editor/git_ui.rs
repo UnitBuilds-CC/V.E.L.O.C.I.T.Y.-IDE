@@ -82,6 +82,13 @@ pub struct GitState {
 }
 
 impl GitState {
+    /// Create a GitState populated from the given workspace root.
+    pub fn from_workspace(workspace_root: &Path) -> Self {
+        let mut state = Self::default();
+        state.refresh(workspace_root);
+        state
+    }
+
     /// Refresh git status from the workspace.
     pub fn refresh(&mut self, workspace_root: &Path) {
         self.last_error = None;

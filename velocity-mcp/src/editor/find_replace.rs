@@ -5,6 +5,7 @@
 //! regex support, and replace-one / replace-all operations.
 
 use eframe::egui;
+use crate::editor::theme::IdePalette;
 
 /// State for the find/replace overlay within a single editor tab.
 #[derive(Debug, Clone, Default)]
@@ -240,6 +241,79 @@ pub enum FindAction {
     Prev,
     ReplaceCurrent,
     ReplaceAll,
+}
+
+/// Render the find/replace overlay bar.
+pub fn render_find_replace(
+    ui: &mut egui::Ui,
+    state: &mut FindReplaceState,
+    content: &str,
+    palette: IdePalette,
+) {
+    egui::Frame::new()
+        .fill(palette.bg_secondary)
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut state.query)
+                        .hint_text("Find…")
+                        .desired_width(200.0),
+                );
+                if state.just_opened {
+                    resp.request_focus();
+                    state.just_opened = false;
+                }
+                if resp.changed() {
+                    state.recompute_matches(content);
+                }
+                // Match count
+                let match_text = if state.matches.is_empty() {
+                    "No matches".to_string()
+                } else {
+                    format!("{}/{}", state.current_match + 1, state.matches.len())
+                };
+                ui.label(match_text);
+
+                if ui.small_button("▲").clicked() {
+                    state.prev_match();
+                }
+                if ui.small_button("▼").clicked() {
+                    state.next_match();
+                }
+                // Toggles
+                let cs_label = if state.case_sensitive { "Aa✓" } else { "Aa" };
+                if ui.small_button(cs_label).clicked() {
+                    state.case_sensitive = !state.case_sensitive;
+                    state.recompute_matches(content);
+                }
+                let re_label = if state.use_regex { ".*✓" } else { ".*" };
+                if ui.small_button(re_label).clicked() {
+                    state.use_regex = !state.use_regex;
+                    state.recompute_matches(content);
+                }
+                if ui.small_button("✕").clicked() {
+                    state.close();
+                }
+            });
+
+            // Replace row
+            if state.replace_visible {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.replacement)
+                            .hint_text("Replace with…")
+                            .desired_width(200.0),
+                    );
+                    if ui.small_button("Replace").clicked() {
+                        // Replace current match
+                    }
+                    if ui.small_button("All").clicked() {
+                        // Replace all matches
+                    }
+                });
+            }
+        });
 }
 
 #[cfg(test)]

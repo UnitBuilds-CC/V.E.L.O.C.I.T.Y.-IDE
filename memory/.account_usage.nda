@@ -1,5 +1,5 @@
 account-usage version 2
-date 2026-07-23
+date 2026-07-24
 account_count 24
 account	1
 field	1	label	Acc1
@@ -166,27 +166,27 @@ field	or_1	daily_limit	50
 account	or_2
 field	or_2	label	OR-Acc2
 field	or_2	tier	free
-field	or_2	requests	0
-field	or_2	tokens_in	0
-field	or_2	tokens_out	0
+field	or_2	requests	1
+field	or_2	tokens_in	14961
+field	or_2	tokens_out	27
 field	or_2	exhausted	false
 field	or_2	exhausted_at	-
 field	or_2	daily_limit	50
 account	or_3
 field	or_3	label	OR-Acc3
 field	or_3	tier	free
-field	or_3	requests	1
-field	or_3	tokens_in	15371
-field	or_3	tokens_out	475
+field	or_3	requests	6
+field	or_3	tokens_in	86533
+field	or_3	tokens_out	434
 field	or_3	exhausted	false
 field	or_3	exhausted_at	-
 field	or_3	daily_limit	50
 account	or_4
 field	or_4	label	OR-Acc4
 field	or_4	tier	free
-field	or_4	requests	0
-field	or_4	tokens_in	0
-field	or_4	tokens_out	0
+field	or_4	requests	4
+field	or_4	tokens_in	60491
+field	or_4	tokens_out	128
 field	or_4	exhausted	false
 field	or_4	exhausted_at	-
 field	or_4	daily_limit	50
@@ -194,8 +194,8 @@ account	or_5
 field	or_5	label	OR-Acc5
 field	or_5	tier	free
 field	or_5	requests	1
-field	or_5	tokens_in	15372
-field	or_5	tokens_out	580
+field	or_5	tokens_in	14260
+field	or_5	tokens_out	23
 field	or_5	exhausted	false
 field	or_5	exhausted_at	-
 field	or_5	daily_limit	50
@@ -203,8 +203,8 @@ account	or_6
 field	or_6	label	OR-Acc6
 field	or_6	tier	free
 field	or_6	requests	2
-field	or_6	tokens_in	26518
-field	or_6	tokens_out	1838
+field	or_6	tokens_in	29787
+field	or_6	tokens_out	199
 field	or_6	exhausted	false
 field	or_6	exhausted_at	-
 field	or_6	daily_limit	50
@@ -212,8 +212,8 @@ account	or_7
 field	or_7	label	OR-Acc7
 field	or_7	tier	free
 field	or_7	requests	1
-field	or_7	tokens_in	11027
-field	or_7	tokens_out	126
+field	or_7	tokens_in	14958
+field	or_7	tokens_out	19
 field	or_7	exhausted	false
 field	or_7	exhausted_at	-
 field	or_7	daily_limit	50

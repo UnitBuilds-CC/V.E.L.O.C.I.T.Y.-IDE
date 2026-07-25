@@ -26,8 +26,10 @@ pub mod task_timeline;
 pub mod smart_sidebar;
 
 // Expert Teams Studio & Task Routing
+pub mod agent_memory;
 pub mod expert_team;
 pub mod skill_file;
+pub mod team_builder_chat;
 pub mod team_router;
 
 // Mode-Specialized UI Workflows
@@ -40,15 +42,25 @@ pub mod toolbar_actions;
 pub mod auto_indent;
 pub mod bracket_match;
 pub mod breadcrumbs;
+pub mod browse_panel;
+pub mod checkpoint;
 pub mod code_folding;
 pub mod completion;
+pub mod continuation_ledger;
 pub mod debugger;
+pub mod deploy_pipeline;
 pub mod diagnostics;
 pub mod extensions;
 pub mod find_replace;
 pub mod git_ui;
+pub mod inline_suggestions;
 pub mod keybindings;
+pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;
+pub mod semantic_search;
 pub mod snippets;
+pub mod speculative_precomp;
 pub mod terminal;
+pub mod test_generator;
+pub mod voice_commands;

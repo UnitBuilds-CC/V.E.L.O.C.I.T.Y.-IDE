@@ -105,11 +105,20 @@ pub struct EditorBuffer {
     pub undo_stack: UndoStack,
     /// Hash of content at last frame — detects when egui TextEdit mutated text.
     pub last_frame_hash: u64,
+    /// Per-buffer find/replace overlay state.
+    pub find_replace: crate::editor::find_replace::FindReplaceState,
+    /// Per-buffer code folding state.
+    pub fold_state: crate::editor::code_folding::FoldState,
+    /// Detected indent style for this buffer.
+    pub indent_style: crate::editor::auto_indent::IndentStyle,
+    /// Breakpoints set in this buffer (line numbers, 1-based).
+    pub breakpoints: Vec<usize>,
 }
 
 impl EditorBuffer {
     pub fn new(path: Option<PathBuf>, content: String) -> Self {
         let h = fnv1a(&content);
+        let indent_style = crate::editor::auto_indent::IndentStyle::detect(&content);
         Self {
             path,
             saved_content: content.clone(),
@@ -119,6 +128,10 @@ impl EditorBuffer {
             diff_marks_hash: 0,
             undo_stack: UndoStack::default(),
             last_frame_hash: h,
+            find_replace: Default::default(),
+            fold_state: Default::default(),
+            indent_style,
+            breakpoints: Vec::new(),
         }
     }
 

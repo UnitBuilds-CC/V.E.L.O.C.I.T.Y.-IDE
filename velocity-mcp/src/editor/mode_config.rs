@@ -65,6 +65,7 @@ static CODER_LEFT_TABS: &[SidebarTab] = &[
     SidebarTab::Outline,
     SidebarTab::Git,
     SidebarTab::Search,
+    SidebarTab::Browse,
 ];
 
 static CODER_RIGHT_PANELS: &[RightPanel] = &[
@@ -89,7 +90,7 @@ impl ModeConfig for CoderMode {
     fn right_panels(&self) -> &[RightPanel] { CODER_RIGHT_PANELS }
     fn toolbar_actions(&self) -> &[ToolbarAction] { CODER_TOOLBAR }
     fn bottom_layout(&self) -> BottomPanelLayout {
-        BottomPanelLayout::Tabbed(vec!["Terminal", "Problems", "Output", "Chat"])
+        BottomPanelLayout::Tabbed(vec!["Terminal", "Problems", "Output", "Checkpoints", "Chat"])
     }
     fn priority_categories(&self) -> &[&'static str] { CODER_PRIORITY_CATEGORIES }
 }

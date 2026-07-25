@@ -5,9 +5,11 @@
 //! references, rename, and diagnostics via JSON-RPC over stdin/stdout.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read as IoRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,6 +54,19 @@ pub struct LspServer {
     pending_requests: HashMap<i64, String>,
     pub initialized: bool,
     pub capabilities: ServerCapabilities,
+    /// Shared inbox for responses/notifications coming from the language server's stdout.
+    pub inbox: Arc<Mutex<LspInbox>>,
+}
+
+/// Accumulated responses and notifications from the LSP server stdout reader thread.
+#[derive(Debug, Default)]
+pub struct LspInbox {
+    /// Responses keyed by request id.
+    pub responses: HashMap<i64, Value>,
+    /// Incoming notifications (method, params).
+    pub notifications: Vec<(String, Value)>,
+    /// Reader thread alive flag.
+    pub reader_alive: bool,
 }
 
 /// Subset of server capabilities we care about.
@@ -112,20 +127,48 @@ impl LspServer {
             pending_requests: HashMap::new(),
             initialized: false,
             capabilities: ServerCapabilities::default(),
+            inbox: Arc::new(Mutex::new(LspInbox {
+                responses: HashMap::new(),
+                notifications: Vec::new(),
+                reader_alive: false,
+            })),
         }
     }
 
-    /// Start the language server process.
+    /// Start the language server process and spawn the stdout reader thread.
     pub fn start(&mut self) -> Result<(), String> {
-        let child = Command::new(&self.config.command)
+        let mut child = Command::new(&self.config.command)
             .args(&self.config.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("Failed to start {}: {}", self.config.command, e))?;
+
+        // Take stdout and spawn reader thread
+        if let Some(stdout) = child.stdout.take() {
+            let inbox = self.inbox.clone();
+            inbox.lock().unwrap().reader_alive = true;
+            thread::spawn(move || {
+                lsp_stdout_reader(stdout, inbox);
+            });
+        }
+
         self.process = Some(child);
         Ok(())
+    }
+
+    /// Take a response for a given request ID, if available.
+    pub fn take_response(&self, id: i64) -> Option<Value> {
+        self.inbox.lock().ok()?.responses.remove(&id)
+    }
+
+    /// Drain all pending notifications from the inbox.
+    pub fn drain_notifications(&self) -> Vec<(String, Value)> {
+        match self.inbox.lock() {
+            Ok(mut inbox) => std::mem::take(&mut inbox.notifications),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Send the initialize request.
@@ -327,6 +370,26 @@ impl LspManager {
         mgr
     }
 
+    /// Poll all servers for incoming notifications and update diagnostics.
+    pub fn poll_notifications(&mut self) {
+        let mut new_diagnostics = Vec::new();
+        for server in self.servers.values_mut() {
+            let notifications = server.drain_notifications();
+            for (method, params) in notifications {
+                if method == "textDocument/publishDiagnostics" {
+                    if let Some(diags) = parse_publish_diagnostics(&params) {
+                        // Remove old diagnostics for this file, add new ones
+                        let file = &diags[0].file;
+                        self.diagnostics.retain(|d| &d.file != file);
+                        new_diagnostics.extend(diags);
+                    }
+                }
+                // Handle other notifications (e.g. progress) in the future
+            }
+        }
+        self.diagnostics.extend(new_diagnostics);
+    }
+
     /// Shutdown all servers.
     pub fn shutdown_all(&mut self) {
         for server in self.servers.values_mut() {
@@ -351,6 +414,130 @@ pub fn uri_to_path(uri: &str) -> PathBuf {
     PathBuf::from(stripped.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LSP Stdout Reader Thread
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Background thread that reads JSON-RPC messages from a language server's stdout.
+/// Parses Content-Length headers, reads the JSON body, and deposits messages into
+/// the shared `LspInbox`.
+fn lsp_stdout_reader(stdout: impl IoRead + Send + 'static, inbox: Arc<Mutex<LspInbox>>) {
+    let mut reader = BufReader::new(stdout);
+    loop {
+        // Read headers until empty line
+        let mut content_length: Option<usize> = None;
+        loop {
+            let mut header_line = String::new();
+            match reader.read_line(&mut header_line) {
+                Ok(0) => {
+                    // EOF — server process exited
+                    if let Ok(mut inbox) = inbox.lock() {
+                        inbox.reader_alive = false;
+                    }
+                    return;
+                }
+                Ok(_) => {
+                    let trimmed = header_line.trim();
+                    if trimmed.is_empty() {
+                        break; // End of headers
+                    }
+                    if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
+                        if let Ok(len) = len_str.trim().parse::<usize>() {
+                            content_length = Some(len);
+                        }
+                    }
+                }
+                Err(_) => {
+                    if let Ok(mut inbox) = inbox.lock() {
+                        inbox.reader_alive = false;
+                    }
+                    return;
+                }
+            }
+        }
+
+        let Some(len) = content_length else {
+            continue; // No Content-Length — skip malformed frame
+        };
+
+        // Read the JSON body
+        let mut body = vec![0u8; len];
+        if reader.read_exact(&mut body).is_err() {
+            if let Ok(mut inbox) = inbox.lock() {
+                inbox.reader_alive = false;
+            }
+            return;
+        }
+
+        let Ok(json) = serde_json::from_slice::<Value>(&body) else {
+            continue; // Unparseable JSON — skip
+        };
+
+        // Classify: response (has "id" + "result"/"error") vs notification (has "method")
+        if let Some(id) = json.get("id").and_then(|v| v.as_i64()) {
+            // It's a response to a request
+            if let Ok(mut inbox) = inbox.lock() {
+                inbox.responses.insert(id, json);
+            }
+        } else if let Some(method) = json.get("method").and_then(|v| v.as_str()) {
+            // It's a notification from the server
+            let params = json.get("params").cloned().unwrap_or(Value::Null);
+            if let Ok(mut inbox) = inbox.lock() {
+                inbox.notifications.push((method.to_string(), params));
+            }
+        }
+    }
+}
+
+/// Parse a `textDocument/publishDiagnostics` notification into our diagnostic structs.
+fn parse_publish_diagnostics(params: &Value) -> Option<Vec<LspDiagnostic>> {
+    let uri = params.get("uri")?.as_str()?;
+    let file = uri_to_path(uri);
+    let diagnostics_arr = params.get("diagnostics")?.as_array()?;
+    if diagnostics_arr.is_empty() {
+        // Empty diagnostics = file is clean. Return a sentinel to trigger cleanup.
+        return Some(vec![LspDiagnostic {
+            file,
+            line: 0,
+            col: 0,
+            end_line: 0,
+            end_col: 0,
+            severity: DiagnosticSeverity::Info,
+            message: String::new(),
+            source: None,
+            code: None,
+        }]);
+    }
+
+    let mut results = Vec::with_capacity(diagnostics_arr.len());
+    for diag in diagnostics_arr {
+        let range = diag.get("range")?;
+        let start = range.get("start")?;
+        let end = range.get("end")?;
+        let severity_num = diag.get("severity").and_then(|v| v.as_u64()).unwrap_or(1);
+        let severity = match severity_num {
+            1 => DiagnosticSeverity::Error,
+            2 => DiagnosticSeverity::Warning,
+            3 => DiagnosticSeverity::Info,
+            _ => DiagnosticSeverity::Hint,
+        };
+        results.push(LspDiagnostic {
+            file: file.clone(),
+            line: start.get("line")?.as_u64()? as usize,
+            col: start.get("character")?.as_u64()? as usize,
+            end_line: end.get("line")?.as_u64()? as usize,
+            end_col: end.get("character")?.as_u64()? as usize,
+            severity,
+            message: diag.get("message")?.as_str()?.to_string(),
+            source: diag.get("source").and_then(|v| v.as_str()).map(String::from),
+            code: diag.get("code").and_then(|v| {
+                v.as_str().map(String::from).or_else(|| v.as_u64().map(|n| n.to_string()))
+            }),
+        });
+    }
+    if results.is_empty() { None } else { Some(results) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +555,47 @@ mod tests {
         let cfg = LspServerConfig::rust_analyzer(Path::new("/tmp/project"));
         assert_eq!(cfg.language_id, "rust");
         assert!(cfg.extensions.contains(&"rs".to_string()));
+    }
+
+    #[test]
+    fn parse_publish_diagnostics_works() {
+        let params = serde_json::json!({
+            "uri": "file:///home/user/project/src/main.rs",
+            "diagnostics": [
+                {
+                    "range": {
+                        "start": { "line": 5, "character": 10 },
+                        "end": { "line": 5, "character": 15 }
+                    },
+                    "severity": 1,
+                    "message": "cannot find value `x`",
+                    "source": "rust-analyzer"
+                }
+            ]
+        });
+        let result = parse_publish_diagnostics(&params).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].line, 5);
+        assert_eq!(result[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(result[0].message, "cannot find value `x`");
+    }
+
+    #[test]
+    fn parse_publish_diagnostics_empty_clears_file() {
+        let params = serde_json::json!({
+            "uri": "file:///home/user/project/src/main.rs",
+            "diagnostics": []
+        });
+        let result = parse_publish_diagnostics(&params).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].message.is_empty());
+    }
+
+    #[test]
+    fn inbox_default_is_empty() {
+        let inbox = LspInbox::default();
+        assert!(inbox.responses.is_empty());
+        assert!(inbox.notifications.is_empty());
+        assert!(!inbox.reader_alive);
     }
 }
