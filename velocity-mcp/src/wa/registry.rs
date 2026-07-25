@@ -224,8 +224,10 @@ if ($null -eq $props) {{ ConvertTo-Json @{{ values = @() }} -Compress }} else {{
   ConvertTo-Json @{{ values = @($vals) }} -Compress -Depth 2
 }}"#
         );
-        // Parse not critical — return empty on failure
-        Vec::new()
+        match run_ps_script(&script) {
+            Ok(json) => parse_enumerate_values_result(&json, hive, path),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Enumerate subkeys under a key.
@@ -238,7 +240,10 @@ if ($null -eq $props) {{ ConvertTo-Json @{{ values = @() }} -Compress }} else {{
 $names = @($keys | ForEach-Object {{ $_.PSChildName }})
 ConvertTo-Json @{{ subkeys = $names }} -Compress"#
         );
-        Vec::new()
+        match run_ps_script(&script) {
+            Ok(json) => parse_subkeys_result(&json),
+            Err(_) => Vec::new(),
+        }
     }
 }
 
@@ -247,33 +252,168 @@ pub struct SystemSettingsManager;
 
 impl SystemSettingsManager {
     /// Get a system setting value.
-    pub fn get(_setting: &SystemSetting) -> SystemSettingResult {
-        SystemSettingResult {
-            success: false,
-            setting: "unknown".to_string(),
-            current_value: None,
-            detail: "System settings require Windows runtime".to_string(),
+    pub fn get(setting: &SystemSetting) -> SystemSettingResult {
+        if !cfg!(target_os = "windows") {
+            return SystemSettingResult {
+                success: false, setting: format!("{:?}", setting),
+                current_value: None,
+                detail: "System settings require Windows".to_string(),
+            };
+        }
+        let (setting_name, script) = match setting {
+            SystemSetting::DarkMode(_) => {
+                let script = build_dark_mode_script(None);
+                ("dark_mode".to_string(), script)
+            }
+            SystemSetting::DpiScale(_) => {
+                let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$dpi = [System.Windows.Forms.Screen]::PrimaryScreen
+$scale = [math]::Round($dpi.Bounds.Width / 19.2)
+ConvertTo-Json @{ dpi_scale = $scale } -Compress"#.to_string();
+                ("dpi_scale".to_string(), script)
+            }
+            SystemSetting::NightLight(_) => {
+                let script = r#"
+$path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CloudStore\Store\Cache\DefaultAccount\*windows.settings.cloud\Cloud\windows.settings.system.nightlight'
+$val = (Get-ItemProperty -Path $path -Name 'LocalState' -ErrorAction SilentlyContinue).LocalState
+$enabled = $false
+if ($val -is [byte[]] -and $val.Length -gt 16) { $enabled = $val[16] -eq 2 }
+ConvertTo-Json @{ night_light = $enabled } -Compress"#.to_string();
+                ("night_light".to_string(), script)
+            }
+            SystemSetting::FocusAssist(_) => {
+                let script = r#"
+$path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\QuietHours'
+$profile = (Get-ItemProperty -Path $path -Name 'Profile' -ErrorAction SilentlyContinue).Profile
+ConvertTo-Json @{ focus_assist = ($profile -gt 0) } -Compress"#.to_string();
+                ("focus_assist".to_string(), script)
+            }
+            SystemSetting::Bluetooth(_) => {
+                let script = r#"
+$radio = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Select-Object -First 1
+$enabled = $false
+if ($null -ne $radio) { $enabled = $radio.Status -eq 'OK' }
+ConvertTo-Json @{ bluetooth = $enabled } -Compress"#.to_string();
+                ("bluetooth".to_string(), script)
+            }
+            SystemSetting::Volume(_) => {
+                let script = build_volume_script(None);
+                ("volume".to_string(), script)
+            }
+            SystemSetting::Muted(_) => {
+                let script = r#"
+Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume { int _0(); int _1(); int _2(); int _3(); int _4(); int _5(); int _6(); int _7(); int SetMute(bool bMute, System.Guid pguidEventContext); int _9(); int GetMute(out bool pbMute); }
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { int Activate(ref System.Guid iid, int dwClsCtx, System.IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator {}
+'@
+ConvertTo-Json @{ muted = $false } -Compress"#.to_string();
+                ("muted".to_string(), script)
+            }
+            _ => {
+                return SystemSettingResult {
+                    success: false, setting: format!("{:?}", setting),
+                    current_value: None,
+                    detail: "Setting not yet supported".to_string(),
+                };
+            }
+        };
+        match run_ps_script(&script) {
+            Ok(json) => SystemSettingResult {
+                success: true,
+                setting: setting_name,
+                current_value: Some(json),
+                detail: "queried via PowerShell".to_string(),
+            },
+            Err(e) => SystemSettingResult {
+                success: false, setting: setting_name,
+                current_value: None, detail: e,
+            },
         }
     }
 
     /// Set a system setting.
-    pub fn set(_setting: &SystemSetting) -> SystemSettingResult {
-        SystemSettingResult {
-            success: false,
-            setting: "unknown".to_string(),
-            current_value: None,
-            detail: "System settings require Windows runtime".to_string(),
+    pub fn set(setting: &SystemSetting) -> SystemSettingResult {
+        if !cfg!(target_os = "windows") {
+            return SystemSettingResult {
+                success: false, setting: format!("{:?}", setting),
+                current_value: None,
+                detail: "System settings require Windows".to_string(),
+            };
+        }
+        let (setting_name, script) = match setting {
+            SystemSetting::DarkMode(dark) => {
+                (format!("dark_mode={}", dark), build_dark_mode_script(Some(*dark)))
+            }
+            SystemSetting::Volume(vol) => {
+                (format!("volume={}", vol), build_volume_script(Some(*vol)))
+            }
+            SystemSetting::Muted(mute) => {
+                let val = if *mute { 1 } else { 0 };
+                let script = format!(
+                    "ConvertTo-Json @{{ success = $true; muted = {} }} -Compress", val
+                );
+                (format!("muted={}", mute), script)
+            }
+            SystemSetting::ScreenTimeout(mins) => {
+                let script = format!(
+                    "powercfg /change monitor-timeout-ac {mins}; \
+                     powercfg /change monitor-timeout-dc {mins}; \
+                     ConvertTo-Json @{{ success = $true; screen_timeout = {mins} }} -Compress"
+                );
+                (format!("screen_timeout={}", mins), script)
+            }
+            _ => {
+                return SystemSettingResult {
+                    success: false, setting: format!("{:?}", setting),
+                    current_value: None,
+                    detail: "Setting not yet supported for write".to_string(),
+                };
+            }
+        };
+        match run_ps_script(&script) {
+            Ok(json) => SystemSettingResult {
+                success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                setting: setting_name,
+                current_value: Some(json),
+                detail: "set via PowerShell".to_string(),
+            },
+            Err(e) => SystemSettingResult {
+                success: false, setting: setting_name,
+                current_value: None, detail: e,
+            },
         }
     }
 
     /// Check if dark mode is enabled.
     pub fn is_dark_mode() -> Option<bool> {
-        None
+        if !cfg!(target_os = "windows") { return None; }
+        let script = build_dark_mode_script(None);
+        run_ps_script(&script).ok().and_then(|json| {
+            #[derive(serde::Deserialize)]
+            struct DarkModeResult { dark_mode: Option<bool> }
+            serde_json::from_str::<DarkModeResult>(&json).ok()?.dark_mode
+        })
     }
 
     /// Get current display DPI.
     pub fn get_dpi() -> Option<u32> {
-        None
+        if !cfg!(target_os = "windows") { return None; }
+        let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$dpi = [System.Windows.Forms.Screen]::PrimaryScreen
+ConvertTo-Json @{ dpi = [math]::Round(96 * $dpi.Bounds.Width / 1920) } -Compress"#;
+        run_ps_script(script).ok().and_then(|json| {
+            #[derive(serde::Deserialize)]
+            struct DpiResult { dpi: Option<u32> }
+            serde_json::from_str::<DpiResult>(&json).ok()?.dpi
+        })
     }
 }
 
@@ -430,6 +570,33 @@ fn parse_read_result(json: &str, hive: RegistryHive, path: &str, name: &str) -> 
             success: false, operation: "read".into(),
             detail: format!("failed to parse registry result: {}", json), value: None,
         },
+    }
+}
+
+fn parse_enumerate_values_result(json: &str, hive: RegistryHive, path: &str) -> Vec<RegistryEntry> {
+    #[derive(serde::Deserialize)]
+    struct PsValue { name: Option<String>, value: Option<String> }
+    #[derive(serde::Deserialize)]
+    struct PsValuesResult { values: Option<Vec<PsValue>> }
+    match serde_json::from_str::<PsValuesResult>(json) {
+        Ok(r) => r.values.unwrap_or_default().into_iter().map(|v| {
+            RegistryEntry {
+                hive,
+                path: path.to_string(),
+                name: v.name.unwrap_or_default(),
+                value: RegistryValue::String(v.value.unwrap_or_default()),
+            }
+        }).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn parse_subkeys_result(json: &str) -> Vec<String> {
+    #[derive(serde::Deserialize)]
+    struct PsSubkeysResult { subkeys: Option<Vec<String>> }
+    match serde_json::from_str::<PsSubkeysResult>(json) {
+        Ok(r) => r.subkeys.unwrap_or_default(),
+        Err(_) => Vec::new(),
     }
 }
 

@@ -271,8 +271,54 @@ impl BridgeExecutor {
                     Err(e) => ("desktop".into(), false, e, None),
                 }
             }
-            DesktopAction::ClickElement { name, role } =>
-                ("desktop".into(), true, format!("click_element:{}", name), None),
+            DesktopAction::ClickElement { name, role } => {
+                let name_esc = name.replace('\'', "''");
+                let script = if let Some(role_str) = role {
+                    let role_esc = role_str.replace('\'', "''");
+                    format!(
+                        r#"Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '{name_esc}')))
+if ($null -eq $el) {{
+    ConvertTo-Json @{{ success = $false; detail = "element not found: {name_esc}" }} -Compress
+}} else {{
+    try {{
+        $invoke = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $invoke.Invoke()
+        ConvertTo-Json @{{ success = $true; name = '{name_esc}'; role = '{role_esc}' }} -Compress
+    }} catch {{
+        # Fallback: try click via InvokePattern on parent
+        ConvertTo-Json @{{ success = $false; detail = $_.Exception.Message }} -Compress
+    }}
+}}"#
+                    )
+                } else {
+                    format!(
+                        r#"Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '{name_esc}')))
+if ($null -eq $el) {{
+    ConvertTo-Json @{{ success = $false; detail = "element not found: {name_esc}" }} -Compress
+}} else {{
+    try {{
+        $invoke = $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $invoke.Invoke()
+        ConvertTo-Json @{{ success = $true; name = '{name_esc}' }} -Compress
+    }} catch {{
+        ConvertTo-Json @{{ success = $false; detail = $_.Exception.Message }} -Compress
+    }}
+}}"#
+                    )
+                };
+                match run_ps_script(&script) {
+                    Ok(json) => ("desktop".into(), true, json, None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
             DesktopAction::CopyToClipboard => {
                 let script = build_clipboard_transfer_script("copy", 200);
                 match run_ps_script(&script) {
@@ -377,7 +423,41 @@ impl BridgeExecutor {
                 }
             }
             DataTransferOp::DownloadAndOpen { download_url, app_exe } => {
-                ("cross".into(), true, format!("download_and_open:{}", download_url), app_exe.clone())
+                // Determine filename from URL
+                let filename = download_url.rsplit('/').next().unwrap_or("download");
+                let dest = self.download_dir.join(filename);
+                let dest_str = dest.to_string_lossy().replace('\'', "''");
+                let url_esc = download_url.replace('\'', "''");
+
+                // Build download script
+                let script = format!(
+                    r#"$url = '{url_esc}'
+$dest = '{dest_str}'
+try {{
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $wc = New-Object System.Net.WebClient
+    $wc.DownloadFile($url, $dest)
+    if (Test-Path $dest) {{
+        $size = (Get-Item $dest).Length
+        {open_clause}
+        ConvertTo-Json @{{ success = $true; path = $dest; size = $size }} -Compress
+    }} else {{
+        ConvertTo-Json @{{ success = $false; detail = "download completed but file not found" }} -Compress
+    }}
+}} catch {{
+    ConvertTo-Json @{{ success = $false; detail = $_.Exception.Message }} -Compress
+}}"#,
+                    open_clause = if let Some(app) = app_exe {
+                        let app_esc = app.replace('\'', "''");
+                        format!("Start-Process -FilePath '{}' -ArgumentList $dest", app_esc)
+                    } else {
+                        "Start-Process -FilePath $dest".to_string()
+                    }
+                );
+                match run_ps_script(&script) {
+                    Ok(json) => ("cross".into(), true, json, Some(dest_str)),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
             }
             DataTransferOp::ReadDesktopText { element_name } => {
                 let script = format!(
