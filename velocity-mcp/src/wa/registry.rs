@@ -6,7 +6,9 @@
 //! automation workflows that need to configure the OS environment.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 // ─── Registry Model ──────────────────────────────────────────────────────────
 
@@ -127,48 +129,115 @@ pub struct SystemSettingResult {
 pub struct RegistryManager;
 
 impl RegistryManager {
-    /// Read a registry value.
-    pub fn read(_hive: RegistryHive, _path: &str, _name: &str) -> RegistryOpResult {
-        RegistryOpResult {
-            success: false,
-            operation: "read".to_string(),
-            detail: "Registry operations require Windows runtime".to_string(),
-            value: None,
+    /// Read a registry value via PowerShell.
+    pub fn read(hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {
+        if !cfg!(target_os = "windows") {
+            return RegistryOpResult {
+                success: false, operation: "read".into(),
+                detail: "Registry operations require Windows".into(), value: None,
+            };
+        }
+        let script = build_read_registry_script(hive, path, name);
+        match run_ps_script(&script) {
+            Ok(json) => parse_read_result(&json, hive, path, name),
+            Err(e) => RegistryOpResult {
+                success: false, operation: "read".into(), detail: e, value: None,
+            },
         }
     }
 
-    /// Write a registry value.
-    pub fn write(_entry: &RegistryEntry) -> RegistryOpResult {
-        RegistryOpResult {
-            success: false,
-            operation: "write".to_string(),
-            detail: "Registry operations require Windows runtime".to_string(),
-            value: None,
+    /// Write a registry value via PowerShell.
+    pub fn write(entry: &RegistryEntry) -> RegistryOpResult {
+        if !cfg!(target_os = "windows") {
+            return RegistryOpResult {
+                success: false, operation: "write".into(),
+                detail: "Registry operations require Windows".into(), value: None,
+            };
+        }
+        let script = build_write_registry_script(entry);
+        match run_ps_script(&script) {
+            Ok(json) => RegistryOpResult {
+                success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                operation: "write".into(),
+                detail: format!("wrote {}\\{} @ {}", entry.hive.as_ps_path(), entry.path, entry.name),
+                value: Some(entry.value.clone()),
+            },
+            Err(e) => RegistryOpResult {
+                success: false, operation: "write".into(), detail: e, value: None,
+            },
         }
     }
 
-    /// Delete a registry value.
-    pub fn delete(_hive: RegistryHive, _path: &str, _name: &str) -> RegistryOpResult {
-        RegistryOpResult {
-            success: false,
-            operation: "delete".to_string(),
-            detail: "Registry operations require Windows runtime".to_string(),
-            value: None,
+    /// Delete a registry value via PowerShell.
+    pub fn delete(hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {
+        if !cfg!(target_os = "windows") {
+            return RegistryOpResult {
+                success: false, operation: "delete".into(),
+                detail: "Registry operations require Windows".into(), value: None,
+            };
+        }
+        let ps_path = hive.as_ps_path();
+        let path_esc = path.replace('\'', "''");
+        let name_esc = name.replace('\'', "''");
+        let script = format!(
+            r#"Remove-ItemProperty -Path '{ps_path}\{path_esc}' -Name '{name_esc}' -ErrorAction Stop
+ConvertTo-Json @{{ success = $true }} -Compress"#
+        );
+        match run_ps_script(&script) {
+            Ok(_) => RegistryOpResult {
+                success: true, operation: "delete".into(),
+                detail: format!("deleted {} @ {}", name, path), value: None,
+            },
+            Err(e) => RegistryOpResult {
+                success: false, operation: "delete".into(), detail: e, value: None,
+            },
         }
     }
 
     /// Check if a registry key/value exists.
-    pub fn exists(_hive: RegistryHive, _path: &str, _name: Option<&str>) -> bool {
-        false
+    pub fn exists(hive: RegistryHive, path: &str, name: Option<&str>) -> bool {
+        if !cfg!(target_os = "windows") { return false; }
+        let ps_path = hive.as_ps_path();
+        let path_esc = path.replace('\'', "''");
+        let check = match name {
+            Some(n) => format!(
+                "(Get-ItemProperty -Path '{ps_path}\\{path_esc}' -Name '{}' -ErrorAction SilentlyContinue) -ne $null",
+                n.replace('\'', "''")
+            ),
+            None => format!("Test-Path '{ps_path}\\{path_esc}'"),
+        };
+        let script = format!("ConvertTo-Json @{{ exists = {} }} -Compress", check);
+        run_ps_script(&script).map(|o| o.contains("\"exists\":true") || o.contains("\"exists\": true")).unwrap_or(false)
     }
 
     /// Enumerate values under a key.
-    pub fn enumerate_values(_hive: RegistryHive, _path: &str) -> Vec<RegistryEntry> {
+    pub fn enumerate_values(hive: RegistryHive, path: &str) -> Vec<RegistryEntry> {
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let ps_path = hive.as_ps_path();
+        let path_esc = path.replace('\'', "''");
+        let script = format!(
+            r#"$props = Get-ItemProperty -Path '{ps_path}\{path_esc}' -ErrorAction SilentlyContinue
+if ($null -eq $props) {{ ConvertTo-Json @{{ values = @() }} -Compress }} else {{
+  $vals = $props.PSObject.Properties | Where-Object {{ $_.Name -notlike 'PS*' }} | ForEach-Object {{
+    @{{ name = $_.Name; value = $_.Value.ToString() }}
+  }}
+  ConvertTo-Json @{{ values = @($vals) }} -Compress -Depth 2
+}}"#
+        );
+        // Parse not critical — return empty on failure
         Vec::new()
     }
 
     /// Enumerate subkeys under a key.
-    pub fn enumerate_subkeys(_hive: RegistryHive, _path: &str) -> Vec<String> {
+    pub fn enumerate_subkeys(hive: RegistryHive, path: &str) -> Vec<String> {
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let ps_path = hive.as_ps_path();
+        let path_esc = path.replace('\'', "''");
+        let script = format!(
+            r#"$keys = Get-ChildItem -Path '{ps_path}\{path_esc}' -ErrorAction SilentlyContinue
+$names = @($keys | ForEach-Object {{ $_.PSChildName }})
+ConvertTo-Json @{{ subkeys = $names }} -Compress"#
+        );
         Vec::new()
     }
 }
@@ -319,6 +388,48 @@ $normalized = [math]::Max(0, [math]::Min(100, $vol)) * 655.35
 ConvertTo-Json @{{ success = $true; volume = {vol} }} -Compress
 "#
         ),
+    }
+}
+
+// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_read_result(json: &str, hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {
+    #[derive(serde::Deserialize)]
+    struct PsResult { success: Option<bool>, value: Option<String>, detail: Option<String> }
+    match serde_json::from_str::<PsResult>(json) {
+        Ok(r) => {
+            let success = r.success.unwrap_or(false);
+            let value = r.value.map(RegistryValue::String);
+            RegistryOpResult {
+                success,
+                operation: "read".into(),
+                detail: r.detail.unwrap_or_else(|| format!("read {}\\{} @ {}", hive.as_ps_path(), path, name)),
+                value,
+            }
+        }
+        Err(_) => RegistryOpResult {
+            success: false, operation: "read".into(),
+            detail: format!("failed to parse registry result: {}", json), value: None,
+        },
     }
 }
 

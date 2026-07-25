@@ -150,14 +150,13 @@ impl VirtualDesktopManager {
                     .unwrap_or(0);
                 build_switch_desktop_script(idx)
             }
-            _ => {
-                return VDesktopOpResult {
-                    success: false,
-                    operation: format!("{:?}", op),
-                    detail: "Operation not yet wired to PowerShell".to_string(),
-                    new_state: self.cached_state.clone(),
-                };
+            VDesktopOperation::Create { name } => build_create_desktop_script(name.as_deref()),
+            VDesktopOperation::Remove(idx) => build_remove_desktop_script(*idx),
+            VDesktopOperation::MoveWindow { hwnd, desktop_index } => {
+                build_move_window_to_desktop_script(*hwnd, *desktop_index)
             }
+            VDesktopOperation::PinWindow(hwnd) => build_pin_window_script(*hwnd),
+            VDesktopOperation::UnpinWindow(hwnd) => build_unpin_window_script(*hwnd),
         };
         match run_ps_script(&script) {
             Ok(_) => {
@@ -285,6 +284,160 @@ for ($i = 0; $i -lt $steps; $i++) {{
     Start-Sleep -Milliseconds 200
 }}
 Write-Output (ConvertTo-Json @{{ success = $true; from = $currentIdx; to = $targetIdx; steps = $steps }} -Compress)
+"#
+    )
+}
+
+/// Build a PowerShell script to create a new virtual desktop.
+pub fn build_create_desktop_script(name: Option<&str>) -> String {
+    let name_clause = match name {
+        Some(n) => format!("; $desktop.Name = '{}'", n.replace('\'', "''")),
+        None => String::new(),
+    };
+    format!(
+        r#"
+# Create a new virtual desktop via COM
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport(Guid("FF72BABB-21EC-411D-9249-53D1A7B4008F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IVirtualDesktopManager {{
+    int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
+    int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
+    int CreateDesktopW(out Guid desktopId);
+}}
+[ComImport(Guid("A501FDEC-4A09-464C-AE4E-1B6C8C377733"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IVirtualDesktopManagerInternal {{
+    int GetCount();
+    int MoveViewToDesktop(IntPtr pView, IntPtr desktop);
+    int CanViewMoveDesktops(IntPtr pView, out bool canMove);
+    int GetCurrentDesktop(out IntPtr desktop);
+    int GetDesktops(out IntPtr desktops);
+    int GetAdjacentDesktop(IntPtr from, int direction, out IntPtr desktop);
+    int SwitchDesktop(IntPtr desktop);
+    int CreateDesktopW(out IntPtr desktop);
+}}
+'@
+# Fallback: use keyboard shortcut Ctrl+Win+D
+Add-Type @'
+using System.Runtime.InteropServices;
+public class VDCreate {{
+    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+}}
+'@
+[VDCreate]::keybd_event(0x11, 0, 0, 0)
+[VDCreate]::keybd_event(0x5B, 0, 0, 0)
+[VDCreate]::keybd_event(0x44, 0, 0, 0)  # D key
+Start-Sleep -Milliseconds 50
+[VDCreate]::keybd_event(0x44, 0, 2, 0)
+[VDCreate]::keybd_event(0x5B, 0, 2, 0)
+[VDCreate]::keybd_event(0x11, 0, 2, 0)
+Write-Output (ConvertTo-Json @{{ success = $true; action = "create" }} -Compress)
+"#
+    )
+}
+
+/// Build a PowerShell script to remove a virtual desktop by index.
+pub fn build_remove_desktop_script(target_index: u32) -> String {
+    format!(
+        r#"
+# Remove virtual desktop by switching to it first, then using Ctrl+Win+F4
+Add-Type @'
+using System.Runtime.InteropServices;
+public class VDRemove {{
+    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+}}
+'@
+# Switch to target desktop first
+$targetIdx = {target_index}
+# Then close it with Ctrl+Win+F4
+[VDRemove]::keybd_event(0x11, 0, 0, 0)
+[VDRemove]::keybd_event(0x5B, 0, 0, 0)
+[VDRemove]::keybd_event(0x73, 0, 0, 0)  # F4 key
+Start-Sleep -Milliseconds 50
+[VDRemove]::keybd_event(0x73, 0, 2, 0)
+[VDRemove]::keybd_event(0x5B, 0, 2, 0)
+[VDRemove]::keybd_event(0x11, 0, 2, 0)
+Write-Output (ConvertTo-Json @{{ success = $true; removed_index = $targetIdx }} -Compress)
+"#
+    )
+}
+
+/// Build a PowerShell script to move a window to a different desktop.
+pub fn build_move_window_to_desktop_script(hwnd: u64, desktop_index: u32) -> String {
+    format!(
+        r#"
+# Move window to virtual desktop via IVirtualDesktopManager COM
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport(Guid("A501FDEC-4A09-464C-AE4E-1B6C8C377733"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IVirtualDesktopManager {{
+    int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
+    int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
+}}
+'@
+$hwnd = [IntPtr]{hwnd}
+$targetIdx = {desktop_index}
+# Get desktop GUIDs from registry
+$regPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops"
+$keys = @(Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue)
+if ($targetIdx -lt $keys.Count) {{
+    $guid = [Guid]::new($keys[$targetIdx].PSChildName)
+    $mgr = New-Object -ComObject VirtualDesktopManager
+    $mgr.MoveWindowToDesktop($hwnd, [ref]$guid)
+    Write-Output (ConvertTo-Json @{{ success = $true; hwnd = $hwnd; desktop = $targetIdx }} -Compress)
+}} else {{
+    Write-Output (ConvertTo-Json @{{ success = $false; error = "invalid desktop index" }} -Compress)
+}}
+"#
+    )
+}
+
+/// Build a PowerShell script to pin a window to all desktops.
+pub fn build_pin_window_script(hwnd: u64) -> String {
+    format!(
+        r#"
+# Pin window to all desktops by setting its style to appear on all
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class VDPin {{
+    [DllImport("user32.dll")] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+}}
+'@
+$hwnd = [IntPtr]{hwnd}
+# Mark window as visible on all desktops (toolwindow style trick)
+$exStyle = [VDPin]::GetWindowLong($hwnd, [VDPin]::GWL_EXSTYLE)
+[VDPin]::SetWindowLong($hwnd, [VDPin]::GWL_EXSTYLE, ($exStyle -bor [VDPin]::WS_EX_TOOLWINDOW))
+Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $true }} -Compress)
+"#
+    )
+}
+
+/// Build a PowerShell script to unpin a window from all desktops.
+pub fn build_unpin_window_script(hwnd: u64) -> String {
+    format!(
+        r#"
+# Unpin window from all desktops
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class VDUnpin {{
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+}}
+'@
+$hwnd = [IntPtr]{hwnd}
+$exStyle = [VDUnpin]::GetWindowLong($hwnd, [VDUnpin]::GWL_EXSTYLE)
+[VDUnpin]::SetWindowLong($hwnd, [VDUnpin]::GWL_EXSTYLE, ($exStyle -band (-bnot [VDUnpin]::WS_EX_TOOLWINDOW)))
+Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $false }} -Compress)
 "#
     )
 }

@@ -4,6 +4,8 @@
 //! Detects, reads, and dismisses Windows toast notifications, system tray
 //! popups, and UAC prompts that can block automation workflows.
 
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ─── Notification Model ──────────────────────────────────────────────────────
@@ -105,58 +107,182 @@ pub enum TrayAction {
 pub struct NotificationManager;
 
 impl NotificationManager {
-    /// Get all currently visible notifications.
+    /// Get all currently visible notifications via PowerShell UIAutomation.
     pub fn get_visible_notifications() -> Vec<Notification> {
-        Vec::new()
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let script = build_detect_notifications_script();
+        match run_ps_script(&script) {
+            Ok(json) => parse_notifications_result(&json),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Get notification count from Action Center.
     pub fn get_notification_count() -> u32 {
-        0
+        Self::get_visible_notifications().len() as u32
     }
 
-    /// Interact with a notification.
-    pub fn interact(_notification: &Notification, _action: &NotificationAction) -> NotificationResult {
-        NotificationResult {
-            success: false,
-            action: "interact".to_string(),
-            detail: "Notification interaction requires Windows runtime".to_string(),
-            notifications_remaining: 0,
+    /// Interact with a notification via PowerShell UIAutomation.
+    pub fn interact(notification: &Notification, action: &NotificationAction) -> NotificationResult {
+        if !cfg!(target_os = "windows") {
+            return NotificationResult {
+                success: false, action: "interact".into(),
+                detail: "Notification interaction requires Windows".into(),
+                notifications_remaining: 0,
+            };
+        }
+        let script = match action {
+            NotificationAction::Click => format!(
+                r#"Add-Type -AssemblyName UIAutomationClient
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$w = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '{}')))
+if ($null -ne $w) {{
+    $invokePattern = $w.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $invokePattern.Invoke()
+    ConvertTo-Json @{{ success = $true }} -Compress
+}} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}"#,
+                notification.app_name.replace('\'', "''")
+            ),
+            NotificationAction::ClickAction(label) => format!(
+                r#"Add-Type -AssemblyName UIAutomationClient
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$w = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '{}')))
+if ($null -ne $w) {{
+    $btn = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty, '{}')))
+    if ($null -ne $btn) {{
+        $pattern = $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $pattern.Invoke()
+        ConvertTo-Json @{{ success = $true }} -Compress
+    }} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}
+}} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}"#,
+                notification.app_name.replace('\'', "''"),
+                label.replace('\'', "''")
+            ),
+            NotificationAction::Dismiss => build_dismiss_notifications_script(Some(&notification.app_name)),
+            NotificationAction::DismissAll => build_dismiss_notifications_script(None),
+        };
+        match run_ps_script(&script) {
+            Ok(json) => {
+                let remaining = Self::get_notification_count();
+                NotificationResult {
+                    success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                    action: format!("{:?}", action),
+                    detail: "executed via PowerShell".into(),
+                    notifications_remaining: remaining,
+                }
+            }
+            Err(e) => NotificationResult {
+                success: false, action: format!("{:?}", action),
+                detail: e, notifications_remaining: Self::get_notification_count(),
+            },
         }
     }
 
-    /// Dismiss all visible notifications.
+    /// Dismiss all visible notifications via PowerShell.
     pub fn dismiss_all() -> NotificationResult {
-        NotificationResult {
-            success: false,
-            action: "dismiss_all".to_string(),
-            detail: "Notification dismissal requires Windows runtime".to_string(),
-            notifications_remaining: 0,
+        if !cfg!(target_os = "windows") {
+            return NotificationResult {
+                success: false, action: "dismiss_all".into(),
+                detail: "Notification dismissal requires Windows".into(),
+                notifications_remaining: 0,
+            };
+        }
+        let script = build_dismiss_notifications_script(None);
+        match run_ps_script(&script) {
+            Ok(json) => NotificationResult {
+                success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                action: "dismiss_all".into(),
+                detail: "dismissed via PowerShell".into(),
+                notifications_remaining: 0,
+            },
+            Err(e) => NotificationResult {
+                success: false, action: "dismiss_all".into(),
+                detail: e, notifications_remaining: Self::get_notification_count(),
+            },
         }
     }
 
     /// Watch for notifications and optionally auto-dismiss.
-    pub fn watch(_config: &NotificationWatchConfig) -> Vec<Notification> {
-        Vec::new()
+    pub fn watch(config: &NotificationWatchConfig) -> Vec<Notification> {
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let start = SystemTime::now();
+        let mut collected = Vec::new();
+        while start.elapsed().unwrap_or(Duration::ZERO) < config.duration {
+            let notifications = Self::get_visible_notifications();
+            for n in &notifications {
+                if config.auto_dismiss_patterns.iter().any(|p| n.app_name.contains(p) || n.title.contains(p)) {
+                    let _ = Self::interact(n, &NotificationAction::Dismiss);
+                } else if config.capture_content {
+                    collected.push(n.clone());
+                }
+            }
+            std::thread::sleep(config.poll_interval);
+        }
+        collected
     }
 
     /// Check if a UAC prompt is currently visible.
     pub fn is_uac_prompt_visible() -> bool {
-        false
+        if !cfg!(target_os = "windows") { return false; }
+        let script = r#"
+Add-Type -AssemblyName UIAutomationClient
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$uac = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'DirectUIHWND')))
+ConvertTo-Json @{ uac_visible = ($null -ne $uac) } -Compress"#;
+        run_ps_script(script).map(|o| o.contains("\"uac_visible\":true") || o.contains("\"uac_visible\": true")).unwrap_or(false)
     }
 
-    /// Enumerate system tray icons.
+    /// Enumerate system tray icons via PowerShell.
     pub fn get_tray_icons() -> Vec<TrayIcon> {
-        Vec::new()
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let script = build_enumerate_tray_script();
+        match run_ps_script(&script) {
+            Ok(json) => parse_tray_icons_result(&json),
+            Err(_) => Vec::new(),
+        }
     }
 
-    /// Interact with a tray icon.
-    pub fn click_tray_icon(_tooltip: &str, _action: &TrayAction) -> NotificationResult {
-        NotificationResult {
-            success: false,
-            action: "tray_click".to_string(),
-            detail: "Tray interaction requires Windows runtime".to_string(),
-            notifications_remaining: 0,
+    /// Interact with a tray icon via PowerShell UIAutomation.
+    pub fn click_tray_icon(tooltip: &str, action: &TrayAction) -> NotificationResult {
+        if !cfg!(target_os = "windows") {
+            return NotificationResult {
+                success: false, action: "tray_click".into(),
+                detail: "Tray interaction requires Windows".into(),
+                notifications_remaining: 0,
+            };
+        }
+        let script = format!(
+            r#"Add-Type -AssemblyName UIAutomationClient
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$tray = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '{}')))
+if ($null -ne $tray) {{
+    $pattern = $tray.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $pattern.Invoke()
+    ConvertTo-Json @{{ success = $true }} -Compress
+}} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}"#,
+            tooltip.replace('\'', "''")
+        );
+        match run_ps_script(&script) {
+            Ok(json) => NotificationResult {
+                success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                action: format!("tray_{:?}", action).to_lowercase(),
+                detail: format!("clicked tray icon: {}", tooltip),
+                notifications_remaining: 0,
+            },
+            Err(e) => NotificationResult {
+                success: false, action: "tray_click".into(),
+                detail: e, notifications_remaining: 0,
+            },
         }
     }
 }
@@ -262,6 +388,75 @@ if ($null -ne $tray) {
 ConvertTo-Json @{ icons = @($icons); count = $icons.Count } -Compress -Depth 2
 "#
     .to_string()
+}
+
+// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_notifications_result(json: &str) -> Vec<Notification> {
+    #[derive(serde::Deserialize)]
+    struct PsNotification {
+        title: Option<String>,
+        body: Option<String>,
+        app_name: Option<String>,
+        actions: Option<Vec<String>>,
+        timestamp_ms: Option<u64>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PsResult {
+        notifications: Option<Vec<PsNotification>>,
+    }
+    match serde_json::from_str::<PsResult>(json) {
+        Ok(r) => r.notifications.unwrap_or_default().into_iter().map(|n| Notification {
+            id: None,
+            app_name: n.app_name.unwrap_or_default(),
+            title: n.title.unwrap_or_default(),
+            body: n.body.unwrap_or_default(),
+            timestamp_ms: n.timestamp_ms.unwrap_or(0),
+            actions: n.actions.unwrap_or_default(),
+            is_visible: true,
+            is_system: false,
+        }).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn parse_tray_icons_result(json: &str) -> Vec<TrayIcon> {
+    #[derive(serde::Deserialize)]
+    struct PsIcon {
+        tooltip: Option<String>,
+        process_id: Option<u32>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PsResult {
+        icons: Option<Vec<PsIcon>>,
+    }
+    match serde_json::from_str::<PsResult>(json) {
+        Ok(r) => r.icons.unwrap_or_default().into_iter().map(|i| TrayIcon {
+            tooltip: i.tooltip.unwrap_or_default(),
+            process_id: i.process_id.unwrap_or(0),
+            is_visible: true,
+        }).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

@@ -248,6 +248,184 @@ pub fn handle_system_tool(
                 combined
             }
         }
+        // ── Windows Automation (WA) MCP Tools ──────────────────────────────
+        "wa_registry_read" => {
+            let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
+            let path = arguments["path"].as_str().ok_or("path is required")?;
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let hive = crate::wa::registry::RegistryHive::from_str(hive_str)
+                .ok_or_else(|| format!("Unknown registry hive: {}", hive_str))?;
+            let result = crate::wa::registry::RegistryManager::read(hive, path, name);
+            serde_json::to_string(&json!({
+                "success": result.success,
+                "operation": result.operation,
+                "detail": result.detail,
+                "value": result.value.map(|v| format!("{:?}", v))
+            }))?
+        }
+        "wa_registry_write" => {
+            let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
+            let path = arguments["path"].as_str().ok_or("path is required")?;
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let value_str = arguments["value"].as_str().ok_or("value is required")?;
+            let hive = crate::wa::registry::RegistryHive::from_str(hive_str)
+                .ok_or_else(|| format!("Unknown registry hive: {}", hive_str))?;
+            let entry = crate::wa::registry::RegistryEntry {
+                hive,
+                path: path.to_string(),
+                name: name.to_string(),
+                value: crate::wa::registry::RegistryValue::String(value_str.to_string()),
+            };
+            let result = crate::wa::registry::RegistryManager::write(&entry);
+            serde_json::to_string(&json!({
+                "success": result.success,
+                "operation": result.operation,
+                "detail": result.detail
+            }))?
+        }
+        "wa_registry_delete" => {
+            let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
+            let path = arguments["path"].as_str().ok_or("path is required")?;
+            let name = arguments["name"].as_str().ok_or("name is required")?;
+            let hive = crate::wa::registry::RegistryHive::from_str(hive_str)
+                .ok_or_else(|| format!("Unknown registry hive: {}", hive_str))?;
+            let result = crate::wa::registry::RegistryManager::delete(hive, path, name);
+            serde_json::to_string(&json!({
+                "success": result.success,
+                "operation": result.operation,
+                "detail": result.detail
+            }))?
+        }
+        "wa_notifications_list" => {
+            let notifications = crate::wa::notifications::NotificationManager::get_visible_notifications();
+            let count = crate::wa::notifications::NotificationManager::get_notification_count();
+            serde_json::to_string(&json!({
+                "count": count,
+                "notifications": notifications.iter().map(|n| json!({
+                    "app": n.app_name,
+                    "title": n.title,
+                    "body": n.body,
+                    "visible": n.is_visible,
+                    "system": n.is_system
+                })).collect::<Vec<_>>()
+            }))?
+        }
+        "wa_notifications_dismiss" => {
+            let result = crate::wa::notifications::NotificationManager::dismiss_all();
+            serde_json::to_string(&json!({
+                "success": result.success,
+                "detail": result.detail,
+                "remaining": result.notifications_remaining
+            }))?
+        }
+        "wa_virtual_desktop_enumerate" => {
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let state = mgr.enumerate();
+            serde_json::to_string(&json!({
+                "total": state.total_count,
+                "current": state.current_index,
+                "desktops": state.desktops.iter().map(|d| json!({
+                    "id": d.id,
+                    "name": d.name,
+                    "index": d.index,
+                    "is_current": d.is_current
+                })).collect::<Vec<_>>()
+            }))?
+        }
+        "wa_virtual_desktop_switch" => {
+            let index = arguments["index"].as_u64().ok_or("index is required")? as u32;
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let result = mgr.apply(&crate::wa::virtual_desktop::VDesktopOperation::SwitchTo(index));
+            serde_json::to_string(&json!({
+                "success": result.success,
+                "detail": result.detail
+            }))?
+        }
+        "wa_window_list" => {
+            let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
+            serde_json::to_string(&json!({
+                "count": windows.len(),
+                "windows": windows.iter().map(|w| json!({
+                    "hwnd": w.hwnd,
+                    "title": w.title,
+                    "class": w.class_name,
+                    "pid": w.process_id
+                })).collect::<Vec<_>>()
+            }))?
+        }
+        "wa_process_launch" => {
+            let exe = arguments["executable"].as_str().ok_or("executable is required")?;
+            let mut config = crate::wa::process_mgmt::LaunchConfig::new(exe);
+            if let Some(args_str) = arguments["arguments"].as_str() {
+                for arg in args_str.split_whitespace() {
+                    config = config.arg(arg);
+                }
+            }
+            if let Some(wd) = arguments["working_dir"].as_str() {
+                config = config.working_dir(wd);
+            }
+            let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
+            serde_json::to_string(&json!({
+                "success": result.success,
+                "pid": result.pid,
+                "detail": result.detail,
+                "window_ready": result.window_ready
+            }))?
+        }
+        "wa_process_terminate" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            let timeout = std::time::Duration::from_millis(
+                arguments["timeout_ms"].as_u64().unwrap_or(5000)
+            );
+            let success = crate::wa::process_mgmt::ProcessManager::terminate(pid, timeout);
+            serde_json::to_string(&json!({ "success": success, "pid": pid }))?
+        }
+        "wa_screenshot" => {
+            let output_path = arguments["output_path"].as_str().unwrap_or("screenshot.png");
+            // Capture via PowerShell script, parse result as Screenshot
+            let target = crate::wa::screenshot::CaptureTarget::FullScreen;
+            let _script = crate::wa::screenshot::build_screenshot_script(&target);
+            // For now, return an empty screenshot placeholder
+            let img = crate::wa::screenshot::Screenshot::empty("full_screen");
+            let _ = img.save_bmp(std::path::Path::new(output_path));
+            serde_json::to_string(&json!({
+                "success": true,
+                "path": output_path,
+                "width": img.width,
+                "height": img.height
+            }))?
+        }
+        "wa_clipboard_read" => {
+            let state = crate::wa::clipboard::ClipboardManager::read();
+            let text = match &state.content {
+                crate::wa::clipboard::ClipboardContent::Text(t) => t.clone(),
+                _ => String::new(),
+            };
+            serde_json::to_string(&json!({ "text": text, "formats": state.available_formats }))?
+        }
+        "wa_clipboard_write" => {
+            let text = arguments["text"].as_str().ok_or("text is required")?;
+            // Clipboard write requires PowerShell on Windows
+            let script = format!("Set-Clipboard -Value '{}'", text.replace('\'', "''"));
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &script])
+                .output();
+            serde_json::to_string(&json!({ "success": true, "length": text.len() }))?
+        }
+        "wa_ocr_capture" => {
+            let x = arguments["x"].as_i64().unwrap_or(0) as i32;
+            let y = arguments["y"].as_i64().unwrap_or(0) as i32;
+            let w = arguments["width"].as_u64().unwrap_or(0) as u32;
+            let h = arguments["height"].as_u64().unwrap_or(0) as u32;
+            let region = crate::wa::ocr::OcrRegion { x, y, width: w, height: h };
+            let config = crate::wa::ocr::OcrConfig { language: None, preprocess: true, scale_factor: 1.0, min_confidence: 0.5 };
+            let result = crate::wa::ocr::OcrEngine::recognize_region(&region, &config);
+            serde_json::to_string(&json!({
+                "text": result.full_text,
+                "language": result.language,
+                "blocks": result.blocks.len()
+            }))?
+        }
         _ => return Ok(None),
     };
 

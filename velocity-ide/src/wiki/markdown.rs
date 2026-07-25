@@ -291,7 +291,12 @@ pub fn slugify_module(name: &str) -> String {
 fn link_for(target: &str, model: &WikiModel) -> String {
     if let Some(page) = find_page(model, target) {
         let rel = match page.kind {
-            WikiPageKind::File => format!("../files/{}.md", page.slug),
+            WikiPageKind::File => {
+                // Use module-aware path for file pages
+                let module = page.title.split('/').next().unwrap_or("root");
+                let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+                format!("../files/{}/{}.md", slugify_module(module), page.slug)
+            }
             WikiPageKind::Symbol => format!("../symbols/{}.md", page.slug),
             WikiPageKind::Overview => "../index.md".to_string(),
         };

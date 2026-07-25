@@ -113,12 +113,17 @@ pub struct EditorBuffer {
     pub indent_style: crate::editor::auto_indent::IndentStyle,
     /// Breakpoints set in this buffer (line numbers, 1-based).
     pub breakpoints: Vec<usize>,
+    /// Cached line index for fast line-based operations on large files.
+    line_index: Option<LineIndex>,
+    /// Line window for virtual scrolling in large files.
+    pub line_window: Option<LineWindow>,
 }
 
 impl EditorBuffer {
     pub fn new(path: Option<PathBuf>, content: String) -> Self {
         let h = fnv1a(&content);
         let indent_style = crate::editor::auto_indent::IndentStyle::detect(&content);
+        let line_count = content.lines().count().max(1);
         Self {
             path,
             saved_content: content.clone(),
@@ -132,6 +137,12 @@ impl EditorBuffer {
             fold_state: Default::default(),
             indent_style,
             breakpoints: Vec::new(),
+            line_index: None,
+            line_window: if line_count > LARGE_FILE_THRESHOLD {
+                Some(LineWindow::new(line_count, 50))
+            } else {
+                None
+            },
         }
     }
 
@@ -219,6 +230,80 @@ impl EditorBuffer {
         }
         self.diff_marks = compute_line_diff(&self.saved_content, &self.content);
         self.diff_marks_hash = h;
+    }
+
+    /// Get or build the cached line index. Rebuilds only when content changes.
+    pub fn line_index(&mut self) -> &LineIndex {
+        let needs_rebuild = match &self.line_index {
+            None => true,
+            Some(idx) => !idx.is_valid(&self.content),
+        };
+        if needs_rebuild {
+            self.line_index = Some(LineIndex::build(&self.content));
+        }
+        self.line_index.as_ref().unwrap()
+    }
+
+    /// Get the total line count using the cached index.
+    pub fn line_count(&mut self) -> usize {
+        self.line_index().line_count()
+    }
+
+    /// Get a specific line's content using the cached index. O(1) after index build.
+    pub fn get_line(&mut self, line: usize) -> Option<&str> {
+        // Build index if needed (separate statement to end mutable borrow)
+        let needs_rebuild = match &self.line_index {
+            None => true,
+            Some(idx) => !idx.is_valid(&self.content),
+        };
+        if needs_rebuild {
+            self.line_index = Some(LineIndex::build(&self.content));
+        }
+        let content_len = self.content.len();
+        let idx = self.line_index.as_ref().unwrap();
+        idx.line_range(line, content_len).map(|(start, end)| &self.content[start..end])
+    }
+
+    /// Convert byte offset to (line, col) using the cached index.
+    pub fn byte_to_line_col(&mut self, offset: usize) -> (usize, usize) {
+        self.line_index().byte_to_line_col(offset)
+    }
+
+    /// Convert (line, col) to byte offset using the cached index.
+    pub fn line_col_to_byte(&mut self, line: usize, col: usize) -> usize {
+        self.line_index().line_col_to_byte(line, col)
+    }
+
+    /// Ensure the line window is initialized and up to date.
+    pub fn ensure_line_window(&mut self, viewport_height: usize) {
+        let total = self.line_index().line_count();
+        match &mut self.line_window {
+            Some(win) => {
+                win.set_total_lines(total);
+                win.set_viewport_height(viewport_height);
+            }
+            None if total > LARGE_FILE_THRESHOLD => {
+                self.line_window = Some(LineWindow::new(total, viewport_height));
+            }
+            None => {}
+        }
+    }
+
+    /// Scroll the line window to make a specific line visible.
+    pub fn scroll_to_line(&mut self, line: usize, viewport_height: usize) {
+        self.ensure_line_window(viewport_height);
+        if let Some(win) = &mut self.line_window {
+            win.scroll_to(line);
+        }
+    }
+
+    /// Get the visible line range for virtual scrolling.
+    pub fn visible_lines(&mut self, viewport_height: usize) -> std::ops::Range<usize> {
+        self.ensure_line_window(viewport_height);
+        match &self.line_window {
+            Some(win) => win.visible_range(),
+            None => 0..self.line_index().line_count(),
+        }
     }
 }
 

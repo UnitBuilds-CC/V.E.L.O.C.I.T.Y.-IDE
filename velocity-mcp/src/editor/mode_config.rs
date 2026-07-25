@@ -460,6 +460,84 @@ impl KeyboardNavMap {
                 && b.modifiers.iter().all(|m| modifiers.contains(&m.as_str()))
         })
     }
+
+    /// Dispatch a key event to the appropriate action handler.
+    /// Returns the action string if a binding was found, None otherwise.
+    pub fn dispatch_key_event(&self, key: &str, modifiers: &[&str]) -> Option<String> {
+        self.lookup(key, modifiers).map(|b| b.action.clone())
+    }
+
+    /// Get all bindings for a specific action category (e.g., "focus", "navigate").
+    pub fn bindings_by_category(&self, prefix: &str) -> Vec<&KeyBinding> {
+        self.bindings.iter().filter(|b| b.action.starts_with(prefix)).collect()
+    }
+}
+
+/// Accessibility integration hub: coordinates screen reader, high contrast,
+/// and keyboard navigation.
+pub struct AccessibilityHub {
+    pub screen_reader: ScreenReaderSim,
+    pub contrast: HighContrastPalette,
+    pub nav_map: KeyboardNavMap,
+    pub enabled: bool,
+}
+
+impl AccessibilityHub {
+    pub fn new() -> Self {
+        Self {
+            screen_reader: ScreenReaderSim::new(),
+            contrast: HighContrastPalette::dark(),
+            nav_map: KeyboardNavMap::default_a11y_bindings(),
+            enabled: false,
+        }
+    }
+
+    /// Enable accessibility mode with dark high-contrast theme.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+        self.screen_reader.enabled = true;
+        self.contrast = HighContrastPalette::dark();
+    }
+
+    /// Disable accessibility mode.
+    pub fn disable(&mut self) {
+        self.enabled = false;
+        self.screen_reader.enabled = false;
+    }
+
+    /// Toggle between dark and light high-contrast themes.
+    pub fn toggle_contrast(&mut self) {
+        if self.contrast.background == [0, 0, 0] {
+            self.contrast = HighContrastPalette::light();
+        } else {
+            self.contrast = HighContrastPalette::dark();
+        }
+    }
+
+    /// Process a keyboard event through the navigation map.
+    /// Returns the action if handled, or None if not an a11y binding.
+    pub fn handle_key_event(&self, key: &str, modifiers: &[&str]) -> Option<String> {
+        if !self.enabled { return None; }
+        self.nav_map.dispatch_key_event(key, modifiers)
+    }
+
+    /// Build the accessibility tree from UI elements.
+    pub fn build_accessibility_tree(&mut self, elements: Vec<A11yElement>) {
+        self.screen_reader.elements = elements;
+        self.screen_reader.focus_index = 0;
+        self.screen_reader.speech_buffer.clear();
+    }
+
+    /// Get the current contrast ratio for the theme.
+    pub fn current_contrast_ratio(&self) -> f64 {
+        HighContrastPalette::contrast_ratio(self.contrast.background, self.contrast.foreground)
+    }
+}
+
+impl Default for AccessibilityHub {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
