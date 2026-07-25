@@ -1,9 +1,17 @@
+pub mod advanced_input;
 pub mod model;
+pub mod multi_monitor;
 pub mod nda;
 pub mod platform;
+pub mod process_mgmt;
+pub mod recording;
 pub mod runtime;
+pub mod screenshot;
 pub mod selector;
 pub mod storage;
+pub mod uia_ffi;
+pub mod virtual_desktop;
+pub mod window_mgmt;
 pub mod windows;
 
 pub use model::{
