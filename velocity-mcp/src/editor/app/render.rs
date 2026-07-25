@@ -49,25 +49,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     egui::Frame::new().inner_margin(egui::Margin::same(4)).show(
                         ui,
                         |ui: &mut egui::Ui| {
-                            // Breadcrumbs bar
-                            if self.app.show_breadcrumbs {
-                                if let Some(file_path) = path.as_deref() {
-                                    let segments = crate::editor::breadcrumbs::build_breadcrumbs(
-                                        &self.app.workspace_root,
-                                        file_path,
-                                        None,
-                                    );
-                                    ui.horizontal(|ui| {
-                                        for (i, seg) in segments.iter().enumerate() {
-                                            if i > 0 {
-                                                ui.label(">");
-                                            }
-                                            let _ = ui.small_button(&seg.label);
-                                        }
-                                    });
-                                    ui.separator();
-                                }
-                            }
+                            // Breadcrumbs are rendered in the dedicated top
+                            // panel (see ui_render.rs breadcrumb strip) so we
+                            // no longer duplicate them inside each editor tab.
 
                             // Find/Replace overlay
                             if buf.find_replace.visible {

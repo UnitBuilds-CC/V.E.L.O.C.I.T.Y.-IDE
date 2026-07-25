@@ -292,10 +292,10 @@ mod tests {
 
     #[test]
     fn lex_float_literal() {
-        let src = "3.14";
+        let src = "1.23";
         let mut lexer = NdaLexer::new(src);
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens[0].token, Token::FloatLit(3.14));
+        assert_eq!(tokens[0].token, Token::FloatLit(1.23));
     }
 
     #[test]

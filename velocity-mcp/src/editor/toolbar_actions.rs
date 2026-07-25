@@ -38,7 +38,11 @@ impl ToolbarAction {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Render the mode-specific toolbar buttons. Returns the `id` of any button
-/// that was clicked this frame, or `None`.
+/// that was clicked this frame, or None.
+///
+/// Uses icon-only buttons with tooltips so the toolbar stays compact even
+/// when a mode has many actions.  The full label and shortcut appear on
+/// hover, keeping the bar visually light.
 pub fn render_mode_toolbar(
     ui: &mut egui::Ui,
     actions: &[ToolbarAction],
@@ -49,16 +53,14 @@ pub fn render_mode_toolbar(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for action in actions {
-            let text = egui::RichText::new(action.label)
-                .size(11.0)
+            let icon_text = egui::RichText::new(action.icon)
+                .size(13.0)
                 .color(palette.text);
-            let btn = ui.small_button(text);
+            let btn = ui.small_button(icon_text);
             if btn.clicked() {
                 clicked = Some(action.id);
             }
-            if btn.hovered() {
-                btn.on_hover_text(action.tooltip());
-            }
+            btn.on_hover_text(action.tooltip());
         }
     });
 

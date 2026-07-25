@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use crate::editor::agent_ui_render::{render_agent_metrics, RenderSnapshot};
@@ -1220,33 +1220,96 @@ impl VelocityApp {
             .map(String::from)
             .unwrap_or_default();
 
+        let palette = self.palette();
+        let workspace_root = self.workspace_root.clone();
+
         egui::Window::new("Open File")
             .open(&mut open)
-            .resizable(false)
+            .resizable(true)
             .collapsible(false)
+            .default_size((480.0, 360.0))
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label("File path (relative to workspace):");
-                if ui.text_edit_singleline(&mut path_string).changed() {
-                    self.pending_open_path = Some(PathBuf::from(&path_string));
-                }
                 ui.horizontal(|ui| {
-                    if ui.button("Open").clicked() {
-                        let p = self.workspace_root.join(&path_string);
-                        if p.exists() && p.is_file() {
-                            self.open_editor(Some(p));
-                            self.pending_open_path = None;
-                        } else {
-                            self.status_message = format!("File not found: {}", p.display());
+                    // Left: file tree browser
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Workspace").size(9.0).strong().color(palette.text_muted));
+                        ui.add_space(2.0);
+                        let tree = build_file_tree(&workspace_root);
+                        egui::ScrollArea::vertical().max_width(220.0).show(ui, |ui| {
+                            Self::render_file_tree_node(ui, &tree, &workspace_root, &mut path_string, palette);
+                        });
+                    });
+                    ui.separator();
+
+                    // Right: text input + actions
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("File path (relative to workspace):").size(9.0).color(palette.text_muted));
+                        ui.add_space(2.0);
+                        if ui.add(egui::TextEdit::singleline(&mut path_string).desired_width(200.0)).changed() {
+                            self.pending_open_path = Some(PathBuf::from(&path_string));
                         }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.pending_open_path = None;
-                    }
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Open").clicked() {
+                                let p = workspace_root.join(&path_string);
+                                if p.exists() && p.is_file() {
+                                    self.open_editor(Some(p));
+                                    self.pending_open_path = None;
+                                } else {
+                                    self.status_message = format!("File not found: {}", p.display());
+                                }
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.pending_open_path = None;
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("Browse the tree on the left\nor type a path above.").size(8.0).color(palette.text_muted.gamma_multiply(0.7)));
+                    });
                 });
             });
         if !open {
             self.pending_open_path = None;
+        }
+    }
+
+    /// Recursively render a file tree node in the open-file dialog.
+    fn render_file_tree_node(
+        ui: &mut egui::Ui,
+        node: &FileNode,
+        workspace_root: &Path,
+        path_string: &mut String,
+        palette: crate::editor::theme::IdePalette,
+    ) {
+        if node.is_dir {
+            if let Some(children) = &node.children {
+                let dir_name = if node.path == workspace_root {
+                    workspace_root.file_name().unwrap_or_default().to_string_lossy().to_string()
+                } else {
+                    node.name.clone()
+                };
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(format!("▸ {}", dir_name)).size(10.0).color(palette.text)
+                )
+                .default_open(node.path == workspace_root)
+                .show(ui, |ui| {
+                    for child in children {
+                        Self::render_file_tree_node(ui, child, workspace_root, path_string, palette);
+                    }
+                });
+            }
+        } else {
+            let rel = node.path.strip_prefix(workspace_root)
+                .unwrap_or(&node.path)
+                .to_string_lossy()
+                .to_string();
+            let icon = crate::editor::search::icon_for_path(&node.path);
+            if ui.add(egui::Button::new(
+                egui::RichText::new(format!("{} {}", icon, rel)).size(9.0).color(palette.text)
+            ).frame(false)).clicked() {
+                *path_string = rel;
+            }
         }
     }
 
@@ -1652,29 +1715,18 @@ impl eframe::App for VelocityApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(if self.right_sidebar_visible { "◧" } else { "◨" })
-                        .on_hover_text("Toggle history panel")
+                        .on_hover_text("Toggle right panel  (Ctrl+Shift+E)")
                         .clicked()
                     {
                         self.toggle_right_sidebar();
                     }
                     if ui
                         .small_button(if self.left_sidebar_visible { "◨" } else { "◧" })
-                        .on_hover_text("Toggle sidebar")
+                        .on_hover_text("Toggle sidebar  (Ctrl+E)")
                         .clicked()
                     {
                         self.toggle_left_sidebar();
                     }
-
-                    let model_name = if self.selected_model.is_empty() {
-                        "default"
-                    } else {
-                        &self.selected_model
-                    };
-                    ui.label(
-                        egui::RichText::new(format!("{} / {}", self.provider.label(), model_name))
-                            .small()
-                            .color(palette.accent),
-                    );
                 });
             });
         });
@@ -2040,25 +2092,31 @@ impl eframe::App for VelocityApp {
                         self.smart_sidebar.add_diagnostic(0, true, "workspace", 0, 0, "Build errors require attention");
                     }
 
-                    // Active changes section
+                    // ── Active changes (collapsible) ──
                     if let Some(change_preview) = &active_change_preview {
                         self.smart_sidebar.add_quick_action(0, "Review current changes", &change_preview.file_label, 0);
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(&change_preview.file_label).strong().color(palette.warning));
-                                ui.label(egui::RichText::new(format!("+{} -{}", change_preview.added_lines, change_preview.removed_lines)).small().color(palette.text_muted));
+                        let changes_header = if self.right_changes_collapsed { "▸ Changes" } else { "▾ Changes" };
+                        if ui.add(egui::Button::new(egui::RichText::new(changes_header).size(10.0).strong().color(palette.warning)).frame(false)).clicked() {
+                            self.right_changes_collapsed = !self.right_changes_collapsed;
+                        }
+                        if !self.right_changes_collapsed {
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(&change_preview.file_label).strong().color(palette.warning));
+                                    ui.label(egui::RichText::new(format!("+{} -{}", change_preview.added_lines, change_preview.removed_lines)).small().color(palette.text_muted));
+                                });
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("Save").clicked() { self.save_active(); }
+                                    if ui.small_button("Revert").clicked() { self.revert_active_from_disk(); }
+                                    if ui.small_button("Stage").clicked() { self.stage_active_file(); }
+                                    if ui.small_button("Diff").clicked() { self.show_full_diff = true; }
+                                });
                             });
-                            ui.horizontal(|ui| {
-                                if ui.small_button("Save").clicked() { self.save_active(); }
-                                if ui.small_button("Revert").clicked() { self.revert_active_from_disk(); }
-                                if ui.small_button("Stage").clicked() { self.stage_active_file(); }
-                                if ui.small_button("Diff").clicked() { self.show_full_diff = true; }
-                            });
-                        });
+                        }
                         ui.separator();
                     }
 
-                    // Symbol context section
+                    // ── Symbol context (collapsible) ──
                     // Recompute callers/deps only when the active symbol changes; the
                     // site map itself is cached (TTL) so we never re-read index.json per frame.
                     if self.cached_relation_symbol != active_symbol {
@@ -2093,39 +2151,47 @@ impl eframe::App for VelocityApp {
                     }
                     if let Some(symbol) = &active_symbol {
                         self.smart_sidebar.add_symbol(0, symbol, "active-buffer", cursor_pos.map(|(line, _)| line as u32).unwrap_or(0), 0);
-                        ui.label(egui::RichText::new(format!("{}()", symbol)).strong().color(palette.accent));
-
-                        if !self.cached_callers.is_empty() {
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(format!("Callers ({})", self.cached_callers.len()))
-                                    .small()
-                                    .strong()
-                                    .color(palette.text_muted),
-                            );
-                            for name in self.cached_callers.clone() {
-                                if ui
-                                    .link(egui::RichText::new(format!("→ {}", name)).size(11.0))
-                                    .clicked()
-                                {
-                                    self.jump_to_symbol_name(&name);
+                        let sym_header = if self.right_symbol_collapsed {
+                            format!("▸ {}()", symbol)
+                        } else {
+                            format!("▾ {}()", symbol)
+                        };
+                        if ui.add(egui::Button::new(egui::RichText::new(&sym_header).size(10.0).strong().color(palette.accent)).frame(false)).clicked() {
+                            self.right_symbol_collapsed = !self.right_symbol_collapsed;
+                        }
+                        if !self.right_symbol_collapsed {
+                            if !self.cached_callers.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!("Callers ({})", self.cached_callers.len()))
+                                        .small()
+                                        .strong()
+                                        .color(palette.text_muted),
+                                );
+                                for name in self.cached_callers.clone() {
+                                    if ui
+                                        .link(egui::RichText::new(format!("→ {}", name)).size(11.0))
+                                        .clicked()
+                                    {
+                                        self.jump_to_symbol_name(&name);
+                                    }
                                 }
                             }
-                        }
-                        if !self.cached_deps.is_empty() {
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(format!("Dependencies ({})", self.cached_deps.len()))
-                                    .small()
-                                    .strong()
-                                    .color(palette.text_muted),
-                            );
-                            for name in self.cached_deps.clone() {
-                                if ui
-                                    .link(egui::RichText::new(format!("→ {}", name)).size(11.0))
-                                    .clicked()
-                                {
-                                    self.jump_to_symbol_name(&name);
+                            if !self.cached_deps.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!("Dependencies ({})", self.cached_deps.len()))
+                                        .small()
+                                        .strong()
+                                        .color(palette.text_muted),
+                                );
+                                for name in self.cached_deps.clone() {
+                                    if ui
+                                        .link(egui::RichText::new(format!("→ {}", name)).size(11.0))
+                                        .clicked()
+                                    {
+                                        self.jump_to_symbol_name(&name);
+                                    }
                                 }
                             }
                         }
@@ -2157,6 +2223,11 @@ impl eframe::App for VelocityApp {
 
         let branch = get_git_branch(&self.workspace_root);
         let build_ok = self.build_errors_count == 0;
+        let model_name = if self.selected_model.is_empty() {
+            "default"
+        } else {
+            &self.selected_model
+        };
         crate::editor::status_bar::StatusBar::show(
             ui,
             palette,
@@ -2169,6 +2240,8 @@ impl eframe::App for VelocityApp {
                 self.appearance.profile.glyph(),
                 self.appearance.profile.short_label()
             ),
+            self.provider.label(),
+            model_name,
         );
 
         egui::CentralPanel::default().show(ui, |ui| {

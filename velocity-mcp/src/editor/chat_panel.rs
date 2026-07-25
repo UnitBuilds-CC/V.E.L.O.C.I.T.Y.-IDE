@@ -148,6 +148,8 @@ fn render_header(
     palette: IdePalette,
 ) -> bool {
     let mut preferences_changed = false;
+
+    // Row 1: title + status indicator
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("Chat")
@@ -164,33 +166,41 @@ fn render_header(
         };
         ui.label(egui::RichText::new(label).size(12.0).color(color));
 
-        if state.agent_active
-            && ui
-                .small_button("Interrupt")
-                .on_hover_text("Interrupt current agent task")
-                .clicked()
-            {
-                let _ = agent_tx.send(UiToAgentMessage::CancelTask);
-            }
-
+        // Right-aligned secondary actions (compact, less prominent)
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button("Clear")
+                .small_button(egui::RichText::new("Clear").size(10.0))
                 .on_hover_text("Clear chat & reset context")
                 .clicked()
             {
                 state.messages.clear();
                 let _ = agent_tx.send(UiToAgentMessage::ClearHistory);
             }
-            if ui
-                .small_button(if state.show_thoughts { "Thoughts: on" } else { "Thoughts: off" })
-                .clicked()
+            if state.agent_active
+                && ui
+                    .small_button(egui::RichText::new("Interrupt").size(10.0))
+                    .on_hover_text("Interrupt current agent task")
+                    .clicked()
             {
-                state.show_thoughts = !state.show_thoughts;
-                preferences_changed = true;
+                let _ = agent_tx.send(UiToAgentMessage::CancelTask);
             }
         });
     });
+
+    // Row 2: toggle options (visually separated, less cluttered)
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let thoughts_label = if state.show_thoughts { "Show reasoning: on" } else { "Show reasoning: off" };
+        if ui
+            .add(egui::Button::new(egui::RichText::new(thoughts_label).size(9.0))
+                .frame(false))
+            .clicked()
+        {
+            state.show_thoughts = !state.show_thoughts;
+            preferences_changed = true;
+        }
+    });
+
     preferences_changed
 }
 

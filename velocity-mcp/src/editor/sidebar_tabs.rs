@@ -94,6 +94,9 @@ impl SidebarTab {
 
 /// Render the tab strip for the left sidebar, returning the index of the
 /// selected tab. `active` is the current selection index.
+///
+/// Uses icon-only buttons with tooltips to save horizontal space — the
+/// sidebar is narrow (180–420 px) so text labels would wrap or truncate.
 pub fn render_sidebar_tab_strip(
     ui: &mut egui::Ui,
     tabs: &[SidebarTab],
@@ -103,18 +106,22 @@ pub fn render_sidebar_tab_strip(
     let mut selected = active.min(tabs.len().saturating_sub(1));
 
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
         for (i, tab) in tabs.iter().enumerate() {
             let is_active = i == selected;
-            let text = egui::RichText::new(tab.label())
-                .size(10.0)
+            let icon_text = egui::RichText::new(tab.icon())
+                .size(14.0)
                 .color(if is_active { palette.accent } else { palette.text_muted });
 
-            let btn = ui.selectable_label(is_active, text);
-            if btn.clicked() {
+            let resp = ui.selectable_label(is_active, icon_text);
+            let tooltip = format!("{}  {}", tab.icon(), tab.label());
+            let resp = if is_active {
+                resp.on_hover_text(format!("{tooltip}  (active)"))
+            } else {
+                resp.on_hover_text(&tooltip)
+            };
+            if resp.clicked() {
                 selected = i;
-            }
-            if btn.hovered() {
-                btn.on_hover_text(format!("{} {}", tab.icon(), tab.label()));
             }
         }
     });
@@ -213,7 +220,14 @@ pub fn render_git_content(
 
     // Changed files
     if data.changed_files.is_empty() {
-        ui.label(egui::RichText::new("Working tree clean").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("✔").size(18.0).color(palette.success));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Working tree clean").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Changes will appear here when you edit files.").size(8.0).color(palette.text_muted.gamma_multiply(0.7)));
+        });
     } else {
         ui.label(egui::RichText::new(format!("Changes ({})", data.changed_files.len())).size(10.0).strong().color(palette.warning));
         egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
@@ -239,9 +253,14 @@ pub fn render_flows_content(
     ui.label(egui::RichText::new("⧉ Automation Flows").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if flows.is_empty() {
-        ui.label(egui::RichText::new("No flows recorded yet.").size(9.0).color(palette.text_muted));
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new("Record a new flow with the toolbar ● button.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("⧉").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No flows recorded yet.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Press the ● Record button in the toolbar to capture one.").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
             for flow in flows {
@@ -269,8 +288,14 @@ pub fn render_targets_content(
     ui.label(egui::RichText::new("◎ Site Targets").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if targets.is_empty() {
-        ui.label(egui::RichText::new("No targets registered.").size(9.0).color(palette.text_muted));
-        ui.label(egui::RichText::new("Add targets via the orchestrator or .velocity_projects.nda").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("◎").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No targets registered.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Add projects to .velocity_projects.nda to see them here.").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
             for target in targets {
@@ -300,8 +325,14 @@ pub fn render_recordings_content(
     ui.label(egui::RichText::new("● Recordings").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if recordings.is_empty() {
-        ui.label(egui::RichText::new("No recordings saved.").size(9.0).color(palette.text_muted));
-        ui.label(egui::RichText::new("Press Record in the toolbar to capture a flow.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("●").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No recordings saved.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Click the ● Record button in the toolbar to start.").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
             for (i, name) in recordings.iter().enumerate() {
@@ -326,7 +357,14 @@ pub fn render_logs_content(
     ui.label(egui::RichText::new(format!("{} events in timeline", event_count)).size(9.0).color(palette.text_muted));
     ui.add_space(4.0);
     if command_output.is_empty() {
-        ui.label(egui::RichText::new("No recent output.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("≡").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No recent output.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Run a build or task to see execution logs here.").size(8.0).color(palette.text_muted.gamma_multiply(0.7)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
             ui.label(egui::RichText::new(command_output).size(9.0).monospace().color(palette.text));
@@ -343,8 +381,14 @@ pub fn render_agents_content(
     ui.label(egui::RichText::new("⊙ Agent Roster").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if agents.is_empty() {
-        ui.label(egui::RichText::new("No active agents.").size(9.0).color(palette.text_muted));
-        ui.label(egui::RichText::new("Deploy agents via the toolbar.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("⊙").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No active agents.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Deploy an agent from Mission Control mode (Ctrl+3).").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
             for agent in agents {
@@ -385,7 +429,14 @@ pub fn render_queue_content(
     ui.label(egui::RichText::new("⊞ Task Queue").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if queue.is_empty() {
-        ui.label(egui::RichText::new("Queue empty — all tasks dispatched.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("⊞").size(18.0).color(palette.success));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Queue empty — all tasks dispatched.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("New tasks appear here when agents are working.").size(8.0).color(palette.text_muted.gamma_multiply(0.7)));
+        });
     } else {
         ui.label(egui::RichText::new(format!("{} pending", queue.len())).size(9.0).color(palette.warning));
         ui.add_space(4.0);
@@ -473,8 +524,14 @@ pub fn render_favorites_content(
     ui.label(egui::RichText::new("★ Favorites").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if favorites.is_empty() {
-        ui.label(egui::RichText::new("No favorites pinned.").size(9.0).color(palette.text_muted));
-        ui.label(egui::RichText::new("Right-click a file to add it.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("★").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No favorites pinned.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Open a file and click ★ to pin it for quick access.").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
             for path in favorites {
@@ -500,8 +557,14 @@ pub fn render_bookmarks_content(
     ui.label(egui::RichText::new("⊛ Bookmarks").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if bookmarks.is_empty() {
-        ui.label(egui::RichText::new("No bookmarks set.").size(9.0).color(palette.text_muted));
-        ui.label(egui::RichText::new("Use Ctrl+Shift+B to bookmark a line.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("⊛").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No bookmarks set.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Use Ctrl+Shift+B while editing to bookmark a line.").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
             for bm in bookmarks {
@@ -524,8 +587,14 @@ pub fn render_audit_content(
     ui.label(egui::RichText::new("♿ Accessibility Audit").size(11.0).strong().color(palette.text));
     ui.add_space(4.0);
     if findings.is_empty() {
-        ui.label(egui::RichText::new("No audit findings.").size(9.0).color(palette.text_muted));
-        ui.label(egui::RichText::new("Run an audit via the toolbar to check WCAG compliance.").size(9.0).color(palette.text_muted));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("♿").size(18.0).color(palette.text_muted.gamma_multiply(0.6)));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("No audit findings.").size(9.0).color(palette.text_muted));
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Run an audit via the toolbar ✓ button to check WCAG compliance.").size(8.0).color(palette.accent.gamma_multiply(0.8)));
+        });
     } else {
         ui.label(egui::RichText::new(format!("{} issue(s) found", findings.len())).size(10.0).color(palette.warning));
         ui.add_space(4.0);

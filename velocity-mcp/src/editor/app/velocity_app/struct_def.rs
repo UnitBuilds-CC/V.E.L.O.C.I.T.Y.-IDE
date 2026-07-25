@@ -189,6 +189,10 @@ pub struct VelocityApp {
     pub agent_ui_state: AgentUiState,
     pub task_timeline: TTState,
     pub smart_sidebar: SmartSidebarState,
+    /// Whether the "Active changes" section in the right sidebar is collapsed.
+    pub right_changes_collapsed: bool,
+    /// Whether the "Symbol context" section in the right sidebar is collapsed.
+    pub right_symbol_collapsed: bool,
     pub bottom_panel_state: BottomPanelState,
 
     /// Pinned favorite files (Accessibility mode).
@@ -737,6 +741,8 @@ impl VelocityApp {
             agent_ui_state: AgentUiState::default(),
             task_timeline: TTState::default(),
             smart_sidebar: SmartSidebarState::default(),
+            right_changes_collapsed: false,
+            right_symbol_collapsed: false,
             bottom_panel_state: BottomPanelState::default(),
             favorite_files: Vec::new(),
             bookmarks: Vec::new(),
