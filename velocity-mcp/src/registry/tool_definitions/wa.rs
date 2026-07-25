@@ -497,5 +497,174 @@ pub fn get_wa_tools() -> Vec<Tool> {
                 "properties": {}
             }),
         },
+        Tool {
+            name: "wa_trigger_fire".to_string(),
+            description: "Manually fire a registered trigger by ID, executing its action script immediately.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "triggerId": { "type": "string", "description": "The ID of the trigger to fire." }
+                },
+                "required": ["triggerId"]
+            }),
+        },
+        Tool {
+            name: "wa_trigger_remove".to_string(),
+            description: "Remove a registered automation trigger by ID.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "triggerId": { "type": "string", "description": "The ID of the trigger to remove." }
+                },
+                "required": ["triggerId"]
+            }),
+        },
+        // ─── Recovery Tools ─────────────────────────────────────────────────────
+        Tool {
+            name: "wa_recovery_set_policy".to_string(),
+            description: "Configure the retry/recovery policy for WA operations (max retries, backoff, circuit breaker).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "maxRetries": { "type": "integer", "description": "Maximum retry attempts. Default 3." },
+                    "baseDelayMs": { "type": "integer", "description": "Base delay between retries in ms. Default 500." },
+                    "circuitBreakerThreshold": { "type": "integer", "description": "Failures before circuit opens. Default 5." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_recovery_get_status".to_string(),
+            description: "Get the current recovery/circuit-breaker status for WA operations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        // ─── Event Subscription Tools ───────────────────────────────────────────
+        Tool {
+            name: "wa_event_subscribe".to_string(),
+            description: "Subscribe to Windows UI Automation events (window opened, element changed, structure changed).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "eventKind": { "type": "string", "enum": ["window_opened", "window_closed", "element_focus", "element_value_changed", "structure_changed"], "description": "Type of UIA event." },
+                    "processId": { "type": "integer", "description": "Optional PID filter." },
+                    "timeoutMs": { "type": "integer", "description": "Listen duration in ms. Default 5000." }
+                },
+                "required": ["eventKind"]
+            }),
+        },
+        Tool {
+            name: "wa_event_poll".to_string(),
+            description: "Poll buffered UIA events that have been captured since last poll.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "maxEvents": { "type": "integer", "description": "Maximum events to return. Default 20." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_event_unsubscribe".to_string(),
+            description: "Unsubscribe from UIA events and stop the listener.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        // ─── File Dialog Tools ──────────────────────────────────────────────────
+        Tool {
+            name: "wa_file_dialog_open".to_string(),
+            description: "Interact with an open file dialog: set the file path and confirm.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "filePath": { "type": "string", "description": "Full path to set in the file dialog." },
+                    "processId": { "type": "integer", "description": "Optional PID of the process owning the dialog." }
+                },
+                "required": ["filePath"]
+            }),
+        },
+        Tool {
+            name: "wa_file_dialog_save".to_string(),
+            description: "Interact with a save file dialog: set the file path and confirm.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "filePath": { "type": "string", "description": "Full path to set in the save dialog." },
+                    "processId": { "type": "integer", "description": "Optional PID of the process owning the dialog." }
+                },
+                "required": ["filePath"]
+            }),
+        },
+        // ─── Virtual Desktop Extended Tools ─────────────────────────────────────
+        Tool {
+            name: "wa_vdesktop_create".to_string(),
+            description: "Create a new Windows virtual desktop.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Optional name for the new desktop (Windows 11)." }
+                }
+            }),
+        },
+        Tool {
+            name: "wa_vdesktop_remove".to_string(),
+            description: "Remove a Windows virtual desktop by index.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "index": { "type": "integer", "description": "Index of the desktop to remove." }
+                },
+                "required": ["index"]
+            }),
+        },
+        Tool {
+            name: "wa_vdesktop_move_window".to_string(),
+            description: "Move a window to a different virtual desktop.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hwnd": { "type": "integer", "description": "Window handle to move." },
+                    "targetIndex": { "type": "integer", "description": "Target desktop index." }
+                },
+                "required": ["hwnd", "targetIndex"]
+            }),
+        },
+        // ─── Window Tiling Tool ─────────────────────────────────────────────────
+        Tool {
+            name: "wa_window_tile".to_string(),
+            description: "Tile visible windows in a grid layout (2-column, 3-column, or custom).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "columns": { "type": "integer", "description": "Number of columns in the tile grid. Default 2." },
+                    "monitor": { "type": "integer", "description": "Monitor index to tile on. Default 0 (primary)." }
+                }
+            }),
+        },
+        // ─── Browser Bridge Tools ───────────────────────────────────────────────
+        Tool {
+            name: "wa_browser_navigate".to_string(),
+            description: "Navigate the browser bridge to a URL (launches browser if needed).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "URL to navigate to." },
+                    "browser": { "type": "string", "enum": ["chrome", "edge", "firefox"], "description": "Browser to use. Default edge." }
+                },
+                "required": ["url"]
+            }),
+        },
+        Tool {
+            name: "wa_browser_screenshot".to_string(),
+            description: "Capture a screenshot of the browser window via the bridge.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "outputPath": { "type": "string", "description": "Path to save the screenshot. Default 'browser_screenshot.png'." }
+                }
+            }),
+        },
     ]
 }

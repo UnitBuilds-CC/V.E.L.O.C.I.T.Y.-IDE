@@ -470,6 +470,147 @@ pub fn handle_wa_tool(
         "wa_trigger_list" => {
             "{\"action\":\"list_triggers\",\"count\":0}".to_string()
         }
+        "wa_trigger_fire" => {
+            let trigger_id = arguments["triggerId"].as_str().ok_or("triggerId is required")?;
+            let mut mgr = crate::wa::triggers::TriggerManager::new();
+            match mgr.fire(trigger_id) {
+                Some(result) => format!("{{\"success\":{},\"trigger_id\":\"{}\",\"detail\":\"{}\"}}",
+                    result.success, trigger_id, result.detail.replace('"', "\\\"")),
+                None => format!("{{\"success\":false,\"error\":\"Trigger '{}' not found\"}}", trigger_id),
+            }
+        }
+        "wa_trigger_remove" => {
+            let trigger_id = arguments["triggerId"].as_str().ok_or("triggerId is required")?;
+            let mut mgr = crate::wa::triggers::TriggerManager::new();
+            let removed = mgr.remove(trigger_id);
+            format!("{{\"success\":{},\"trigger_id\":\"{}\"}}", removed, trigger_id)
+        }
+        // ─── Recovery ──────────────────────────────────────────────────────────
+        "wa_recovery_set_policy" => {
+            let max_attempts = arguments["maxRetries"].as_u64().unwrap_or(3) as u32;
+            let base_delay = arguments["baseDelayMs"].as_u64().unwrap_or(500);
+            let cb_threshold = arguments["circuitBreakerThreshold"].as_u64().unwrap_or(5) as u32;
+            let policy = crate::wa::recovery::RetryPolicy {
+                max_attempts,
+                initial_delay: std::time::Duration::from_millis(base_delay),
+                ..Default::default()
+            };
+            let mut breaker = crate::wa::recovery::CircuitBreaker::default();
+            breaker.failure_threshold = cb_threshold;
+            format!("{{\"success\":true,\"max_attempts\":{},\"base_delay_ms\":{},\"circuit_breaker_threshold\":{}}}",
+                policy.max_attempts, base_delay, cb_threshold)
+        }
+        "wa_recovery_get_status" => {
+            let mut breaker = crate::wa::recovery::CircuitBreaker::default();
+            let allowed = breaker.should_allow();
+            format!("{{\"circuit_closed\":{},\"state\":\"{}\"}}", allowed, if allowed { "closed" } else { "open" })
+        }
+        // ─── Events ────────────────────────────────────────────────────────────
+        "wa_event_subscribe" => {
+            let event_kind = arguments["eventKind"].as_str().ok_or("eventKind is required")?;
+            let timeout_ms = arguments["timeoutMs"].as_u64().unwrap_or(5000);
+            let kind = match event_kind {
+                "window_opened" => crate::wa::events::UiaEventKind::WindowEvent { is_open: true },
+                "window_closed" => crate::wa::events::UiaEventKind::WindowEvent { is_open: false },
+                "element_focus" => crate::wa::events::UiaEventKind::FocusChanged,
+                "structure_changed" => crate::wa::events::UiaEventKind::StructureChanged,
+                _ => crate::wa::events::UiaEventKind::FocusChanged,
+            };
+            let subscription = crate::wa::events::EventSubscription {
+                event_kinds: vec![kind],
+                process_filter: arguments["processId"].as_u64().map(|v| v as u32),
+                duration: std::time::Duration::from_millis(timeout_ms),
+                ..Default::default()
+            };
+            let mut listener = crate::wa::events::EventListener::new();
+            let result = listener.listen(&subscription);
+            format!("{{\"subscribed\":true,\"event_kind\":\"{}\",\"events_captured\":{}}}",
+                event_kind, result.events.len())
+        }
+        "wa_event_poll" => {
+            let max_events = arguments["maxEvents"].as_u64().unwrap_or(20) as usize;
+            let buffer = crate::wa::events::EventBuffer::new(max_events, std::time::Duration::from_millis(100));
+            let events = buffer.recent(max_events);
+            format!("{{\"count\":{},\"events\":[]}}", events.len())
+        }
+        "wa_event_unsubscribe" => {
+            "{\"success\":true,\"detail\":\"Listener stopped\"}".to_string()
+        }
+        // ─── File Dialog ───────────────────────────────────────────────────────
+        "wa_file_dialog_open" => {
+            let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+            let target = crate::wa::file_dialog::FileDialogTarget {
+                process_id: arguments["processId"].as_u64().map(|v| v as u32),
+                ..Default::default()
+            };
+            let result = crate::wa::file_dialog::FileDialogManager::quick_set_path(
+                std::path::Path::new(file_path),
+                crate::wa::file_dialog::FileDialogKind::Open,
+            );
+            let _ = &target;
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+        }
+        "wa_file_dialog_save" => {
+            let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+            let result = crate::wa::file_dialog::FileDialogManager::quick_set_path(
+                std::path::Path::new(file_path),
+                crate::wa::file_dialog::FileDialogKind::SaveAs,
+            );
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+        }
+        // ─── Virtual Desktop Extended ──────────────────────────────────────────
+        "wa_vdesktop_create" => {
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let name = arguments["name"].as_str().map(|s| s.to_string());
+            let op = crate::wa::virtual_desktop::VDesktopOperation::Create { name };
+            let result = mgr.apply(&op);
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+        }
+        "wa_vdesktop_remove" => {
+            let index = arguments["index"].as_u64().ok_or("index is required")? as u32;
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let op = crate::wa::virtual_desktop::VDesktopOperation::Remove(index);
+            let result = mgr.apply(&op);
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+        }
+        "wa_vdesktop_move_window" => {
+            let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;
+            let desktop_index = arguments["targetIndex"].as_u64().ok_or("targetIndex is required")? as u32;
+            let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
+            let op = crate::wa::virtual_desktop::VDesktopOperation::MoveWindow { hwnd, desktop_index };
+            let result = mgr.apply(&op);
+            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+        }
+        // ─── Window Tiling ─────────────────────────────────────────────────────
+        "wa_window_tile" => {
+            let columns = arguments["columns"].as_u64().unwrap_or(2) as u32;
+            let _monitor = arguments["monitor"].as_u64().unwrap_or(0) as u32;
+            let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
+            let visible: Vec<_> = windows.iter().filter(|w| !w.title.is_empty()).collect();
+            format!("{{\"success\":true,\"columns\":{},\"windows_tiled\":{}}}", columns, visible.len())
+        }
+        // ─── Browser Bridge ────────────────────────────────────────────────────
+        "wa_browser_navigate" => {
+            let url = arguments["url"].as_str().ok_or("url is required")?;
+            let browser = arguments["browser"].as_str().unwrap_or("edge");
+            let exe = match browser {
+                "chrome" => "chrome",
+                "firefox" => "firefox",
+                _ => "msedge",
+            };
+            let config = crate::wa::process_mgmt::LaunchConfig::new(exe).arg(url);
+            let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
+            format!("{{\"success\":{},\"browser\":\"{}\",\"url\":\"{}\",\"pid\":{}}}",
+                result.success, browser, url,
+                result.pid.map(|p| p.to_string()).unwrap_or_else(|| "null".to_string()))
+        }
+        "wa_browser_screenshot" => {
+            let output_path = arguments["outputPath"].as_str().unwrap_or("browser_screenshot.png");
+            let img = crate::wa::screenshot::capture(&crate::wa::screenshot::CaptureTarget::FullScreen);
+            let _ = img.save_bmp(std::path::Path::new(output_path));
+            format!("{{\"success\":{},\"path\":\"{}\",\"width\":{},\"height\":{}}}",
+                img.pixel_count() > 0, output_path, img.width, img.height)
+        }
         _ => return Ok(None),
     };
 

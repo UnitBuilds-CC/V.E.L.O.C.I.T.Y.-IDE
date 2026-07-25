@@ -52,6 +52,90 @@ pub fn scan_file_content(content: &str) -> Option<String> {
     }
 }
 
+/// Generate test stubs from source code using regex-based function extraction.
+fn generate_test_stubs(source: &str, language: &str) -> Vec<String> {
+    let mut tests = Vec::new();
+
+    match language {
+        "rust" => {
+            // Extract function signatures: pub fn name(...) -> RetType
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if let Some(fn_start) = trimmed.find("fn ") {
+                    let after_fn = &trimmed[fn_start + 3..];
+                    if let Some(paren) = after_fn.find('(') {
+                        let name = after_fn[..paren].trim().trim_start_matches("pub ");
+                        if name.is_empty() || name.starts_with("test_") {
+                            continue;
+                        }
+                        tests.push(format!(
+                            "#[test]\nfn test_{}() {{\n    // TODO: Setup\n    let result = {}(/* args */);\n    // TODO: Assert\n    assert!(result != Default::default());\n}}",
+                            name, name
+                        ));
+                        // Edge case: empty/zero input
+                        tests.push(format!(
+                            "#[test]\nfn test_{}_empty_input() {{\n    // Edge case: empty or zero input\n    // TODO: Verify graceful handling\n}}",
+                            name
+                        ));
+                    }
+                }
+            }
+        }
+        "typescript" | "javascript" => {
+            // Extract function/const arrow signatures
+            for line in source.lines() {
+                let trimmed = line.trim();
+                let name = if trimmed.starts_with("export function ") || trimmed.starts_with("function ") {
+                    trimmed
+                        .trim_start_matches("export ")
+                        .trim_start_matches("function ")
+                        .split('(')
+                        .next()
+                        .map(|s| s.trim().to_string())
+                } else if trimmed.contains("= (") || trimmed.contains("= async (") {
+                    trimmed
+                        .split("= ")
+                        .next()
+                        .map(|s| s.trim().trim_start_matches("export ").trim_start_matches("const ").trim_start_matches("let ").to_string())
+                } else {
+                    None
+                };
+                if let Some(fname) = name {
+                    if fname.is_empty() || fname.contains("test") {
+                        continue;
+                    }
+                    tests.push(format!(
+                        "describe('{}', () => {{\n  it('should work with valid input', () => {{\n    // TODO: Arrange\n    // TODO: Act\n    // TODO: Assert\n  }});\n\n  it('should handle empty input', () => {{\n    // Edge case\n  }});\n}});",
+                        fname
+                    ));
+                }
+            }
+        }
+        "python" => {
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("def ") && !trimmed.starts_with("def test_") {
+                    if let Some(paren) = trimmed.find('(') {
+                        let name = &trimmed[4..paren];
+                        tests.push(format!(
+                            "def test_{}():\n    # TODO: Setup\n    result = {}()\n    assert result is not None\n\ndef test_{}_edge_case():\n    # Edge case: empty/None input\n    pass",
+                            name, name, name
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {
+            tests.push("// Unsupported language for test generation".to_string());
+        }
+    }
+
+    if tests.is_empty() {
+        tests.push("// No testable functions found in source".to_string());
+    }
+    tests
+}
+
 pub fn handle_system_tool(
     root: &Path,
     name: &str,
@@ -432,6 +516,109 @@ pub fn handle_system_tool(
                 "text": result.full_text,
                 "language": result.language,
                 "blocks": result.blocks.len()
+            }))?
+        }
+        // ── Agent Checkpointing ─────────────────────────────────────────────
+        "agent_checkpoint_create" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            let mut mgr = crate::agent::checkpoint::CheckpointManager::new(root);
+            match mgr.checkpoint(label) {
+                Some(id) => serde_json::to_string(&json!({
+                    "success": true,
+                    "checkpointId": id,
+                    "label": label,
+                    "totalCheckpoints": mgr.count()
+                }))?,
+                None => serde_json::to_string(&json!({
+                    "success": false,
+                    "error": "Checkpointing unavailable (not a git repository or git not found)"
+                }))?,
+            }
+        }
+        "agent_checkpoint_restore" => {
+            let cp_id = arguments["checkpointId"].as_u64().ok_or("checkpointId is required")? as usize;
+            let mut mgr = crate::agent::checkpoint::CheckpointManager::new(root);
+            // Note: In a real session the same CheckpointManager instance should be reused.
+            // This handler provides the MCP interface; the loop_runner holds the live instance.
+            match mgr.restore(cp_id) {
+                Ok(()) => serde_json::to_string(&json!({
+                    "success": true,
+                    "restoredTo": cp_id
+                }))?,
+                Err(e) => serde_json::to_string(&json!({
+                    "success": false,
+                    "error": e
+                }))?,
+            }
+        }
+        "agent_checkpoint_list" => {
+            let mgr = crate::agent::checkpoint::CheckpointManager::new(root);
+            let list: Vec<Value> = mgr.list().iter().map(|cp| json!({
+                "id": cp.id,
+                "label": cp.label,
+                "gitRef": cp.git_ref,
+                "createdAt": cp.created_at,
+                "dirtyFiles": cp.dirty_files
+            })).collect();
+            serde_json::to_string(&json!({
+                "count": list.len(),
+                "checkpoints": list
+            }))?
+        }
+        // ── Agent Memory ────────────────────────────────────────────────────
+        "agent_memory_remember" => {
+            let key = arguments["key"].as_str().ok_or("key is required")?;
+            let content = arguments["content"].as_str().ok_or("content is required")?;
+            let tags: Vec<&str> = arguments["tags"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            let score = arguments["score"].as_f64().unwrap_or(0.5);
+            let mut mem = crate::agent::memory_store::PersistentMemory::open(root);
+            mem.remember(key, content, &tags, score);
+            let _ = mem.save();
+            serde_json::to_string(&json!({
+                "success": true,
+                "key": key,
+                "totalMemories": mem.len()
+            }))?
+        }
+        "agent_memory_recall" => {
+            let query = arguments["query"].as_str().ok_or("query is required")?;
+            let limit = arguments["limit"].as_u64().unwrap_or(5) as usize;
+            let mem = crate::agent::memory_store::PersistentMemory::open(root);
+            let hits = mem.recall(query, limit);
+            let results: Vec<Value> = hits.iter().map(|h| json!({
+                "key": h.entry.key,
+                "content": h.entry.content,
+                "tags": h.entry.tags,
+                "score": h.entry.score,
+                "similarity": h.similarity
+            })).collect();
+            serde_json::to_string(&json!({
+                "count": results.len(),
+                "results": results
+            }))?
+        }
+        "agent_memory_forget" => {
+            let key = arguments["key"].as_str().ok_or("key is required")?;
+            let mut mem = crate::agent::memory_store::PersistentMemory::open(root);
+            let removed = mem.forget(key);
+            let _ = mem.save();
+            serde_json::to_string(&json!({
+                "success": removed,
+                "key": key
+            }))?
+        }
+        // ── Test Generation ─────────────────────────────────────────────────
+        "code_generate_tests" => {
+            let source = arguments["source"].as_str().ok_or("source is required")?;
+            let language = arguments["language"].as_str().unwrap_or("rust");
+            let tests = generate_test_stubs(source, language);
+            serde_json::to_string(&json!({
+                "language": language,
+                "testCount": tests.len(),
+                "tests": tests
             }))?
         }
         _ => return Ok(None),

@@ -1,6 +1,7 @@
 use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
+use super::super::coordination::CoordinationBus;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update};
@@ -208,6 +209,10 @@ pub fn run_agent_thread(
 
     let mut deferred_messages: Vec<UiToAgentMessage> = Vec::new();
     let mut expert_teams: Vec<ExpertTeam> = load_expert_teams(&workspace_root);
+
+    // Phase 5: Multi-agent coordination bus
+    let coordination_bus = CoordinationBus::new();
+    coordination_bus.report_progress("primary", 0.0, "initialized");
 
     while let Ok(msg) = ui_rx.recv() {
         process_ui_message(
