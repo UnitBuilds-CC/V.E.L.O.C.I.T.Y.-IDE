@@ -81,6 +81,310 @@ fn resolve_snapshot_name(
     })
 }
 
+// ── CSS Selector Engine ──────────────────────────────────────────────
+
+/// Parsed CSS selector component.
+#[derive(Debug, Clone)]
+pub struct CssSelectorPart {
+    pub role: Option<String>,
+    pub name_contains: Option<String>,
+    pub name_equals: Option<String>,
+    pub id: Option<String>,
+    pub visible: Option<bool>,
+    pub enabled: Option<bool>,
+    pub action: Option<String>,
+}
+
+/// Parse a CSS-like selector string into selector parts.
+/// Supports: `[role=X]`, `[name=Y]`, `[name*="Z"]`, `#id`, `[visible]`, `[enabled]`, `[action=click]`
+pub fn parse_css_selector(selector: &str) -> Vec<CssSelectorPart> {
+    let mut parts = Vec::new();
+    let mut current = CssSelectorPart {
+        role: None, name_contains: None, name_equals: None,
+        id: None, visible: None, enabled: None, action: None,
+    };
+    let mut has_any = false;
+    let chars: Vec<char> = selector.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '#' => {
+                // ID selector: #someId
+                i += 1;
+                let start = i;
+                while i < chars.len() && chars[i] != '[' && chars[i] != '.' && chars[i] != ' ' {
+                    i += 1;
+                }
+                current.id = Some(selector[start..i].to_string());
+                has_any = true;
+            }
+            '[' => {
+                // Attribute selector: [attr=value] or [attr*="value"]
+                i += 1;
+                let start = i;
+                while i < chars.len() && chars[i] != ']' {
+                    i += 1;
+                }
+                let attr_str = &selector[start..i];
+                if i < chars.len() { i += 1; } // skip ']'
+                parse_attribute_selector(attr_str, &mut current);
+                has_any = true;
+            }
+            '.' => {
+                // Class-like selector (mapped to action)
+                i += 1;
+                let start = i;
+                while i < chars.len() && chars[i] != '[' && chars[i] != '.' && chars[i] != ' ' {
+                    i += 1;
+                }
+                current.action = Some(selector[start..i].to_string());
+                has_any = true;
+            }
+            ' ' => {
+                // Combinator: push current and start new part
+                if has_any {
+                    parts.push(std::mem::replace(&mut current, CssSelectorPart {
+                        role: None, name_contains: None, name_equals: None,
+                        id: None, visible: None, enabled: None, action: None,
+                    }));
+                    has_any = false;
+                }
+                i += 1;
+            }
+            _ => { i += 1; }
+        }
+    }
+    if has_any {
+        parts.push(current);
+    }
+    if parts.is_empty() {
+        parts.push(CssSelectorPart {
+            role: None, name_contains: None, name_equals: None,
+            id: None, visible: None, enabled: None, action: None,
+        });
+    }
+    parts
+}
+
+fn parse_attribute_selector(attr: &str, part: &mut CssSelectorPart) {
+    if let Some(eq_pos) = attr.find('*') {
+        // [name*="value"] — contains
+        let key = attr[..eq_pos].trim();
+        let val = attr[eq_pos+1..].trim().trim_matches('"').trim_matches('\'');
+        match key {
+            "name" => part.name_contains = Some(val.to_string()),
+            "role" => part.role = Some(val.to_string()),
+            _ => {}
+        }
+    } else if let Some(eq_pos) = attr.find('=') {
+        let key = attr[..eq_pos].trim();
+        let val = attr[eq_pos+1..].trim().trim_matches('"').trim_matches('\'');
+        match key {
+            "role" => part.role = Some(val.to_string()),
+            "name" => part.name_equals = Some(val.to_string()),
+            "id" => part.id = Some(val.to_string()),
+            "action" => part.action = Some(val.to_string()),
+            "visible" => part.visible = Some(val == "true"),
+            "enabled" => part.enabled = Some(val == "true"),
+            _ => {}
+        }
+    } else {
+        // Boolean attribute: [visible], [enabled]
+        match attr.trim() {
+            "visible" => part.visible = Some(true),
+            "enabled" => part.enabled = Some(true),
+            _ => {}
+        }
+    }
+}
+
+/// Score a node against a CSS selector part.
+fn score_css(node: &WaNode, part: &CssSelectorPart) -> Option<i32> {
+    let mut score = 0i32;
+    if let Some(ref expected_id) = part.id {
+        if !node.id.eq_ignore_ascii_case(expected_id) { return None; }
+        score += 10_000;
+    }
+    if let Some(ref expected_role) = part.role {
+        if !node.role.eq_ignore_ascii_case(expected_role) { return None; }
+        score += 500;
+    }
+    if let Some(ref expected_name) = part.name_equals {
+        if node.name.eq_ignore_ascii_case(expected_name) {
+            score += 250;
+        } else { return None; }
+    }
+    if let Some(ref needle) = part.name_contains {
+        if contains_case_insensitive(&node.name, needle) {
+            score += 100;
+        } else { return None; }
+    }
+    if let Some(expected_action) = &part.action {
+        if !action_supported(node, expected_action) { return None; }
+        score += 400;
+    }
+    if let Some(vis) = part.visible {
+        if vis && !node.visible { return None; }
+        if !vis && node.visible { return None; }
+        score += 50;
+    }
+    if let Some(en) = part.enabled {
+        if en && !node.enabled { return None; }
+        if !en && node.enabled { return None; }
+        score += 50;
+    }
+    score += (node.confidence.clamp(0.0, 1.0) * 100.0).round() as i32;
+    Some(score)
+}
+
+/// Resolve nodes using a CSS selector string.
+pub fn resolve_css_selector(
+    root: &Path,
+    session_id: &str,
+    snapshot_name: Option<&str>,
+    css_selector: &str,
+) -> Result<Vec<(i32, WaNode)>, Box<dyn Error>> {
+    let resolved_snapshot_name = resolve_snapshot_name(root, session_id, snapshot_name)?;
+    let snapshot = crate::wa::storage::load_snapshot(root, session_id, &resolved_snapshot_name)?;
+    let parts = parse_css_selector(css_selector);
+    // Match against the last part (descendant combinator simplified)
+    let part = parts.last().unwrap();
+    let mut candidates: Vec<(i32, WaNode)> = snapshot.nodes.iter()
+        .filter_map(|node| score_css(node, part).map(|s| (s, node.clone())))
+        .collect();
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(candidates)
+}
+
+// ── XPath Engine ─────────────────────────────────────────────────────
+
+/// Simple XPath expression.
+#[derive(Debug, Clone)]
+pub enum XPathExpr {
+    /// //node — match all nodes
+    DescendantAll,
+    /// //role[@name='X'] — match by role and optional attribute
+    DescendantByRole { role: String, name_filter: Option<String> },
+    /// //*[@id='X'] — match by id
+    DescendantById(String),
+    /// //*[contains(@name, 'X')] — contains match
+    DescendantContains { attr: String, value: String },
+}
+
+/// Parse a simple XPath expression.
+pub fn parse_xpath(xpath: &str) -> Option<XPathExpr> {
+    let xpath = xpath.trim();
+    if xpath == "//*" || xpath == "//node" {
+        return Some(XPathExpr::DescendantAll);
+    }
+    // //*[@id='X']
+    if let Some(rest) = xpath.strip_prefix("//*[@id='") {
+        if let Some(id) = rest.strip_suffix("']") {
+            return Some(XPathExpr::DescendantById(id.to_string()));
+        }
+    }
+    if let Some(rest) = xpath.strip_prefix("//*[contains(@") {
+        // //*[contains(@name, 'value')]
+        if let Some(at_pos) = rest.find(',') {
+            let attr = &rest[..at_pos];
+            let remainder = &rest[at_pos+1..];
+            if let Some(end) = remainder.find("')]") {
+                let value_clean = remainder[..end].trim().trim_matches(' ').trim_matches('\'');
+                return Some(XPathExpr::DescendantContains {
+                    attr: attr.to_string(),
+                    value: value_clean.to_string(),
+                });
+            }
+        }
+    }
+    // //role[@name='X']
+    if xpath.starts_with("//") {
+        let rest = &xpath[2..];
+        if let Some(bracket_pos) = rest.find('[') {
+            let role = &rest[..bracket_pos];
+            let attr_part = &rest[bracket_pos..];
+            if let Some(name_val) = extract_attr_value(attr_part, "name") {
+                return Some(XPathExpr::DescendantByRole {
+                    role: role.to_string(),
+                    name_filter: Some(name_val),
+                });
+            }
+            return Some(XPathExpr::DescendantByRole {
+                role: role.to_string(),
+                name_filter: None,
+            });
+        } else {
+            return Some(XPathExpr::DescendantByRole {
+                role: rest.to_string(),
+                name_filter: None,
+            });
+        }
+    }
+    None
+}
+
+fn extract_attr_value(attr_str: &str, attr_name: &str) -> Option<String> {
+    let pattern = format!("@{}='", attr_name);
+    if let Some(start) = attr_str.find(&pattern) {
+        let val_start = start + pattern.len();
+        if let Some(end) = attr_str[val_start..].find('\'') {
+            return Some(attr_str[val_start..val_start + end].to_string());
+        }
+    }
+    None
+}
+
+/// Resolve nodes using an XPath expression.
+pub fn resolve_xpath(
+    root: &Path,
+    session_id: &str,
+    snapshot_name: Option<&str>,
+    xpath: &str,
+) -> Result<Vec<(i32, WaNode)>, Box<dyn Error>> {
+    let resolved_snapshot_name = resolve_snapshot_name(root, session_id, snapshot_name)?;
+    let snapshot = crate::wa::storage::load_snapshot(root, session_id, &resolved_snapshot_name)?;
+    let expr = parse_xpath(xpath).ok_or_else(|| {
+        IoError::new(ErrorKind::InvalidInput, format!("unsupported XPath: {}", xpath))
+    })?;
+    let mut candidates: Vec<(i32, WaNode)> = match expr {
+        XPathExpr::DescendantAll => {
+            snapshot.nodes.iter().map(|n| (100i32 + (n.confidence * 100.0) as i32, n.clone())).collect()
+        }
+        XPathExpr::DescendantById(ref id) => {
+            snapshot.nodes.iter()
+                .filter(|n| n.id.eq_ignore_ascii_case(id))
+                .map(|n| (10_000i32 + (n.confidence * 100.0) as i32, n.clone()))
+                .collect()
+        }
+        XPathExpr::DescendantByRole { ref role, ref name_filter } => {
+            snapshot.nodes.iter()
+                .filter(|n| {
+                    n.role.eq_ignore_ascii_case(role)
+                        && name_filter.as_ref().map_or(true, |nf| contains_case_insensitive(&n.name, nf))
+                })
+                .map(|n| (500i32 + (n.confidence * 100.0) as i32, n.clone()))
+                .collect()
+        }
+        XPathExpr::DescendantContains { ref attr, ref value } => {
+            snapshot.nodes.iter()
+                .filter(|n| {
+                    match attr.as_str() {
+                        "name" => contains_case_insensitive(&n.name, value),
+                        "role" => contains_case_insensitive(&n.role, value),
+                        "id" => contains_case_insensitive(&n.id, value),
+                        _ => false,
+                    }
+                })
+                .map(|n| (200i32 + (n.confidence * 100.0) as i32, n.clone()))
+                .collect()
+        }
+    };
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(candidates)
+}
+
+// ── Original API ─────────────────────────────────────────────────────
+
 pub fn resolve_selector(
     root: &Path,
     session_id: &str,
