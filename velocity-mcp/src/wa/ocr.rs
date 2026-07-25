@@ -6,8 +6,10 @@
 //! built-in OCR via WinRT OcrEngine (available on Windows 10+) through
 //! PowerShell for zero external dependencies.
 
+use std::io::Write;
 use std::path::Path;
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 // ─── OCR Model ───────────────────────────────────────────────────────────────
 
@@ -100,39 +102,108 @@ pub struct OcrEngine;
 
 impl OcrEngine {
     /// Perform OCR on a screen region.
-    pub fn recognize_region(_region: &OcrRegion, _config: &OcrConfig) -> OcrResult {
-        OcrResult {
-            blocks: Vec::new(),
-            full_text: String::new(),
-            language: None,
-            duration: Duration::ZERO,
-            source: "region".to_string(),
+    pub fn recognize_region(region: &OcrRegion, config: &OcrConfig) -> OcrResult {
+        if !cfg!(target_os = "windows") {
+            return OcrResult {
+                blocks: Vec::new(), full_text: String::new(),
+                language: None, duration: Duration::ZERO, source: "region".into(),
+            };
+        }
+        let start = Instant::now();
+        let script = build_ocr_script(region, config);
+        match run_ps_script(&script) {
+            Ok(json) => {
+                let mut result = parse_ocr_result(&json, region);
+                result.duration = start.elapsed();
+                result
+            }
+            Err(e) => OcrResult {
+                blocks: Vec::new(), full_text: String::new(),
+                language: None, duration: start.elapsed(),
+                source: format!("region error: {e}"),
+            },
         }
     }
 
     /// Perform OCR on a specific window's content.
-    pub fn recognize_window(_pid: u32, _config: &OcrConfig) -> OcrResult {
-        OcrResult {
-            blocks: Vec::new(),
-            full_text: String::new(),
-            language: None,
-            duration: Duration::ZERO,
-            source: "window".to_string(),
+    pub fn recognize_window(pid: u32, config: &OcrConfig) -> OcrResult {
+        if !cfg!(target_os = "windows") {
+            return OcrResult {
+                blocks: Vec::new(), full_text: String::new(),
+                language: None, duration: Duration::ZERO, source: "window".into(),
+            };
+        }
+        let start = Instant::now();
+        // First get the window bounds, then OCR that region
+        let bounds_script = format!(
+            "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; \
+             if ($null -ne $p -and $p.MainWindowHandle -ne 0) {{ \
+                 Add-Type @'\nusing System; using System.Runtime.InteropServices;\npublic struct Rect {{ [DllImport(\"user32\")] public static extern int GetWindowRect(IntPtr h, ref Rectangle r); }}\npublic struct Rectangle {{ public int Left, Top, Right, Bottom; }}\n'@\n\
+                 $rect = New-Object Rectangle; \
+                 [void][System.Windows.Forms.Screen]::PrimaryScreen; \
+                 ConvertTo-Json @{{ x = $rect.Left; y = $rect.Top; w = ($rect.Right - $rect.Left); h = ($rect.Bottom - $rect.Top) }} -Compress \
+             }} else {{ Write-Output '{{\"error\":\"window not found\"}}' }}"
+        );
+        match run_ps_script(&bounds_script) {
+            Ok(json) => {
+                #[derive(serde::Deserialize)]
+                struct Bounds { x: Option<i32>, y: Option<i32>, w: Option<u32>, h: Option<u32> }
+                if let Ok(b) = serde_json::from_str::<Bounds>(&json) {
+                    let region = OcrRegion {
+                        x: b.x.unwrap_or(0), y: b.y.unwrap_or(0),
+                        width: b.w.unwrap_or(800), height: b.h.unwrap_or(600),
+                    };
+                    let mut result = Self::recognize_region(&region, config);
+                    result.source = format!("window pid={pid}");
+                    result.duration = start.elapsed();
+                    result
+                } else {
+                    OcrResult {
+                        blocks: Vec::new(), full_text: String::new(),
+                        language: None, duration: start.elapsed(),
+                        source: "window bounds parse error".into(),
+                    }
+                }
+            }
+            Err(e) => OcrResult {
+                blocks: Vec::new(), full_text: String::new(),
+                language: None, duration: start.elapsed(),
+                source: format!("window error: {e}"),
+            },
         }
     }
 
     /// Find text on screen and return its location (useful for clicking).
     pub fn find_text(
-        _text: &str,
-        _region: Option<&OcrRegion>,
-        _config: &OcrConfig,
+        text: &str,
+        region: Option<&OcrRegion>,
+        config: &OcrConfig,
     ) -> Vec<OcrTextBlock> {
-        Vec::new()
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let script = build_find_text_script(text, region);
+        match run_ps_script(&script) {
+            Ok(json) => parse_ocr_blocks(&json, config.min_confidence),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Get available OCR languages on this system.
     pub fn available_languages() -> Vec<String> {
-        Vec::new()
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let script = build_list_ocr_languages_script();
+        match run_ps_script(&script) {
+            Ok(json) => {
+                #[derive(serde::Deserialize)]
+                struct Lang { tag: Option<String>, name: Option<String> }
+                serde_json::from_str::<Vec<Lang>>(&json)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|l| l.tag.or(l.name).unwrap_or_default())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        }
     }
 }
 
@@ -292,6 +363,101 @@ $matches = @()
 ConvertTo-Json @{{ search = $searchText; matches = @($matches) }} -Compress
 "#
     )
+}
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_ocr_result(json: &str, region: &OcrRegion) -> OcrResult {
+    #[derive(serde::Deserialize)]
+    struct PsOcrResult {
+        blocks: Option<Vec<PsOcrBlock>>,
+        full_text: Option<String>,
+        language: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PsOcrBlock {
+        text: Option<String>,
+        x: Option<f64>,
+        y: Option<f64>,
+        width: Option<f64>,
+        height: Option<f64>,
+        line_index: Option<u32>,
+        word_index: Option<u32>,
+    }
+    match serde_json::from_str::<PsOcrResult>(json) {
+        Ok(r) => {
+            let blocks = r.blocks.unwrap_or_default().into_iter().map(|b| {
+                OcrTextBlock {
+                    text: b.text.unwrap_or_default(),
+                    bounds: OcrRect {
+                        x: b.x.unwrap_or(0.0), y: b.y.unwrap_or(0.0),
+                        width: b.width.unwrap_or(0.0), height: b.height.unwrap_or(0.0),
+                    },
+                    confidence: 0.9,
+                    line_index: b.line_index.unwrap_or(0),
+                    word_index: b.word_index.unwrap_or(0),
+                }
+            }).collect();
+            OcrResult {
+                blocks,
+                full_text: r.full_text.unwrap_or_default(),
+                language: r.language,
+                duration: Duration::ZERO,
+                source: format!("region ({},{},{},{})", region.x, region.y, region.width, region.height),
+            }
+        }
+        Err(_) => OcrResult {
+            blocks: Vec::new(), full_text: String::new(),
+            language: None, duration: Duration::ZERO,
+            source: "parse error".into(),
+        },
+    }
+}
+
+fn parse_ocr_blocks(json: &str, min_confidence: f32) -> Vec<OcrTextBlock> {
+    #[derive(serde::Deserialize)]
+    struct PsFindResult { matches: Option<Vec<PsOcrBlockInner>> }
+    #[derive(serde::Deserialize)]
+    struct PsOcrBlockInner {
+        text: Option<String>,
+        x: Option<f64>, y: Option<f64>,
+        width: Option<f64>, height: Option<f64>,
+        line_index: Option<u32>, word_index: Option<u32>,
+    }
+    serde_json::from_str::<PsFindResult>(json)
+        .ok()
+        .and_then(|r| r.matches)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|b| OcrTextBlock {
+            text: b.text.unwrap_or_default(),
+            bounds: OcrRect {
+                x: b.x.unwrap_or(0.0), y: b.y.unwrap_or(0.0),
+                width: b.width.unwrap_or(0.0), height: b.height.unwrap_or(0.0),
+            },
+            confidence: 0.9,
+            line_index: b.line_index.unwrap_or(0),
+            word_index: b.word_index.unwrap_or(0),
+        })
+        .filter(|b| b.confidence >= min_confidence)
+        .collect()
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

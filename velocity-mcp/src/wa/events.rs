@@ -6,7 +6,9 @@
 //! changes, focus changes, and automation events via PowerShell wrappers.
 
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // ─── Event Types ─────────────────────────────────────────────────────────────
 
@@ -179,13 +181,31 @@ impl EventListener {
     }
 
     /// Start listening for events (blocks until duration/max_events).
-    pub fn listen(&mut self, _subscription: &EventSubscription) -> EventListenResult {
-        EventListenResult {
-            events: Vec::new(),
-            listen_duration: Duration::ZERO,
-            hit_event_limit: false,
-            timed_out: true,
-            errors: vec!["Event listener requires Windows runtime".to_string()],
+    pub fn listen(&mut self, subscription: &EventSubscription) -> EventListenResult {
+        if !cfg!(target_os = "windows") {
+            return EventListenResult {
+                events: Vec::new(),
+                listen_duration: Duration::ZERO,
+                hit_event_limit: false,
+                timed_out: true,
+                errors: vec!["Event listener requires Windows runtime".to_string()],
+            };
+        }
+        self.active = true;
+        let start = Instant::now();
+        let script = build_event_listener_script(subscription);
+        let result = run_ps_script(&script);
+        self.active = false;
+        let elapsed = start.elapsed();
+        match result {
+            Ok(json) => parse_event_listen_result(&json, elapsed),
+            Err(e) => EventListenResult {
+                events: Vec::new(),
+                listen_duration: elapsed,
+                hit_event_limit: false,
+                timed_out: true,
+                errors: vec![e],
+            },
         }
     }
 
@@ -302,6 +322,79 @@ while ([Environment]::TickCount64 -lt $deadline) {{
 ConvertTo-Json @($events) -Compress -Depth 3
 "#
     )
+}
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_event_listen_result(json: &str, elapsed: Duration) -> EventListenResult {
+    #[derive(serde::Deserialize)]
+    struct PsEventResult {
+        events: Option<Vec<PsEvent>>,
+        event_count: Option<usize>,
+        timed_out: Option<bool>,
+        hit_limit: Option<bool>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PsEvent {
+        kind: Option<String>,
+        timestamp_ms: Option<u64>,
+        source_automation_id: Option<String>,
+        source_name: Option<String>,
+        source_control_type: Option<String>,
+        process_id: Option<u32>,
+    }
+    match serde_json::from_str::<PsEventResult>(json) {
+        Ok(r) => {
+            let events = r.events.unwrap_or_default().into_iter().map(|e| {
+                let kind = match e.kind.as_deref() {
+                    Some("focus_changed") => UiaEventKind::FocusChanged,
+                    Some("structure_changed") => UiaEventKind::StructureChanged,
+                    _ => UiaEventKind::FocusChanged,
+                };
+                UiaEvent {
+                    kind,
+                    timestamp_ms: e.timestamp_ms.unwrap_or(0),
+                    source_automation_id: e.source_automation_id,
+                    source_name: e.source_name,
+                    source_control_type: e.source_control_type,
+                    process_id: e.process_id,
+                    old_value: None,
+                    new_value: None,
+                }
+            }).collect();
+            EventListenResult {
+                events,
+                listen_duration: elapsed,
+                hit_event_limit: r.hit_limit.unwrap_or(false),
+                timed_out: r.timed_out.unwrap_or(true),
+                errors: Vec::new(),
+            }
+        }
+        Err(e) => EventListenResult {
+            events: Vec::new(),
+            listen_duration: elapsed,
+            hit_event_limit: false,
+            timed_out: true,
+            errors: vec![format!("parse error: {e}")],
+        },
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

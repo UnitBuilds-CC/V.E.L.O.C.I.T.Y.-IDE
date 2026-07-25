@@ -150,7 +150,12 @@ pub struct ProcessManager;
 impl ProcessManager {
     /// Enumerate all running processes.
     pub fn enumerate() -> Vec<ProcessInfo> {
-        Vec::new() // Populated by PowerShell at runtime
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let script = build_enumerate_processes_script(None);
+        match run_ps_script(&script) {
+            Ok(json) => parse_process_list(&json),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Find processes by name (case-insensitive, partial match).
@@ -270,12 +275,18 @@ impl ProcessManager {
                     },
                 }
             }
-            _ => WaitResult {
-                condition_met: false,
-                elapsed: start.elapsed(),
-                detail: "condition type not yet wired".to_string(),
-                exit_code: None,
-            },
+            _ => {
+                let script = build_wait_condition_script(pid, condition, deadline_ms, poll_ms);
+                match run_ps_script(&script) {
+                    Ok(json) => parse_wait_result(&json, start.elapsed()),
+                    Err(e) => WaitResult {
+                        condition_met: false,
+                        elapsed: start.elapsed(),
+                        detail: e,
+                        exit_code: None,
+                    },
+                }
+            }
         }
     }
 
@@ -436,6 +447,147 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         return Err(format!("PowerShell error: {}", stderr.trim()));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_process_list(json: &str) -> Vec<ProcessInfo> {
+    #[derive(serde::Deserialize)]
+    struct PsProcess {
+        pid: Option<u32>,
+        name: Option<String>,
+        exe_path: Option<String>,
+        parent_pid: Option<u32>,
+        main_window_title: Option<String>,
+        has_window: Option<bool>,
+        memory_bytes: Option<u64>,
+        start_time_ms: Option<u64>,
+    }
+    serde_json::from_str::<Vec<PsProcess>>(json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| ProcessInfo {
+            pid: p.pid.unwrap_or(0),
+            name: p.name.unwrap_or_default(),
+            exe_path: p.exe_path,
+            command_line: None,
+            parent_pid: p.parent_pid,
+            main_window_title: p.main_window_title,
+            has_window: p.has_window.unwrap_or(false),
+            cpu_percent: None,
+            memory_bytes: p.memory_bytes,
+            start_time_ms: p.start_time_ms,
+        })
+        .collect()
+}
+
+fn build_wait_condition_script(pid: u32, condition: &ProcessWaitCondition, deadline_ms: u64, poll_ms: u64) -> String {
+    match condition {
+        ProcessWaitCondition::WindowAppears { title_contains } => {
+            let escaped = title_contains.replace('\'', "''");
+            format!(
+                r#"
+$deadline = [Environment]::TickCount64 + {deadline_ms}
+$found = $false
+while ([Environment]::TickCount64 -lt $deadline) {{
+    $procs = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{escaped}*' }}
+    if ($procs.Count -gt 0) {{
+        $found = $true
+        $title = $procs[0].MainWindowTitle
+        break
+    }}
+    Start-Sleep -Milliseconds {poll_ms}
+}}
+ConvertTo-Json @{{ condition_met = $found; title = if ($found) {{ $title }} else {{ $null }} }} -Compress
+"#
+            )
+        }
+        ProcessWaitCondition::Idle { cpu_threshold, stable_seconds } => {
+            format!(
+                r#"
+$deadline = [Environment]::TickCount64 + {deadline_ms}
+$stableMs = {stable_secs} * 1000
+$idleStart = [Environment]::TickCount64
+$isIdle = $false
+while ([Environment]::TickCount64 -lt $deadline) {{
+    $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
+    if ($null -eq $proc) {{ break }}
+    $cpu = $proc.CPU
+    Start-Sleep -Milliseconds {poll_ms}
+    $proc.Refresh()
+    $cpuDelta = $proc.CPU - $cpu
+    $pct = $cpuDelta / ({poll_ms} / 1000.0)
+    if ($pct -lt {threshold}) {{
+        if (([Environment]::TickCount64 - $idleStart) -ge $stableMs) {{
+            $isIdle = $true
+            break
+        }}
+    }} else {{
+        $idleStart = [Environment]::TickCount64
+    }}
+}}
+ConvertTo-Json @{{ condition_met = $isIdle }} -Compress
+"#,
+                stable_secs = stable_seconds,
+                threshold = cpu_threshold,
+            )
+        }
+        ProcessWaitCondition::MemoryStable { tolerance_bytes, stable_seconds } => {
+            format!(
+                r#"
+$deadline = [Environment]::TickCount64 + {deadline_ms}
+$stableMs = {stable_secs} * 1000
+$memStart = [Environment]::TickCount64
+$isStable = $false
+$lastMem = 0
+while ([Environment]::TickCount64 -lt $deadline) {{
+    $proc = Get-Process -Id {pid} -ErrorAction SilentlyContinue
+    if ($null -eq $proc) {{ break }}
+    $mem = $proc.WorkingSet64
+    if ($lastMem -gt 0 -and [Math]::Abs($mem - $lastMem) -le {tolerance}) {{
+        if (([Environment]::TickCount64 - $memStart) -ge $stableMs) {{
+            $isStable = $true
+            break
+        }}
+    }} else {{
+        $memStart = [Environment]::TickCount64
+    }}
+    $lastMem = $mem
+    Start-Sleep -Milliseconds {poll_ms}
+}}
+ConvertTo-Json @{{ condition_met = $isStable; memory_bytes = $lastMem }} -Compress
+"#,
+                stable_secs = stable_seconds,
+                tolerance = tolerance_bytes,
+            )
+        }
+        ProcessWaitCondition::Exit => String::new(), // handled separately
+    }
+}
+
+fn parse_wait_result(json: &str, elapsed: Duration) -> WaitResult {
+    #[derive(serde::Deserialize)]
+    struct PsWaitResult {
+        condition_met: Option<bool>,
+        exit_code: Option<i32>,
+        detail: Option<String>,
+        exited: Option<bool>,
+    }
+    match serde_json::from_str::<PsWaitResult>(json) {
+        Ok(r) => {
+            let met = r.condition_met.or(r.exited).unwrap_or(false);
+            WaitResult {
+                condition_met: met,
+                elapsed,
+                detail: r.detail.unwrap_or_else(|| if met { "condition met".into() } else { "timed out".into() }),
+                exit_code: r.exit_code,
+            }
+        }
+        Err(e) => WaitResult {
+            condition_met: false,
+            elapsed,
+            detail: format!("parse error: {e}"),
+            exit_code: None,
+        },
+    }
 }
 
 fn parse_launch_result(json: &str) -> LaunchResult {

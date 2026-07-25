@@ -16,8 +16,23 @@ pub struct DownloadStreamArtifact {
     pub url: String,
     pub file_name: String,
     pub total_bytes: usize,
+    pub received_bytes: usize,
     pub save_path: String,
     pub is_complete: bool,
+    pub started_at_ms: u64,
+}
+
+impl DownloadStreamArtifact {
+    /// Progress as a fraction (0.0..1.0).
+    pub fn progress(&self) -> f64 {
+        if self.total_bytes == 0 { return 0.0; }
+        self.received_bytes as f64 / self.total_bytes as f64
+    }
+
+    /// Whether the download is still in progress.
+    pub fn is_in_progress(&self) -> bool {
+        !self.is_complete && self.received_bytes < self.total_bytes
+    }
 }
 
 pub struct FileManager {
@@ -93,9 +108,52 @@ impl FileManager {
             url: url.to_string(),
             file_name: file_name.to_string(),
             total_bytes,
+            received_bytes: 0,
             save_path: save_path.to_string(),
             is_complete: true,
+            started_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
         });
+    }
+
+    /// Start tracking a new in-progress download.
+    pub fn start_download(&mut self, guid: &str, url: &str, file_name: &str, total_bytes: usize, save_path: &str) {
+        self.downloads.push(DownloadStreamArtifact {
+            guid: guid.to_string(),
+            url: url.to_string(),
+            file_name: file_name.to_string(),
+            total_bytes,
+            received_bytes: 0,
+            save_path: save_path.to_string(),
+            is_complete: false,
+            started_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        });
+    }
+
+    /// Update progress on an in-progress download.
+    pub fn update_download_progress(&mut self, guid: &str, received_bytes: usize) {
+        if let Some(d) = self.downloads.iter_mut().find(|d| d.guid == guid) {
+            d.received_bytes = received_bytes;
+            if d.total_bytes > 0 && received_bytes >= d.total_bytes {
+                d.is_complete = true;
+                d.received_bytes = d.total_bytes;
+            }
+        }
+    }
+
+    /// Get all in-progress downloads.
+    pub fn active_downloads(&self) -> Vec<&DownloadStreamArtifact> {
+        self.downloads.iter().filter(|d| d.is_in_progress()).collect()
+    }
+
+    /// Find a download by guid.
+    pub fn get_download(&self, guid: &str) -> Option<&DownloadStreamArtifact> {
+        self.downloads.iter().find(|d| d.guid == guid)
     }
 
     pub fn export_files_nda(&self) -> Vec<NdaTriple> {

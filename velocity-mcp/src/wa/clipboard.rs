@@ -5,7 +5,9 @@
 //! file list, and rich content (HTML/RTF). Includes clipboard watching for
 //! change detection and history tracking.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ─── Clipboard Content Model ─────────────────────────────────────────────────
@@ -99,62 +101,107 @@ pub struct ClipboardManager;
 impl ClipboardManager {
     /// Read current clipboard content.
     pub fn read() -> ClipboardState {
-        ClipboardState {
-            available_formats: Vec::new(),
-            content: ClipboardContent::Empty,
-            sequence_number: 0,
-            captured_at_ms: now_ms(),
+        if !cfg!(target_os = "windows") {
+            return ClipboardState {
+                available_formats: Vec::new(),
+                content: ClipboardContent::Empty,
+                sequence_number: 0,
+                captured_at_ms: now_ms(),
+            };
+        }
+        let script = build_read_clipboard_script();
+        match run_ps_script(&script) {
+            Ok(json) => parse_clipboard_read_result(&json),
+            Err(_) => ClipboardState {
+                available_formats: Vec::new(),
+                content: ClipboardContent::Empty,
+                sequence_number: 0,
+                captured_at_ms: now_ms(),
+            },
         }
     }
 
     /// Write text to clipboard.
     pub fn write_text(text: &str) -> ClipboardOpResult {
-        ClipboardOpResult {
-            success: false,
-            operation: "write_text".to_string(),
-            detail: "Clipboard write requires Windows runtime".to_string(),
-            sequence_number: None,
+        if !cfg!(target_os = "windows") {
+            return ClipboardOpResult {
+                success: false, operation: "write_text".into(),
+                detail: "Clipboard write requires Windows".into(), sequence_number: None,
+            };
+        }
+        let script = build_write_text_script(text);
+        match run_ps_script(&script) {
+            Ok(json) => parse_clipboard_write_result(&json, "write_text"),
+            Err(e) => ClipboardOpResult { success: false, operation: "write_text".into(), detail: e, sequence_number: None },
         }
     }
 
     /// Write HTML to clipboard (also sets plain text fallback).
     pub fn write_html(html: &str, plain_fallback: Option<&str>) -> ClipboardOpResult {
-        ClipboardOpResult {
-            success: false,
-            operation: "write_html".to_string(),
-            detail: "Clipboard write requires Windows runtime".to_string(),
-            sequence_number: None,
+        if !cfg!(target_os = "windows") {
+            return ClipboardOpResult {
+                success: false, operation: "write_html".into(),
+                detail: "Clipboard write requires Windows".into(), sequence_number: None,
+            };
+        }
+        let script = build_write_html_script(html, plain_fallback);
+        match run_ps_script(&script) {
+            Ok(json) => parse_clipboard_write_result(&json, "write_html"),
+            Err(e) => ClipboardOpResult { success: false, operation: "write_html".into(), detail: e, sequence_number: None },
         }
     }
 
     /// Write file list to clipboard (for paste operations).
     pub fn write_files(paths: &[PathBuf]) -> ClipboardOpResult {
-        ClipboardOpResult {
-            success: false,
-            operation: "write_files".to_string(),
-            detail: "Clipboard write requires Windows runtime".to_string(),
-            sequence_number: None,
+        if !cfg!(target_os = "windows") {
+            return ClipboardOpResult {
+                success: false, operation: "write_files".into(),
+                detail: "Clipboard write requires Windows".into(), sequence_number: None,
+            };
+        }
+        let script = build_write_files_script(paths);
+        match run_ps_script(&script) {
+            Ok(json) => parse_clipboard_write_result(&json, "write_files"),
+            Err(e) => ClipboardOpResult { success: false, operation: "write_files".into(), detail: e, sequence_number: None },
         }
     }
 
     /// Clear the clipboard.
     pub fn clear() -> ClipboardOpResult {
-        ClipboardOpResult {
-            success: false,
-            operation: "clear".to_string(),
-            detail: "Clipboard clear requires Windows runtime".to_string(),
-            sequence_number: None,
+        if !cfg!(target_os = "windows") {
+            return ClipboardOpResult {
+                success: false, operation: "clear".into(),
+                detail: "Clipboard clear requires Windows".into(), sequence_number: None,
+            };
+        }
+        let script = build_clear_clipboard_script();
+        match run_ps_script(&script) {
+            Ok(json) => parse_clipboard_write_result(&json, "clear"),
+            Err(e) => ClipboardOpResult { success: false, operation: "clear".into(), detail: e, sequence_number: None },
         }
     }
 
     /// Get the current clipboard sequence number.
     pub fn sequence_number() -> u32 {
-        0
+        if !cfg!(target_os = "windows") { return 0; }
+        let script = build_read_clipboard_script();
+        match run_ps_script(&script) {
+            Ok(json) => parse_clipboard_read_result(&json).sequence_number,
+            Err(_) => 0,
+        }
     }
 
     /// Watch clipboard for changes over a duration.
-    pub fn watch(_config: &ClipboardWatchConfig) -> Vec<ClipboardChangeEvent> {
-        Vec::new()
+    pub fn watch(config: &ClipboardWatchConfig) -> Vec<ClipboardChangeEvent> {
+        if !cfg!(target_os = "windows") { return Vec::new(); }
+        let script = build_watch_clipboard_script(
+            config.duration.as_millis() as u64,
+            config.poll_interval.as_millis() as u64,
+        );
+        match run_ps_script(&script) {
+            Ok(json) => parse_watch_events(&json),
+            Err(_) => Vec::new(),
+        }
     }
 }
 
@@ -163,6 +210,104 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_clipboard_read_result(json: &str) -> ClipboardState {
+    #[derive(serde::Deserialize)]
+    struct PsClipResult {
+        sequence_number: Option<u32>,
+        content_type: Option<String>,
+        content: Option<serde_json::Value>,
+        formats: Option<Vec<String>>,
+    }
+    match serde_json::from_str::<PsClipResult>(json) {
+        Ok(r) => {
+            let content = match r.content_type.as_deref() {
+                Some("text") => ClipboardContent::Text(
+                    r.content.as_ref().and_then(|v| v.as_str()).unwrap_or("").to_string()
+                ),
+                Some("files") => {
+                    let files = r.content.as_ref()
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(PathBuf::from)).collect())
+                        .unwrap_or_default();
+                    ClipboardContent::Files(files)
+                },
+                _ => ClipboardContent::Empty,
+            };
+            ClipboardState {
+                available_formats: r.formats.unwrap_or_default(),
+                content,
+                sequence_number: r.sequence_number.unwrap_or(0),
+                captured_at_ms: now_ms(),
+            }
+        }
+        Err(_) => ClipboardState {
+            available_formats: Vec::new(),
+            content: ClipboardContent::Empty,
+            sequence_number: 0,
+            captured_at_ms: now_ms(),
+        },
+    }
+}
+
+fn parse_clipboard_write_result(json: &str, op: &str) -> ClipboardOpResult {
+    #[derive(serde::Deserialize)]
+    struct PsWriteResult {
+        success: Option<bool>,
+        sequence_number: Option<u32>,
+    }
+    match serde_json::from_str::<PsWriteResult>(json) {
+        Ok(r) => ClipboardOpResult {
+            success: r.success.unwrap_or(true),
+            operation: op.to_string(),
+            detail: "ok".to_string(),
+            sequence_number: r.sequence_number,
+        },
+        Err(e) => ClipboardOpResult {
+            success: false, operation: op.to_string(),
+            detail: format!("parse error: {e}"), sequence_number: None,
+        },
+    }
+}
+
+fn parse_watch_events(json: &str) -> Vec<ClipboardChangeEvent> {
+    #[derive(serde::Deserialize)]
+    struct PsEvent {
+        timestamp_ms: Option<u64>,
+        sequence_number: Option<u32>,
+        text_preview: Option<String>,
+    }
+    serde_json::from_str::<Vec<PsEvent>>(json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| ClipboardChangeEvent {
+            timestamp_ms: e.timestamp_ms.unwrap_or(0),
+            sequence_number: e.sequence_number.unwrap_or(0),
+            source_process: None,
+            formats: Vec::new(),
+            text_preview: e.text_preview,
+        })
+        .collect()
 }
 
 // ─── PowerShell Scripts ──────────────────────────────────────────────────────
@@ -338,9 +483,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_returns_empty_state() {
+    fn read_returns_state() {
         let state = ClipboardManager::read();
-        assert!(matches!(state.content, ClipboardContent::Empty));
+        // On non-Windows, always Empty. On Windows, depends on clipboard.
+        if !cfg!(target_os = "windows") {
+            assert!(matches!(state.content, ClipboardContent::Empty));
+            assert_eq!(state.sequence_number, 0);
+        }
+        // Just verify it doesn't panic
+        let _ = state.captured_at_ms;
     }
 
     #[test]

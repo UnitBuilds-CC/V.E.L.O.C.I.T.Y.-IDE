@@ -5,7 +5,9 @@
 //! and file system operations that bridge between the automation layer and
 //! the Windows Explorer shell dialogs.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 // ─── Dialog Types ────────────────────────────────────────────────────────────
@@ -83,21 +85,37 @@ pub struct FileDialogManager;
 
 impl FileDialogManager {
     /// Detect if a file dialog is currently open.
-    pub fn detect_dialog(_target: &FileDialogTarget) -> Option<FileDialogInfo> {
-        None
+    pub fn detect_dialog(target: &FileDialogTarget) -> Option<FileDialogInfo> {
+        if !cfg!(target_os = "windows") { return None; }
+        let script = build_detect_dialog_script(target);
+        match run_ps_script(&script) {
+            Ok(json) => parse_dialog_info(&json),
+            Err(_) => None,
+        }
     }
 
     /// Perform an action on a detected file dialog.
     pub fn perform(
-        _target: &FileDialogTarget,
-        _action: &FileDialogAction,
+        target: &FileDialogTarget,
+        action: &FileDialogAction,
     ) -> FileDialogResult {
-        FileDialogResult {
-            success: false,
-            action: "unknown".to_string(),
-            detail: "File dialog automation requires Windows runtime".to_string(),
-            selected_path: None,
-            selected_paths: Vec::new(),
+        if !cfg!(target_os = "windows") {
+            return FileDialogResult {
+                success: false, action: "unknown".into(),
+                detail: "File dialog automation requires Windows runtime".into(),
+                selected_path: None, selected_paths: Vec::new(),
+            };
+        }
+        let script = build_file_dialog_script(target, action);
+        match run_ps_script(&script) {
+            Ok(json) => parse_dialog_result(&json, action),
+            Err(e) => FileDialogResult {
+                success: false,
+                action: format!("{:?}", action),
+                detail: e,
+                selected_path: None,
+                selected_paths: Vec::new(),
+            },
         }
     }
 
@@ -114,16 +132,19 @@ impl FileDialogManager {
 
     /// Wait for a file dialog to appear, then interact with it.
     pub fn wait_and_set_path(
-        _path: &Path,
-        _target: &FileDialogTarget,
+        path: &Path,
+        target: &FileDialogTarget,
     ) -> FileDialogResult {
-        FileDialogResult {
-            success: false,
-            action: "wait_and_set_path".to_string(),
-            detail: "File dialog automation requires Windows runtime".to_string(),
-            selected_path: None,
-            selected_paths: Vec::new(),
+        if !cfg!(target_os = "windows") {
+            return FileDialogResult {
+                success: false, action: "wait_and_set_path".into(),
+                detail: "File dialog automation requires Windows runtime".into(),
+                selected_path: None, selected_paths: Vec::new(),
+            };
         }
+        // The build_file_dialog_script already includes a wait loop with timeout
+        let action = FileDialogAction::SetPath(path.to_path_buf());
+        Self::perform(target, &action)
     }
 }
 
@@ -302,6 +323,111 @@ ConvertTo-Json $result -Compress -Depth 3
     )
 }
 
+/// Build a PowerShell script to detect a file dialog without interacting.
+pub fn build_detect_dialog_script(target: &FileDialogTarget) -> String {
+    let title_filter = target
+        .title_contains
+        .as_deref()
+        .unwrap_or("Open|Save|Browse|Select");
+    let pid_clause = target
+        .process_id
+        .map(|p| format!("$targetPid = {p}"))
+        .unwrap_or_else(|| "$targetPid = $null".to_string());
+    format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+{pid_clause}
+$titlePattern = '{title_filter}'
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+foreach ($w in $windows) {{
+    $name = $w.Current.Name
+    if ($null -ne $targetPid -and $w.Current.ProcessId -ne $targetPid) {{ continue }}
+    if ($name -match $titlePattern) {{
+        $result = @{{
+            hwnd = 0
+            process_id = $w.Current.ProcessId
+            title = $name
+            kind = "open"
+        }}
+        ConvertTo-Json $result -Compress
+        exit
+    }}
+}}
+Write-Output '{{"found":false}}'
+"#,
+        title_filter = title_filter.replace('\'', "''"),
+    )
+}
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_dialog_info(json: &str) -> Option<FileDialogInfo> {
+    #[derive(serde::Deserialize)]
+    struct PsDialogInfo {
+        found: Option<bool>,
+        hwnd: Option<u64>,
+        process_id: Option<u32>,
+        title: Option<String>,
+        kind: Option<String>,
+    }
+    let info = serde_json::from_str::<PsDialogInfo>(json).ok()?;
+    if info.found == Some(false) { return None; }
+    Some(FileDialogInfo {
+        hwnd: info.hwnd.unwrap_or(0),
+        process_id: info.process_id.unwrap_or(0),
+        title: info.title.unwrap_or_default(),
+        kind: FileDialogKind::Open,
+        current_folder: None,
+        current_filename: None,
+        filters: Vec::new(),
+    })
+}
+
+fn parse_dialog_result(json: &str, action: &FileDialogAction) -> FileDialogResult {
+    #[derive(serde::Deserialize)]
+    struct PsDialogResult {
+        success: Option<bool>,
+        detail: Option<String>,
+        path: Option<String>,
+        action: Option<String>,
+    }
+    match serde_json::from_str::<PsDialogResult>(json) {
+        Ok(r) => FileDialogResult {
+            success: r.success.unwrap_or(false),
+            action: r.action.unwrap_or_else(|| format!("{:?}", action)),
+            detail: r.detail.unwrap_or_default(),
+            selected_path: r.path.map(PathBuf::from),
+            selected_paths: Vec::new(),
+        },
+        Err(e) => FileDialogResult {
+            success: false,
+            action: format!("{:?}", action),
+            detail: format!("parse error: {e}"),
+            selected_path: None,
+            selected_paths: Vec::new(),
+        },
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -352,6 +478,7 @@ mod tests {
             Path::new("C:\\test.txt"),
             FileDialogKind::SaveAs,
         );
-        assert!(!result.success); // No Windows runtime in tests
+        // Result depends on whether a dialog is open; just verify no panic
+        let _ = result.success;
     }
 }

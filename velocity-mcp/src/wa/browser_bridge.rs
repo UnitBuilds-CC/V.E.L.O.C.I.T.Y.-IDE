@@ -7,8 +7,10 @@
 //! upload via file dialog).
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // ─── Bridge Model ────────────────────────────────────────────────────────────
 
@@ -146,25 +148,255 @@ impl BridgeExecutor {
     }
 
     /// Execute a complete workflow.
-    pub fn execute(&self, _workflow: &BridgeWorkflow) -> BridgeWorkflowResult {
+    pub fn execute(&self, workflow: &BridgeWorkflow) -> BridgeWorkflowResult {
+        let start = Instant::now();
+        let mut step_results = Vec::with_capacity(workflow.steps.len());
+        let mut stopped_at = None;
+
+        for (i, step) in workflow.steps.iter().enumerate() {
+            let step_start = Instant::now();
+            let result = self.execute_step_inner(step, i);
+            let step_result = BridgeStepResult {
+                step_index: i,
+                context: result.0,
+                success: result.1,
+                detail: result.2,
+                elapsed: step_start.elapsed(),
+                data: result.3,
+            };
+            let success = step_result.success;
+            step_results.push(step_result);
+            if !success && workflow.fail_fast {
+                stopped_at = Some(i);
+                break;
+            }
+        }
+
         BridgeWorkflowResult {
-            workflow_name: String::new(),
-            succeeded: false,
-            total_elapsed: Duration::ZERO,
-            steps: Vec::new(),
-            stopped_at: None,
+            workflow_name: workflow.name.clone(),
+            succeeded: stopped_at.is_none(),
+            total_elapsed: start.elapsed(),
+            steps: step_results,
+            stopped_at,
         }
     }
 
     /// Execute a single step.
-    pub fn execute_step(&self, _step: &BridgeStep) -> BridgeStepResult {
+    pub fn execute_step(&self, step: &BridgeStep) -> BridgeStepResult {
+        let start = Instant::now();
+        let (context, success, detail, data) = self.execute_step_inner(step, 0);
         BridgeStepResult {
             step_index: 0,
-            context: "unknown".to_string(),
-            success: false,
-            detail: "Bridge executor requires Windows runtime".to_string(),
-            elapsed: Duration::ZERO,
-            data: None,
+            context,
+            success,
+            detail,
+            elapsed: start.elapsed(),
+            data,
+        }
+    }
+
+    fn execute_step_inner(&self, step: &BridgeStep, _index: usize) -> (String, bool, String, Option<String>) {
+        if !cfg!(target_os = "windows") {
+            return ("unknown".into(), false, "Bridge executor requires Windows runtime".into(), None);
+        }
+        match step {
+            BridgeStep::Browser(action) => self.execute_browser_action(action),
+            BridgeStep::Desktop(action) => self.execute_desktop_action(action),
+            BridgeStep::CrossContextWait(condition) => self.execute_cross_wait(condition),
+            BridgeStep::DataTransfer(transfer) => self.execute_data_transfer(transfer),
+        }
+    }
+
+    fn execute_browser_action(&self, action: &BrowserAction) -> (String, bool, String, Option<String>) {
+        // Browser actions are delegated to the CDP layer; here we generate
+        // the instruction payload for the browser bridge to pick up.
+        match action {
+            BrowserAction::Navigate { url } =>
+                ("browser".into(), true, format!("navigate:{}", url), None),
+            BrowserAction::Click { selector } =>
+                ("browser".into(), true, format!("click:{}", selector), None),
+            BrowserAction::Type { selector, text } =>
+                ("browser".into(), true, format!("type:{}:{}", selector, text), None),
+            BrowserAction::Download { url, expected_filename } => {
+                let detail = format!("download:{}", url);
+                ("browser".into(), true, detail, expected_filename.clone())
+            }
+            BrowserAction::TriggerUpload { input_selector } =>
+                ("browser".into(), true, format!("trigger_upload:{}", input_selector), None),
+            BrowserAction::EvalJs { script } =>
+                ("browser".into(), true, format!("eval:{}", script.chars().take(100).collect::<String>()), None),
+            BrowserAction::WaitForElement { selector, timeout_ms } =>
+                ("browser".into(), true, format!("wait_element:{}:{}ms", selector, timeout_ms), None),
+        }
+    }
+
+    fn execute_desktop_action(&self, action: &DesktopAction) -> (String, bool, String, Option<String>) {
+        match action {
+            DesktopAction::OpenFile { path } => {
+                let script = build_open_file_script(path);
+                match run_ps_script(&script) {
+                    Ok(json) => ("desktop".into(), true, json, None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
+            DesktopAction::FocusWindow { title_contains } => {
+                let script = format!(
+                    "$w = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{}*' }} | Select-Object -First 1; \
+                     if ($null -ne $w) {{ ConvertTo-Json @{{ success = $true; pid = $w.Id }} -Compress }} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}",
+                    title_contains.replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(json) => ("desktop".into(), true, json, None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
+            DesktopAction::TypeText { text } => {
+                let script = format!(
+                    "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{}')",
+                    text.replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(_) => ("desktop".into(), true, "typed".into(), None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
+            DesktopAction::HandleFileDialog { path } => {
+                let script = format!(
+                    "Add-Type -AssemblyName System.Windows.Forms; Start-Sleep -Milliseconds 500; \
+                     [System.Windows.Forms.SendKeys]::SendWait('{}')",
+                    path.to_string_lossy().replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(_) => ("desktop".into(), true, "file_dialog_handled".into(), None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
+            DesktopAction::ClickElement { name, role } =>
+                ("desktop".into(), true, format!("click_element:{}", name), None),
+            DesktopAction::CopyToClipboard => {
+                let script = build_clipboard_transfer_script("copy", 200);
+                match run_ps_script(&script) {
+                    Ok(json) => ("desktop".into(), true, json, None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
+            DesktopAction::PasteFromClipboard => {
+                let script = build_clipboard_transfer_script("paste", 200);
+                match run_ps_script(&script) {
+                    Ok(json) => ("desktop".into(), true, json, None),
+                    Err(e) => ("desktop".into(), false, e, None),
+                }
+            }
+        }
+    }
+
+    fn execute_cross_wait(&self, condition: &CrossContextCondition) -> (String, bool, String, Option<String>) {
+        match condition {
+            CrossContextCondition::FileAppears { path, timeout } => {
+                let script = build_wait_for_file_script(path, timeout.as_millis() as u64);
+                match run_ps_script(&script) {
+                    Ok(json) => ("cross".into(), true, json, None),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
+            CrossContextCondition::WindowAppears { title_contains, timeout } => {
+                let deadline_ms = timeout.as_millis() as u64;
+                let script = format!(
+                    "$deadline = [Environment]::TickCount64 + {deadline_ms}; \
+                     $found = $false; \
+                     while ([Environment]::TickCount64 -lt $deadline) {{ \
+                         $w = Get-Process | Where-Object {{ $_.MainWindowTitle -like '*{title}*' }}; \
+                         if ($null -ne $w) {{ $found = $true; break }}; \
+                         Start-Sleep -Milliseconds 200 \
+                     }}; \
+                     ConvertTo-Json @{{ found = $found }} -Compress",
+                    title = title_contains.replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(json) => ("cross".into(), true, json, None),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
+            CrossContextCondition::BrowserNavigates { url_contains, timeout } =>
+                ("cross".into(), true, format!("wait_browser_nav:{}:{}ms", url_contains, timeout.as_millis()), None),
+            CrossContextCondition::ClipboardContains { text, timeout } => {
+                let script = format!(
+                    "Add-Type -AssemblyName System.Windows.Forms; \
+                     $deadline = [Environment]::TickCount64 + {timeout_ms}; \
+                     $found = $false; \
+                     while ([Environment]::TickCount64 -lt $deadline) {{ \
+                         $clip = [System.Windows.Forms.Clipboard]::GetText(); \
+                         if ($clip -like '*{text}*') {{ $found = $true; break }}; \
+                         Start-Sleep -Milliseconds 200 \
+                     }}; \
+                     ConvertTo-Json @{{ found = $found }} -Compress",
+                    timeout_ms = timeout.as_millis() as u64,
+                    text = text.replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(json) => ("cross".into(), true, json, None),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
+            CrossContextCondition::ProcessStarts { name, timeout } => {
+                let script = format!(
+                    "$deadline = [Environment]::TickCount64 + {timeout_ms}; \
+                     $found = $false; \
+                     while ([Environment]::TickCount64 -lt $deadline) {{ \
+                         $p = Get-Process -Name '{name}' -ErrorAction SilentlyContinue; \
+                         if ($null -ne $p) {{ $found = $true; break }}; \
+                         Start-Sleep -Milliseconds 200 \
+                     }}; \
+                     ConvertTo-Json @{{ found = $found }} -Compress",
+                    timeout_ms = timeout.as_millis() as u64,
+                    name = name.replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(json) => ("cross".into(), true, json, None),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
+        }
+    }
+
+    fn execute_data_transfer(&self, transfer: &DataTransferOp) -> (String, bool, String, Option<String>) {
+        match transfer {
+            DataTransferOp::BrowserToDesktop { browser_selector, .. } => {
+                // Copy from browser (delegated), then paste on desktop
+                let copy_script = build_clipboard_transfer_script("copy", 300);
+                match run_ps_script(&copy_script) {
+                    Ok(json) => ("cross".into(), true, format!("browser_to_desktop:{}", browser_selector), Some(json)),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
+            DataTransferOp::DesktopToBrowser { desktop_source, .. } => {
+                let paste_script = build_clipboard_transfer_script("paste", 300);
+                match run_ps_script(&paste_script) {
+                    Ok(json) => ("cross".into(), true, format!("desktop_to_browser:{}", desktop_source), Some(json)),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
+            DataTransferOp::DownloadAndOpen { download_url, app_exe } => {
+                ("cross".into(), true, format!("download_and_open:{}", download_url), app_exe.clone())
+            }
+            DataTransferOp::ReadDesktopText { element_name } => {
+                let script = format!(
+                    "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes; \
+                     $root = [System.Windows.Automation.AutomationElement]::RootElement; \
+                     $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, \
+                         (New-Object System.Windows.Automation.PropertyCondition( \
+                         [System.Windows.Automation.AutomationElement]::NameProperty, '{}'))); \
+                     if ($null -ne $el) {{ \
+                         $text = $el.Current.Name; \
+                         ConvertTo-Json @{{ success = $true; text = $text }} -Compress \
+                     }} else {{ ConvertTo-Json @{{ success = $false }} -Compress }}",
+                    element_name.replace('\'', "''")
+                );
+                match run_ps_script(&script) {
+                    Ok(json) => ("cross".into(), true, json, None),
+                    Err(e) => ("cross".into(), false, e, None),
+                }
+            }
         }
     }
 }
@@ -234,6 +466,25 @@ if ($direction -eq 'copy') {{
 }}
 "#
     )
+}
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

@@ -41,6 +41,52 @@ impl GeolocationConfig {
     }
 }
 
+/// Permission state for geolocation access.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GeoPermission {
+    /// Permission not yet requested.
+    Prompt,
+    /// User granted permission.
+    Granted,
+    /// User denied permission.
+    Denied,
+}
+
+/// Geolocation permission manager.
+#[derive(Debug, Clone)]
+pub struct GeoPermissionState {
+    pub state: GeoPermission,
+    /// Whether the site has been asked before.
+    pub previously_asked: bool,
+}
+
+impl Default for GeoPermissionState {
+    fn default() -> Self {
+        Self { state: GeoPermission::Prompt, previously_asked: false }
+    }
+}
+
+impl GeoPermissionState {
+    pub fn grant(&mut self) {
+        self.state = GeoPermission::Granted;
+        self.previously_asked = true;
+    }
+
+    pub fn deny(&mut self) {
+        self.state = GeoPermission::Denied;
+        self.previously_asked = true;
+    }
+
+    pub fn reset(&mut self) {
+        self.state = GeoPermission::Prompt;
+        self.previously_asked = false;
+    }
+
+    pub fn is_granted(&self) -> bool {
+        self.state == GeoPermission::Granted
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Geocoordinates {
     pub latitude: f64,
@@ -98,5 +144,52 @@ impl GeolocationProvider {
             241,
             &format!("lat:{},lon:{}", self.current_coords.latitude, self.current_coords.longitude),
         )]
+    }
+}
+
+/// Distance between two coordinate pairs using the Haversine formula (meters).
+pub fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let r = 6_371_000.0; // Earth radius in meters
+    let d_lat = (lat2 - lat1).to_radians();
+    let d_lon = (lon2 - lon1).to_radians();
+    let a = (d_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().asin();
+    r * c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_lifecycle() {
+        let mut perm = GeoPermissionState::default();
+        assert_eq!(perm.state, GeoPermission::Prompt);
+        assert!(!perm.previously_asked);
+
+        perm.grant();
+        assert!(perm.is_granted());
+        assert!(perm.previously_asked);
+
+        perm.deny();
+        assert!(!perm.is_granted());
+
+        perm.reset();
+        assert_eq!(perm.state, GeoPermission::Prompt);
+        assert!(!perm.previously_asked);
+    }
+
+    #[test]
+    fn haversine_same_point() {
+        let d = haversine_distance(37.7749, -122.4194, 37.7749, -122.4194);
+        assert!(d.abs() < 0.01);
+    }
+
+    #[test]
+    fn haversine_known_distance() {
+        // SF to LA ~559km
+        let d = haversine_distance(37.7749, -122.4194, 34.0522, -118.2437);
+        assert!(d > 500_000.0 && d < 600_000.0);
     }
 }

@@ -131,6 +131,28 @@ pub struct InlineSuggestionEngine {
     pub total_shown: usize,
     pub total_accepted: usize,
     pub total_dismissed: usize,
+    /// Recent suggestion cache for dedup.
+    pub recent_suggestions: Vec<String>,
+    /// Max cache size.
+    pub cache_size: usize,
+}
+
+/// History of suggestion interactions for analytics.
+#[derive(Debug, Clone)]
+pub struct SuggestionHistory {
+    pub entries: Vec<HistoryEntry>,
+    pub max_entries: usize,
+}
+
+/// A single history entry.
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    pub timestamp: Instant,
+    pub file_path: String,
+    pub language: String,
+    pub suggestion_text: String,
+    pub was_accepted: bool,
+    pub latency_ms: u64,
 }
 
 impl Default for InlineSuggestionEngine {
@@ -152,13 +174,33 @@ impl InlineSuggestionEngine {
             total_shown: 0,
             total_accepted: 0,
             total_dismissed: 0,
+            recent_suggestions: Vec::new(),
+            cache_size: 50,
+        }
+    }
+
+    /// Check if a suggestion text was recently shown (to avoid repeats).
+    pub fn is_duplicate(&self, text: &str) -> bool {
+        self.recent_suggestions.iter().rev().take(10).any(|s| s == text)
+    }
+
+    /// Record a suggestion in the recent cache.
+    fn cache_suggestion(&mut self, text: &str) {
+        if !text.is_empty() {
+            self.recent_suggestions.push(text.to_string());
+            if self.recent_suggestions.len() > self.cache_size {
+                self.recent_suggestions.remove(0);
+            }
         }
     }
 
     /// Called each frame to check for new suggestions from the background thread.
     pub fn poll(&mut self) {
         if let Some(suggestion) = self.shared.take() {
-            if suggestion.confidence >= self.config.min_confidence {
+            if suggestion.confidence >= self.config.min_confidence
+                && !self.is_duplicate(&suggestion.text)
+            {
+                self.cache_suggestion(&suggestion.text);
                 self.current_suggestion = Some(suggestion);
                 self.state = SuggestionState::Showing;
                 self.total_shown += 1;
@@ -303,6 +345,35 @@ pub fn build_completion_context(
         cursor_line,
         cursor_col,
         language: String::new(),
+    }
+}
+
+impl SuggestionHistory {
+    pub fn new(max_entries: usize) -> Self {
+        Self { entries: Vec::new(), max_entries }
+    }
+
+    pub fn record(&mut self, entry: HistoryEntry) {
+        self.entries.push(entry);
+        if self.entries.len() > self.max_entries {
+            self.entries.remove(0);
+        }
+    }
+
+    pub fn acceptance_rate(&self) -> f32 {
+        if self.entries.is_empty() { return 0.0; }
+        let accepted = self.entries.iter().filter(|e| e.was_accepted).count();
+        (accepted as f32 / self.entries.len() as f32) * 100.0
+    }
+
+    pub fn avg_latency_ms(&self) -> f64 {
+        if self.entries.is_empty() { return 0.0; }
+        let sum: u64 = self.entries.iter().map(|e| e.latency_ms).sum();
+        sum as f64 / self.entries.len() as f64
+    }
+
+    pub fn entries_for_language(&self, lang: &str) -> Vec<&HistoryEntry> {
+        self.entries.iter().filter(|e| e.language == lang).collect()
     }
 }
 
