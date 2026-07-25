@@ -6,6 +6,8 @@
 //! awareness per monitor, and supports targeting specific monitors for capture.
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 // ─── Monitor Info Model ──────────────────────────────────────────────────────
 
@@ -170,12 +172,109 @@ impl MultiMonitorManager {
         }
     }
 
+    /// Refresh the monitor list by querying PowerShell.
+    pub fn refresh(&mut self) -> bool {
+        if !cfg!(target_os = "windows") {
+            return false;
+        }
+        let script = build_enumerate_monitors_script();
+        match run_ps_script(&script) {
+            Ok(json) => {
+                self.monitors = parse_monitor_list(&json);
+                !self.monitors.is_empty()
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Find the best monitor for a given window size (most available space).
     pub fn best_monitor_for_size(&self, width: u32, height: u32) -> Option<&MonitorInfo> {
         self.monitors
             .iter()
             .filter(|m| m.work_area.width >= width && m.work_area.height >= height)
             .max_by_key(|m| m.work_area.width as u64 * m.work_area.height as u64)
+    }
+}
+
+// ─── Runtime Helpers ─────────────────────────────────────────────────────────
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_monitor_list(json: &str) -> Vec<MonitorInfo> {
+    #[derive(serde::Deserialize)]
+    struct PsMonitor {
+        index: Option<u32>,
+        device_name: Option<String>,
+        is_primary: Option<bool>,
+        bounds_x: Option<i32>,
+        bounds_y: Option<i32>,
+        bounds_w: Option<u32>,
+        bounds_h: Option<u32>,
+        work_x: Option<i32>,
+        work_y: Option<i32>,
+        work_w: Option<u32>,
+        work_h: Option<u32>,
+        dpi: Option<u32>,
+        dpi_scale: Option<f64>,
+        bits_per_pixel: Option<u32>,
+    }
+    let parsed: Result<Vec<PsMonitor>, _> = serde_json::from_str(json);
+    match parsed {
+        Ok(monitors) => monitors
+            .into_iter()
+            .map(|m| {
+                let dpi = m.dpi.unwrap_or(96);
+                let dpi_scale = m.dpi_scale.unwrap_or(1.0);
+                let bw = m.bounds_w.unwrap_or(1920);
+                let bh = m.bounds_h.unwrap_or(1080);
+                MonitorInfo {
+                    index: m.index.unwrap_or(0),
+                    device_name: m.device_name.unwrap_or_default(),
+                    friendly_name: None,
+                    bounds: MonitorRect {
+                        x: m.bounds_x.unwrap_or(0),
+                        y: m.bounds_y.unwrap_or(0),
+                        width: bw,
+                        height: bh,
+                    },
+                    work_area: MonitorRect {
+                        x: m.work_x.unwrap_or(0),
+                        y: m.work_y.unwrap_or(0),
+                        width: m.work_w.unwrap_or(bw),
+                        height: m.work_h.unwrap_or(bh),
+                    },
+                    is_primary: m.is_primary.unwrap_or(false),
+                    dpi_scale,
+                    dpi,
+                    physical_width: (bw as f64 * dpi_scale) as u32,
+                    physical_height: (bh as f64 * dpi_scale) as u32,
+                    refresh_rate: 0,
+                    orientation: if bh > bw {
+                        MonitorOrientation::Portrait
+                    } else {
+                        MonitorOrientation::Landscape
+                    },
+                }
+            })
+            .collect(),
+        Err(_) => Vec::new(),
     }
 }
 

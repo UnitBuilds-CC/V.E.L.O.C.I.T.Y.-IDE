@@ -382,14 +382,22 @@ pub fn handle_system_tool(
         }
         "wa_screenshot" => {
             let output_path = arguments["output_path"].as_str().unwrap_or("screenshot.png");
-            // Capture via PowerShell script, parse result as Screenshot
-            let target = crate::wa::screenshot::CaptureTarget::FullScreen;
-            let _script = crate::wa::screenshot::build_screenshot_script(&target);
-            // For now, return an empty screenshot placeholder
-            let img = crate::wa::screenshot::Screenshot::empty("full_screen");
+            let target = if let Some(pid) = arguments["pid"].as_u64() {
+                crate::wa::screenshot::CaptureTarget::Window(pid as u32)
+            } else if let Some(region) = arguments["region"].as_object() {
+                crate::wa::screenshot::CaptureTarget::Region(crate::wa::screenshot::CaptureRegion {
+                    x: region.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                    y: region.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                    width: region.get("width").and_then(|v| v.as_u64()).unwrap_or(1920) as u32,
+                    height: region.get("height").and_then(|v| v.as_u64()).unwrap_or(1080) as u32,
+                })
+            } else {
+                crate::wa::screenshot::CaptureTarget::FullScreen
+            };
+            let img = crate::wa::screenshot::capture(&target);
             let _ = img.save_bmp(std::path::Path::new(output_path));
             serde_json::to_string(&json!({
-                "success": true,
+                "success": img.pixel_count() > 0,
                 "path": output_path,
                 "width": img.width,
                 "height": img.height

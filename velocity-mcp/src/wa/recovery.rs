@@ -5,7 +5,8 @@
 //! that learn from element availability patterns, circuit-breaker protection
 //! for consistently failing operations, and recovery script execution.
 
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // ─── Retry Policy ────────────────────────────────────────────────────────────
 
@@ -410,6 +411,179 @@ Write-Output (ConvertTo-Json @{{ success = $true; action = "restart_process"; pi
             ))
         }
         RecoveryAction::CustomScript(script) => Some(script.clone()),
+    }
+}
+
+// ─── Checkpoint Manager ───────────────────────────────────────────────────────
+
+/// A saved checkpoint of system state that can be restored.
+#[derive(Debug, Clone)]
+pub struct Checkpoint {
+    pub id: String,
+    pub label: String,
+    pub created_at_ms: u64,
+    pub description: String,
+    /// Snapshot of window states at checkpoint time.
+    pub window_states: Vec<CheckpointWindow>,
+    /// Clipboard content at checkpoint time.
+    pub clipboard_snapshot: Option<String>,
+}
+
+/// Window state captured at a checkpoint.
+#[derive(Debug, Clone)]
+pub struct CheckpointWindow {
+    pub hwnd: u64,
+    pub title: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub minimized: bool,
+    pub maximized: bool,
+}
+
+/// Result of a checkpoint operation.
+#[derive(Debug, Clone)]
+pub struct CheckpointResult {
+    pub success: bool,
+    pub checkpoint_id: String,
+    pub detail: String,
+}
+
+/// Manages creation, listing, and restoration of system state checkpoints.
+pub struct CheckpointManager {
+    checkpoints: Vec<Checkpoint>,
+    max_checkpoints: usize,
+}
+
+impl CheckpointManager {
+    pub fn new() -> Self {
+        Self {
+            checkpoints: Vec::new(),
+            max_checkpoints: 50,
+        }
+    }
+
+    /// Create a checkpoint capturing current window positions and clipboard.
+    pub fn create(&mut self, label: &str) -> CheckpointResult {
+        let id = format!("cp_{}", now_ms());
+        let windows = capture_window_states();
+        let clipboard = capture_clipboard();
+        let cp = Checkpoint {
+            id: id.clone(),
+            label: label.to_string(),
+            created_at_ms: now_ms(),
+            description: format!("Checkpoint '{}': {} windows, clipboard={}",
+                label, windows.len(), if clipboard.is_some() { "yes" } else { "no" }),
+            window_states: windows,
+            clipboard_snapshot: clipboard,
+        };
+        self.checkpoints.push(cp);
+        if self.checkpoints.len() > self.max_checkpoints {
+            self.checkpoints.remove(0);
+        }
+        CheckpointResult {
+            success: true,
+            checkpoint_id: id,
+            detail: format!("Created checkpoint '{}'", label),
+        }
+    }
+
+    /// List all checkpoints (newest last).
+    pub fn list(&self) -> &[Checkpoint] {
+        &self.checkpoints
+    }
+
+    /// Get a checkpoint by ID.
+    pub fn get(&self, id: &str) -> Option<&Checkpoint> {
+        self.checkpoints.iter().find(|cp| cp.id == id)
+    }
+
+    /// Restore a checkpoint: re-apply window positions and clipboard content.
+    pub fn restore(&self, id: &str) -> CheckpointResult {
+        let cp = match self.get(id) {
+            Some(cp) => cp,
+            None => return CheckpointResult {
+                success: false,
+                checkpoint_id: id.to_string(),
+                detail: format!("Checkpoint '{}' not found", id),
+            },
+        };
+        let mut restored = 0u32;
+        for win in &cp.window_states {
+            let op = if win.minimized {
+                crate::wa::window_mgmt::WindowOperation::Minimize
+            } else if win.maximized {
+                crate::wa::window_mgmt::WindowOperation::Maximize
+            } else {
+                crate::wa::window_mgmt::WindowOperation::MoveResize {
+                    x: win.x, y: win.y, width: win.width, height: win.height,
+                }
+            };
+            let result = crate::wa::window_mgmt::WindowManager::apply_operation(win.hwnd, &op);
+            if result.success {
+                restored += 1;
+            }
+        }
+        // Restore clipboard if we have a snapshot
+        if let Some(ref text) = cp.clipboard_snapshot {
+            let _ = crate::wa::clipboard::ClipboardManager::write_text(text);
+        }
+        CheckpointResult {
+            success: restored > 0 || cp.window_states.is_empty(),
+            checkpoint_id: id.to_string(),
+            detail: format!("Restored {}/{} windows from checkpoint '{}'",
+                restored, cp.window_states.len(), cp.label),
+        }
+    }
+
+    /// Remove a checkpoint by ID.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.checkpoints.len();
+        self.checkpoints.retain(|cp| cp.id != id);
+        self.checkpoints.len() < before
+    }
+
+    /// Remove all checkpoints.
+    pub fn clear(&mut self) {
+        self.checkpoints.clear();
+    }
+}
+
+impl Default for CheckpointManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn capture_window_states() -> Vec<CheckpointWindow> {
+    crate::wa::window_mgmt::WindowManager::enumerate_windows()
+        .into_iter()
+        .map(|w| CheckpointWindow {
+            hwnd: w.hwnd,
+            title: w.title,
+            x: w.rect.x,
+            y: w.rect.y,
+            width: w.rect.width,
+            height: w.rect.height,
+            minimized: w.state == crate::wa::window_mgmt::WindowState::Minimized,
+            maximized: w.state == crate::wa::window_mgmt::WindowState::Maximized,
+        })
+        .collect()
+}
+
+fn capture_clipboard() -> Option<String> {
+    let state = crate::wa::clipboard::ClipboardManager::read();
+    match state.content {
+        crate::wa::clipboard::ClipboardContent::Text(text) if !text.is_empty() => Some(text),
+        _ => None,
     }
 }
 

@@ -613,6 +613,108 @@ if ($null -ne $el) {{
 }} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
 "#
         ),
+        UiaPattern::Scroll => {
+            let amount = value.unwrap_or("SmallIncrement");
+            let (horizontal, vertical) = match amount {
+                "LineUp" => ("0", "SmallDecrement"),
+                "LineDown" => ("0", "SmallIncrement"),
+                "LineLeft" => ("SmallDecrement", "0"),
+                "LineRight" => ("SmallIncrement", "0"),
+                "PageUp" => ("0", "LargeDecrement"),
+                "PageDown" => ("0", "LargeIncrement"),
+                _ => ("0", "SmallIncrement"),
+            };
+            format!(
+                r#"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '{automation_id}')
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if ($null -eq $el) {{ $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '{name}'); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) }}
+if ($null -ne $el) {{
+    $pattern = $el.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    $pattern.Scroll([System.Windows.Automation.ScrollAmount]::{vertical}, [System.Windows.Automation.ScrollAmount]::{horizontal})
+    Write-Output '{{"success":true}}'
+}} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
+"#
+            )
+        }
+        UiaPattern::Selection => format!(
+            r#"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '{automation_id}')
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if ($null -eq $el) {{ $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '{name}'); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) }}
+if ($null -ne $el) {{
+    $pattern = $el.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern)
+    $selected = $pattern.Current.GetSelection()
+    $names = @()
+    foreach ($s in $selected) {{ $names += $s.Current.Name }}
+    Write-Output (ConvertTo-Json @{{ success = $true; selected = ($names -join ',') }} -Compress)
+}} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
+"#
+        ),
+        UiaPattern::SelectionItem => {
+            let action = value.unwrap_or("Select");
+            let method = match action {
+                "AddToSelection" => "AddToSelection()",
+                "RemoveFromSelection" => "RemoveFromSelection()",
+                _ => "Select()",
+            };
+            format!(
+                r#"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '{automation_id}')
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if ($null -eq $el) {{ $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '{name}'); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) }}
+if ($null -ne $el) {{
+    $pattern = $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+    $pattern.{method}
+    Write-Output '{{"success":true}}'
+}} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
+"#
+            )
+        }
+        UiaPattern::ExpandCollapse => {
+            let action = value.unwrap_or("Expand");
+            let method = match action {
+                "Collapse" => "Collapse()",
+                _ => "Expand()",
+            };
+            format!(
+                r#"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '{automation_id}')
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if ($null -eq $el) {{ $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '{name}'); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) }}
+if ($null -ne $el) {{
+    $pattern = $el.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $pattern.{method}
+    Write-Output '{{"success":true}}'
+}} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
+"#
+            )
+        }
+        UiaPattern::RangeValue => {
+            let val = value.unwrap_or("50");
+            format!(
+                r#"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '{automation_id}')
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if ($null -eq $el) {{ $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '{name}'); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) }}
+if ($null -ne $el) {{
+    $pattern = $el.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern)
+    $pattern.SetValue({val})
+    Write-Output '{{"success":true}}'
+}} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
+"#
+            )
+        }
         _ => format!(
             r#"Write-Output '{{"success":false,"error":"pattern {} not yet wired for direct invoke"}}'"#,
             pattern.as_str()

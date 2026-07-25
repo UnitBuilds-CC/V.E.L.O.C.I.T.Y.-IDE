@@ -6,7 +6,9 @@
 //! scripts when conditions are met.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ─── Trigger Types ───────────────────────────────────────────────────────────
@@ -196,6 +198,74 @@ impl TriggerManager {
             })
             .collect()
     }
+
+    /// Evaluate all enabled triggers and fire any whose conditions are met.
+    /// Returns results for triggers that fired during this evaluation.
+    pub fn evaluate(&mut self) -> Vec<TriggerFireResult> {
+        let mut fired = Vec::new();
+        let mut to_fire = Vec::new();
+
+        for trigger in &self.triggers {
+            if !trigger.enabled {
+                continue;
+            }
+            if trigger.max_fires.map(|max| trigger.fire_count >= max).unwrap_or(false) {
+                continue;
+            }
+            if self.should_fire(trigger) {
+                to_fire.push(trigger.id.clone());
+            }
+        }
+
+        for id in to_fire {
+            if let Some(result) = self.fire(&id) {
+                fired.push(result);
+            }
+        }
+        fired
+    }
+
+    /// Check whether a single trigger's condition is currently met.
+    fn should_fire(&self, trigger: &TriggerDefinition) -> bool {
+        match &trigger.kind {
+            TriggerKind::Delay(duration) => {
+                let elapsed = now_ms().saturating_sub(trigger.created_at_ms);
+                elapsed >= duration.as_millis() as u64
+            }
+            TriggerKind::Interval { period, .. } => {
+                let last = trigger.last_fired_at_ms.unwrap_or(trigger.created_at_ms);
+                let elapsed = now_ms().saturating_sub(last);
+                elapsed >= period.as_millis() as u64
+            }
+            TriggerKind::FileWatch { path, event } => {
+                check_file_condition(path, event)
+            }
+            TriggerKind::WindowAppears { title_contains } => {
+                check_window_condition(title_contains, true)
+            }
+            TriggerKind::WindowCloses { title_contains } => {
+                check_window_condition(title_contains, false)
+            }
+            TriggerKind::ProcessStarts { name_contains } => {
+                check_process_condition(name_contains, true)
+            }
+            TriggerKind::ProcessExits { pid } => {
+                !check_process_alive(*pid)
+            }
+            TriggerKind::ClipboardChanged => {
+                // Clipboard change detection requires state tracking across polls
+                // For now, always fire (caller should track sequence numbers)
+                false
+            }
+            TriggerKind::SystemIdle { idle_threshold } => {
+                check_system_idle(idle_threshold.as_millis() as u64)
+            }
+            TriggerKind::Hotkey { .. } => {
+                // Hotkey detection requires a message loop; not pollable
+                false
+            }
+        }
+    }
 }
 
 impl Default for TriggerManager {
@@ -209,6 +279,100 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn run_ps_quick(script: &str) -> Option<String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn().ok()?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).ok()?;
+    }
+    let output = child.wait_with_output().ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn check_file_condition(path: &Path, event: &FileWatchEvent) -> bool {
+    match event {
+        FileWatchEvent::Created | FileWatchEvent::Any => path.exists(),
+        FileWatchEvent::Deleted => !path.exists(),
+        FileWatchEvent::Modified | FileWatchEvent::Renamed => {
+            // Check if file was modified in last 5 seconds
+            if let Ok(meta) = std::fs::metadata(path) {
+                if let Ok(modified) = meta.modified() {
+                    let age = SystemTime::now().duration_since(modified).unwrap_or(Duration::MAX);
+                    age < Duration::from_secs(5)
+                } else { false }
+            } else { false }
+        }
+    }
+}
+
+fn check_window_condition(title_contains: &str, should_exist: bool) -> bool {
+    if !cfg!(target_os = "windows") { return false; }
+    let escaped = title_contains.replace('\'', "''");
+    let script = format!(
+        r#"Add-Type -AssemblyName UIAutomationClient; $root = [System.Windows.Automation.AutomationElement]::RootElement; $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition); $found = $false; foreach ($w in $windows) {{ if ($w.Current.Name -like '*{}*') {{ $found = $true; break }} }}; Write-Output $found"#,
+        escaped
+    );
+    match run_ps_quick(&script) {
+        Some(out) => {
+            let is_true = out.eq_ignore_ascii_case("true");
+            if should_exist { is_true } else { !is_true }
+        }
+        None => false,
+    }
+}
+
+fn check_process_condition(name_contains: &str, should_exist: bool) -> bool {
+    if !cfg!(target_os = "windows") { return false; }
+    let escaped = name_contains.replace('\'', "''");
+    let script = format!(
+        r#"$p = Get-Process | Where-Object {{ $_.ProcessName -like '*{}*' }}; Write-Output ($null -ne $p)"#,
+        escaped
+    );
+    match run_ps_quick(&script) {
+        Some(out) => {
+            let is_true = out.eq_ignore_ascii_case("true");
+            if should_exist { is_true } else { !is_true }
+        }
+        None => false,
+    }
+}
+
+fn check_process_alive(pid: u32) -> bool {
+    if !cfg!(target_os = "windows") { return true; }
+    let script = format!(r#"$p = Get-Process -Id {} -ErrorAction SilentlyContinue; Write-Output ($null -ne $p)"#, pid);
+    match run_ps_quick(&script) {
+        Some(out) => out.eq_ignore_ascii_case("true"),
+        None => true, // assume alive if we can't check
+    }
+}
+
+fn check_system_idle(threshold_ms: u64) -> bool {
+    if !cfg!(target_os = "windows") { return false; }
+    let script = format!(
+        r#"Add-Type @'
+using System; using System.Runtime.InteropServices;
+public class IdleCheck {{
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+    [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO {{ public uint cbSize; public uint dwTime; }}
+    public static uint GetIdle() {{ var i = new LASTINPUTINFO {{ cbSize = 8 }}; GetLastInputInfo(ref i); return (uint)Environment.TickCount - i.dwTime; }}
+}}
+'@; Write-Output ([IdleCheck]::GetIdle() -ge {})"#,
+        threshold_ms
+    );
+    match run_ps_quick(&script) {
+        Some(out) => out.eq_ignore_ascii_case("true"),
+        None => false,
+    }
 }
 
 // ─── PowerShell Scripts ──────────────────────────────────────────────────────

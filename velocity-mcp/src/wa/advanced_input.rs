@@ -8,6 +8,8 @@
 //! - Complex keyboard combinations (Ctrl+Shift+..., Alt+Tab, etc.)
 //! - SendInput-based low-level input injection
 
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 // ─── Input Types ─────────────────────────────────────────────────────────────
@@ -396,6 +398,71 @@ Write-Output '{{"success":true,"events":{count}}}' -f @{{count={count}}}
 "#,
         count = sequence.events.len()
     )
+}
+
+/// Result of executing an input sequence.
+#[derive(Debug, Clone)]
+pub struct InputExecutionResult {
+    pub success: bool,
+    pub events_sent: usize,
+    pub detail: String,
+}
+
+/// Execute an input sequence by running the generated PowerShell script.
+pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
+    if !cfg!(target_os = "windows") {
+        return InputExecutionResult {
+            success: false,
+            events_sent: 0,
+            detail: "Input execution requires Windows runtime".to_string(),
+        };
+    }
+    let script = build_input_sequence_script(sequence);
+    match run_ps_script(&script) {
+        Ok(json) => {
+            #[derive(serde::Deserialize)]
+            struct PsResult {
+                success: Option<bool>,
+                events: Option<usize>,
+            }
+            match serde_json::from_str::<PsResult>(&json) {
+                Ok(r) => InputExecutionResult {
+                    success: r.success.unwrap_or(true),
+                    events_sent: r.events.unwrap_or(sequence.events.len()),
+                    detail: format!("Executed {} events via SendInput", sequence.events.len()),
+                },
+                Err(e) => InputExecutionResult {
+                    success: false,
+                    events_sent: 0,
+                    detail: format!("Parse error: {e}"),
+                },
+            }
+        }
+        Err(e) => InputExecutionResult {
+            success: false,
+            events_sent: 0,
+            detail: e,
+        },
+    }
+}
+
+fn run_ps_script(script: &str) -> Result<String, String> {
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

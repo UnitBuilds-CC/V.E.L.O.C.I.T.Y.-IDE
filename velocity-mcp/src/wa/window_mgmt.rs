@@ -96,9 +96,14 @@ pub struct WindowManager;
 impl WindowManager {
     /// Enumerate all visible top-level windows.
     pub fn enumerate_windows() -> Vec<WindowInfo> {
-        // This would call the PowerShell script at runtime on Windows.
-        // Returns empty on non-Windows platforms.
-        Vec::new()
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
+        let script = build_enumerate_windows_script();
+        match run_ps_script(&script) {
+            Ok(json) => parse_window_list(&json),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Find windows matching a title pattern (case-insensitive substring).
@@ -356,6 +361,52 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         return Err(format!("PowerShell error: {}", stderr.trim()));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn parse_window_list(json: &str) -> Vec<WindowInfo> {
+    #[derive(serde::Deserialize)]
+    struct PsWindow {
+        hwnd: Option<i64>,
+        process_id: Option<u32>,
+        title: Option<String>,
+        class_name: Option<String>,
+        x: Option<i32>,
+        y: Option<i32>,
+        width: Option<u32>,
+        height: Option<u32>,
+        state: Option<String>,
+        is_foreground: Option<bool>,
+    }
+    let parsed: Result<Vec<PsWindow>, _> = serde_json::from_str(json);
+    match parsed {
+        Ok(windows) => windows
+            .into_iter()
+            .map(|w| {
+                let state_str = w.state.as_deref().unwrap_or("normal");
+                WindowInfo {
+                    hwnd: w.hwnd.unwrap_or(0) as u64,
+                    process_id: w.process_id.unwrap_or(0),
+                    title: w.title.unwrap_or_default(),
+                    class_name: w.class_name.unwrap_or_default(),
+                    rect: WindowRect {
+                        x: w.x.unwrap_or(0),
+                        y: w.y.unwrap_or(0),
+                        width: w.width.unwrap_or(0),
+                        height: w.height.unwrap_or(0),
+                    },
+                    state: match state_str {
+                        "minimized" => WindowState::Minimized,
+                        "maximized" => WindowState::Maximized,
+                        "hidden" => WindowState::Hidden,
+                        _ => WindowState::Normal,
+                    },
+                    is_foreground: w.is_foreground.unwrap_or(false),
+                    is_top_level: true,
+                }
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 fn parse_window_op_result(hwnd: u64, op: &WindowOperation, json: &str) -> WindowOpResult {

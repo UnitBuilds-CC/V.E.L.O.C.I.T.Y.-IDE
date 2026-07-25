@@ -172,12 +172,15 @@ impl TestGenerator {
 /// Generate a test skeleton for a single function.
 fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -> GeneratedTest {
     let test_name = format!("test_{}", func.name);
+    let (setup, assertion, confidence) = analyze_function_signature(func);
     let test_body = match config.framework {
         TestFramework::RustBuiltin => {
             if config.include_assertions {
                 format!(
-                    "#[test]\nfn {}() {{\n    // TODO: test {}\n    // assert_eq!({}(...), expected);\n    assert!(true);\n}}",
-                    test_name, func.name, func.name
+                    "#[test]\nfn {}() {{\n{}    let result = {}(\n{}    );\n{}\n}}",
+                    test_name, setup, func.name,
+                    generate_default_args(&func.signature, TestFramework::RustBuiltin),
+                    assertion
                 )
             } else {
                 format!(
@@ -188,26 +191,34 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
         }
         TestFramework::Pytest => {
             format!(
-                "def {}():\n    # TODO: test {}\n    assert True",
-                test_name, func.name
+                "def {}():\n{}    result = {}(\n{}    )\n{}",
+                test_name, setup, func.name,
+                generate_default_args(&func.signature, TestFramework::Pytest),
+                assertion
             )
         }
         TestFramework::Jest => {
             format!(
-                "test('{}', () => {{\n  // TODO: test {}\n  expect(true).toBe(true);\n}});",
-                func.name, func.name
+                "test('{}', () => {{\n{}  const result = {}(\n{}  );\n{}\n}});",
+                func.name, setup, func.name,
+                generate_default_args(&func.signature, TestFramework::Jest),
+                assertion
             )
         }
         TestFramework::Mocha => {
             format!(
-                "it('should {}', () => {{\n  // TODO: test {}\n  assert.ok(true);\n}});",
-                func.name, func.name
+                "it('should {}', () => {{\n{}  const result = {}(\n{}  );\n{}\n}});",
+                func.name, setup, func.name,
+                generate_default_args(&func.signature, TestFramework::Mocha),
+                assertion
             )
         }
         TestFramework::JUnit => {
             format!(
-                "@Test\npublic void {}() {{\n    // TODO: test {}\n    assertTrue(true);\n}}",
-                test_name, func.name
+                "@Test\npublic void {}() {{\n{}    var result = {}(\n{}    );\n{}\n}}",
+                test_name, setup, func.name,
+                generate_default_args(&func.signature, TestFramework::JUnit),
+                assertion
             )
         }
     };
@@ -217,8 +228,103 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
         test_name,
         test_body,
         target_file: func.file.clone(),
-        confidence: 0.7,
+        confidence,
     }
+}
+
+/// Analyze a function signature to generate appropriate setup and assertion code.
+fn analyze_function_signature(func: &TestableFunction) -> (String, String, f32) {
+    let sig = &func.signature;
+    let has_return = sig.contains("->") || sig.contains(": ");
+    let returns_bool = sig.contains("bool") || sig.contains("Boolean");
+    let returns_option = sig.contains("Option") || sig.contains("?");
+    let returns_result = sig.contains("Result") || sig.contains("throws");
+    let returns_vec = sig.contains("Vec") || sig.contains("[]") || sig.contains("List");
+    let returns_string = sig.contains("String") || sig.contains("str");
+    let returns_number = sig.contains("f64") || sig.contains("f32") || sig.contains("i32")
+        || sig.contains("u32") || sig.contains("usize") || sig.contains("int") || sig.contains("float");
+
+    let setup = String::new();
+
+    let assertion = if returns_bool {
+        match func.name.to_lowercase() {
+            n if n.starts_with("is_") || n.starts_with("has_") || n.starts_with("can_") =>
+                "    assert!(result, \"Expected {} to return true\");\n".to_string(),
+            n if n.starts_with("should_") =>
+                "    assert!(result, \"Expected {} to return true\");\n".to_string(),
+            _ => "    // Assert expected boolean result\n    // assert!(result);\n".to_string(),
+        }
+    } else if returns_option {
+        "    assert!(result.is_some(), \"Expected Some value\");\n".to_string()
+    } else if returns_result {
+        "    assert!(result.is_ok(), \"Expected Ok result\");\n".to_string()
+    } else if returns_vec {
+        "    // Assert collection is non-empty or has expected length\n    // assert!(!result.is_empty());\n".to_string()
+    } else if returns_string {
+        "    assert!(!result.is_empty(), \"Expected non-empty string\");\n".to_string()
+    } else if returns_number {
+        "    // Assert expected numeric result\n    // assert_eq!(result, expected_value);\n".to_string()
+    } else if has_return {
+        "    assert!(result, \"Expected valid result\");\n".to_string()
+    } else {
+        "    // Function returns void; verify side effects\n    // assert!(condition_after_call);\n".to_string()
+    };
+
+    let confidence = if has_return { 0.8 } else { 0.5 };
+    (setup, assertion, confidence)
+}
+
+/// Generate default argument expressions for a function call.
+fn generate_default_args(signature: &str, framework: TestFramework) -> String {
+    // Extract parameter names from signature
+    let params = extract_param_names(signature);
+    if params.is_empty() {
+        return String::new();
+    }
+    let indent = match framework {
+        TestFramework::RustBuiltin | TestFramework::JUnit => "        ",
+        TestFramework::Pytest => "        ",
+        TestFramework::Jest | TestFramework::Mocha => "        ",
+    };
+    params.iter()
+        .map(|name| format!("{}{}, // TODO: provide test value", indent, name))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// Extract parameter names from a function signature.
+fn extract_param_names(signature: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    // Find content between parentheses
+    if let Some(start) = signature.find('(') {
+        if let Some(end) = signature.find(')') {
+            let params_str = &signature[start + 1..end];
+            for param in params_str.split(',') {
+                let trimmed = param.trim();
+                if trimmed.is_empty() || trimmed == "&self" || trimmed == "&mut self" {
+                    continue;
+                }
+                // Rust: `name: Type` -> take `name`
+                if let Some(colon_pos) = trimmed.find(':') {
+                    let name = trimmed[..colon_pos].trim().trim_start_matches("mut ");
+                    if !name.is_empty() {
+                        names.push(name.to_string());
+                    }
+                }
+                // Python/JS: just the name
+                else if trimmed.contains(char::is_alphabetic) {
+                    let name = trimmed.split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .next()
+                        .unwrap_or("");
+                    if !name.is_empty() && name != "self" {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Build an index of existing test function names across the workspace.

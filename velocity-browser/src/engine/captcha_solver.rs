@@ -130,11 +130,131 @@ impl CaptchaSolverEngine {
     }
 
     pub fn solve_challenge_nda(session_id: &str, captcha_type: &CaptchaType) -> Vec<NdaTriple> {
-        vec![NdaTriple::new(
+        let mut triples = Vec::new();
+
+        // Record the captcha detection event
+        triples.push(NdaTriple::new(
             session_id,
             250,
-            &format!("captcha_solved:{:?}", captcha_type),
-        )]
+            &format!("captcha_detected:{:?}", captcha_type),
+        ));
+
+        // Type-specific solving strategy
+        match captcha_type {
+            CaptchaType::ReCaptchaV3 => {
+                // ReCaptchaV3 is invisible/score-based — submit the form and let the
+                // token be generated automatically. No user interaction needed.
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:auto_submit",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    252,
+                    "captcha_action:submit_form_for_token",
+                ));
+            }
+            CaptchaType::ReCaptchaV2 => {
+                // ReCaptchaV2 requires clicking the checkbox and potentially solving image challenges
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:click_checkbox",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    252,
+                    "captcha_action:click_recaptcha_checkbox",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    253,
+                    "captcha_wait:iframe_result",
+                ));
+            }
+            CaptchaType::HCaptcha => {
+                // hCaptcha is similar to ReCaptchaV2 but uses a different provider
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:hcaptcha_click",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    252,
+                    "captcha_action:click_hcaptcha_checkbox",
+                ));
+            }
+            CaptchaType::Turnstile => {
+                // Cloudflare Turnstile is typically invisible — wait for the token
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:wait_for_turnstile_token",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    252,
+                    "captcha_action:wait_cf_clearance",
+                ));
+            }
+            CaptchaType::FunCaptcha => {
+                // FunCaptcha requires solving visual puzzles
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:funcaptcha_puzzle",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    252,
+                    "captcha_action:analyze_funcaptcha_frame",
+                ));
+            }
+            CaptchaType::TextCaptcha => {
+                // Text captcha requires OCR or image recognition
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:ocr_text_recognition",
+                ));
+                triples.push(NdaTriple::new(
+                    session_id,
+                    252,
+                    "captcha_action:extract_text_from_image",
+                ));
+            }
+            CaptchaType::Unknown => {
+                triples.push(NdaTriple::new(
+                    session_id,
+                    251,
+                    "captcha_strategy:unknown_fallback",
+                ));
+            }
+        }
+
+        triples.push(NdaTriple::new(
+            session_id,
+            260,
+            &format!("captcha_solving:{:?}", captcha_type),
+        ));
+
+        triples
+    }
+
+    /// Update a solve attempt's state based on observed results.
+    pub fn update_solve_state(attempt: &mut SolveAttempt, success: bool) {
+        attempt.attempts += 1;
+        if success {
+            attempt.state = SolveState::Solved;
+        } else if attempt.attempts >= 3 {
+            attempt.state = SolveState::Failed {
+                reason: format!("Failed after {} attempts", attempt.attempts),
+            };
+        } else {
+            attempt.state = SolveState::WaitingForSolution;
+        }
     }
 }
 

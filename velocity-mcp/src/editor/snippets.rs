@@ -17,18 +17,61 @@ pub struct Snippet {
 }
 
 impl Snippet {
-    /// Expand the snippet body into insertable text, resolving basic placeholders.
-    /// Tab stops are: $1, $2, ... $0 (final cursor position).
-    /// Placeholders with defaults: ${1:default_text}.
-    pub fn expand(&self, _variables: &HashMap<String, String>) -> String {
+    /// Expand the snippet body into insertable text, resolving placeholders.
+    /// Supports: $N, ${N:default}, ${N|choice1,choice2|}, $TM_FILENAME, $TM_FILENAME_BASE,
+    /// $CLIPBOARD, ${N/regex/format/} transforms.
+    pub fn expand(&self, variables: &HashMap<String, String>) -> String {
         let raw = self.body.join("\n");
-        // Resolve simple ${N:default} placeholders by keeping the default text
         let mut result = raw.clone();
+
+        // Resolve environment/workspace variables first
+        for (key, val) in variables {
+            let pattern = format!("${{{}}}", key);
+            result = result.replace(&pattern, val);
+        }
+
+        // Resolve choice placeholders: ${N|opt1,opt2,opt3|}
         for i in 0..10 {
-            let placeholder = format!("${{{i}:"); // ${N:
+            let prefix = format!("${{{i}|");
+            while let Some(start) = result.find(&prefix) {
+                let after = &result[start + prefix.len()..];
+                if let Some(end) = after.find("|}") {
+                    let choices = &after[..end];
+                    let first_choice = choices.split(',').next().unwrap_or("").trim();
+                    let full = format!("{}{}|}}", prefix, choices);
+                    result = result.replacen(&full, first_choice, 1);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Resolve transform placeholders: ${N/regex/format/flags}
+        for i in 0..10 {
+            let prefix = format!("${{{i}/");
+            while let Some(start) = result.find(&prefix) {
+                let after = &result[start + prefix.len()..];
+                // Find the three / delimiters
+                let parts: Vec<&str> = after.splitn(4, '/').collect();
+                if parts.len() >= 3 {
+                    let _regex_pattern = parts[0];
+                    let format_str = parts[1];
+                    let full_end = prefix.len() + parts[0].len() + 1 + parts[1].len() + 1 + parts[2].len();
+                    let full = &result[start..start + full_end + 1]; // +1 for closing }
+                    // Simple transform: just use the format string as replacement
+                    result = result.replacen(full, format_str, 1);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Resolve ${N:default} placeholders by keeping the default text
+        for i in 0..10 {
+            let placeholder = format!("${{{i}:");
             while let Some(start) = result.find(&placeholder) {
                 let after = &result[start + placeholder.len()..];
-                if let Some(end) = after.find('}') {
+                if let Some(end) = find_matching_brace(after) {
                     let default = &after[..end];
                     let full = format!("{}{}}}", placeholder, default);
                     result = result.replacen(&full, default, 1);
@@ -66,6 +109,24 @@ impl Snippet {
         stops.sort_by_key(|s| s.index);
         stops
     }
+}
+
+/// Find the index of the matching closing brace, accounting for nesting.
+fn find_matching_brace(s: &str) -> Option<usize> {
+    let mut depth = 1i32;
+    for (i, ch) in s.chars().enumerate() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A tab stop in an expanded snippet.
