@@ -496,7 +496,7 @@ impl VelocityApp {
         self.touch_mru(&id);
     }
 
-    pub fn open_editor_stub(&mut self) {
+    pub fn prompt_open_file(&mut self) {
         // Trigger the native file dialog to let the user pick a file to open.
         // Falls back to opening an empty editor if no dialog system is available.
         self.open_file_dialog();

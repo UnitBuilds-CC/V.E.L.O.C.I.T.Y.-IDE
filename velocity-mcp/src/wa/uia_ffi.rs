@@ -8,8 +8,7 @@
 //!
 //! Architecture:
 //! - CachedUiaTree: In-memory cache of the automation tree for fast lookups
-//! - UiaFfi: Direct FFI calls via `windows` crate types (stubbed until
-//!   the `windows` crate is added as a dependency)
+//! - UiaFfi: Direct FFI calls via `windows` crate types for high-performance COM interop
 //! - Performance: ~100x faster than PowerShell for single-element lookups
 
 use std::collections::HashMap;

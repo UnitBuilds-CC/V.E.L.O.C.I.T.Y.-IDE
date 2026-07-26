@@ -1579,7 +1579,7 @@ impl eframe::App for VelocityApp {
 
                 ui.menu_button("File", |ui| {
                     if ui.button("New File").clicked() {
-                        self.open_editor_stub();
+                        self.prompt_open_file();
                         ui.close();
                     }
                     if ui.button("Open File…").clicked() {
@@ -1611,7 +1611,7 @@ impl eframe::App for VelocityApp {
                         match action_id {
                             "run" | "run_flow" => self.run_active(),
                             "build" => self.build_active(),
-                            "file" => self.open_editor_stub(),
+                            "file" => self.prompt_open_file(),
                             "git" => { self.left_sidebar_tab = 2; self.left_sidebar_visible = true; }
                             "settings" => self.toggle_panel(TabKind::Settings),
                             "deploy" => self.trigger_deploy(),
