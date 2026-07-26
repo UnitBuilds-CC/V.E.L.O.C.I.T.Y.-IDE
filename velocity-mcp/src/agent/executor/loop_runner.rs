@@ -4,6 +4,7 @@ use super::super::memory_store::PersistentMemory;
 use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
+use super::super::self_improve::ImprovementEngine;
 use super::thread::{apply_headless_control_messages, run_compilation_check};
 use super::utils::{
     build_request, compress_history, estimate_tokens, sanitize_chat_token, send_usage_update,
@@ -51,6 +52,20 @@ pub fn run_agent_reasoning_loop(
 
     // Phase 3: Persistent memory for cross-session learning
     let mut memory = PersistentMemory::open(workspace_root);
+
+    // Phase 4: Self-improvement engine — analyzes failures and refines prompts
+    let mut improve_engine = ImprovementEngine::new(&memory);
+
+    // Inject previously-learned directives into system prompt at session start
+    let learned_directives = ImprovementEngine::recall_directives(&memory, 5);
+    if !learned_directives.is_empty() {
+        if let Some(sys_msg) = message_history.iter_mut().find(|m| m.role == "system") {
+            sys_msg.content.push_str("\n\n## Previously Learned Patterns\n");
+            for d in &learned_directives {
+                sys_msg.content.push_str(&format!("- {}\n", d));
+            }
+        }
+    }
 
     // T2b: LSP-gated writes — track files written this session to prevent
     // repeated overwrites when build diagnostics report errors.
@@ -882,13 +897,16 @@ pub fn run_agent_reasoning_loop(
             for (call_id, tool_name, tool_result, file_buffer_update, changelog_entry) in
                 thread_results
             {
-                if tool_result.contains("Error executing tool") {
+                if tool_result.contains("Error executing tool") || tool_result.starts_with("BLOCKED:") {
                     any_error = true;
                     // Phase 3: Penalize failed strategy
                     let mem_key = format!("tool:{}:error", tool_name);
                     memory.reinforce(&mem_key, -0.1);
+                    // Phase 4: Record failure for self-improvement analysis
+                    improve_engine.record_failure(&tool_name, &tool_result, loop_count);
                 } else if tool_result.contains("rejected by the user") {
                     any_rejected = true;
+                    improve_engine.record_failure(&tool_name, "rejected by the user", loop_count);
                 } else {
                     any_success = true;
                     // Phase 3: Remember successful tool usage
@@ -904,6 +922,8 @@ pub fn run_agent_reasoning_loop(
                         &["tool", "success"],
                         0.8,
                     );
+                    // Phase 4: Record success for ratio tracking
+                    improve_engine.record_success();
                 }
 
                 if let Some((path, content)) = file_buffer_update {
@@ -980,6 +1000,27 @@ pub fn run_agent_reasoning_loop(
     }
 
     save_chatlogs_nda(workspace_root, message_history);
+
+    // Phase 4: Run self-improvement analysis and persist learnings
+    if improve_engine.has_data() {
+        improve_engine.persist_to_memory(&mut memory);
+        let failure_count = improve_engine.failure_count();
+        if let Some(addendum) = improve_engine.generate_prompt_addendum(0.3) {
+            // Store the generated addendum for next session's system prompt
+            memory.remember(
+                "self_improve:prompt_addendum",
+                &addendum,
+                &["self_improve", "prompt"],
+                0.85,
+            );
+        }
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(format!(
+                "Self-improvement: analyzed {} failure(s), updated strategy memory.",
+                failure_count
+            )))
+            .ok();
+    }
 
     // Phase 3: Persist memory to disk
     let _ = memory.save();

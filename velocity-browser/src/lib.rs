@@ -40,4 +40,4 @@ pub use session_storage::SessionStorageDisk;
 pub use session_storage_events::{StorageEventBroadcaster, StorageEventRecord};
 pub use session_storage_quota::{StorageQuotaEstimate, StorageQuotaManager};
 pub use session_swarm::SwarmSessionOrchestrator;
-pub use style::{CssRule, CssAnimation, KeyframesRule, KeyframeStop, AnimationInstance, AnimationState, FillMode, AnimationDirection, PlayState, TimingFunction, StepPosition, FontShaperEngine, GlyphMetric, ScopedCssMatcher, Specificity, StyleCascader};
+pub use style::{CssRule, CssAnimation, KeyframesRule, KeyframeStop, AnimationInstance, AnimationManager, AnimationState, FillMode, AnimationDirection, PlayState, TimingFunction, StepPosition, FontShaperEngine, GlyphMetric, ScopedCssMatcher, Specificity, StyleCascader};

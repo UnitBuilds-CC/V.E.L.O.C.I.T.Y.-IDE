@@ -766,7 +766,7 @@ impl Parser {
         loop {
             match self.peek().clone() {
                 Token::LParen => { let args = self.parse_args()?; expr = Expr::Call(Box::new(expr), args); }
-                Token::Dot => { self.advance(); let prop = match self.advance() { Token::Ident(n) => n, t => return Err(format!("expected property name, got {:?}", t)) }; expr = Expr::Member(Box::new(expr), prop); }
+                Token::Dot => { self.advance(); let prop = self.parse_prop_name()?; expr = Expr::Member(Box::new(expr), prop); }
                 Token::QuestionDot => {
                     self.advance();
                     if self.at(&Token::LParen) {
@@ -778,7 +778,7 @@ impl Parser {
                         self.expect(&Token::RBracket)?;
                         expr = Expr::OptionalIndex(Box::new(expr), Box::new(idx));
                     } else {
-                        let prop = match self.advance() { Token::Ident(n) => n, t => return Err(format!("expected property name after ?., got {:?}", t)) };
+                        let prop = self.parse_prop_name()?;
                         expr = Expr::OptionalMember(Box::new(expr), prop);
                     }
                 }
@@ -794,7 +794,7 @@ impl Parser {
         let mut expr = self.parse_primary()?;
         loop {
             match self.peek().clone() {
-                Token::Dot => { self.advance(); let prop = match self.advance() { Token::Ident(n) => n, t => return Err(format!("expected property name, got {:?}", t)) }; expr = Expr::Member(Box::new(expr), prop); }
+                Token::Dot => { self.advance(); let prop = self.parse_prop_name()?; expr = Expr::Member(Box::new(expr), prop); }
                 Token::LBracket => { self.advance(); let idx = self.parse_expr()?; self.expect(&Token::RBracket)?; expr = Expr::Index(Box::new(expr), Box::new(idx)); }
                 _ => break,
             }
@@ -811,6 +811,56 @@ impl Parser {
         }
         self.expect(&Token::RParen)?;
         Ok(args)
+    }
+
+    /// Parse a property name after `.` — accepts identifiers AND keywords
+    /// (e.g., `obj.catch(...)`, `obj.finally(...)`, `obj.get(...)` are valid JS).
+    fn parse_prop_name(&mut self) -> Result<String, String> {
+        match self.advance() {
+            Token::Ident(n) => Ok(n),
+            // Keywords that are valid as property names in member access
+            Token::Catch => Ok("catch".to_string()),
+            Token::Finally => Ok("finally".to_string()),
+            Token::Try => Ok("try".to_string()),
+            Token::Throw => Ok("throw".to_string()),
+            Token::New => Ok("new".to_string()),
+            Token::Typeof => Ok("typeof".to_string()),
+            Token::Instanceof => Ok("instanceof".to_string()),
+            Token::Delete => Ok("delete".to_string()),
+            Token::Void => Ok("void".to_string()),
+            Token::In => Ok("in".to_string()),
+            Token::Of => Ok("of".to_string()),
+            Token::As => Ok("as".to_string()),
+            Token::From => Ok("from".to_string()),
+            Token::Default => Ok("default".to_string()),
+            Token::Import => Ok("import".to_string()),
+            Token::Export => Ok("export".to_string()),
+            Token::Yield => Ok("yield".to_string()),
+            Token::Async => Ok("async".to_string()),
+            Token::Await => Ok("await".to_string()),
+            Token::Let => Ok("let".to_string()),
+            Token::Static => Ok("static".to_string()),
+            Token::Class => Ok("class".to_string()),
+            Token::Extends => Ok("extends".to_string()),
+            Token::Super => Ok("super".to_string()),
+            Token::If => Ok("if".to_string()),
+            Token::Else => Ok("else".to_string()),
+            Token::For => Ok("for".to_string()),
+            Token::While => Ok("while".to_string()),
+            Token::Do => Ok("do".to_string()),
+            Token::Break => Ok("break".to_string()),
+            Token::Continue => Ok("continue".to_string()),
+            Token::Return => Ok("return".to_string()),
+            Token::Var => Ok("var".to_string()),
+            Token::Const => Ok("const".to_string()),
+            Token::Function => Ok("function".to_string()),
+            Token::This => Ok("this".to_string()),
+            Token::True => Ok("true".to_string()),
+            Token::False => Ok("false".to_string()),
+            Token::Null => Ok("null".to_string()),
+            Token::Undefined => Ok("undefined".to_string()),
+            t => Err(format!("expected property name, got {:?}", t)),
+        }
     }
 
     fn parse_primary(&mut self) -> Result<Expr, String> {
@@ -1334,11 +1384,27 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
         Expr::Void(_) => Ok(JsValue::Undefined),
         Expr::Spread(_) => Ok(JsValue::Undefined),
         Expr::Await(e) => {
-            // Synchronous model: await just evaluates the expression
-            let val = eval_expr_node(e, scope)?;
-            // If it's a "promise" object with a __value__ key, unwrap
-            if let JsValue::Object(map) = &val {
-                if let Some(inner) = map.get("__resolved__") { return Ok(inner.clone()); }
+            // Evaluate the expression and unwrap the Promise chain.
+            let mut val = eval_expr_node(e, scope)?;
+            // Recursively unwrap nested promises (max 32 levels to prevent loops)
+            let mut depth = 0;
+            loop {
+                if depth >= 32 { break; }
+                match &val {
+                    JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Promise") => {
+                        // Rejected promise: throw the rejection reason
+                        if let Some(reason) = map.get("__rejected__") {
+                            if *reason != JsValue::Undefined {
+                                return Err(Signal::Throw(reason.clone()));
+                            }
+                        }
+                        // Resolved promise: unwrap
+                        let inner = map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined);
+                        val = inner;
+                        depth += 1;
+                    }
+                    _ => break,
+                }
             }
             Ok(val)
         }
@@ -1661,19 +1727,27 @@ fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
             Ok(JsValue::Object(map))
         }
         Some("Promise") => {
-            // new Promise((resolve, reject) => { ... }) - just call executor and capture value
+            // new Promise((resolve, reject) => { ... })
+            // Uses a thread-local to capture resolve/reject calls from the executor.
             let mut map = HashMap::new();
             map.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
-            map.insert("__resolved__".to_string(), JsValue::Undefined);
             if let Some(executor) = evaluated_args.first() {
-                // Create resolve/reject native fns
-                let result_scope = Scope::new_child(scope);
-                Scope::declare(&result_scope, "__promise_resolved__", JsValue::Undefined);
+                PROMISE_CAPTURE.with(|cap| {
+                    *cap.borrow_mut() = None;
+                });
                 let resolve_fn = JsValue::NativeFunction("__promise_resolve__".to_string());
                 let reject_fn = JsValue::NativeFunction("__promise_reject__".to_string());
-                let _ = call_function(executor, &[resolve_fn, reject_fn], &result_scope);
-                // The resolved value was stored in scope (simplified)
-                map.insert("__resolved__".to_string(), Scope::resolve(&result_scope, "__promise_resolved__").unwrap_or(JsValue::Undefined));
+                let exec_scope = Scope::new_child(scope);
+                let _ = call_function(executor, &[resolve_fn, reject_fn], &exec_scope);
+                // Read captured result
+                let captured = PROMISE_CAPTURE.with(|cap| cap.borrow().clone());
+                match captured {
+                    Some((false, val)) => { map.insert("__resolved__".to_string(), val); }
+                    Some((true, reason)) => { map.insert("__rejected__".to_string(), reason); }
+                    None => { map.insert("__resolved__".to_string(), JsValue::Undefined); }
+                }
+            } else {
+                map.insert("__resolved__".to_string(), JsValue::Undefined);
             }
             Ok(JsValue::Object(map))
         }
@@ -2090,6 +2164,16 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             JsValue::Number(0.0)
         }
         "__noop__" => JsValue::Undefined,
+        "__promise_resolve__" => {
+            let val = args.first().cloned().unwrap_or(JsValue::Undefined);
+            PROMISE_CAPTURE.with(|cap| { *cap.borrow_mut() = Some((false, val)); });
+            JsValue::Undefined
+        }
+        "__promise_reject__" => {
+            let val = args.first().cloned().unwrap_or(JsValue::Undefined);
+            PROMISE_CAPTURE.with(|cap| { *cap.borrow_mut() = Some((true, val)); });
+            JsValue::Undefined
+        }
         "eval" => {
             // eval(code) - lex, parse, and eval inline
             let code = args.first().map(to_string).unwrap_or_default();
@@ -2360,6 +2444,23 @@ use std::sync::Mutex;
 /// Maps module specifier -> exported bindings (name -> value).
 static MODULE_REGISTRY: Mutex<Option<HashMap<String, HashMap<String, JsValue>>>> = Mutex::new(None);
 
+// Resolver callback: given a module specifier, returns the module source code.
+// Set by the embedding runtime (e.g., session) to fetch modules from network/filesystem.
+type ModuleResolverFn = dyn Fn(&str) -> Option<String> + Send + Sync;
+static MODULE_RESOLVER: Mutex<Option<Box<ModuleResolverFn>>> = Mutex::new(None);
+
+/// Set a module resolver callback. When an import references a module not yet
+/// in the registry, the resolver is invoked to obtain the module source, which
+/// is then evaluated and registered automatically.
+pub fn set_module_resolver(resolver: impl Fn(&str) -> Option<String> + Send + Sync + 'static) {
+    *MODULE_RESOLVER.lock().unwrap() = Some(Box::new(resolver));
+}
+
+/// Clear the module resolver (e.g., between navigations).
+pub fn clear_module_resolver() {
+    *MODULE_RESOLVER.lock().unwrap() = None;
+}
+
 /// Register a module's exports in the global registry.
 pub fn register_module(specifier: &str, exports: HashMap<String, JsValue>) {
     let mut registry = MODULE_REGISTRY.lock().unwrap();
@@ -2384,11 +2485,7 @@ pub fn resolve_module(specifier: &str) -> Option<HashMap<String, JsValue>> {
 pub fn evaluate_module(specifier: &str, source: &str) -> Result<HashMap<String, JsValue>, String> {
     let tokens = lex(source)?;
     let mut parser = Parser::new(tokens);
-    let block = parser.parse_block()?;
-    let stmts = match block {
-        Stmt::Block(stmts) => stmts,
-        other => vec![other],
-    };
+    let stmts = parser.parse_program()?;
     let scope = Scope::new_global();
     let mut exports = HashMap::new();
 
@@ -2431,6 +2528,8 @@ pub fn evaluate_module(specifier: &str, source: &str) -> Result<HashMap<String, 
 }
 
 /// Apply an import statement: resolve the module and bind specifiers into scope.
+/// If the module is not yet registered, the module resolver (if set) is invoked
+/// to fetch and evaluate the module source on demand.
 pub fn apply_import(
     specifiers: &[ImportSpecifier],
     source: &str,
@@ -2438,7 +2537,16 @@ pub fn apply_import(
 ) -> Result<(), String> {
     let module_exports = match resolve_module(source) {
         Some(exports) => exports,
-        None => return Ok(()), // Module not yet loaded; silently skip
+        None => {
+            // Attempt on-demand resolution via the registered resolver callback.
+            let fetched = MODULE_RESOLVER.lock().unwrap()
+                .as_ref()
+                .and_then(|resolver| resolver(source));
+            match fetched {
+                Some(src) => evaluate_module(source, &src)?,
+                None => return Ok(()), // No resolver or resolver returned None; skip
+            }
+        }
     };
     for spec in specifiers {
         let value = if spec.imported == "*" {
@@ -2461,6 +2569,12 @@ pub fn apply_import(
 const MAX_PROXY_TRAP_DEPTH: u32 = 8;
 std::thread_local! {
     static PROXY_TRAP_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+// Thread-local capture for Promise executor resolve/reject calls.
+// (is_reject, value) — set by __promise_resolve__ / __promise_reject__ natives.
+std::thread_local! {
+    static PROMISE_CAPTURE: std::cell::RefCell<Option<(bool, JsValue)>> = const { std::cell::RefCell::new(None) };
 }
 
 pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
@@ -2873,26 +2987,74 @@ fn call_set_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue
 fn call_promise_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
     match method {
         "then" => {
+            // If the promise is rejected, propagate the rejection (skip callback)
+            if let Some(rejected) = map.get("__rejected__") {
+                if *rejected != JsValue::Undefined {
+                    let mut new_promise = HashMap::new();
+                    new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                    new_promise.insert("__rejected__".to_string(), rejected.clone());
+                    return Ok(JsValue::Object(new_promise));
+                }
+            }
             let resolved = map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined);
             if let Some(callback) = args.first() {
-                let result = call_function(callback, &[resolved], scope)?;
-                // Wrap result in a new promise
-                let mut new_promise = HashMap::new();
-                new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
-                new_promise.insert("__resolved__".to_string(), result);
-                Ok(JsValue::Object(new_promise))
+                match call_function(callback, &[resolved], scope) {
+                    Ok(result) => {
+                        // If the callback returns a promise, flatten it
+                        let mut new_promise = HashMap::new();
+                        new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                        match &result {
+                            JsValue::Object(inner_map) if inner_map.get("__type__").map(to_string).as_deref() == Some("Promise") => {
+                                // Flatten: adopt the inner promise's state
+                                if let Some(rej) = inner_map.get("__rejected__") {
+                                    if *rej != JsValue::Undefined {
+                                        new_promise.insert("__rejected__".to_string(), rej.clone());
+                                    } else {
+                                        new_promise.insert("__resolved__".to_string(), inner_map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined));
+                                    }
+                                } else {
+                                    new_promise.insert("__resolved__".to_string(), inner_map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined));
+                                }
+                            }
+                            _ => {
+                                new_promise.insert("__resolved__".to_string(), result);
+                            }
+                        }
+                        Ok(JsValue::Object(new_promise))
+                    }
+                    Err(Signal::Throw(reason)) => {
+                        // Callback threw: returned promise is rejected
+                        let mut new_promise = HashMap::new();
+                        new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                        new_promise.insert("__rejected__".to_string(), reason);
+                        Ok(JsValue::Object(new_promise))
+                    }
+                    Err(other) => Err(other),
+                }
             } else {
                 Ok(JsValue::Object(map.clone()))
             }
         }
         "catch" => {
             if let Some(rejected) = map.get("__rejected__") {
-                if let Some(callback) = args.first() {
-                    let result = call_function(callback, &[rejected.clone()], scope)?;
-                    let mut new_promise = HashMap::new();
-                    new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
-                    new_promise.insert("__resolved__".to_string(), result);
-                    return Ok(JsValue::Object(new_promise));
+                if *rejected != JsValue::Undefined {
+                    if let Some(callback) = args.first() {
+                        match call_function(callback, &[rejected.clone()], scope) {
+                            Ok(result) => {
+                                let mut new_promise = HashMap::new();
+                                new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                                new_promise.insert("__resolved__".to_string(), result);
+                                return Ok(JsValue::Object(new_promise));
+                            }
+                            Err(Signal::Throw(reason)) => {
+                                let mut new_promise = HashMap::new();
+                                new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                                new_promise.insert("__rejected__".to_string(), reason);
+                                return Ok(JsValue::Object(new_promise));
+                            }
+                            Err(other) => return Err(other),
+                        }
+                    }
                 }
             }
             Ok(JsValue::Object(map.clone()))
@@ -2901,6 +3063,7 @@ fn call_promise_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsV
             if let Some(callback) = args.first() {
                 let _ = call_function(callback, &[], scope);
             }
+            // finally passes through the original promise state unchanged
             Ok(JsValue::Object(map.clone()))
         }
         _ => Ok(JsValue::Undefined),
@@ -3301,6 +3464,88 @@ mod tests {
     }
 
     #[test]
+    fn promise_resolve_reject() {
+        // Promise.resolve chains
+        assert_eq!(eval_full("
+            var p = Promise.resolve(99);
+            var result = 0;
+            p.then(function(v) { result = v; });
+            result
+        "), JsValue::Number(99.0));
+    }
+
+    #[test]
+    fn promise_reject_catch() {
+        // Rejected promise is caught by .catch()
+        assert_eq!(eval_full("
+            var p = Promise.reject('oops');
+            var caught = '';
+            p.catch(function(e) { caught = e; });
+            caught
+        "), JsValue::String("oops".to_string()));
+    }
+
+    #[test]
+    fn promise_then_skips_on_reject() {
+        // .then() is skipped when promise is rejected
+        assert_eq!(eval_full("
+            var p = Promise.reject('err');
+            var called = false;
+            var caught = '';
+            p.then(function(v) { called = true; }).catch(function(e) { caught = e; });
+            called
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn await_rejected_throws() {
+        // await on a rejected promise throws, caught by try/catch
+        assert_eq!(eval_full("
+            var msg = '';
+            try {
+                var p = Promise.reject('fail');
+                await p;
+            } catch(e) {
+                msg = e;
+            }
+            msg
+        "), JsValue::String("fail".to_string()));
+    }
+
+    #[test]
+    fn promise_executor_resolve() {
+        // new Promise with resolve() call
+        assert_eq!(eval_full("
+            var p = new Promise(function(resolve, reject) { resolve(77); });
+            var out = 0;
+            p.then(function(v) { out = v; });
+            out
+        "), JsValue::Number(77.0));
+    }
+
+    #[test]
+    fn promise_executor_reject() {
+        // new Promise with reject() call
+        assert_eq!(eval_full("
+            var p = new Promise(function(resolve, reject) { reject('bad'); });
+            var out = '';
+            p.catch(function(e) { out = e; });
+            out
+        "), JsValue::String("bad".to_string()));
+    }
+
+    #[test]
+    fn promise_then_flattens() {
+        // .then() returning a promise is flattened
+        assert_eq!(eval_full("
+            var p = Promise.resolve(10);
+            var out = 0;
+            p.then(function(v) { return Promise.resolve(v * 2); }).then(function(v) { out = v; });
+            out
+        "), JsValue::Number(20.0));
+    }
+
+    #[test]
     fn map_basic() {
         assert_eq!(eval_full("
             var m = new Map([['a', 1], ['b', 2]]);
@@ -3468,5 +3713,32 @@ mod tests {
     #[test]
     fn structuredclone_works() {
         assert_eq!(eval_full("structuredClone(42)"), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn module_resolver_on_demand() {
+        // Set a resolver that provides module source on demand
+        set_module_resolver(|specifier: &str| {
+            match specifier {
+                "./math.js" => Some("export function add(a, b) { return a + b; }".to_string()),
+                "./utils.js" => Some("export const PI = 3; export function double(x) { return x * 2; }".to_string()),
+                _ => None,
+            }
+        });
+        // Named import resolves via the callback
+        let result = eval_full("
+            import { add } from './math.js';
+            add(3, 4)
+        ");
+        assert_eq!(result, JsValue::Number(7.0));
+        // Namespace import resolves via the callback
+        let result2 = eval_full("
+            import * as utils from './utils.js';
+            utils.double(utils.PI)
+        ");
+        assert_eq!(result2, JsValue::Number(6.0));
+        // Cleanup
+        clear_module_resolver();
+        clear_module_registry();
     }
 }

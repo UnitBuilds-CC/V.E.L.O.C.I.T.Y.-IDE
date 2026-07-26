@@ -6,6 +6,7 @@ pub mod memory_store;
 pub mod models;
 pub mod nda;
 pub mod provider;
+pub mod self_improve;
 
 #[cfg(test)]
 mod tests;

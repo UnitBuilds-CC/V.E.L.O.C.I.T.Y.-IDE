@@ -590,6 +590,146 @@ impl AnimationInstance {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Animation Runtime Manager
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Manages active CSS animations across the document. The layout engine
+/// queries this each frame to get interpolated style overrides per node.
+#[derive(Debug, Clone)]
+pub struct AnimationManager {
+    /// Active animation instances keyed by DOM node ID.
+    active: HashMap<usize, Vec<AnimationInstance>>,
+    /// Registered @keyframes rules by name.
+    keyframes_registry: HashMap<String, KeyframesRule>,
+    /// Whether any animations are currently running.
+    pub has_active: bool,
+}
+
+impl Default for AnimationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnimationManager {
+    pub fn new() -> Self {
+        Self {
+            active: HashMap::new(),
+            keyframes_registry: HashMap::new(),
+            has_active: false,
+        }
+    }
+
+    /// Register a @keyframes rule for later use by animations.
+    pub fn register_keyframes(&mut self, rule: KeyframesRule) {
+        self.keyframes_registry.insert(rule.name.clone(), rule);
+    }
+
+    /// Start an animation on a DOM node. Returns false if the keyframes are unknown.
+    pub fn start_animation(
+        &mut self,
+        node_id: usize,
+        animation: CssAnimation,
+        now_ms: f64,
+    ) -> bool {
+        let keyframes = match self.keyframes_registry.get(&animation.name) {
+            Some(kf) => kf.clone(),
+            None => return false,
+        };
+        let instance = AnimationInstance {
+            animation,
+            keyframes,
+            start_time_ms: now_ms,
+            current_iteration: 0.0,
+            state: AnimationState::Delayed,
+        };
+        self.active.entry(node_id).or_default().push(instance);
+        self.has_active = true;
+        true
+    }
+
+    /// Start an animation with explicit keyframes (no registry lookup).
+    pub fn start_animation_with_keyframes(
+        &mut self,
+        node_id: usize,
+        animation: CssAnimation,
+        keyframes: KeyframesRule,
+        now_ms: f64,
+    ) {
+        let instance = AnimationInstance {
+            animation,
+            keyframes,
+            start_time_ms: now_ms,
+            current_iteration: 0.0,
+            state: AnimationState::Delayed,
+        };
+        self.active.entry(node_id).or_default().push(instance);
+        self.has_active = true;
+    }
+
+    /// Advance all animations to `now_ms` and return style overrides per node.
+    /// Finished animations are pruned automatically.
+    pub fn tick(&mut self, now_ms: f64) -> HashMap<usize, HashMap<String, String>> {
+        let mut overrides: HashMap<usize, HashMap<String, String>> = HashMap::new();
+        let mut any_active = false;
+
+        for (node_id, instances) in self.active.iter_mut() {
+            let mut merged = HashMap::new();
+            for instance in instances.iter_mut() {
+                let decls = instance.tick(now_ms);
+                merged.extend(decls);
+                if instance.state != AnimationState::Finished {
+                    any_active = true;
+                }
+            }
+            if !merged.is_empty() {
+                overrides.insert(*node_id, merged);
+            }
+        }
+
+        // Prune finished animations
+        for instances in self.active.values_mut() {
+            instances.retain(|i| i.state != AnimationState::Finished);
+        }
+        self.active.retain(|_, v| !v.is_empty());
+        self.has_active = any_active;
+
+        overrides
+    }
+
+    /// Get the current animated style overrides for a specific node without advancing time.
+    pub fn styles_for_node(&self, node_id: usize, now_ms: f64) -> HashMap<String, String> {
+        let mut merged = HashMap::new();
+        if let Some(instances) = self.active.get(&node_id) {
+            for instance in instances {
+                // Peek at what tick would produce (without mutating)
+                let mut clone = instance.clone();
+                let decls = clone.tick(now_ms);
+                merged.extend(decls);
+            }
+        }
+        merged
+    }
+
+    /// Cancel all animations on a node.
+    pub fn cancel_node(&mut self, node_id: usize) {
+        self.active.remove(&node_id);
+        self.has_active = !self.active.is_empty();
+    }
+
+    /// Cancel all animations globally.
+    pub fn cancel_all(&mut self) {
+        self.active.clear();
+        self.has_active = false;
+    }
+
+    /// Number of nodes with active animations.
+    pub fn active_node_count(&self) -> usize {
+        self.active.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,5 +850,63 @@ mod tests {
         assert_eq!(features.len(), 2);
         assert_eq!(features[0], MediaFeature::MinWidth(768.0));
         assert_eq!(features[1], MediaFeature::MaxWidth(1024.0));
+    }
+
+    #[test]
+    fn animation_manager_lifecycle() {
+        let mut mgr = AnimationManager::new();
+        assert!(!mgr.has_active);
+
+        // Register keyframes
+        let kf = KeyframesRule {
+            name: "fadeIn".to_string(),
+            stops: vec![
+                KeyframeStop { progress: 0.0, declarations: { let mut m = HashMap::new(); m.insert("opacity".to_string(), "0".to_string()); m } },
+                KeyframeStop { progress: 1.0, declarations: { let mut m = HashMap::new(); m.insert("opacity".to_string(), "1".to_string()); m } },
+            ],
+        };
+        mgr.register_keyframes(kf);
+
+        // Start animation on node 5
+        let anim = CssAnimation {
+            name: "fadeIn".to_string(),
+            duration_ms: 1000.0,
+            delay_ms: 0.0,
+            iteration_count: 1.0,
+            timing_function: TimingFunction::Linear,
+            fill_mode: FillMode::Forwards,
+            direction: AnimationDirection::Normal,
+            play_state: PlayState::Running,
+        };
+        assert!(mgr.start_animation(5, anim, 0.0));
+        assert!(mgr.has_active);
+        assert_eq!(mgr.active_node_count(), 1);
+
+        // Tick at 500ms — should be ~50% opacity
+        let overrides = mgr.tick(500.0);
+        let node_styles = overrides.get(&5).unwrap();
+        assert_eq!(node_styles.get("opacity").unwrap(), "0.5");
+
+        // Tick past end — animation finishes, fill:forwards keeps final value
+        let _overrides = mgr.tick(1100.0);
+        // After finishing, the animation is pruned
+        assert!(!mgr.has_active);
+        assert_eq!(mgr.active_node_count(), 0);
+    }
+
+    #[test]
+    fn animation_manager_unknown_keyframes() {
+        let mut mgr = AnimationManager::new();
+        let anim = CssAnimation {
+            name: "nonexistent".to_string(),
+            duration_ms: 500.0,
+            delay_ms: 0.0,
+            iteration_count: 1.0,
+            timing_function: TimingFunction::Linear,
+            fill_mode: FillMode::None,
+            direction: AnimationDirection::Normal,
+            play_state: PlayState::Running,
+        };
+        assert!(!mgr.start_animation(1, anim, 0.0));
     }
 }
