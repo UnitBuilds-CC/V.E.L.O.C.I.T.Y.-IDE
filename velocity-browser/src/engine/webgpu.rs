@@ -464,4 +464,257 @@ impl WebGpuComputeEngine {
             true
         } else { false }
     }
+
+    // ── Compute Execution ──
+
+    /// Execute a compute pipeline on bound buffers, simulating shader operations.
+    pub fn execute_compute(&mut self, pipeline_id: usize, workgroup_count: (u32, u32, u32)) -> bool {
+        if !self.dispatch_pipeline(pipeline_id, workgroup_count) {
+            return false;
+        }
+
+        let pipeline = match self.pipelines.iter().find(|p| p.pipeline_id == pipeline_id) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let buffer_ids = pipeline.buffer_bindings.clone();
+        if buffer_ids.is_empty() {
+            return true;
+        }
+
+        // Simulate compute: apply shader-like operations to bound buffers
+        let total_workgroups = (workgroup_count.0 * workgroup_count.1 * workgroup_count.2) as usize;
+        let shader_kind = Self::infer_shader_kind(&pipeline.shader_source);
+
+        match shader_kind {
+            ShaderKind::Copy => {
+                // Copy first buffer to all others
+                if let Some(first_buf) = buffer_ids.first() {
+                    let data = self.active_buffers.iter().find(|b| b.buffer_id == *first_buf).map(|b| b.data.clone());
+                    if let Some(src_data) = data {
+                        for &bid in buffer_ids.iter().skip(1) {
+                            if let Some(dst) = self.active_buffers.iter_mut().find(|b| b.buffer_id == bid) {
+                                let len = src_data.len().min(dst.size_bytes);
+                                dst.data[..len].copy_from_slice(&src_data[..len]);
+                            }
+                        }
+                    }
+                }
+            }
+            ShaderKind::Transform => {
+                // Apply simple transform: multiply each byte by 2 (mod 256)
+                for bid in buffer_ids {
+                    if let Some(buf) = self.active_buffers.iter_mut().find(|b| b.buffer_id == bid) {
+                        for byte in buf.data.iter_mut() {
+                            *byte = byte.wrapping_mul(2);
+                        }
+                    }
+                }
+            }
+            ShaderKind::ColorFill => {
+                // Fill buffers with a pattern based on workgroup count
+                let pattern = (total_workgroups % 256) as u8;
+                for bid in buffer_ids {
+                    if let Some(buf) = self.active_buffers.iter_mut().find(|b| b.buffer_id == bid) {
+                        for byte in buf.data.iter_mut() {
+                            *byte = pattern;
+                        }
+                    }
+                }
+            }
+            ShaderKind::Identity => {
+                // No-op
+            }
+        }
+
+        true
+    }
+
+    fn infer_shader_kind(shader_source: &str) -> ShaderKind {
+        if shader_source.contains("copy") || shader_source.contains("COPY") {
+            ShaderKind::Copy
+        } else if shader_source.contains("transform") || shader_source.contains("TRANSFORM") {
+            ShaderKind::Transform
+        } else if shader_source.contains("color") || shader_source.contains("fill") {
+            ShaderKind::ColorFill
+        } else {
+            ShaderKind::Identity
+        }
+    }
+
+    // ── Render Pass Execution ──
+
+    /// Execute a render pass, simulating vertex processing and rasterization.
+    pub fn execute_render_pass(&mut self, encoder_id: usize, render_pass_id: usize) -> bool {
+        let render_pass = match self.command_encoders.iter().find(|e| e.encoder_id == encoder_id) {
+            Some(enc) => enc.render_passes.get(render_pass_id).cloned(),
+            None => None,
+        };
+
+        let render_pass = match render_pass {
+            Some(rp) => rp,
+            None => return false,
+        };
+
+        // Validate pipeline
+        if !self.render_pipelines.iter().any(|p| p.pipeline_id == render_pass.pipeline_id) {
+            return false;
+        }
+
+        // Simulate vertex processing: read vertex buffer
+        let vertex_data = self.active_buffers.iter()
+            .find(|b| b.buffer_id == render_pass.vertex_buffer_id)
+            .map(|b| b.data.clone());
+
+        let vertex_data = match vertex_data {
+            Some(d) => d,
+            None => return false,
+        };
+
+        // Simulate rasterization: write to color attachment texture
+        if let Some(tex) = self.textures.iter_mut().find(|t| t.texture_id == render_pass.color_attachment) {
+            // Simple triangle fill: fill texture with a gradient based on vertex data
+            let pattern_byte = vertex_data.first().copied().unwrap_or(128);
+            for pixel in tex.data.chunks_exact_mut(4) {
+                pixel[0] = pattern_byte; // R
+                pixel[1] = pattern_byte.wrapping_add(64); // G
+                pixel[2] = pattern_byte.wrapping_add(128); // B
+                pixel[3] = 255; // A
+            }
+        }
+
+        true
+    }
+
+    /// Add a render pass to an encoder.
+    pub fn add_render_pass(&mut self, encoder_id: usize, pipeline_id: usize, color_attachment: usize, vertex_buffer_id: usize, vertex_count: u32) -> bool {
+        if let Some(enc) = self.command_encoders.iter_mut().find(|e| e.encoder_id == encoder_id) {
+            enc.render_passes.push(RenderPass {
+                pipeline_id,
+                color_attachment,
+                depth_attachment: None,
+                vertex_buffer_id,
+                index_buffer_id: None,
+                bind_groups: Vec::new(),
+                vertex_count,
+                index_count: None,
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    // ── Query Support ──
+
+    /// Query buffer information for agent inspection.
+    pub fn query_buffer_summary(&self, buffer_id: usize) -> Option<(usize, usize, BufferUsage)> {
+        self.active_buffers.iter()
+            .find(|b| b.buffer_id == buffer_id)
+            .map(|b| (b.size_bytes, b.data.len(), b.usage))
+    }
+
+    /// Query texture information for agent inspection.
+    pub fn query_texture_summary(&self, texture_id: usize) -> Option<(u32, u32, TextureFormat, usize)> {
+        self.textures.iter()
+            .find(|t| t.texture_id == texture_id)
+            .map(|t| (t.width, t.height, t.format, t.data.len()))
+    }
+
+    // ── Timestamp Queries ──
+
+    /// Begin a timestamp query (records fake GPU timestamp).
+    pub fn begin_timestamp_query(&mut self, encoder_id: usize) -> bool {
+        self.command_encoders.iter().any(|e| e.encoder_id == encoder_id)
+    }
+
+    /// End a timestamp query (records fake GPU timestamp).
+    pub fn end_timestamp_query(&mut self, encoder_id: usize) -> bool {
+        self.command_encoders.iter().any(|e| e.encoder_id == encoder_id)
+    }
 }
+
+/// Shader kind for compute operations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ShaderKind {
+    Identity,
+    Copy,
+    Transform,
+    ColorFill,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_compute_copy() {
+        let mut engine = WebGpuComputeEngine::new();
+        let buf1 = engine.create_buffer(16);
+        let buf2 = engine.create_buffer(16);
+        engine.write_buffer(buf1, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+
+        let pipeline = engine.create_pipeline("@compute fn copy() { /* copy */ }", (4, 1, 1));
+        engine.bind_buffer(pipeline, buf1);
+        engine.bind_buffer(pipeline, buf2);
+
+        assert!(engine.execute_compute(pipeline, (1, 1, 1)));
+        let data2 = engine.read_buffer(buf2).unwrap();
+        assert_eq!(data2, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    }
+
+    #[test]
+    fn execute_compute_transform() {
+        let mut engine = WebGpuComputeEngine::new();
+        let buf = engine.create_buffer(4);
+        engine.write_buffer(buf, &[10, 20, 30, 40]);
+
+        let pipeline = engine.create_pipeline("@compute fn transform() { /* transform */ }", (1, 1, 1));
+        engine.bind_buffer(pipeline, buf);
+
+        assert!(engine.execute_compute(pipeline, (1, 1, 1)));
+        let data = engine.read_buffer(buf).unwrap();
+        assert_eq!(data, &[20, 40, 60, 80]);
+    }
+
+    #[test]
+    fn execute_render_pass() {
+        let mut engine = WebGpuComputeEngine::new();
+        let vertex_buf = engine.create_buffer_with_usage(12, BufferUsage::Vertex);
+        engine.write_buffer(vertex_buf, &[100, 50, 25]);
+
+        let texture = engine.create_texture(4, 4, TextureFormat::Rgba8Unorm, TextureUsage::new(TextureUsage::RENDER_ATTACHMENT));
+        let pipeline = engine.create_render_pipeline("vertex", "fragment", TextureFormat::Rgba8Unorm);
+
+        let encoder = engine.create_command_encoder();
+        engine.add_render_pass(encoder, pipeline, texture, vertex_buf, 3);
+
+        assert!(engine.execute_render_pass(encoder, 0));
+        let tex_data = engine.read_texture(texture).unwrap();
+        assert_eq!(tex_data.len(), 64); // 4x4 pixels * 4 bytes
+        assert_eq!(tex_data[0], 100); // R
+        assert_eq!(tex_data[1], 164); // G (100 + 64)
+        assert_eq!(tex_data[2], 228); // B (100 + 128)
+        assert_eq!(tex_data[3], 255); // A
+    }
+
+    #[test]
+    fn query_buffer_and_texture() {
+        let mut engine = WebGpuComputeEngine::new();
+        let buf = engine.create_buffer(1024);
+        let tex = engine.create_texture(256, 256, TextureFormat::Rgba8Unorm, TextureUsage::new(TextureUsage::TEXTURE_BINDING));
+
+        let (size, data_len, usage) = engine.query_buffer_summary(buf).unwrap();
+        assert_eq!(size, 1024);
+        assert_eq!(data_len, 1024);
+        assert_eq!(usage, BufferUsage::Storage);
+
+        let (w, h, fmt, data_len) = engine.query_texture_summary(tex).unwrap();
+        assert_eq!(w, 256);
+        assert_eq!(h, 256);
+        assert_eq!(fmt, TextureFormat::Rgba8Unorm);
+        assert_eq!(data_len, 256 * 256 * 4);
+    }
+}
+

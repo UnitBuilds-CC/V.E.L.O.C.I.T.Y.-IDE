@@ -259,7 +259,7 @@ impl NativeBrowserBridge {
                     default_prevented: false,
                     propagation_stopped: false,
                 };
-                let _ = velocity_browser::SyntheticEventDispatcher::dispatch_pointer_event(tree, node_id, event);
+                let _ = velocity_browser::SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
                 let _ = self.active_session.js_vm.dispatch_event(tree, &selector, "mouseenter");
                 let _ = self.active_session.js_vm.dispatch_event(tree, &selector, "mouseover");
             }

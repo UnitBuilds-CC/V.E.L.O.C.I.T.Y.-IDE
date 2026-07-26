@@ -367,7 +367,7 @@ impl BrowserSession {
                     default_prevented: false,
                     propagation_stopped: false,
                 };
-                let _ = SyntheticEventDispatcher::dispatch_pointer_event(tree, node_id, event);
+                let _ = SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
                 self.mutation_observer.observe_attribute_change(node_id, "click");
                 self.trace_collector.record_mutation(selector, "click", "Native click event dispatched");
                 return Ok(());
@@ -473,7 +473,7 @@ impl BrowserSession {
                     default_prevented: false,
                     propagation_stopped: false,
                 };
-                let _ = SyntheticEventDispatcher::dispatch_pointer_event(tree, node_id, event);
+                let _ = SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
                 if let Some(sel) = &selector {
                     let _ = self.js_vm.dispatch_event(tree, sel, "click");
                 }
