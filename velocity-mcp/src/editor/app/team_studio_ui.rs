@@ -30,6 +30,10 @@ impl VelocityApp {
             });
             ui.separator();
 
+            // Track which member card is selected across frames.
+            let selected_member = self.selected_member_id.clone();
+            let mut newly_selected: Option<Option<String>> = None;
+
             // Split: Gallery (top 60%) | Builder Chat (bottom 40%)
             let available_height = ui.available_height();
             let gallery_height = (available_height * 0.58).max(200.0);
@@ -90,17 +94,27 @@ impl VelocityApp {
                                     let team = &self.expert_teams[idx];
                                     ui.horizontal_wrapped(|ui| {
                                         for member in &team.members {
-                                            egui::Frame::new()
+                                            let is_selected =
+                                                selected_member.as_deref() == Some(member.name.as_str());
+                                            let member_card = egui::Frame::new()
                                                 .fill(palette.bg_primary)
                                                 .corner_radius(6.0)
                                                 .inner_margin(8.0)
-                                                .stroke(egui::Stroke::new(0.5, palette.border))
+                                                .stroke(egui::Stroke::new(
+                                                    if is_selected { 1.5 } else { 0.5 },
+                                                    if is_selected { palette.accent } else { palette.border },
+                                                ))
                                                 .show(ui, |ui| {
                                                     ui.set_min_width(160.0);
                                                     ui.set_max_width(200.0);
 
                                                     // Member name + role
-                                                    ui.label(RichText::new(&member.name).strong().size(11.0).color(palette.text));
+                                                    ui.horizontal(|ui| {
+                                                        if is_selected {
+                                                            ui.label(RichText::new("\u{25B8}").size(9.0).color(palette.accent));
+                                                        }
+                                                        ui.label(RichText::new(&member.name).strong().size(11.0).color(palette.text));
+                                                    });
                                                     ui.label(RichText::new(&member.role).size(9.0).color(palette.accent));
 
                                                     // Provider + Model pill
@@ -143,6 +157,13 @@ impl VelocityApp {
                                                         ui.label(RichText::new(excerpt).size(8.0).italics().color(palette.text_muted));
                                                     }
                                                 });
+                                            if member_card.response.interact(egui::Sense::click()).clicked() {
+                                                newly_selected = Some(if is_selected {
+                                                    None
+                                                } else {
+                                                    Some(member.name.clone())
+                                                });
+                                            }
                                         }
                                     });
 
@@ -179,6 +200,9 @@ impl VelocityApp {
             // ═══════════════════════════════════════════════════════════════
             // TEAM BUILDER CHAT SECTION
             // ═══════════════════════════════════════════════════════════════
+            if let Some(sel) = newly_selected {
+                self.selected_member_id = sel;
+            }
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(RichText::new("\u{1F4AC} Team Builder").size(11.0).strong().color(palette.accent));

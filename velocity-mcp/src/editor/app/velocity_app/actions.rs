@@ -77,6 +77,11 @@ impl VelocityApp {
             Command { label: "Graph", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Graph), modes: &[] },
             Command { label: "Wiki", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Wiki), modes: &[] },
             Command { label: "Settings", category: "Panels", shortcut: Some("Ctrl+,"), action: |a| a.toggle_settings(), modes: &[] },
+            Command { label: "Extensions", category: "Panels", shortcut: None, action: |a| a.toggle_extensions(), modes: &[] },
+            Command { label: "Live Activity", category: "Panels", shortcut: None, action: |a| a.toggle_activity(), modes: &[WorkspaceProfile::MissionControl] },
+            Command { label: "Test Coverage", category: "Panels", shortcut: None, action: |a| a.toggle_coverage(), modes: &[WorkspaceProfile::Coder] },
+            Command { label: "Deploy Pipeline", category: "Build", shortcut: None, action: |a| a.toggle_pipeline(), modes: &[WorkspaceProfile::Coder] },
+            Command { label: "Voice Commands", category: "Panels", shortcut: None, action: |a| a.toggle_voice(), modes: &[] },
             Command { label: "Find / Replace", category: "Edit", shortcut: Some("Ctrl+H"), action: |a| a.open_find_replace_active(), modes: &[] },
             Command { label: "Find", category: "Edit", shortcut: Some("Ctrl+F"), action: |a| a.open_find_active(), modes: &[] },
             Command { label: "Request Inline Suggestion", category: "Agent", shortcut: Some("Ctrl+Shift+I"), action: |a| a.request_inline_suggestion(), modes: &[] },
@@ -787,6 +792,37 @@ impl VelocityApp {
 
     pub fn toggle_settings(&mut self) {
         self.toggle_panel(TabKind::Settings);
+    }
+
+    /// Rescan extensions from disk and open the Extensions manager panel.
+    pub fn toggle_extensions(&mut self) {
+        let ws = self.workspace_root.clone();
+        self.extension_registry.scan(&ws);
+        self.toggle_panel(TabKind::Extensions);
+    }
+
+    /// Open the live orchestration Activity panel.
+    pub fn toggle_activity(&mut self) {
+        self.toggle_panel(TabKind::Activity);
+    }
+
+    /// Analyze coverage on first open, then show the Coverage panel.
+    pub fn toggle_coverage(&mut self) {
+        if self.test_generator.analysis.total_functions == 0 {
+            self.run_coverage_analysis();
+        }
+        self.toggle_panel(TabKind::Coverage);
+    }
+
+    /// Initialize the deploy pipeline and open the Pipeline panel.
+    pub fn toggle_pipeline(&mut self) {
+        self.init_deploy_pipeline();
+        self.toggle_panel(TabKind::Pipeline);
+    }
+
+    /// Open the Voice command panel.
+    pub fn toggle_voice(&mut self) {
+        self.toggle_panel(TabKind::Voice);
     }
 
     pub fn toggle_left_sidebar(&mut self) {

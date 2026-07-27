@@ -178,7 +178,6 @@ pub struct VelocityApp {
 
     pub expert_teams: Vec<crate::editor::expert_team::ExpertTeam>,
     pub active_team_index: usize,
-    #[allow(dead_code)]
     pub selected_member_id: Option<String>,
 
     /// Which team card is currently expanded in the gallery (None = all collapsed).
@@ -224,7 +223,6 @@ pub struct VelocityApp {
     pub pending_close_tab: Option<TabId>,
     pub show_full_diff: bool,
     pub build_errors_count: usize,
-    #[allow(dead_code)]
     pub gpu_name: String,
     pub search_query: String,
     pub search_hits: Vec<crate::editor::search::SearchHit>,
@@ -251,8 +249,6 @@ pub struct VelocityApp {
     pub terminal_input: String,
     pub current_agent_task_id: u32,
 
-    #[allow(dead_code)]
-    pub chat_input: String,
     pub chat_history: String,
 
     // ─── IDE Feature Integration State ────────────────────────────────────────
@@ -273,7 +269,6 @@ pub struct VelocityApp {
     /// Git integration state.
     pub git_state: crate::editor::git_ui::GitState,
     /// Extension registry.
-    #[allow(dead_code)]
     pub extension_registry: crate::editor::extensions::ExtensionRegistry,
     /// Minimap configuration.
     pub minimap_config: crate::editor::minimap::MinimapConfig,
@@ -292,27 +287,20 @@ pub struct VelocityApp {
     /// Persistent per-member agent knowledge store.
     pub agent_memory: crate::editor::agent_memory::AgentMemoryManager,
     /// Live multi-agent orchestration activity feed and progress.
-    #[allow(dead_code)]
     pub live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState,
     /// Speculative pre-computation cache for agent workers.
-    #[allow(dead_code)]
     pub precomp_cache: crate::editor::speculative_precomp::PrecomputationCache,
     /// Semantic code search index (TF-IDF).
-    #[allow(dead_code)]
     pub semantic_index: Option<crate::editor::semantic_search::SemanticIndex>,
     /// Whether semantic search mode is active (vs. literal grep).
     pub semantic_search_active: bool,
     /// Inline ghost-text suggestion engine.
-    #[allow(dead_code)]
     pub inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine,
     /// Auto-generated test coverage analyzer.
-    #[allow(dead_code)]
     pub test_generator: crate::editor::test_generator::TestGenerator,
     /// Build/test/deploy pipeline manager.
-    #[allow(dead_code)]
     pub deploy_pipeline: Option<crate::editor::deploy_pipeline::PipelineManager>,
     /// Voice-to-task input state.
-    #[allow(dead_code)]
     pub voice_input: crate::editor::voice_commands::VoiceInputState,
 }
 
@@ -672,7 +660,6 @@ impl VelocityApp {
             active_tab: Some(chat.id.clone()),
             buffers: HashMap::new(),
             dock_state: Some(DockState::new(tabs)),
-            chat_input: String::new(),
             chat_history: String::new(),
             command_output: String::from("V.E.L.O.C.I.T.Y. IDE initialized.\n"),
             command_palette: CommandPalette {

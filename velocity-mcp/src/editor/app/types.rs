@@ -46,6 +46,11 @@ impl Tab {
             TabKind::Bookmarks => "Bookmarks".into(),
             TabKind::AccessibilityAudit => "Audit".into(),
             TabKind::Terminal => "Terminal".into(),
+            TabKind::Extensions => "Extensions".into(),
+            TabKind::Activity => "Activity".into(),
+            TabKind::Coverage => "Coverage".into(),
+            TabKind::Pipeline => "Pipeline".into(),
+            TabKind::Voice => "Voice".into(),
         }
     }
 
@@ -87,6 +92,12 @@ pub enum TabKind {
     Bookmarks,
     AccessibilityAudit,
     Terminal,
+    // Tier-3 subsystem panels
+    Extensions,
+    Activity,
+    Coverage,
+    Pipeline,
+    Voice,
 }
 
 pub struct Command {

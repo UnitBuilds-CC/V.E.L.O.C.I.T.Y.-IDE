@@ -439,6 +439,12 @@ impl VelocityApp {
                 self.toggle_settings();
             } else if cmd && shift && i.key_pressed(egui::Key::I) {
                 self.request_inline_suggestion();
+            } else if cmd && shift && i.key_pressed(egui::Key::X) {
+                self.toggle_extensions();
+            } else if cmd && shift && i.key_pressed(egui::Key::A) {
+                self.toggle_activity();
+            } else if cmd && shift && i.key_pressed(egui::Key::V) {
+                self.toggle_voice();
             } else if cmd && i.modifiers.alt && i.key_pressed(egui::Key::R) {
                 self.rollback_deploy();
             }

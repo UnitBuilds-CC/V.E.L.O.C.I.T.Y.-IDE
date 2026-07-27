@@ -215,6 +215,21 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Settings => {
                 self.settings_panel(ui);
             }
+            TabKind::Extensions => {
+                self.app.render_extensions_panel(ui);
+            }
+            TabKind::Activity => {
+                self.app.render_activity_panel(ui);
+            }
+            TabKind::Coverage => {
+                self.app.render_coverage_panel(ui);
+            }
+            TabKind::Pipeline => {
+                self.app.render_pipeline_panel(ui);
+            }
+            TabKind::Voice => {
+                self.app.render_voice_panel(ui);
+            }
             // Mode-specific panel tabs - real content from orchestrator/timeline data
             _ => {
                 let palette = self.app.palette();
@@ -504,6 +519,20 @@ impl<'a> TabViewerImpl<'a> {
                             section_header(ui, "Editor");
                             ui.checkbox(&mut self.app.show_breadcrumbs, "Show breadcrumbs above editor");
                             ui.checkbox(&mut self.app.word_wrap, "Word wrap in editor");
+                        });
+                    });
+
+                    ui.add_space(8.0);
+                    ui.group(|ui| {
+                        section_header(ui, "System");
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("GPU").small().color(palette.text_muted));
+                            ui.label(
+                                egui::RichText::new(&self.app.gpu_name)
+                                    .monospace()
+                                    .small()
+                                    .color(palette.text),
+                            );
                         });
                     });
 
