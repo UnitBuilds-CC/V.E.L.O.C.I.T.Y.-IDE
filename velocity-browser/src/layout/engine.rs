@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::dom::DomTree;
 use crate::nda::NdaTriple;
 use crate::parser::html::{DomNode, NodeType};
-use crate::style::StyleCascader;
+use crate::style::{AnimationManager, CssAnimation, StyleCascader, TransitionManager, TransitionSpec};
 
 /// Viewport width used as the initial containing block.
 const VIEWPORT_WIDTH: f32 = 800.0;
@@ -49,11 +49,68 @@ impl LayoutBox {
 
 pub struct LayoutEngine2D {
     pub cascader: StyleCascader,
+    /// CSS `@keyframes` animation runtime.
+    pub animations: AnimationManager,
+    /// CSS `transition` runtime.
+    pub transitions: TransitionManager,
+    /// Per-node style overrides produced by the most recent
+    /// [`advance_animations`](Self::advance_animations) call, merged into every
+    /// computed style during layout.
+    dynamic_overrides: HashMap<usize, HashMap<String, String>>,
 }
 
 impl LayoutEngine2D {
     pub fn new(cascader: StyleCascader) -> Self {
-        Self { cascader }
+        Self {
+            cascader,
+            animations: AnimationManager::new(),
+            transitions: TransitionManager::new(),
+            dynamic_overrides: HashMap::new(),
+        }
+    }
+
+    /// Register a `@keyframes` rule so animations can reference it by name.
+    pub fn register_keyframes(&mut self, rule: crate::style::KeyframesRule) {
+        self.animations.register_keyframes(rule);
+    }
+
+    /// Start a CSS animation on a DOM node.
+    pub fn start_animation(&mut self, node_id: usize, animation: CssAnimation, now_ms: f64) -> bool {
+        self.animations.start_animation(node_id, animation, now_ms)
+    }
+
+    /// Declare the `transition` specs in effect for a node.
+    pub fn set_transition_specs(&mut self, node_id: usize, specs: Vec<TransitionSpec>) {
+        self.transitions.set_transition_specs(node_id, specs);
+    }
+
+    /// Advance animations and transitions to `now_ms`, detect computed-style
+    /// changes to feed the transition runtime, and snapshot the resulting
+    /// per-node style overrides that [`build_layout_tree`](Self::build_layout_tree)
+    /// will merge into layout. Call this once per frame before laying out.
+    pub fn advance_animations(&mut self, tree: &DomTree, now_ms: f64) {
+        // Feed the transition runtime: any computed property that changed since
+        // the previous frame becomes a transition candidate.
+        for node in &tree.nodes {
+            if node.node_type != NodeType::Element {
+                continue;
+            }
+            let style = self.computed_style_for(node);
+            for (prop, val) in &style {
+                self.transitions.set_property(node.id, prop, val, now_ms);
+            }
+        }
+
+        let mut overrides = self.animations.tick(now_ms);
+        for (node_id, trans) in self.transitions.tick(now_ms) {
+            overrides.entry(node_id).or_default().extend(trans);
+        }
+        self.dynamic_overrides = overrides;
+    }
+
+    /// Whether any animation or transition is currently running.
+    pub fn has_active_motion(&self) -> bool {
+        self.animations.has_active || self.transitions.has_active
     }
 
     /// Compute a real box-model layout and return every box in document order
@@ -232,10 +289,17 @@ impl LayoutEngine2D {
     }
 
     fn computed_style_for(&self, node: &DomNode) -> HashMap<String, String> {
-        self.cascader.compute_computed_style(|sel| {
+        let mut style = self.cascader.compute_computed_style(|sel| {
             sel.contains(&node.tag_name)
                 || node.attributes.get("id").map(|s| s.as_str()) == Some(sel.trim_start_matches('#'))
-        })
+        });
+        // Merge animation/transition overrides produced by advance_animations.
+        if let Some(ov) = self.dynamic_overrides.get(&node.id) {
+            for (k, v) in ov {
+                style.insert(k.clone(), v.clone());
+            }
+        }
+        style
     }
 
     pub fn export_layout_nda(&self, boxes: &[LayoutBox]) -> Vec<NdaTriple> {
@@ -443,5 +507,53 @@ mod tests {
         let (tree, boxes) = layout("<div>layered</div>", cascader);
         let div = box_for_tag(&tree, &boxes, "div");
         assert_eq!(div.z_index, 42);
+    }
+
+    #[test]
+    fn animation_overrides_drive_layout_geometry() {
+        use crate::style::{parse_keyframes, AnimationDirection, CssAnimation, FillMode, PlayState, TimingFunction};
+
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("height".to_string(), "50px".to_string());
+        cascader.add_rule("div", decl);
+
+        let tree = DomTree::new(HtmlParser::parse_html5("<div>x</div>"));
+        let div_id = tree
+            .nodes
+            .iter()
+            .find(|n| n.tag_name == "div")
+            .map(|n| n.id)
+            .expect("div node");
+
+        let mut engine = LayoutEngine2D::new(cascader);
+        engine.register_keyframes(parse_keyframes("@keyframes grow { from { width: 0px; } to { width: 100px; } }").unwrap());
+        engine.start_animation(
+            div_id,
+            CssAnimation {
+                name: "grow".to_string(),
+                duration_ms: 1000.0,
+                delay_ms: 0.0,
+                iteration_count: 1.0,
+                timing_function: TimingFunction::Linear,
+                fill_mode: FillMode::Forwards,
+                direction: AnimationDirection::Normal,
+                play_state: PlayState::Running,
+            },
+            0.0,
+        );
+
+        // Halfway through the animation the width override is ~50px.
+        engine.advance_animations(&tree, 500.0);
+        let boxes = engine.build_layout_tree(&tree);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert!((div.width - 50.0).abs() < 0.5, "animated width ~50px, got {}", div.width);
+        assert_eq!(div.height, 50.0, "static height is unaffected");
+
+        // Past the end, fill:forwards holds the final 100px width.
+        engine.advance_animations(&tree, 1500.0);
+        let boxes = engine.build_layout_tree(&tree);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert!((div.width - 100.0).abs() < 0.5, "final width ~100px, got {}", div.width);
     }
 }

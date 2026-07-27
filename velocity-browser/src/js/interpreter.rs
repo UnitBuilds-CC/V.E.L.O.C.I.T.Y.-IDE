@@ -2448,6 +2448,13 @@ static MODULE_REGISTRY: Mutex<Option<HashMap<String, HashMap<String, JsValue>>>>
 type ModuleResolverFn = dyn Fn(&str) -> Option<String> + Send + Sync;
 static MODULE_RESOLVER: Mutex<Option<Box<ModuleResolverFn>>> = Mutex::new(None);
 
+/// Serialization lock for tests that mutate the global module resolver /
+/// registry. These statics are process-wide, so tests touching them must hold
+/// this lock to avoid racing (parallel test threads otherwise interleave
+/// set/clear operations and observe each other's state).
+#[cfg(test)]
+pub static MODULE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 /// Set a module resolver callback. When an import references a module not yet
 /// in the registry, the resolver is invoked to obtain the module source, which
 /// is then evaluated and registered automatically.
@@ -3716,6 +3723,9 @@ mod tests {
 
     #[test]
     fn module_resolver_on_demand() {
+        // Serialize with other module-system tests that touch the global
+        // resolver/registry (see MODULE_TEST_LOCK).
+        let _guard = MODULE_TEST_LOCK.lock().unwrap();
         // Set a resolver that provides module source on demand
         set_module_resolver(|specifier: &str| {
             match specifier {

@@ -491,9 +491,100 @@ impl KeyframesRule {
     }
 }
 
+/// Parse a `@keyframes` rule block into a [`KeyframesRule`].
+///
+/// Accepts either the full at-rule (`@keyframes name { ... }`) or just the
+/// inner body. `from` maps to progress 0.0, `to` to 1.0, and percentages map
+/// proportionally. Stops are sorted by progress.
+pub fn parse_keyframes(css: &str) -> Option<KeyframesRule> {
+    let trimmed = css.trim();
+    let body_start = trimmed.find('{')?;
+
+    // The name sits between the `@keyframes` keyword and the first `{`.
+    let head = trimmed[..body_start].trim();
+    let name = head
+        .strip_prefix("@keyframes")
+        .or_else(|| head.strip_prefix("@-webkit-keyframes"))
+        .unwrap_or(head)
+        .trim()
+        .to_string();
+
+    // Extract the outermost block body.
+    let rest = &trimmed[body_start + 1..];
+    let body_end = rest.rfind('}')?;
+    let body = &rest[..body_end];
+
+    let mut stops = Vec::new();
+    let mut pos = 0;
+    let bytes = body.as_bytes();
+    while pos < bytes.len() {
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let sel_start = pos;
+        while pos < bytes.len() && bytes[pos] != b'{' {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        let selector = body[sel_start..pos].trim().to_string();
+        pos += 1; // skip '{'
+        let decl_start = pos;
+        while pos < bytes.len() && bytes[pos] != b'}' {
+            pos += 1;
+        }
+        let decl_text = &body[decl_start..pos];
+        pos += 1; // skip '}'
+
+        for progress in keyframe_selector_progress(&selector) {
+            stops.push(KeyframeStop {
+                progress,
+                declarations: parse_declaration_block(decl_text),
+            });
+        }
+    }
+
+    if stops.is_empty() {
+        return None;
+    }
+    stops.sort_by(|a, b| a.progress.partial_cmp(&b.progress).unwrap_or(std::cmp::Ordering::Equal));
+    Some(KeyframesRule { name, stops })
+}
+
+/// Map a keyframe selector (possibly comma-separated) to progress values.
+fn keyframe_selector_progress(selector: &str) -> Vec<f64> {
+    selector
+        .split(',')
+        .filter_map(|part| {
+            let p = part.trim().trim_end_matches('%').trim();
+            match p {
+                "from" => Some(0.0),
+                "to" => Some(1.0),
+                _ => p.parse::<f64>().ok().map(|v| (v / 100.0).clamp(0.0, 1.0)),
+            }
+        })
+        .collect()
+}
+
+/// Parse a `prop: value; prop: value` declaration block into a map.
+fn parse_declaration_block(text: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for decl in text.split(';') {
+        if let Some((prop, val)) = decl.split_once(':') {
+            let prop = prop.trim().to_string();
+            let val = val.trim().to_string();
+            if !prop.is_empty() && !val.is_empty() {
+                map.insert(prop, val);
+            }
+        }
+    }
+    map
+}
+
 /// Interpolate between two CSS values at progress t.
 /// Numeric pixel/number values are lerped; others snap at t >= 0.5.
-fn interpolate_value(from: &str, to: &str, t: f64) -> String {
+pub fn interpolate_value(from: &str, to: &str, t: f64) -> String {
     // Try numeric interpolation
     let from_num = from.trim_end_matches("px").parse::<f64>().ok();
     let to_num = to.trim_end_matches("px").parse::<f64>().ok();
@@ -906,5 +997,50 @@ mod tests {
             play_state: PlayState::Running,
         };
         assert!(!mgr.start_animation(1, anim, 0.0));
+    }
+
+    #[test]
+    fn parse_keyframes_from_to() {
+        let kf = parse_keyframes("@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }")
+            .expect("keyframes should parse");
+        assert_eq!(kf.name, "fadeIn");
+        assert_eq!(kf.stops.len(), 2);
+        assert_eq!(kf.stops[0].progress, 0.0);
+        assert_eq!(kf.stops[0].declarations.get("opacity").unwrap(), "0");
+        assert_eq!(kf.stops[1].progress, 1.0);
+        assert_eq!(kf.stops[1].declarations.get("opacity").unwrap(), "1");
+    }
+
+    #[test]
+    fn parse_keyframes_percentages_sorted() {
+        let kf = parse_keyframes(
+            "@keyframes pulse { 50% { transform: 10px; } 0% { transform: 0px; } 100% { transform: 20px; } }",
+        )
+        .expect("keyframes should parse");
+        assert_eq!(kf.stops.len(), 3);
+        // Stops are sorted by progress regardless of source order.
+        assert_eq!(kf.stops[0].progress, 0.0);
+        assert_eq!(kf.stops[1].progress, 0.5);
+        assert_eq!(kf.stops[2].progress, 1.0);
+    }
+
+    #[test]
+    fn parse_keyframes_round_trips_into_manager() {
+        let kf = parse_keyframes("@keyframes grow { from { width: 0px; } to { width: 100px; } }").unwrap();
+        let mut mgr = AnimationManager::new();
+        mgr.register_keyframes(kf);
+        let anim = CssAnimation {
+            name: "grow".to_string(),
+            duration_ms: 1000.0,
+            delay_ms: 0.0,
+            iteration_count: 1.0,
+            timing_function: TimingFunction::Linear,
+            fill_mode: FillMode::Forwards,
+            direction: AnimationDirection::Normal,
+            play_state: PlayState::Running,
+        };
+        assert!(mgr.start_animation(2, anim, 0.0));
+        let overrides = mgr.tick(500.0);
+        assert_eq!(overrides.get(&2).unwrap().get("width").unwrap(), "50.0px");
     }
 }

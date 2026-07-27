@@ -194,7 +194,7 @@ pub fn fetch_external_script(
 }
 
 /// Resolve a script src URL against the page base URL.
-fn resolve_script_url(base_url: &str, src: &str) -> String {
+pub fn resolve_script_url(base_url: &str, src: &str) -> String {
     let src = src.trim();
     if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("//") {
         if src.starts_with("//") {
@@ -221,6 +221,30 @@ fn resolve_script_url(base_url: &str, src: &str) -> String {
     }
 }
 
+/// Install a module resolver that fetches cross-file ES module imports.
+///
+/// When a page script contains `import { x } from './lib.js'`, the interpreter
+/// invokes the registered module resolver to obtain the module source. This
+/// wires that callback to the network stack: relative specifiers are resolved
+/// against `base_url` and fetched over HTTP(S). The resolver owns its own
+/// [`HttpClient`] (behind a mutex) because the callback must be `Send + Sync +
+/// 'static`.
+pub fn install_module_fetch_resolver(base_url: &str) {
+    use crate::js::interpreter::set_module_resolver;
+    use std::sync::{Arc, Mutex};
+
+    let base = base_url.to_string();
+    let client = Arc::new(Mutex::new(HttpClient::new()));
+    set_module_resolver(move |specifier: &str| {
+        let url = resolve_script_url(&base, specifier);
+        let mut guard = client.lock().ok()?;
+        match guard.get(&url) {
+            Ok(resp) if (200..400).contains(&resp.status_code) => Some(resp.body),
+            _ => None,
+        }
+    });
+}
+
 /// Full pipeline: find scripts, fetch externals, execute all.
 pub fn execute_page_scripts_full(
     tree: &mut DomTree,
@@ -230,6 +254,11 @@ pub fn execute_page_scripts_full(
     trace: &mut TraceCollector,
     current_url: &str,
 ) {
+    // Provide on-demand fetching for cross-file ES module imports and start
+    // from a clean module registry so re-navigation re-evaluates modules.
+    crate::js::interpreter::clear_module_registry();
+    install_module_fetch_resolver(current_url);
+
     let script_nodes = find_script_nodes(tree);
     let mut deferred: Vec<String> = Vec::new();
 
@@ -369,5 +398,87 @@ mod tests {
         // Both should have run
         assert_eq!(node.attributes.get("data-s").map(|s| s.as_str()), Some("1"));
         assert_eq!(node.attributes.get("data-d").map(|s| s.as_str()), Some("2"));
+    }
+
+    /// Spin up a tiny single-threaded HTTP server that serves `body` for every
+    /// request and records the requested paths. Returns (base_url, paths_log).
+    fn serve_module(body: String) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().unwrap();
+        let paths: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let paths_thread = paths.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    continue;
+                }
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("/")
+                    .to_string();
+                paths_thread.lock().unwrap().push(path);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://{}/", addr), paths)
+    }
+
+    #[test]
+    fn module_fetch_resolver_resolves_cross_file_import() {
+        // Serialize with other module-system tests (global resolver/registry).
+        let _guard = crate::js::interpreter::MODULE_TEST_LOCK.lock().unwrap();
+        let (base, _paths) = serve_module("export function add(a, b) { return a + b; }".to_string());
+        install_module_fetch_resolver(&base);
+
+        let mut tree = make_tree("<div id='out'></div>");
+        let mut vm = JsVirtualMachine::new();
+        // The relative import './math.js' is fetched from the local server.
+        let result = vm.eval_statement(&mut tree, "import { add } from './math.js'; add(40, 2)");
+        assert_eq!(result.unwrap(), crate::js::vm::JsValue::Number(42.0));
+
+        crate::js::interpreter::clear_module_resolver();
+        crate::js::interpreter::clear_module_registry();
+    }
+
+    #[test]
+    fn page_pipeline_fetches_cross_file_module() {
+        // Serialize with other module-system tests (global resolver/registry).
+        let _guard = crate::js::interpreter::MODULE_TEST_LOCK.lock().unwrap();
+        let (base, paths) = serve_module("export const VALUE = 99;".to_string());
+
+        let mut tree = make_tree("<div id='out'></div><script type='module'>import { VALUE } from './config.js';</script>");
+        let mut vm = JsVirtualMachine::new();
+        let mut scheduler = JsEventLoopScheduler::new();
+        let mut http = HttpClient::new();
+        let mut trace = TraceCollector::new();
+
+        execute_page_scripts_full(&mut tree, &mut vm, &mut scheduler, &mut http, &mut trace, &base);
+
+        // The module file was actually fetched over the network by the resolver.
+        let log = paths.lock().unwrap();
+        assert!(
+            log.iter().any(|p| p.contains("config.js")),
+            "expected config.js fetch, got {:?}",
+            *log
+        );
+
+        crate::js::interpreter::clear_module_resolver();
+        crate::js::interpreter::clear_module_registry();
     }
 }

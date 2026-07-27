@@ -88,6 +88,14 @@ impl DataChannel {
         }
     }
 
+    /// Transition the channel to the open state (models the ICE/DTLS handshake
+    /// completing). Only a channel in the `Connecting` state can be opened.
+    pub fn open(&mut self) {
+        if self.ready_state == DataChannelState::Connecting {
+            self.ready_state = DataChannelState::Open;
+        }
+    }
+
     pub fn send(&mut self, data: &[u8]) -> Result<(), String> {
         if self.ready_state != DataChannelState::Open {
             return Err("DataChannel is not open".to_string());
@@ -293,7 +301,13 @@ impl WebRtcTransport {
                 self.signaling_state = SignalingState::HaveRemoteOffer;
             }
             SdpType::Answer | SdpType::Pranswer => {
-                if self.signaling_state != SignalingState::HaveRemoteOffer {
+                // The offerer receives the remote answer while in
+                // have-local-offer (or have-local-pranswer); the answerer may
+                // also receive a counter-answer from have-remote-offer.
+                if self.signaling_state != SignalingState::HaveLocalOffer
+                    && self.signaling_state != SignalingState::HaveLocalPranswer
+                    && self.signaling_state != SignalingState::HaveRemoteOffer
+                {
                     return Err(format!(
                         "Cannot set remote answer in signaling state {:?}",
                         self.signaling_state
