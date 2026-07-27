@@ -102,6 +102,9 @@ impl VelocityApp {
             Command { label: "Mode: Accessibility", category: "Workspace", shortcut: Some("Ctrl+4"), action: |a| a.set_work_mode(WorkspaceProfile::Accessibility), modes: &[] },
             Command { label: "Mode: Reset Layout to Default", category: "Workspace", shortcut: None, action: |a| a.reset_current_mode_layout(), modes: &[] },
             Command { label: "Wiki: Export to Markdown", category: "Workspace", shortcut: None, action: |a| a.export_wiki_markdown(), modes: &[] },
+            Command { label: "NDA: New Document", category: "Workspace", shortcut: None, action: |a| a.new_nda_document(), modes: &[] },
+            Command { label: "NDA: Import Active File", category: "Workspace", shortcut: None, action: |a| a.import_file_to_nda(), modes: &[] },
+            Command { label: "NDA: Open Browser Viewer", category: "Workspace", shortcut: None, action: |a| a.open_nda_viewer(), modes: &[] },
             // View
             Command { label: "Toggle Sidebar", category: "View", shortcut: Some("Ctrl+E"), action: |a| a.toggle_left_sidebar(), modes: &[] },
             Command { label: "Toggle History", category: "View", shortcut: None, action: |a| a.toggle_right_sidebar(), modes: &[] },
@@ -468,6 +471,16 @@ impl VelocityApp {
     }
 
     pub fn open_editor(&mut self, path: Option<PathBuf>) {
+        // Route portable/sealed NDA documents to the dedicated NDA editor tab
+        // (but never the `.velocity/` / `memory/` at-rest state envelopes).
+        if let Some(ref p) = path {
+            if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("nda")).unwrap_or(false)
+                && !Self::is_internal_nda_path(p)
+            {
+                self.open_nda_document(Some(p.clone()));
+                return;
+            }
+        }
         if let Some(ref p) = path {
             let existing = self.tabs.iter().find_map(|tab| match &tab.kind {
                 TabKind::Editor {
@@ -788,6 +801,92 @@ impl VelocityApp {
     pub fn export_wiki_markdown(&mut self) {
         let workspace_root = self.workspace_root.clone();
         self.wiki_view.export(&workspace_root, &mut self.toasts);
+    }
+
+    /// True for `.nda` files that live in internal state dirs (`.velocity/`,
+    /// `memory/`) — those are at-rest envelopes, never routed to the NDA editor.
+    fn is_internal_nda_path(path: &std::path::Path) -> bool {
+        path.components().any(|c| matches!(c.as_os_str().to_str(), Some(".velocity") | Some("memory")))
+    }
+
+    /// Open (or focus) an NDA document tab. With `None`, opens a fresh blank
+    /// document for native authoring.
+    pub fn open_nda_document(&mut self, path: Option<PathBuf>) {
+        if let Some(ref p) = path {
+            let existing = self.tabs.iter().find_map(|tab| match &tab.kind {
+                TabKind::NdaDoc { path: Some(tp) } if tp == p => Some(tab.id.clone()),
+                _ => None,
+            });
+            if let Some(id) = existing {
+                self.active_tab = Some(id.clone());
+                self.touch_mru(&id);
+                return;
+            }
+        }
+        let id = TabId::next(&mut self.tab_counter);
+        let tab = Tab { id: id.clone(), kind: TabKind::NdaDoc { path: path.clone() } };
+        let mut view = crate::editor::nda_document::NdaDocumentView::new();
+        if let Some(ref p) = path {
+            let ws = self.workspace_root.clone();
+            view.open(&ws, p);
+        }
+        self.nda_docs.insert(id.clone(), view);
+        self.tabs.push(tab.clone());
+        if let Some(dock) = self.dock_state.as_mut() {
+            dock.push_to_focused_leaf(tab);
+        }
+        self.active_tab = Some(id.clone());
+        self.touch_mru(&id);
+    }
+
+    /// Command: open a blank NDA document for authoring.
+    pub fn new_nda_document(&mut self) {
+        self.open_nda_document(None);
+    }
+
+    /// Command: write the standalone NDA PWA viewer to `.velocity/` and open it
+    /// in the default browser (it can then load any `.nda` file).
+    pub fn open_nda_viewer(&mut self) {
+        let dir = self.workspace_root.join(".velocity");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toasts.push(crate::editor::toast::Toast::error(format!("Viewer failed: {e}")));
+            return;
+        }
+        let out = dir.join("nda_viewer.html");
+        match std::fs::write(&out, crate::editor::nda_viewer::pwa_viewer_html()) {
+            Ok(_) => {
+                self.toasts.push(crate::editor::toast::Toast::success(format!("NDA viewer at {}", out.display())));
+                crate::editor::nda_document::open_in_browser(&out);
+            }
+            Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!("Viewer failed: {e}"))),
+        }
+    }
+
+    /// Command: convert a workspace file into a portable NDA document and open it.
+    pub fn import_file_to_nda(&mut self) {
+        let path = self
+            .active_tab
+            .as_ref()
+            .and_then(|id| self.tab_path(id).cloned());
+        let Some(path) = path else {
+            self.toasts.push(crate::editor::toast::Toast::info("Open a file first, then import it to NDA"));
+            return;
+        };
+        match crate::editor::nda_document::convert_file_to_doc(&path) {
+            Ok(doc) => {
+                let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "imported".to_string());
+                let safe: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+                let out = self.workspace_root.join(format!("{safe}.nda"));
+                match crate::editor::nda_document::save_to_disk(&self.workspace_root, &out, &doc, false) {
+                    Ok(_) => {
+                        self.toasts.push(crate::editor::toast::Toast::success(format!("Imported to {}", out.display())));
+                        self.open_nda_document(Some(out));
+                    }
+                    Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!("Import failed: {e}"))),
+                }
+            }
+            Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!("Import failed: {e}"))),
+        }
     }
 
     pub fn toggle_search(&mut self) {

@@ -61,6 +61,8 @@ pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;
 pub mod multimodal;
+pub mod nda_document;
+pub mod nda_viewer;
 pub mod regex_engine;
 pub mod semantic_search;
 pub mod snippets;

@@ -245,6 +245,8 @@ pub struct VelocityApp {
     pub mediator: std::sync::Arc<crate::automation::mediator::MediatorArena>,
     pub graph_view: crate::editor::graph_view::MerkleGraphView,
     pub wiki_view: crate::editor::wiki_view::WikiView,
+    /// Per-tab NDA document editor state, keyed by tab id.
+    pub nda_docs: std::collections::HashMap<TabId, crate::editor::nda_document::NdaDocumentView>,
     pub terminal_rx: Option<std::sync::mpsc::Receiver<String>>,
     pub terminal_input: String,
     pub current_agent_task_id: u32,
@@ -846,6 +848,7 @@ impl VelocityApp {
             mediator,
             graph_view: crate::editor::graph_view::MerkleGraphView::new(),
             wiki_view: crate::editor::wiki_view::WikiView::new(),
+            nda_docs: std::collections::HashMap::new(),
             terminal_rx: None,
             terminal_input: String::new(),
             current_agent_task_id: 0,

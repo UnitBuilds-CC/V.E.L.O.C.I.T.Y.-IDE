@@ -242,6 +242,20 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Governance => {
                 self.app.render_governance_panel(ui);
             }
+            TabKind::NdaDoc { .. } => {
+                let palette = self.app.palette();
+                let tab_id = tab.id.clone();
+                let workspace_root = self.app.workspace_root.clone();
+                let view = self
+                    .app
+                    .nda_docs
+                    .entry(tab_id)
+                    .or_default();
+                let open_path = view.ui(ui, &workspace_root, &mut self.app.toasts, palette);
+                if let Some(p) = open_path {
+                    crate::editor::nda_document::open_in_browser(&p);
+                }
+            }
             // Mode-specific panel tabs - real content from orchestrator/timeline data
             _ => {
                 let palette = self.app.palette();
