@@ -598,6 +598,49 @@ mod tests {
         let _ = state.captured_at_ms;
     }
 
+    /// Live round-trip through the real Win32 clipboard: writes a CF_HDROP
+    /// payload and reads it back via `DragQueryFileW`. Ignored by default
+    /// because it clobbers the interactive clipboard; run explicitly with
+    /// `cargo test --bin velocity_mcp -- --ignored hdrop_live_round_trip`.
+    ///
+    /// The system clipboard is a shared, contended resource (clipboard
+    /// history and cloud-sync agents may grab it mid-test), so the
+    /// write/read is retried a few times before we treat a miss as a real
+    /// extraction failure.
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "touches the live system clipboard; run manually"]
+    fn hdrop_live_round_trip_extracts_written_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("alpha.txt");
+        // A space exercises wide-path handling through DragQueryFileW.
+        let b = dir.path().join("beta log.txt");
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+
+        let mut last: Option<ClipboardContent> = None;
+        for attempt in 0..5 {
+            let written = ClipboardManager::write_files(&[a.clone(), b.clone()]);
+            assert!(written.success, "write_files failed: {}", written.detail);
+
+            let state = ClipboardManager::read();
+            if let ClipboardContent::Files(files) = &state.content {
+                assert!(
+                    state.available_formats.iter().any(|f| f == "CF_HDROP"),
+                    "CF_HDROP not advertised: {:?}",
+                    state.available_formats
+                );
+                assert_eq!(files.len(), 2, "expected two files, got {:?}", files);
+                assert!(files.iter().any(|p| p == &a), "missing {:?} in {:?}", a, files);
+                assert!(files.iter().any(|p| p == &b), "missing {:?} in {:?}", b, files);
+                return;
+            }
+            last = Some(state.content);
+            std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+        }
+        panic!("clipboard never returned our files after retries; last content: {:?}", last);
+    }
+
     #[test]
     fn clipboard_content_variants() {
         let contents = [
