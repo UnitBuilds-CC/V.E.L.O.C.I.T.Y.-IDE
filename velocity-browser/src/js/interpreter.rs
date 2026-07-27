@@ -258,6 +258,10 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum ObjectProp {
     KeyValue(String, Expr),
+    /// Object-literal getter: `{ get x() { ... } }`
+    Getter(String, Expr),
+    /// Object-literal setter: `{ set x(v) { ... } }`
+    Setter(String, Expr),
     Spread(Expr),
 }
 
@@ -986,6 +990,7 @@ impl Parser {
         self.expect(&Token::LBrace)?;
         let mut props = Vec::new();
         let mut has_spread = false;
+        let mut has_accessor = false;
         let mut spread_props = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             // Spread property: { ...expr }
@@ -1010,8 +1015,12 @@ impl Parser {
                 let params = self.parse_params()?;
                 let body = self.parse_block()?;
                 let func = Expr::Function(Some(format!("{}_{}", key, actual_key)), params, Box::new(body));
-                props.push((actual_key.clone(), func.clone()));
-                spread_props.push(ObjectProp::KeyValue(actual_key, func));
+                has_accessor = true;
+                if key == "get" {
+                    spread_props.push(ObjectProp::Getter(actual_key, func));
+                } else {
+                    spread_props.push(ObjectProp::Setter(actual_key, func));
+                }
             } else if self.at(&Token::LParen) {
                 let params = self.parse_params()?;
                 let body = self.parse_block()?;
@@ -1030,7 +1039,7 @@ impl Parser {
             if !self.at(&Token::RBrace) { self.expect(&Token::Comma)?; }
         }
         self.expect(&Token::RBrace)?;
-        if has_spread {
+        if has_spread || has_accessor {
             Ok(Expr::ObjectWithSpread(spread_props))
         } else {
             Ok(Expr::Object(props))
@@ -1324,6 +1333,14 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
             for item in items {
                 match item {
                     ObjectProp::KeyValue(k, v) => { map.insert(k.clone(), eval_expr_node(v, scope)?); }
+                    ObjectProp::Getter(k, func_expr) => {
+                        let func = eval_expr_node(func_expr, scope)?;
+                        install_literal_accessor(&mut map, k, "get", func);
+                    }
+                    ObjectProp::Setter(k, func_expr) => {
+                        let func = eval_expr_node(func_expr, scope)?;
+                        install_literal_accessor(&mut map, k, "set", func);
+                    }
                     ObjectProp::Spread(expr) => {
                         if let JsValue::Object(src) = eval_expr_node(expr, scope)? {
                             map.extend(src);
@@ -1487,7 +1504,27 @@ fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResu
         Token::LtLt => JsValue::Number(((to_number(&l) as i32) << (to_number(&r) as u32 & 31)) as f64),
         Token::GtGt => JsValue::Number(((to_number(&l) as i32) >> (to_number(&r) as u32 & 31)) as f64),
         Token::GtGtGt => JsValue::Number(((to_number(&l) as u32) >> (to_number(&r) as u32 & 31)) as f64),
-        Token::Instanceof => JsValue::Boolean(false), // simplified
+        Token::Instanceof => {
+            // Resolve the right-hand constructor's name (a class object or a named function),
+            // then check whether it appears in the left-hand instance's ancestry chain.
+            let ctor_name: Option<String> = match &r {
+                JsValue::Object(cm) if cm.get("__type__").map(to_string).as_deref() == Some("class") => {
+                    cm.get("__name__").map(to_string)
+                }
+                JsValue::Function { name: Some(n), .. } => Some(n.clone()),
+                _ => None,
+            };
+            match (&l, ctor_name) {
+                (JsValue::Object(im), Some(name)) => {
+                    let in_chain = match im.get("__instanceof__") {
+                        Some(JsValue::Array(chain)) => chain.iter().any(|v| to_string(v) == name),
+                        _ => false,
+                    };
+                    JsValue::Boolean(in_chain)
+                }
+                _ => JsValue::Boolean(false),
+            }
+        }
         Token::In => {
             let key = to_string(&l);
             match &r { JsValue::Object(m) => JsValue::Boolean(m.contains_key(&key)), _ => JsValue::Boolean(false) }
@@ -1970,6 +2007,13 @@ fn call_class_constructor(class_map: &HashMap<String, JsValue>, args: &[JsValue]
         }
     }
 
+    // Record the class ancestry on the instance so `instanceof` can walk the chain.
+    // This is installed before the constructor runs so it survives any `this` mutation.
+    if let Some(JsValue::String(class_name)) = class_map.get("__name__") {
+        instance.insert("__class_name__".to_string(), JsValue::String(class_name.clone()));
+    }
+    instance.insert("__instanceof__".to_string(), JsValue::Array(class_ancestry_names(class_map)));
+
     // Call constructor if present
     if let Some(ctor) = class_map.get("__constructor__") {
         if let JsValue::Function { params, body, closure, .. } = ctor {
@@ -1993,6 +2037,27 @@ fn call_class_constructor(class_map: &HashMap<String, JsValue>, args: &[JsValue]
     }
 
     Ok(JsValue::Object(instance))
+}
+
+/// Collect the ancestry chain of a class object as a list of class-name strings,
+/// e.g. for `class Dog extends Animal {}` this yields `["Dog", "Animal"]`.
+/// Used to implement `instanceof`.
+fn class_ancestry_names(class_map: &HashMap<String, JsValue>) -> Vec<JsValue> {
+    let mut names = Vec::new();
+    let mut current: Option<&HashMap<String, JsValue>> = Some(class_map);
+    let mut depth = 0;
+    while let Some(cm) = current {
+        if depth > 64 { break; }
+        if let Some(JsValue::String(n)) = cm.get("__name__") {
+            names.push(JsValue::String(n.clone()));
+        }
+        current = match cm.get("__parent__") {
+            Some(JsValue::Object(parent)) => Some(parent),
+            _ => None,
+        };
+        depth += 1;
+    }
+    names
 }
 
 pub fn call_function(func: &JsValue, args: &[JsValue], _caller_scope: &ScopeRef) -> EvalResult {
@@ -2797,23 +2862,54 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
             }
         }
         // Accessor property: invoke the setter rather than overwriting the descriptor.
-        if let Some(JsValue::Object(desc)) = map.get(prop) {
-            if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) {
-                let setter = desc.get("set").cloned();
-                let this_obj = JsValue::Object(map.clone());
-                if let Some(setter) = setter {
-                    if !matches!(setter, JsValue::NativeFunction(_)) {
-                        let _ = call_function_with_this(&setter, &[value], &Scope::new_global(), Some(this_obj));
-                    }
-                }
-                return true;
+        // We snapshot the object, run the setter with `this` bound to that snapshot, then
+        // merge any mutations the setter made to `this` back into the real object so that
+        // `set x(v) { this._v = v; }` actually persists.
+        let accessor_info = match map.get(prop) {
+            Some(JsValue::Object(desc)) if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) => {
+                Some((desc.get("set").cloned(), desc.clone(), map.clone()))
             }
+            _ => None,
+        };
+        if let Some((setter, descriptor, this_snapshot)) = accessor_info {
+            if let Some(setter) = setter {
+                if !matches!(setter, JsValue::NativeFunction(_)) {
+                    let updated = invoke_setter_readback(&setter, &value, &this_snapshot);
+                    for (k, v) in updated {
+                        map.insert(k, v);
+                    }
+                    // Preserve the accessor descriptor itself (the setter must not clobber it).
+                    map.insert(prop.to_string(), JsValue::Object(descriptor));
+                }
+            }
+            return true;
         }
         map.insert(prop.to_string(), value);
         true
     } else {
         false
     }
+}
+
+/// Invoke an accessor setter with `this` bound to a snapshot of the owning object, then
+/// read back the (possibly mutated) `this` so the caller can merge the changes into the
+/// real object. Returns the updated object map (or the snapshot unchanged if the setter
+/// did not mutate `this`).
+fn invoke_setter_readback(setter: &JsValue, value: &JsValue, this_map: &HashMap<String, JsValue>) -> HashMap<String, JsValue> {
+    if let JsValue::Function { params, body, closure, .. } = setter {
+        let call_scope = Scope::new_child(closure);
+        Scope::declare(&call_scope, "this", JsValue::Object(this_map.clone()));
+        for (i, p) in params.iter().enumerate() {
+            let val = if i == 0 { value.clone() } else { JsValue::Undefined };
+            Scope::declare(&call_scope, p, val);
+        }
+        Scope::declare(&call_scope, "arguments", JsValue::Array(vec![value.clone()]));
+        let _ = eval_stmt(body, &call_scope);
+        if let Some(JsValue::Object(updated)) = Scope::resolve(&call_scope, "this") {
+            return updated;
+        }
+    }
+    this_map.clone()
 }
 
 /// Apply a single property descriptor (data or accessor) to `target` under `prop`.
@@ -2829,6 +2925,25 @@ fn apply_descriptor(target: &mut HashMap<String, JsValue>, prop: &str, desc: &Ha
     } else {
         target.insert(prop.to_string(), desc.get("value").cloned().unwrap_or(JsValue::Undefined));
     }
+}
+
+/// Install a getter or setter coming from object-literal syntax (`{ get x() {}, set x(v) {} }`).
+/// A getter and setter for the same key arrive as separate props, so we merge them into a
+/// single `__accessor__` descriptor. Object-literal accessors are enumerable+configurable
+/// by default (unlike Object.defineProperty, which defaults to false).
+fn install_literal_accessor(target: &mut HashMap<String, JsValue>, prop: &str, kind: &str, func: JsValue) {
+    let mut accessor = match target.get(prop) {
+        Some(JsValue::Object(existing)) if existing.get("__accessor__") == Some(&JsValue::Boolean(true)) => existing.clone(),
+        _ => {
+            let mut a = HashMap::new();
+            a.insert("__accessor__".to_string(), JsValue::Boolean(true));
+            a.insert("enumerable".to_string(), JsValue::Boolean(true));
+            a.insert("configurable".to_string(), JsValue::Boolean(true));
+            a
+        }
+    };
+    accessor.insert(kind.to_string(), func);
+    target.insert(prop.to_string(), JsValue::Object(accessor));
 }
 
 /// If `val` is an accessor property descriptor (installed via Object.defineProperty
@@ -3727,6 +3842,83 @@ mod tests {
             Reflect.deleteProperty(obj, 'a');
             obj.a
         "), JsValue::Undefined);
+    }
+
+    #[test]
+    fn object_literal_getter() {
+        assert_eq!(eval_full("
+            var obj = { get x() { return 42; } };
+            obj.x
+        "), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn object_literal_getter_uses_this() {
+        assert_eq!(eval_full("
+            var obj = { _v: 7, get x() { return this._v; } };
+            obj.x
+        "), JsValue::Number(7.0));
+    }
+
+    #[test]
+    fn object_literal_setter() {
+        assert_eq!(eval_full("
+            var captured = 0;
+            var obj = { set x(v) { captured = v; } };
+            obj.x = 99;
+            captured
+        "), JsValue::Number(99.0));
+    }
+
+    #[test]
+    fn object_literal_getter_setter_pair() {
+        assert_eq!(eval_full("
+            var obj = {
+                _n: 1,
+                get n() { return this._n; },
+                set n(v) { this._n = v * 2; }
+            };
+            obj.n = 5;
+            obj.n
+        "), JsValue::Number(10.0));
+    }
+
+    #[test]
+    fn instanceof_direct_class() {
+        assert_eq!(eval_full("
+            class Animal {}
+            var a = new Animal();
+            a instanceof Animal
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn instanceof_inherited_class() {
+        assert_eq!(eval_full("
+            class Animal {}
+            class Dog extends Animal {}
+            var d = new Dog();
+            (d instanceof Dog) && (d instanceof Animal)
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn instanceof_negative() {
+        assert_eq!(eval_full("
+            class Animal {}
+            class Cat {}
+            var a = new Animal();
+            a instanceof Cat
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn instanceof_plain_object_is_false() {
+        assert_eq!(eval_full("
+            class Animal {}
+            var o = { a: 1 };
+            o instanceof Animal
+        "), JsValue::Boolean(false));
     }
 
     #[test]
