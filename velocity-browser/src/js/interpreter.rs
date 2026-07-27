@@ -1671,6 +1671,16 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 Some("Promise") => return call_promise_method(map, method, &evaluated_args, scope),
                 Some("Date") => return call_date_method(map, method, &evaluated_args),
                 Some("Generator") => return call_generator_method(map, method),
+                Some("class") => {
+                    // Static method call: ClassName.staticMethod(args). Inside a static
+                    // method `this` is the class object itself; inherited statics are
+                    // resolved by walking the parent chain.
+                    if let Some(func) = find_static_method(&obj, method) {
+                        let (result, _) = call_method_with_this_writeback(&func, &evaluated_args, scope, obj.clone());
+                        return result;
+                    }
+                    return Ok(JsValue::Undefined);
+                }
                 _ => {}
             }
             if let Some(func) = map.get(method).cloned() {
@@ -1768,6 +1778,26 @@ fn find_proto_method(class_val: &JsValue, method: &str) -> Option<JsValue> {
         let JsValue::Object(cm) = &current else { return None };
         if let Some(JsValue::Object(proto)) = cm.get("__proto_methods__") {
             if let Some(func) = proto.get(method) {
+                return Some(func.clone());
+            }
+        }
+        match cm.get("__parent__") {
+            Some(parent) => { current = parent.clone(); depth += 1; }
+            None => return None,
+        }
+    }
+}
+
+/// Walk a class object's ancestry looking for a static `method` in each class's
+/// `__static_methods__` (so inherited statics resolve too).
+fn find_static_method(class_val: &JsValue, method: &str) -> Option<JsValue> {
+    let mut current = class_val.clone();
+    let mut depth = 0;
+    loop {
+        if depth > 64 { return None; }
+        let JsValue::Object(cm) = &current else { return None };
+        if let Some(JsValue::Object(statics)) = cm.get("__static_methods__") {
+            if let Some(func) = statics.get(method) {
                 return Some(func.clone());
             }
         }
@@ -4052,6 +4082,38 @@ mod tests {
             var x = new C();
             x.a + x.b + x.c
         "), JsValue::Number(6.0));
+    }
+
+    #[test]
+    fn static_method_call() {
+        assert_eq!(eval_full("
+            class Math2 {
+                static double(n) { return n * 2; }
+            }
+            Math2.double(21)
+        "), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn static_method_this_is_class() {
+        assert_eq!(eval_full("
+            class Counter {
+                static base() { return 10; }
+                static doubled() { return this.base() * 2; }
+            }
+            Counter.doubled()
+        "), JsValue::Number(20.0));
+    }
+
+    #[test]
+    fn static_method_inherited() {
+        assert_eq!(eval_full("
+            class Base {
+                static hello() { return 'hi'; }
+            }
+            class Sub extends Base {}
+            Sub.hello()
+        "), JsValue::String("hi".to_string()));
     }
 
     #[test]
