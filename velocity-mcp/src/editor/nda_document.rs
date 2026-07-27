@@ -189,6 +189,15 @@ pub struct NdaDocumentView {
     cmd_text: String,
     cmd_x: String,
     cmd_y: String,
+    // Extended command authoring inputs.
+    cmd_kind: u8,
+    cmd_w: String,
+    cmd_h: String,
+    cmd_color: String,
+    cmd_wrap: String,
+    cmd_data_url: String,
+    cmd_image_path: String,
+    cmd_points: String,
     commit_msg: String,
     identity_name: String,
     identity_email: String,
@@ -221,6 +230,14 @@ impl NdaDocumentView {
             cmd_text: String::new(),
             cmd_x: "16".to_string(),
             cmd_y: "24".to_string(),
+            cmd_kind: CommandKind::DrawText as u8,
+            cmd_w: "0".to_string(),
+            cmd_h: "0".to_string(),
+            cmd_color: "#C9D1D9".to_string(),
+            cmd_wrap: "0".to_string(),
+            cmd_data_url: String::new(),
+            cmd_image_path: String::new(),
+            cmd_points: "0,0;40,0;40,40".to_string(),
             commit_msg: String::new(),
             identity_name: String::new(),
             identity_email: String::new(),
@@ -339,7 +356,7 @@ impl NdaDocumentView {
 
             egui::ScrollArea::vertical().show(ui, |ui| match self.sub {
                 NdaSubView::Canvas => self.render_canvas(ui, palette),
-                NdaSubView::Triples => self.render_triples(ui, palette),
+                NdaSubView::Triples => self.render_triples(ui, workspace_root, palette),
                 NdaSubView::History => self.render_history(ui, workspace_root, palette),
                 NdaSubView::Bytes => self.render_bytes(ui, palette),
             });
@@ -444,7 +461,7 @@ impl NdaDocumentView {
         }
     }
 
-    fn render_triples(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
+    fn render_triples(&mut self, ui: &mut egui::Ui, workspace_root: &Path, palette: IdePalette) {
         // Title.
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Title").color(palette.text_muted));
@@ -472,24 +489,108 @@ impl NdaDocumentView {
             }
         });
 
-        // Add display command.
+        // Add display command (all kinds).
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("Add text command").size(11.0).strong().color(palette.text));
+        ui.label(egui::RichText::new("Add display command").size(11.0).strong().color(palette.text));
         ui.horizontal(|ui| {
-            ui.label("text");
-            ui.text_edit_singleline(&mut self.cmd_text);
+            ui.selectable_value(&mut self.cmd_kind, CommandKind::DrawText as u8, "Text");
+            ui.selectable_value(&mut self.cmd_kind, CommandKind::DrawRect as u8, "Rect");
+            ui.selectable_value(&mut self.cmd_kind, CommandKind::DrawImage as u8, "Image");
+            ui.selectable_value(&mut self.cmd_kind, CommandKind::DrawVector as u8, "Vector");
+        });
+        ui.horizontal(|ui| {
             ui.label("x");
             ui.add(egui::TextEdit::singleline(&mut self.cmd_x).desired_width(48.0));
             ui.label("y");
             ui.add(egui::TextEdit::singleline(&mut self.cmd_y).desired_width(48.0));
-            if ui.button("Add").clicked() && !self.cmd_text.is_empty() {
-                let x = self.cmd_x.parse().unwrap_or(16);
-                let y = self.cmd_y.parse().unwrap_or(24);
-                self.doc.push_command(DisplayCommand::text(self.cmd_text.clone(), x, y, 0xC9D1_D9FF));
-                self.cmd_text.clear();
-                self.dirty = true;
-            }
+            ui.label("w");
+            ui.add(egui::TextEdit::singleline(&mut self.cmd_w).desired_width(48.0));
+            ui.label("h");
+            ui.add(egui::TextEdit::singleline(&mut self.cmd_h).desired_width(48.0));
+            ui.label("color");
+            ui.add(egui::TextEdit::singleline(&mut self.cmd_color).desired_width(72.0));
         });
+        match CommandKind::from_u8(self.cmd_kind) {
+            Some(CommandKind::DrawText) => {
+                ui.horizontal(|ui| {
+                    ui.label("text");
+                    ui.text_edit_singleline(&mut self.cmd_text);
+                    ui.label("wrap");
+                    ui.add(egui::TextEdit::singleline(&mut self.cmd_wrap).desired_width(48.0));
+                    if ui.button("Add").clicked() && !self.cmd_text.is_empty() {
+                        let mut c = DisplayCommand::text(
+                            self.cmd_text.clone(),
+                            self.cmd_x.parse().unwrap_or(16),
+                            self.cmd_y.parse().unwrap_or(24),
+                            parse_color_hex(&self.cmd_color).unwrap_or(0xC9D1_D9FF),
+                        );
+                        c.w = self.cmd_wrap.parse().unwrap_or(0);
+                        self.doc.push_command(c);
+                        self.cmd_text.clear();
+                        self.dirty = true;
+                    }
+                });
+            }
+            Some(CommandKind::DrawRect) => {
+                if ui.button("Add rect").clicked() {
+                    self.doc.push_command(DisplayCommand::rect(
+                        self.cmd_x.parse().unwrap_or(0),
+                        self.cmd_y.parse().unwrap_or(0),
+                        self.cmd_w.parse().unwrap_or(40),
+                        self.cmd_h.parse().unwrap_or(24),
+                        parse_color_hex(&self.cmd_color).unwrap_or(0x58A6_FFFF),
+                    ));
+                    self.dirty = true;
+                }
+            }
+            Some(CommandKind::DrawImage) => {
+                ui.horizontal(|ui| {
+                    ui.label("data-url");
+                    ui.text_edit_singleline(&mut self.cmd_data_url);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("or file");
+                    ui.text_edit_singleline(&mut self.cmd_image_path);
+                    if ui.button("Load").on_hover_text("Read an image file and embed it as a PNG data-url").clicked() {
+                        match load_image_as_data_url(workspace_root, self.cmd_image_path.trim()) {
+                            Ok(url) => {
+                                self.cmd_data_url = url;
+                                self.set_error(None);
+                            }
+                            Err(e) => self.set_error(Some(e)),
+                        }
+                    }
+                    if ui.button("Add").clicked() && !self.cmd_data_url.is_empty() {
+                        self.doc.push_command(DisplayCommand::image(
+                            self.cmd_data_url.clone(),
+                            self.cmd_x.parse().unwrap_or(10),
+                            self.cmd_y.parse().unwrap_or(10),
+                            self.cmd_w.parse().unwrap_or(0),
+                            self.cmd_h.parse().unwrap_or(0),
+                        ));
+                        self.dirty = true;
+                    }
+                });
+            }
+            Some(CommandKind::DrawVector) => {
+                ui.horizontal(|ui| {
+                    ui.label("points");
+                    ui.add(egui::TextEdit::singleline(&mut self.cmd_points).desired_width(220.0));
+                    if ui.button("Add").clicked() {
+                        let pts = velocity_browser::nda_portable::parse_vector_points(&self.cmd_points);
+                        self.doc.push_command(DisplayCommand::vector(
+                            &pts,
+                            self.cmd_x.parse().unwrap_or(10),
+                            self.cmd_y.parse().unwrap_or(10),
+                            self.cmd_h.parse().unwrap_or(1).max(1),
+                            parse_color_hex(&self.cmd_color).unwrap_or(0x58A6_FFFF),
+                        ));
+                        self.dirty = true;
+                    }
+                });
+            }
+            None => {}
+        }
         ui.separator();
 
         // Content triple list.
@@ -510,26 +611,115 @@ impl NdaDocumentView {
             self.dirty = true;
         }
 
-        // Command list.
+        // Command list (inline edit + reorder).
         ui.add_space(6.0);
         ui.label(egui::RichText::new(format!("Display commands ({})", self.doc.commands.len())).size(11.0).strong().color(palette.text));
         let mut remove_cmd: Option<usize> = None;
-        for (i, c) in self.doc.commands.clone().iter().enumerate() {
-            ui.horizontal(|ui| {
-                let label = match CommandKind::from_u8(c.kind) {
-                    Some(CommandKind::DrawText) => format!("text @{},{} \"{}\"", c.x, c.y, c.content),
-                    Some(CommandKind::DrawRect) => format!("rect @{},{} {}x{}", c.x, c.y, c.w, c.h),
-                    Some(CommandKind::DrawImage) => format!("image @{},{} {}x{}", c.x, c.y, c.w, c.h),
-                    _ => format!("cmd type {} @{},{}", c.kind, c.x, c.y),
+        let mut swap: Option<(usize, usize)> = None;
+        let n = self.doc.commands.len();
+        for i in 0..n {
+            let (kind, x, y, w, h, color, content) = {
+                let c = &self.doc.commands[i];
+                (c.kind, c.x, c.y, c.w, c.h, c.color, c.content.clone())
+            };
+            let kind_name = match CommandKind::from_u8(kind) {
+                Some(CommandKind::DrawText) => "text",
+                Some(CommandKind::DrawRect) => "rect",
+                Some(CommandKind::DrawImage) => "image",
+                Some(CommandKind::DrawVector) => "vector",
+                None => "?",
+            };
+            let preview = match CommandKind::from_u8(kind) {
+                Some(CommandKind::DrawText) => format!("\"{}\"", content.chars().take(24).collect::<String>()),
+                Some(CommandKind::DrawImage) => format!("{}x{}", w, h),
+                Some(CommandKind::DrawVector) => format!("{} pts", velocity_browser::nda_portable::parse_vector_points(&content).len()),
+                _ => format!("{}x{}", w, h),
+            };
+            egui::CollapsingHeader::new(
+                egui::RichText::new(format!("#{i} {kind_name} @{x},{y} {preview}")).size(11.0).color(palette.text),
+            )
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("x");
+                    let mut sx = x.to_string();
+                    if ui.add(egui::TextEdit::singleline(&mut sx).desired_width(48.0)).changed() {
+                        if let Ok(v) = sx.parse() {
+                            self.doc.commands[i].x = v;
+                            self.dirty = true;
+                        }
+                    }
+                    ui.label("y");
+                    let mut sy = y.to_string();
+                    if ui.add(egui::TextEdit::singleline(&mut sy).desired_width(48.0)).changed() {
+                        if let Ok(v) = sy.parse() {
+                            self.doc.commands[i].y = v;
+                            self.dirty = true;
+                        }
+                    }
+                    ui.label("w");
+                    let mut sw = w.to_string();
+                    if ui.add(egui::TextEdit::singleline(&mut sw).desired_width(48.0)).changed() {
+                        if let Ok(v) = sw.parse() {
+                            self.doc.commands[i].w = v;
+                            self.dirty = true;
+                        }
+                    }
+                    ui.label("h");
+                    let mut sh = h.to_string();
+                    if ui.add(egui::TextEdit::singleline(&mut sh).desired_width(48.0)).changed() {
+                        if let Ok(v) = sh.parse() {
+                            self.doc.commands[i].h = v;
+                            self.dirty = true;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("color");
+                    let mut color_hex = color_to_hex(color);
+                    if ui.add(egui::TextEdit::singleline(&mut color_hex).desired_width(80.0)).changed() {
+                        if let Some(v) = parse_color_hex(&color_hex) {
+                            self.doc.commands[i].color = v;
+                            self.dirty = true;
+                        }
+                    }
+                });
+                let mut content_edit = content;
+                let content_label = match CommandKind::from_u8(kind) {
+                    Some(CommandKind::DrawText) => "text",
+                    Some(CommandKind::DrawImage) => "data-url",
+                    Some(CommandKind::DrawVector) => "points (x,y;x,y)",
+                    _ => "content",
                 };
-                ui.label(egui::RichText::new(label).size(11.0).color(palette.text));
-                if ui.small_button("✕").clicked() {
+                ui.horizontal(|ui| {
+                    ui.label(content_label);
+                    if ui.add(egui::TextEdit::singleline(&mut content_edit).desired_width(280.0)).changed() {
+                        self.doc.commands[i].content = content_edit.clone();
+                        self.dirty = true;
+                    }
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                if ui.small_button("↑").on_hover_text("Move earlier (paints below)").clicked() && i > 0 {
+                    swap = Some((i, i - 1));
+                }
+                if ui.small_button("↓").on_hover_text("Move later (paints above)").clicked() && i + 1 < n {
+                    swap = Some((i, i + 1));
+                }
+                if ui.small_button("✕").on_hover_text("Remove command").clicked() {
                     remove_cmd = Some(i);
                 }
             });
         }
         if let Some(i) = remove_cmd {
             self.doc.commands.remove(i);
+            self.image_textures.clear();
+            self.dirty = true;
+        }
+        if let Some((a, b)) = swap {
+            self.doc.commands.swap(a, b);
+            self.image_textures.clear();
             self.dirty = true;
         }
     }
@@ -834,6 +1024,40 @@ pub fn from_base64(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Parse a `#RRGGBB` or `#RRGGBBAA` hex color into packed `0xRRGGBBAA`
+/// (alpha defaults to `FF` when omitted). Returns `None` for malformed input.
+pub fn parse_color_hex(s: &str) -> Option<u32> {
+    let s = s.trim().trim_start_matches('#');
+    let v = u32::from_str_radix(s, 16).ok()?;
+    match s.len() {
+        6 => Some((v << 8) | 0xFF),
+        8 => Some(v),
+        _ => None,
+    }
+}
+
+/// Format a packed `0xRRGGBBAA` color as `#RRGGBB` (alpha dropped for editing).
+pub fn color_to_hex(c: u32) -> String {
+    format!("#{:06X}", (c >> 8) & 0xFF_FF_FF)
+}
+
+/// Load an image file (absolute or workspace-relative), re-encode it to PNG,
+/// and return a `data:image/png;base64,…` URL. Normalizing to PNG guarantees
+/// both the egui (`image` crate) and browser viewers can decode the embed.
+pub fn load_image_as_data_url(workspace_root: &Path, path_str: &str) -> Result<String, String> {
+    let p = PathBuf::from(path_str);
+    let full = if p.is_absolute() { p } else { workspace_root.join(p) };
+    let img = image::open(&full).map_err(|e| format!("failed to load image: {e}"))?;
+    let rgba = img.to_rgba8();
+    let mut png = Vec::new();
+    rgba.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| format!("failed to encode PNG: {e}"))?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        crate::editor::nda_viewer::base64_encode(&png)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,7 +1097,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("nda_convert_{}.txt", std::process::id()));
         std::fs::write(&tmp, "line one\nline two\nline three").unwrap();
         let doc = convert_file_to_doc(&tmp).unwrap();
-        assert_eq!(doc.title().unwrap().ends_with(".txt"), true);
+        assert!(doc.title().unwrap().ends_with(".txt"));
         assert_eq!(doc.commands.len(), 3);
         assert!(doc.commands.iter().all(|c| c.kind == CommandKind::DrawText as u8));
         let _ = std::fs::remove_file(&tmp);
@@ -905,5 +1129,31 @@ mod tests {
         let decoded = decode_data_url(&url).unwrap();
         let reloaded = image::load_from_memory(&decoded).unwrap();
         assert_eq!((reloaded.width(), reloaded.height()), (2, 2));
+    }
+
+    #[test]
+    fn color_hex_round_trips() {
+        assert_eq!(parse_color_hex("#58A6FF"), Some(0x58A6_FFFF));
+        assert_eq!(parse_color_hex("58a6ff"), Some(0x58A6_FFFF));
+        assert_eq!(parse_color_hex("#58A6FF80"), Some(0x58A6_FF80));
+        assert!(parse_color_hex("#12345").is_none());
+        assert!(parse_color_hex("nothex").is_none());
+        // Formatting drops alpha and round-trips through the parser.
+        assert_eq!(color_to_hex(0x58A6_FFFF), "#58A6FF");
+        assert_eq!(parse_color_hex(&color_to_hex(0xC9D1_D9FF)), Some(0xC9D1_D9FF));
+    }
+
+    #[test]
+    fn load_image_normalizes_to_png_data_url() {
+        let tmp = std::env::temp_dir().join(format!("nda_loadimg_{}.png", std::process::id()));
+        let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([0, 128, 255, 255]));
+        img.save(&tmp).unwrap();
+        let url = load_image_as_data_url(&tmp, tmp.to_str().unwrap()).unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+        // The embedded payload decodes back to a 3x2 PNG.
+        let decoded = decode_data_url(&url).unwrap();
+        let reloaded = image::load_from_memory(&decoded).unwrap();
+        assert_eq!((reloaded.width(), reloaded.height()), (3, 2));
+        let _ = std::fs::remove_file(&tmp);
     }
 }
