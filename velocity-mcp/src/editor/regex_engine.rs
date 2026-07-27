@@ -74,7 +74,7 @@ fn char_eq(a: char, b: char, ci: bool) -> bool {
         return true;
     }
     if ci {
-        a.to_ascii_lowercase() == b.to_ascii_lowercase()
+        a.eq_ignore_ascii_case(&b)
     } else {
         false
     }

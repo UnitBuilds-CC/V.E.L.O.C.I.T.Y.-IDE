@@ -133,6 +133,9 @@ impl KeybindingsConfig {
                 entry("view.toggle_sidebar", "Ctrl+E", None),
                 entry("view.toggle_terminal", "Ctrl+`", None),
                 entry("view.toggle_chat", "Ctrl+J", None),
+                entry("view.toggle_orchestrator", "Ctrl+Shift+Y", None),
+                entry("view.toggle_search", "Ctrl+Shift+F", None),
+                entry("view.toggle_settings", "Ctrl+,", None),
                 entry("view.fold", "Ctrl+Shift+[", Some("editorFocus")),
                 entry("view.unfold", "Ctrl+Shift+]", Some("editorFocus")),
                 entry("view.fold_all", "Ctrl+K Ctrl+0", Some("editorFocus")),
@@ -146,9 +149,12 @@ impl KeybindingsConfig {
                 entry("debug.step_out", "Shift+F11", Some("debugActive")),
                 entry("debug.toggle_breakpoint", "F9", Some("editorFocus")),
                 entry("debug.continue", "F5", Some("debugActive")),
+                // Agent
+                entry("agent.request_inline_suggestion", "Ctrl+Shift+I", None),
                 // Build
                 entry("build.build", "Ctrl+B", None),
                 entry("build.run", "Ctrl+R", None),
+                entry("build.rollback_deploy", "Ctrl+Alt+R", None),
                 // Workspace modes
                 entry("mode.coder", "Ctrl+1", None),
                 entry("mode.operator", "Ctrl+2", None),

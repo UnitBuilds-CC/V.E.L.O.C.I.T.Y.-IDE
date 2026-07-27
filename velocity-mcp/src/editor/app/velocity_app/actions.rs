@@ -70,13 +70,17 @@ impl VelocityApp {
             // Panels
             Command { label: "Chat", category: "Panels", shortcut: Some("Ctrl+J"), action: |a| a.toggle_panel(TabKind::Chat), modes: &[] },
             Command { label: "Output", category: "Panels", shortcut: Some("Ctrl+`"), action: |a| a.toggle_panel(TabKind::Output), modes: &[] },
-            Command { label: "Orchestrator", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Orchestrator), modes: &[WorkspaceProfile::AutomationOperator] },
+            Command { label: "Orchestrator", category: "Panels", shortcut: Some("Ctrl+Shift+Y"), action: |a| a.toggle_orchestrator(), modes: &[WorkspaceProfile::AutomationOperator] },
             Command { label: "Mission Control", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::MissionControl), modes: &[WorkspaceProfile::MissionControl] },
-            Command { label: "Search", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Search), modes: &[] },
+            Command { label: "Search", category: "Panels", shortcut: Some("Ctrl+Shift+F"), action: |a| a.toggle_search(), modes: &[] },
             Command { label: "Usage", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Usage), modes: &[] },
             Command { label: "Graph", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Graph), modes: &[] },
             Command { label: "Wiki", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Wiki), modes: &[] },
-            Command { label: "Settings", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Settings), modes: &[] },
+            Command { label: "Settings", category: "Panels", shortcut: Some("Ctrl+,"), action: |a| a.toggle_settings(), modes: &[] },
+            Command { label: "Find / Replace", category: "Edit", shortcut: Some("Ctrl+H"), action: |a| a.open_find_replace_active(), modes: &[] },
+            Command { label: "Find", category: "Edit", shortcut: Some("Ctrl+F"), action: |a| a.open_find_active(), modes: &[] },
+            Command { label: "Request Inline Suggestion", category: "Agent", shortcut: Some("Ctrl+Shift+I"), action: |a| a.request_inline_suggestion(), modes: &[] },
+            Command { label: "Rollback Deploy", category: "Build", shortcut: Some("Ctrl+Alt+R"), action: |a| a.rollback_deploy(), modes: &[] },
             // Agent
             Command { label: "Approve All Tools", category: "Agent", shortcut: None, action: |a| a.approve_all_pending_tools(), modes: &[] },
             Command { label: "Decline All Tools", category: "Agent", shortcut: None, action: |a| a.reject_all_pending_tools(), modes: &[] },
@@ -763,7 +767,6 @@ impl VelocityApp {
         let _ = self.agent_tx.send(UiToAgentMessage::RunLocalRun);
     }
 
-    #[allow(dead_code)]
     pub fn toggle_orchestrator(&mut self) {
         self.toggle_panel(TabKind::Orchestrator);
     }
@@ -778,12 +781,10 @@ impl VelocityApp {
         self.wiki_view.export(&workspace_root, &mut self.toasts);
     }
 
-    #[allow(dead_code)]
     pub fn toggle_search(&mut self) {
         self.toggle_panel(TabKind::Search);
     }
 
-    #[allow(dead_code)]
     pub fn toggle_settings(&mut self) {
         self.toggle_panel(TabKind::Settings);
     }
@@ -847,12 +848,22 @@ impl VelocityApp {
         }
     }
 
-    /// Get the find/replace state for the active buffer (for rendering).
-    #[allow(dead_code)]
-    pub fn active_find_replace(&self) -> Option<&crate::editor::find_replace::FindReplaceState> {
-        self.active_tab.as_ref()
-            .and_then(|id| self.buffers.get(id))
-            .map(|buf| &buf.find_replace)
+    /// Open the in-file Find overlay on the active editor.
+    pub fn open_find_active(&mut self) {
+        if let Some(id) = self.active_tab.clone() {
+            if let Some(buf) = self.buffers.get_mut(&id) {
+                buf.find_replace.open_find();
+            }
+        }
+    }
+
+    /// Open the in-file Find+Replace overlay on the active editor.
+    pub fn open_find_replace_active(&mut self) {
+        if let Some(id) = self.active_tab.clone() {
+            if let Some(buf) = self.buffers.get_mut(&id) {
+                buf.find_replace.open_find_replace();
+            }
+        }
     }
 
     /// Get git status for the workspace.
@@ -1052,7 +1063,6 @@ impl VelocityApp {
 
     /// Request an inline ghost-text suggestion from the configured LLM provider.
     /// Called on cursor pause after debounce timer (see code_editor integration).
-    #[allow(dead_code)]
     pub fn request_inline_suggestion(&mut self) {
         use crate::editor::inline_suggestions::SuggestionRequest;
 
@@ -1122,7 +1132,6 @@ impl VelocityApp {
     }
 
     /// Rollback to the previous successful deployment.
-    #[allow(dead_code)]
     pub fn rollback_deploy(&mut self) {
         if let Some(ref mut pipeline) = self.deploy_pipeline {
             match pipeline.rollback() {

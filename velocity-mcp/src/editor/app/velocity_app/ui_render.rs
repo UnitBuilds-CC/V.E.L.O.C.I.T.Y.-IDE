@@ -430,6 +430,18 @@ impl VelocityApp {
             } else if cmd && i.key_pressed(egui::Key::Num4) {
                 self.set_work_mode(crate::editor::theme::WorkspaceProfile::Accessibility);
             }
+            // ─── Panel toggle shortcuts ───
+            else if cmd && shift && i.key_pressed(egui::Key::Y) {
+                self.toggle_orchestrator();
+            } else if cmd && shift && i.key_pressed(egui::Key::F) {
+                self.toggle_search();
+            } else if cmd && i.key_pressed(egui::Key::Comma) {
+                self.toggle_settings();
+            } else if cmd && shift && i.key_pressed(egui::Key::I) {
+                self.request_inline_suggestion();
+            } else if cmd && i.modifiers.alt && i.key_pressed(egui::Key::R) {
+                self.rollback_deploy();
+            }
             // ─── IDE Editor Shortcuts ───
             else if cmd && i.key_pressed(egui::Key::F) {
                 // Find in current buffer
@@ -1747,7 +1759,8 @@ impl eframe::App for VelocityApp {
             .as_ref()
             .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
             .and_then(|t| t.editor_path().cloned());
-        if let Some(path) = active_editor_path {
+        if self.show_breadcrumbs {
+            if let Some(path) = active_editor_path {
             let ws_root = self.workspace_root.clone();
             let symbol_for_click = active_symbol.clone();
             egui::Panel::top("breadcrumb").show(ui, |ui: &mut egui::Ui| {
@@ -1783,6 +1796,7 @@ impl eframe::App for VelocityApp {
                 });
                 ui.add_space(2.0);
             });
+        } // end show_breadcrumbs
         }
 
         if self.left_sidebar_visible {
@@ -1828,6 +1842,41 @@ impl eframe::App for VelocityApp {
                                 }
                             }
                         });
+
+                    // Add-project affordance: button toggles an inline path input.
+                    ui.add_space(4.0);
+                    if ui.button("+ Add project…").clicked() {
+                        self.show_add_project_ui = !self.show_add_project_ui;
+                    }
+                    if self.show_add_project_ui {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.new_project_path_input)
+                                    .desired_width(140.0)
+                                    .hint_text("/path/to/project"),
+                            );
+                            if ui.button("Add").clicked() {
+                                let p = std::path::PathBuf::from(self.new_project_path_input.trim());
+                                if p.is_dir() && !self.projects.contains(&p) {
+                                    self.projects.push(p.clone());
+                                    self.workspace_root = p;
+                                    self.reload_workspace_provider_settings();
+                                    self.restore_workspace_preferences();
+                                    self.apply_appearance(&ctx);
+                                    let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::SetWorkspace(self.workspace_root.clone()));
+                                    self.status_message = format!("Added project {:?}", self.workspace_root.file_name().unwrap_or_default());
+                                } else {
+                                    self.toasts.push(crate::editor::toast::Toast::error("Path does not exist or already in list"));
+                                }
+                                self.new_project_path_input.clear();
+                                self.show_add_project_ui = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.new_project_path_input.clear();
+                                self.show_add_project_ui = false;
+                            }
+                        });
+                    }
 
                     ui.separator();
 

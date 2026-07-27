@@ -205,9 +205,7 @@ pub struct VelocityApp {
     pub recordings: Vec<String>,
 
     pub projects: Vec<PathBuf>,
-    #[allow(dead_code)]
     pub show_add_project_ui: bool,
-    #[allow(dead_code)]
     pub new_project_path_input: String,
     pub agent_active: bool,
     pub pending_approvals: Vec<(String, String, serde_json::Value)>,
@@ -284,10 +282,8 @@ pub struct VelocityApp {
     /// Whether to show minimap in editor.
     pub show_minimap: bool,
     /// Whether to show breadcrumbs above editor.
-    #[allow(dead_code)]
     pub show_breadcrumbs: bool,
     /// Whether word wrap is enabled.
-    #[allow(dead_code)]
     pub word_wrap: bool,
     /// Browse panel state (web research sidebar).
     pub browse_state: crate::editor::browse_panel::BrowseState,

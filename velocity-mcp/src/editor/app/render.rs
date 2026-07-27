@@ -498,6 +498,13 @@ impl<'a> TabViewerImpl<'a> {
                                 }
                             });
                         });
+
+                        ui.add_space(8.0);
+                        ui.group(|ui| {
+                            section_header(ui, "Editor");
+                            ui.checkbox(&mut self.app.show_breadcrumbs, "Show breadcrumbs above editor");
+                            ui.checkbox(&mut self.app.word_wrap, "Word wrap in editor");
+                        });
                     });
 
                     ui.add_space(8.0);
