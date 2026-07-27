@@ -237,6 +237,7 @@ impl ZeroTransformer {
         &mut self,
         token: u32,
         pos: usize,
+        condition: Option<&[f32]>,
         mut site_map: Option<&mut SiteMap>,
         stats_hits: &mut usize,
         stats_misses: &mut usize,
@@ -249,7 +250,20 @@ impl ZeroTransformer {
         let start = token as usize * h;
         let end = start + h;
         let x_f32 = &self.weights.embed_tokens[start..end];
-        let mut x = NdaVec::from_f32_slice(x_f32);
+        // Bridge Path 1 → Path 2: when a conditioning hidden state is supplied
+        // (only on the first generated token), inject it into the start-token
+        // embedding so downstream opcode generation is conditioned on the
+        // natural-language prompt rather than a context-free start token.
+        let mut x = if let Some(cond) = condition {
+            let n = cond.len().min(x_f32.len());
+            let mut blended = x_f32.to_vec();
+            for i in 0..n {
+                blended[i] += cond[i];
+            }
+            NdaVec::from_f32_slice(&blended)
+        } else {
+            NdaVec::from_f32_slice(x_f32)
+        };
         if pos < 5 {
             println!("[Debug Embed] pos: {}, token: {}, scale: {}, sign: {:?}", pos, token, x.log2_scale, &x.sign[..2.min(x.sign.len())]);
         }
@@ -417,7 +431,7 @@ impl ZeroTransformer {
         let mut logits = Vec::new();
         let mut h = 0; let mut m = 0;
         for (pos, &tok) in prompt_tokens.iter().enumerate() {
-            logits = self.forward_one_zero(tok, pos, None, &mut h, &mut m);
+            logits = self.forward_one_zero(tok, pos, None, None, &mut h, &mut m);
         }
 
         // History ring buffer for repetition penalty.
@@ -456,7 +470,7 @@ impl ZeroTransformer {
             }
             history.push_back(next);
 
-            logits = self.forward_one_zero(next, n_prompt + step, None, &mut h, &mut m);
+            logits = self.forward_one_zero(next, n_prompt + step, None, None, &mut h, &mut m);
             apply_rep_penalty(&mut logits, &history);
             next = argmax_i32(&logits);
         }

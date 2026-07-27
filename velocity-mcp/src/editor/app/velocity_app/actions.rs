@@ -1092,7 +1092,12 @@ impl VelocityApp {
         };
 
         // Submit to the suggestion engine for async resolution.
-        self.inline_suggestions.submit_request(request, self.provider, &self.selected_model);
+        self.inline_suggestions.submit_request(
+            request,
+            self.provider,
+            &self.selected_model,
+            self.workspace_root.clone(),
+        );
     }
 
     // ─── Deploy Pipeline UI Integration ──────────────────────────────────────

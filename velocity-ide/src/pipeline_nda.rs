@@ -319,7 +319,7 @@ impl NdaPipeline {
 
     fn _generate_inner(
         &mut self,
-        _condition:  Option<&[f32]>,
+        condition:   Option<&[f32]>,
         max_opcodes: usize,
         mut on_opcode: impl FnMut(NdaOpcode),
         t_start: std::time::Instant,
@@ -345,14 +345,18 @@ impl NdaPipeline {
         let mut recent_ops: [u8; REP_WINDOW] = [NdaOpcode::VOCAB_SIZE as u8; REP_WINDOW];
         let mut rep_ptr    = 0usize;
 
-        let mut current_width = _condition.map(|c| c.len()).unwrap_or(896);
+        let mut current_width = condition.map(|c| c.len()).unwrap_or(896);
         let mut matrix_count = 0;
 
         for step in 0..max_opcodes {
             // ── Forward pass → hidden state (896-dim i32) ─────────────────────
+            // Only the first step is conditioned on the Path-1 hidden state;
+            // subsequent steps attend to it through the KV cache.
+            let step_condition = if step == 0 { condition } else { None };
             let logits_i32 = self.model.forward_one_zero(
                 current_opcode_id,
                 step,
+                step_condition,
                 Some(&mut self.site_map),
                 &mut stats.site_map_hits,
                 &mut stats.site_map_misses,
@@ -581,7 +585,7 @@ impl NdaPipeline {
         }
 
         // ── Execute Sandbox and Scope Validator ────────────────────────────────
-        let cond_vec = _condition.unwrap_or(&[]);
+        let cond_vec = condition.unwrap_or(&[]);
         let (sandbox, scope) = if valid && !cond_vec.is_empty() {
             let sandbox_res = crate::sandbox::NdaJitSandbox::run(&nodes, cond_vec, &self.site_map);
             let threshold = 0.10f32; // Starts at 0.10

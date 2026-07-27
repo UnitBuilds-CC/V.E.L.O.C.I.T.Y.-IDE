@@ -59,7 +59,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 crate::editor::find_replace::render_find_replace(
                                     ui,
                                     &mut buf.find_replace,
-                                    &buf.content,
+                                    &mut buf.content,
                                     palette,
                                 );
                             }

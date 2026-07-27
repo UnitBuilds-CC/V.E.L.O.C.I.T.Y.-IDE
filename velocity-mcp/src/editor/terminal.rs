@@ -37,6 +37,10 @@ pub struct TerminalBuffer {
     pub cursor_col: usize,
     pub scrollback: VecDeque<Vec<Cell>>,
     pub scrollback_limit: usize,
+    /// Current graphics attributes applied to newly written cells. Mutated by
+    /// SGR (`ESC[...m`) sequences and persists across `process_output` calls
+    /// because PTY output arrives in arbitrary chunks.
+    pub cur_attrs: CellAttrs,
 }
 
 impl TerminalBuffer {
@@ -50,6 +54,7 @@ impl TerminalBuffer {
             cursor_col: 0,
             scrollback: VecDeque::new(),
             scrollback_limit: 5000,
+            cur_attrs: CellAttrs::default(),
         }
     }
 
@@ -113,15 +118,14 @@ impl TerminalBuffer {
         self.cursor_col = 0;
     }
 
-    /// Process raw output bytes from the PTY (simple ANSI subset).
+    /// Process raw output bytes from the PTY (ANSI subset).
     pub fn process_output(&mut self, data: &[u8]) {
         let text = String::from_utf8_lossy(data);
         let mut chars = text.chars().peekable();
-        let attrs = CellAttrs::default();
 
         while let Some(ch) = chars.next() {
             if ch == '\x1b' {
-                // ANSI escape sequence — consume and mostly ignore for now
+                // ANSI escape sequence.
                 if chars.peek() == Some(&'[') {
                     chars.next(); // consume '['
                     let mut params = String::new();
@@ -137,7 +141,7 @@ impl TerminalBuffer {
                     self.handle_csi(&params, cmd);
                 }
             } else {
-                self.put_char(ch, attrs);
+                self.put_char(ch, self.cur_attrs);
             }
         }
     }
@@ -189,7 +193,68 @@ impl TerminalBuffer {
                 let n: usize = params.parse().unwrap_or(1);
                 self.cursor_col = self.cursor_col.saturating_sub(n);
             }
+            'm' => {
+                self.apply_sgr(params);
+            }
             _ => {} // ignore unknown
+        }
+    }
+
+    /// Apply an SGR (Select Graphic Rendition) sequence to `cur_attrs`.
+    /// Handles reset, intensity/italic/underline flags, the 16 ANSI colours
+    /// (standard + bright), and the `38;5;n` / `48;5;n` 256-colour selectors.
+    fn apply_sgr(&mut self, params: &str) {
+        let codes: Vec<u16> = if params.is_empty() {
+            vec![0]
+        } else {
+            params
+                .split(';')
+                .map(|s| s.parse::<u16>().unwrap_or(0))
+                .collect()
+        };
+        let mut i = 0;
+        while i < codes.len() {
+            match codes[i] {
+                0 => self.cur_attrs = CellAttrs::default(),
+                1 => self.cur_attrs.bold = true,
+                2 => self.cur_attrs.dim = true,
+                3 => self.cur_attrs.italic = true,
+                4 => self.cur_attrs.underline = true,
+                22 => {
+                    self.cur_attrs.bold = false;
+                    self.cur_attrs.dim = false;
+                }
+                23 => self.cur_attrs.italic = false,
+                24 => self.cur_attrs.underline = false,
+                30..=37 => self.cur_attrs.fg_color = Some((codes[i] - 30) as u8),
+                39 => self.cur_attrs.fg_color = None,
+                40..=47 => self.cur_attrs.bg_color = Some((codes[i] - 40) as u8),
+                49 => self.cur_attrs.bg_color = None,
+                90..=97 => self.cur_attrs.fg_color = Some((codes[i] - 90 + 8) as u8),
+                100..=107 => self.cur_attrs.bg_color = Some((codes[i] - 100 + 8) as u8),
+                38 | 48 => {
+                    // Extended colour: `38;5;n` (indexed) or `38;2;r;g;b` (RGB).
+                    let is_fg = codes[i] == 38;
+                    if codes.get(i + 1) == Some(&5) {
+                        if let Some(&n) = codes.get(i + 2) {
+                            let idx = n.min(255) as u8;
+                            if is_fg {
+                                self.cur_attrs.fg_color = Some(idx);
+                            } else {
+                                self.cur_attrs.bg_color = Some(idx);
+                            }
+                        }
+                        i += 2;
+                    } else if codes.get(i + 1) == Some(&2) {
+                        // RGB truecolor: approximate to nearest indexed slot is
+                        // lossy; we only keep the 8-bit channel budget, so skip
+                        // the three components without setting a colour.
+                        i += 4;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
         }
     }
 
@@ -360,9 +425,51 @@ impl TerminalState {
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 if let Ok(buf) = self.buffer.lock() {
-                    let lines = buf.render_lines();
-                    for line in &lines {
-                        ui.colored_label(palette.text, egui::RichText::new(line).font(code_font.clone()));
+                    use egui::text::{LayoutJob, TextFormat};
+                    for row in &buf.cells {
+                        // Trim trailing blank cells so the line height is stable
+                        // but we don't paint a full row of spaces.
+                        let last = row
+                            .iter()
+                            .rposition(|c| c.ch != ' ' || c.attrs.bg_color.is_some())
+                            .map(|i| i + 1)
+                            .unwrap_or(0);
+                        let mut job = LayoutJob::default();
+                        for cell in &row[..last] {
+                            let color = cell
+                                .attrs
+                                .fg_color
+                                .map(ansi_color)
+                                .unwrap_or(palette.text);
+                            let mut fmt = TextFormat {
+                                font_id: code_font.clone(),
+                                color,
+                                ..Default::default()
+                            };
+                            if let Some(bg) = cell.attrs.bg_color {
+                                fmt.background = ansi_color(bg);
+                            }
+                            if cell.attrs.underline {
+                                fmt.underline = egui::Stroke::new(1.0, color);
+                            }
+                            if cell.attrs.italic {
+                                fmt.italics = true;
+                            }
+                            job.append(&cell.ch.to_string(), 0.0, fmt);
+                        }
+                        if last == 0 {
+                            // Preserve blank-line height.
+                            job.append(
+                                " ",
+                                0.0,
+                                TextFormat {
+                                    font_id: code_font.clone(),
+                                    color: palette.text,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        ui.label(job);
                     }
                 }
             });
@@ -383,6 +490,44 @@ impl TerminalState {
                 resp.request_focus();
             }
         });
+    }
+}
+
+/// Map an ANSI colour index to an egui colour. Indices 0..=15 are the standard
+/// and bright 16-colour palette; 16..=255 fall through to a reasonable
+/// approximation from the xterm 256-colour cube.
+pub fn ansi_color(idx: u8) -> egui::Color32 {
+    match idx {
+        0 => egui::Color32::from_rgb(0, 0, 0),
+        1 => egui::Color32::from_rgb(205, 49, 49),
+        2 => egui::Color32::from_rgb(13, 188, 121),
+        3 => egui::Color32::from_rgb(229, 229, 16),
+        4 => egui::Color32::from_rgb(36, 114, 200),
+        5 => egui::Color32::from_rgb(188, 63, 188),
+        6 => egui::Color32::from_rgb(17, 168, 205),
+        7 => egui::Color32::from_rgb(229, 229, 229),
+        8 => egui::Color32::from_rgb(102, 102, 102),
+        9 => egui::Color32::from_rgb(241, 76, 76),
+        10 => egui::Color32::from_rgb(35, 209, 139),
+        11 => egui::Color32::from_rgb(245, 245, 67),
+        12 => egui::Color32::from_rgb(59, 142, 234),
+        13 => egui::Color32::from_rgb(214, 112, 214),
+        14 => egui::Color32::from_rgb(41, 184, 219),
+        15 => egui::Color32::from_rgb(255, 255, 255),
+        16..=231 => {
+            // 6x6x6 colour cube.
+            let n = idx - 16;
+            let r = n / 36;
+            let g = (n % 36) / 6;
+            let b = n % 6;
+            let comp = |v: u8| if v == 0 { 0u8 } else { 55 + v * 40 };
+            egui::Color32::from_rgb(comp(r), comp(g), comp(b))
+        }
+        232..=255 => {
+            // Grayscale ramp.
+            let level = 8 + (idx - 232) * 10;
+            egui::Color32::from_rgb(level, level, level)
+        }
     }
 }
 
@@ -432,5 +577,35 @@ mod tests {
         assert_eq!(term.input_line, "pwd");
         term.history_up();
         assert_eq!(term.input_line, "ls");
+    }
+
+    #[test]
+    fn sgr_sets_and_resets_colors() {
+        let mut buf = TerminalBuffer::new(80, 24);
+        buf.process_output(b"\x1b[31mred\x1b[0mplain");
+        // "red" cells carry foreground index 1.
+        assert_eq!(buf.cells[0][0].attrs.fg_color, Some(1));
+        assert_eq!(buf.cells[0][2].attrs.fg_color, Some(1));
+        // After the reset, subsequent cells have no colour.
+        assert_eq!(buf.cells[0][3].attrs.fg_color, None);
+        // The reset also cleared the running attribute state.
+        assert_eq!(buf.cur_attrs.fg_color, None);
+    }
+
+    #[test]
+    fn sgr_bright_and_background() {
+        let mut buf = TerminalBuffer::new(80, 24);
+        buf.process_output(b"\x1b[1;92;44mX");
+        let a = buf.cells[0][0].attrs;
+        assert!(a.bold);
+        assert_eq!(a.fg_color, Some(10)); // bright green (92 -> 2 + 8)
+        assert_eq!(a.bg_color, Some(4)); // blue background
+    }
+
+    #[test]
+    fn sgr_256_color() {
+        let mut buf = TerminalBuffer::new(80, 24);
+        buf.process_output(b"\x1b[38;5;200mZ");
+        assert_eq!(buf.cells[0][0].attrs.fg_color, Some(200));
     }
 }

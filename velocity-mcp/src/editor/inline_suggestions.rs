@@ -272,12 +272,15 @@ impl InlineSuggestionEngine {
     }
 
     /// Submit a suggestion request to the background inference pipeline.
-    /// The engine queues it and the background thread resolves it via the provider.
+    /// A worker thread runs a scoped headless sub-agent completion and, on a
+    /// non-empty result, publishes it to `shared` for the UI thread to pick up
+    /// via [`poll`](Self::poll).
     pub fn submit_request(
         &mut self,
         request: SuggestionRequest,
         provider: crate::agent::AiProvider,
         model: &str,
+        workspace_root: std::path::PathBuf,
     ) {
         if !self.config.enabled {
             return;
@@ -285,37 +288,88 @@ impl InlineSuggestionEngine {
         self.state = SuggestionState::Loading;
 
         // Build the completion context prompt for the model.
-        let _prompt = format!(
-            "Complete the following {} code. Return ONLY the completion text, no explanation.\n\n\
+        let prompt = format!(
+            "Complete the following {} code. Return ONLY the raw completion text that \
+             should be inserted at the cursor - no explanation, no markdown fences.\n\n\
              ```\n{}\n```\n\nContinue from where the code ends:",
             request.language, request.prefix
         );
 
-        // Spawn a background thread to query the provider.
+        // Capture what the worker needs.
         let shared = self.shared.clone();
         let line = self.last_trigger_line;
         let col = self.last_trigger_col;
         let source_label = format!("{}/{}", provider.label(), model);
-        let _model = model.to_string();
+        let model = model.to_string();
+        let max_chars = self.config.max_suggestion_chars;
+        let allow_multiline = self.config.allow_multiline;
+        let file_path = request.file_path.clone();
+
         std::thread::spawn(move || {
-            // The actual LLM call would go through the agent pipeline here.
-            // For now, mark as loaded with the request context so the engine
-            // knows a request was submitted. Production wiring will use the
-            // existing run_headless_subagent infrastructure.
-            let suggestion = InlineSuggestion {
-                text: String::new(), // Populated by actual LLM response
-                line,
-                column: col,
-                confidence: 0.0,
-                generated_at: Instant::now(),
-                source: source_label,
+            let req = crate::agent::HeadlessSubAgentRequest {
+                workspace_root,
+                provider,
+                model,
+                thinking: false,
+                prompt,
+                cancel_rx: None,
+                progress: None,
+                scoped_files: Some(vec![file_path]),
             };
-            // Only set if we actually got a non-empty completion.
-            if !suggestion.text.is_empty() {
-                shared.set(suggestion);
+            let result = crate::agent::run_headless_subagent(req);
+            let completion = sanitize_completion(&result.transcript, max_chars, allow_multiline);
+            if !completion.is_empty() {
+                shared.set(InlineSuggestion {
+                    text: completion,
+                    line,
+                    column: col,
+                    // Heuristic confidence: a concrete completion arrived.
+                    confidence: 0.75,
+                    generated_at: Instant::now(),
+                    source: source_label,
+                });
             }
         });
     }
+}
+
+/// Turn a raw model transcript into insertable ghost text: strip markdown code
+/// fences and surrounding prose, honour the single-/multi-line policy, and cap
+/// the length.
+fn sanitize_completion(transcript: &str, max_chars: usize, allow_multiline: bool) -> String {
+    let trimmed = transcript.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // If the model wrapped the answer in a fenced code block, keep only the
+    // block body (the first fenced region).
+    let body = if let Some(start) = trimmed.find("```") {
+        let after = &trimmed[start + 3..];
+        // Skip an optional language tag on the opening fence line.
+        let after = match after.find('\n') {
+            Some(nl) => &after[nl + 1..],
+            None => after,
+        };
+        match after.find("```") {
+            Some(end) => &after[..end],
+            None => after,
+        }
+    } else {
+        trimmed
+    };
+
+    let body = body.trim_matches('\n');
+    let mut out = if allow_multiline {
+        body.to_string()
+    } else {
+        body.lines().next().unwrap_or("").to_string()
+    };
+
+    if out.chars().count() > max_chars {
+        out = out.chars().take(max_chars).collect();
+    }
+    out.trim_end().to_string()
 }
 
 /// Build a completion context from the editor buffer for the AI request.
@@ -472,5 +526,25 @@ mod tests {
         engine.total_accepted = 7;
         let rate = engine.acceptance_rate();
         assert!((rate - 70.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn sanitize_strips_code_fence() {
+        let raw = "Here you go:\n```rust\nlet x = 1;\n```\n";
+        let out = sanitize_completion(raw, 200, true);
+        assert_eq!(out, "let x = 1;");
+    }
+
+    #[test]
+    fn sanitize_single_line_policy() {
+        let raw = "foo()\nbar()";
+        assert_eq!(sanitize_completion(raw, 200, false), "foo()");
+        assert_eq!(sanitize_completion(raw, 200, true), "foo()\nbar()");
+    }
+
+    #[test]
+    fn sanitize_truncates_and_handles_empty() {
+        assert_eq!(sanitize_completion("   ", 200, true), "");
+        assert_eq!(sanitize_completion("abcdef", 3, true), "abc");
     }
 }

@@ -51,8 +51,7 @@ impl FindReplaceState {
         }
 
         if self.use_regex {
-            // Simple regex-like search (subset: no full regex crate, just literal for now)
-            self.compute_literal_matches(text);
+            self.compute_regex_matches(text);
         } else {
             self.compute_literal_matches(text);
         }
@@ -61,6 +60,29 @@ impl FindReplaceState {
         if self.current_match >= self.matches.len() {
             self.current_match = 0;
         }
+    }
+
+    /// Compute matches using the built-in regex engine. On a syntax error the
+    /// match list is simply left empty (the UI then shows "No results"),
+    /// mirroring how an unmatched literal query behaves.
+    fn compute_regex_matches(&mut self, text: &str) {
+        let regex = match crate::editor::regex_engine::Regex::compile(&self.query, !self.case_sensitive) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        for (start, end) in regex.find_all(text) {
+            if self.whole_word && !self.is_whole_word(text, start, end) {
+                continue;
+            }
+            self.matches.push((start, end));
+        }
+    }
+
+    /// Whole-word boundary test shared by literal and regex search.
+    fn is_whole_word(&self, text: &str, start: usize, end: usize) -> bool {
+        let before_ok = start == 0 || !text.as_bytes()[start - 1].is_ascii_alphanumeric();
+        let after_ok = end >= text.len() || !text.as_bytes()[end].is_ascii_alphanumeric();
+        before_ok && after_ok
     }
 
     fn compute_literal_matches(&mut self, text: &str) {
@@ -243,11 +265,13 @@ pub enum FindAction {
     ReplaceAll,
 }
 
-/// Render the find/replace overlay bar.
+/// Render the find/replace overlay bar. `content` is the buffer text; Replace
+/// and Replace-All mutate it in place and the edit is picked up by the buffer's
+/// per-frame dirty tracking.
 pub fn render_find_replace(
     ui: &mut egui::Ui,
     state: &mut FindReplaceState,
-    content: &str,
+    content: &mut String,
     palette: IdePalette,
 ) {
     egui::Frame::new()
@@ -265,11 +289,17 @@ pub fn render_find_replace(
                     state.just_opened = false;
                 }
                 if resp.changed() {
-                    state.recompute_matches(content);
+                    state.recompute_matches(content.as_str());
                 }
                 // Match count
                 let match_text = if state.matches.is_empty() {
-                    "No matches".to_string()
+                    if state.use_regex && !state.query.is_empty()
+                        && crate::editor::regex_engine::Regex::compile(&state.query, !state.case_sensitive).is_err()
+                    {
+                        "Bad regex".to_string()
+                    } else {
+                        "No matches".to_string()
+                    }
                 } else {
                     format!("{}/{}", state.current_match + 1, state.matches.len())
                 };
@@ -285,12 +315,12 @@ pub fn render_find_replace(
                 let cs_label = if state.case_sensitive { "Aa✓" } else { "Aa" };
                 if ui.small_button(cs_label).clicked() {
                     state.case_sensitive = !state.case_sensitive;
-                    state.recompute_matches(content);
+                    state.recompute_matches(content.as_str());
                 }
                 let re_label = if state.use_regex { ".*✓" } else { ".*" };
                 if ui.small_button(re_label).clicked() {
                     state.use_regex = !state.use_regex;
-                    state.recompute_matches(content);
+                    state.recompute_matches(content.as_str());
                 }
                 if ui.small_button("✕").clicked() {
                     state.close();
@@ -305,11 +335,13 @@ pub fn render_find_replace(
                             .hint_text("Replace with…")
                             .desired_width(200.0),
                     );
-                    if ui.small_button("Replace").clicked() {
-                        // Replace current match
+                    if ui.small_button("Replace").clicked() && !state.matches.is_empty() {
+                        *content = state.replace_current(content.as_str());
+                        state.recompute_matches(content.as_str());
                     }
-                    if ui.small_button("All").clicked() {
-                        // Replace all matches
+                    if ui.small_button("All").clicked() && !state.matches.is_empty() {
+                        *content = state.replace_all(content.as_str());
+                        state.recompute_matches(content.as_str());
                     }
                 });
             }
@@ -365,5 +397,34 @@ mod tests {
         state.current_match = 1;
         let result = state.replace_current("axbxc");
         assert_eq!(result, "axbYc");
+    }
+
+    #[test]
+    fn regex_digit_matches() {
+        let mut state = FindReplaceState::default();
+        state.use_regex = true;
+        state.query = r"\d+".to_string();
+        state.recompute_matches("a12 b345 c");
+        assert_eq!(state.matches.len(), 2);
+    }
+
+    #[test]
+    fn regex_alternation_replace_all() {
+        let mut state = FindReplaceState::default();
+        state.use_regex = true;
+        state.query = "cat|dog".to_string();
+        state.replacement = "pet".to_string();
+        state.recompute_matches("a cat and a dog");
+        let result = state.replace_all("a cat and a dog");
+        assert_eq!(result, "a pet and a pet");
+    }
+
+    #[test]
+    fn regex_invalid_yields_no_matches() {
+        let mut state = FindReplaceState::default();
+        state.use_regex = true;
+        state.query = "(unclosed".to_string();
+        state.recompute_matches("unclosed text");
+        assert!(state.matches.is_empty());
     }
 }

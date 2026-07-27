@@ -585,10 +585,89 @@ impl Transformer {
     pub fn new(config: ModelConfig, weights: ModelWeights) -> Self {
         let kv_cache = (0..config.n_layers).map(|_| KvLayer::new()).collect();
         let scratch = TransformerScratch::new(&config);
-        
-        let gpu_pipeline = None;
-        
+
+        // Enable the fused Vulkan pipeline only when a GPU driver initialised
+        // and every layer has its projection weights uploaded to GPU buffers.
+        // Any missing piece (no driver, CPU-only weights) falls back to the
+        // CPU path in `forward_one`.
+        let gpu_pipeline = Self::try_build_gpu_pipeline(&config, &weights);
+
         Self { config, weights, kv_cache, scratch, gpu_pipeline }
+    }
+
+    /// Attempt to construct the fused GPU pipeline from the loaded weights.
+    /// Returns `None` (CPU fallback) when the GPU driver is absent, any layer
+    /// lacks uploaded GPU buffers, or pipeline creation fails.
+    fn try_build_gpu_pipeline(
+        config: &ModelConfig,
+        weights: &ModelWeights,
+    ) -> Option<crate::compiler::driver::VulkanModelPipeline> {
+        let driver = weights.vulkan.as_ref()?;
+
+        let all_gpu_ready = !weights.layers.is_empty()
+            && weights.layers.iter().all(|l| {
+                l.q_proj_gpu.is_some()
+                    && l.k_proj_gpu.is_some()
+                    && l.v_proj_gpu.is_some()
+                    && l.o_proj_gpu.is_some()
+                    && l.gate_proj_gpu.is_some()
+                    && l.up_proj_gpu.is_some()
+                    && l.down_proj_gpu.is_some()
+            });
+        if !all_gpu_ready {
+            return None;
+        }
+
+        let attn_norms: Vec<&[f32]> =
+            weights.layers.iter().map(|l| l.attn_norm.as_slice()).collect();
+        let ffn_norms: Vec<&[f32]> =
+            weights.layers.iter().map(|l| l.ffn_norm.as_slice()).collect();
+        let q_biases: Vec<Option<&[f32]>> =
+            weights.layers.iter().map(|l| l.q_proj_bias.as_deref()).collect();
+        let k_biases: Vec<Option<&[f32]>> =
+            weights.layers.iter().map(|l| l.k_proj_bias.as_deref()).collect();
+        let v_biases: Vec<Option<&[f32]>> =
+            weights.layers.iter().map(|l| l.v_proj_bias.as_deref()).collect();
+
+        let layers_gpu: Vec<crate::compiler::driver::LayerGpuGemvs> = weights
+            .layers
+            .iter()
+            .map(|l| crate::compiler::driver::LayerGpuGemvs {
+                q_proj_gpu: &l.q_proj_gpu,
+                k_proj_gpu: &l.k_proj_gpu,
+                v_proj_gpu: &l.v_proj_gpu,
+                o_proj_gpu: &l.o_proj_gpu,
+                gate_proj_gpu: &l.gate_proj_gpu,
+                up_proj_gpu: &l.up_proj_gpu,
+                down_proj_gpu: &l.down_proj_gpu,
+            })
+            .collect();
+        let layers_gpu_refs: Vec<&crate::compiler::driver::LayerGpuGemvs> =
+            layers_gpu.iter().collect();
+
+        match crate::compiler::driver::VulkanModelPipeline::new(
+            driver,
+            config.n_layers,
+            config.hidden_size,
+            config.ffn_size,
+            config.n_heads,
+            config.n_kv_heads,
+            config.head_dim,
+            config.max_seq_len,
+            &attn_norms,
+            &ffn_norms,
+            &q_biases,
+            &k_biases,
+            &v_biases,
+            &weights.final_norm,
+            &layers_gpu_refs,
+        ) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("[transformer] GPU pipeline init failed, using CPU path: {}", e);
+                None
+            }
+        }
     }
 
     /// Reset KV cache (call between independent prompts).

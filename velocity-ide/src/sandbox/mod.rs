@@ -385,16 +385,51 @@ impl ExecutionState {
                     let extra: Vec<u8> = l.extra.iter().map(|b| !b).collect();
                     self.current_vec = NdaVec { len: l.len, log2_scale: l.log2_scale, sign: sign.into(), extra: extra.into() };
                 } else if let Some(r_node) = rhs {
-                    let _r = self.eval_node(r_node, site_map)?;
-                    self.current_vec = l;
+                    let r = self.eval_node(r_node, site_map)?;
+                    // Element-wise bitwise over the vectors' raw integer codes,
+                    // re-encoded into the quaternary NDA representation.
+                    let len = l.len.min(r.len);
+                    let out: Vec<i32> = (0..len)
+                        .map(|i| {
+                            let a = l.get_raw(i);
+                            let b = r.get_raw(i);
+                            match op {
+                                BitwiseOp::And => a & b,
+                                BitwiseOp::Or => a | b,
+                                BitwiseOp::Xor => a ^ b,
+                                BitwiseOp::Shl => a.wrapping_shl(b as u32),
+                                BitwiseOp::Shr => a.wrapping_shr(b as u32),
+                                BitwiseOp::Not => !a,
+                            }
+                        })
+                        .collect();
+                    self.current_vec = NdaVec::from_i32_slice(&out, l.log2_scale);
                 }
             }
             NdaNode::Float { value } => {
                 self.current_vec = NdaVec::from_f32_slice(&[*value]);
             }
-            NdaNode::Math { lhs, .. } => {
-                let l = self.eval_node(lhs, site_map)?;
-                self.current_vec = l;
+            NdaNode::Math { op, lhs, rhs } => {
+                let l = self.eval_node(lhs, site_map)?.to_f32_vec();
+                let r = self.eval_node(rhs, site_map)?.to_f32_vec();
+                // Element-wise arithmetic with scalar broadcast (len-1 operand).
+                let n = l.len().max(r.len());
+                let pick = |v: &[f32], i: usize| -> f32 {
+                    if v.len() == 1 { v[0] } else { v.get(i).copied().unwrap_or(0.0) }
+                };
+                let out: Vec<f32> = (0..n)
+                    .map(|i| {
+                        let a = pick(&l, i);
+                        let b = pick(&r, i);
+                        match op {
+                            MathOp::Add => a + b,
+                            MathOp::Sub => a - b,
+                            MathOp::Mul => a * b,
+                            MathOp::Div => if b != 0.0 { a / b } else { 0.0 },
+                        }
+                    })
+                    .collect();
+                self.current_vec = NdaVec::from_f32_slice(&out);
             }
             NdaNode::MathFunc { func, operand } => {
                 let val = self.eval_node(operand, site_map)?;

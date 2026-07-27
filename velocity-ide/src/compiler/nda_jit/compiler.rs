@@ -28,6 +28,86 @@ pub fn jit_tier_info() -> &'static str {
     }
 }
 
+/// Apply a binary bitwise op to two raw integer values.
+fn bitwise_i32(op: BitwiseOp, a: i32, b: i32) -> i32 {
+    match op {
+        BitwiseOp::And => a & b,
+        BitwiseOp::Or => a | b,
+        BitwiseOp::Xor => a ^ b,
+        BitwiseOp::Shl => a.wrapping_shl(b as u32),
+        BitwiseOp::Shr => a.wrapping_shr(b as u32),
+        BitwiseOp::Not => !a,
+    }
+}
+
+/// Apply a binary bitwise op to two `f32`s via their IEEE-754 bit patterns,
+/// mirroring the unary `Not` case which flips the float's bits.
+fn bitwise_f32(op: BitwiseOp, a: f32, b: f32) -> f32 {
+    let x = a.to_bits();
+    let y = b.to_bits();
+    let bits = match op {
+        BitwiseOp::And => x & y,
+        BitwiseOp::Or => x | y,
+        BitwiseOp::Xor => x ^ y,
+        BitwiseOp::Shl => x.wrapping_shl(y),
+        BitwiseOp::Shr => x.wrapping_shr(y),
+        BitwiseOp::Not => !x,
+    };
+    f32::from_bits(bits)
+}
+
+/// Element-wise bitwise op over two NDA vectors' raw integer codes,
+/// re-encoded into the quaternary NDA representation.
+fn bitwise_vec_vec(op: BitwiseOp, a: &NdaVec, b: &NdaVec) -> JitVal {
+    let len = a.len.min(b.len);
+    let out: Vec<i32> = (0..len)
+        .map(|i| bitwise_i32(op, a.get_raw(i), b.get_raw(i)))
+        .collect();
+    JitVal::Vector(Arc::new(NdaVec::from_i32_slice(&out, a.log2_scale)))
+}
+
+/// Element-wise bitwise op between an NDA vector and a scalar integer code.
+fn bitwise_vec_scalar(op: BitwiseOp, a: &NdaVec, s: i32, scalar_on_left: bool) -> JitVal {
+    let out: Vec<i32> = (0..a.len)
+        .map(|i| {
+            let av = a.get_raw(i);
+            if scalar_on_left {
+                bitwise_i32(op, s, av)
+            } else {
+                bitwise_i32(op, av, s)
+            }
+        })
+        .collect();
+    JitVal::Vector(Arc::new(NdaVec::from_i32_slice(&out, a.log2_scale)))
+}
+
+/// Dispatch a binary bitwise op across every scalar/float/vector combination.
+fn bitwise_binary(op: BitwiseOp, l: JitVal, r: JitVal) -> JitVal {
+    match (l, r) {
+        (JitVal::Scalar(l_v, l_s), JitVal::Scalar(r_v, _)) => {
+            JitVal::Scalar(bitwise_i32(op, l_v, r_v), l_s)
+        }
+        (JitVal::Float(a), JitVal::Float(b)) => JitVal::Float(bitwise_f32(op, a, b)),
+        (JitVal::Float(a), JitVal::Scalar(v, s)) => {
+            JitVal::Float(bitwise_f32(op, a, (v as f32) * 2.0f32.powi(s as i32)))
+        }
+        (JitVal::Scalar(v, s), JitVal::Float(b)) => {
+            JitVal::Float(bitwise_f32(op, (v as f32) * 2.0f32.powi(s as i32), b))
+        }
+        (JitVal::Vector(a), JitVal::Vector(b)) => bitwise_vec_vec(op, &a, &b),
+        (JitVal::Vector(a), JitVal::Scalar(v, _)) => bitwise_vec_scalar(op, &a, v, false),
+        (JitVal::Scalar(v, _), JitVal::Vector(b)) => bitwise_vec_scalar(op, &b, v, true),
+        (JitVal::Vector(a), JitVal::Float(f)) => {
+            let code = NdaVec::from_f32_slice(&[f]).get_raw(0);
+            bitwise_vec_scalar(op, &a, code, false)
+        }
+        (JitVal::Float(f), JitVal::Vector(b)) => {
+            let code = NdaVec::from_f32_slice(&[f]).get_raw(0);
+            bitwise_vec_scalar(op, &b, code, true)
+        }
+    }
+}
+
 /// Compile a slice of `NdaNode`s into a `JitProgram`.
 ///
 /// This is the main entry point.  Call once per program load; execute many times.
@@ -506,24 +586,7 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                         .ok_or("Missing rhs for binary Bitwise op")?;
                     r_fn(state)?;
                     let r = state.stack.pop().ok_or("Stack underflow in Bitwise rhs")?;
-                    match (l, r) {
-                        (JitVal::Scalar(l_v, l_s), JitVal::Scalar(r_v, _r_s)) => {
-                            let val = match op {
-                                BitwiseOp::And => l_v & r_v,
-                                BitwiseOp::Or => l_v | r_v,
-                                BitwiseOp::Xor => l_v ^ r_v,
-                                BitwiseOp::Shl => l_v.wrapping_shl(r_v as u32),
-                                BitwiseOp::Shr => l_v.wrapping_shr(r_v as u32),
-                                _ => unreachable!(),
-                            };
-                            JitVal::Scalar(val, l_s)
-                        }
-                        _ => {
-                            return Err(
-                                "Bitwise vector/float ops not fully implemented".to_string()
-                            )
-                        }
-                    }
+                    bitwise_binary(op, l, r)
                 };
                 state.stack.push(res);
                 Ok(JitControlFlow::Continue)

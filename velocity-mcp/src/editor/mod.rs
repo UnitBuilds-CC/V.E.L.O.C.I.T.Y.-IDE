@@ -58,6 +58,7 @@ pub mod keybindings;
 pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;
+pub mod regex_engine;
 pub mod semantic_search;
 pub mod snippets;
 pub mod speculative_precomp;
