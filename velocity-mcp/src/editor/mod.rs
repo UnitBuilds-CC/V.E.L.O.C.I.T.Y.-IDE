@@ -67,3 +67,4 @@ pub mod terminal;
 pub mod test_generator;
 pub mod triggers;
 pub mod voice_commands;
+pub mod workflow;

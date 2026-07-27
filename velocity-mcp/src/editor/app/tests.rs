@@ -407,6 +407,13 @@ semantic_search_active: false,
         trigger_name_input: String::new(),
         trigger_interval_input: String::new(),
         trigger_prompt_input: String::new(),
+        workflows: crate::editor::workflow::WorkflowRegistry::default(),
+        workflow_name_input: String::new(),
+        workflow_selected: None,
+        workflow_step_tool_input: String::new(),
+        workflow_step_args_input: String::new(),
+        workflow_step_prompt_input: String::new(),
+        workflow_last_run: None,
     };
 
     app.mirror_worker_events_into_timeline(&first_snapshot);
@@ -594,6 +601,13 @@ semantic_search_active: false,
         trigger_name_input: String::new(),
         trigger_interval_input: String::new(),
         trigger_prompt_input: String::new(),
+        workflows: crate::editor::workflow::WorkflowRegistry::default(),
+        workflow_name_input: String::new(),
+        workflow_selected: None,
+        workflow_step_tool_input: String::new(),
+        workflow_step_args_input: String::new(),
+        workflow_step_prompt_input: String::new(),
+        workflow_last_run: None,
     };
 
     app.mirror_worker_events_into_timeline(&snapshot);

@@ -906,14 +906,353 @@ impl VelocityApp {
                     self.toasts
                         .push(crate::editor::toast::Toast::info("Trigger dispatched to agent"));
                 }
-                Some(TriggerAction::RunWorkflow { .. }) => {
-                    self.toasts.push(crate::editor::toast::Toast::info(
-                        "Workflow execution is wired in Pillar 4",
-                    ));
+                Some(TriggerAction::RunWorkflow { workflow_id }) => {
+                    if let Some(wf) = self.workflows.get(&workflow_id).cloned() {
+                        let ws = self.workspace_root.clone();
+                        let run = wf.execute(&ws);
+                        self.triggers.mark_run(&id, now_secs());
+                        let _ = self.triggers.save(&ws);
+                        self.toasts.push(crate::editor::toast::Toast::info(format!(
+                            "Workflow '{}' → {}",
+                            wf.name,
+                            run.status.label()
+                        )));
+                    } else {
+                        self.toasts.push(crate::editor::toast::Toast::error(format!(
+                            "Unknown workflow '{workflow_id}'"
+                        )));
+                    }
                 }
                 None => {}
             }
         }
+    }
+
+    pub fn render_workflows_panel(&mut self, ui: &mut egui::Ui) {
+        use crate::editor::workflow::{RunStatus, StepOutcome, Workflow, WorkflowStep};
+        let palette = self.palette();
+        Self::tier3_header(
+            ui,
+            "Workflows",
+            &format!("{} workflow(s) · list composer", self.workflows.len()),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Create a new workflow.
+        let mut create = false;
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.workflow_name_input)
+                    .hint_text("new workflow name…")
+                    .desired_width(ui.available_width() - 80.0),
+            );
+            if ui.button(RichText::new("Create").size(10.0)).clicked() {
+                create = true;
+            }
+        });
+        ui.add_space(6.0);
+
+        // Workflow list.
+        let mut select: Option<String> = None;
+        let mut run: Option<String> = None;
+        let mut remove: Option<String> = None;
+        let selected = self.workflow_selected.clone();
+        egui::ScrollArea::vertical()
+            .id_salt("workflow_list_scroll")
+            .max_height(130.0)
+            .show(ui, |ui| {
+                if self.workflows.is_empty() {
+                    ui.label(
+                        RichText::new("No workflows yet. Create one above.")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                }
+                for wf in &self.workflows.workflows {
+                    let is_sel = selected.as_deref() == Some(wf.id.as_str());
+                    egui::Frame::new()
+                        .fill(if is_sel { palette.bg_tertiary } else { palette.bg_secondary })
+                        .corner_radius(5.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&wf.name).size(10.0).strong().color(palette.text));
+                                ui.label(
+                                    RichText::new(format!("({} step(s))", wf.steps.len()))
+                                        .size(8.0)
+                                        .color(palette.text_muted),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                        remove = Some(wf.id.clone());
+                                    }
+                                    if ui.small_button(RichText::new("Run").size(8.0)).clicked() {
+                                        run = Some(wf.id.clone());
+                                    }
+                                    if ui.small_button(RichText::new("Edit").size(8.0)).clicked() {
+                                        select = Some(wf.id.clone());
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(3.0);
+                }
+            });
+        ui.add_space(6.0);
+
+        // Step editor for the selected workflow (clone steps to avoid holding a
+        // borrow of self.workflows while rendering the input rows).
+        let mut add_tool = false;
+        let mut add_agent = false;
+        let mut move_up: Option<usize> = None;
+        let mut move_down: Option<usize> = None;
+        let mut remove_step: Option<usize> = None;
+        if let Some(sel_id) = self.workflow_selected.clone() {
+            let snapshot = self
+                .workflows
+                .get(&sel_id)
+                .map(|w| (w.name.clone(), w.steps.clone()));
+            match snapshot {
+                None => self.workflow_selected = None,
+                Some((wf_name, steps)) => {
+                    ui.label(
+                        RichText::new(format!("STEPS · {wf_name}"))
+                            .small()
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    let step_count = steps.len();
+                    for (i, step) in steps.iter().enumerate() {
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("{}. {}", i + 1, step.kind_label()))
+                                            .size(9.0)
+                                            .color(palette.text),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                                remove_step = Some(i);
+                                            }
+                                            if i + 1 < step_count
+                                                && ui.small_button(RichText::new("↓").size(8.0)).clicked()
+                                            {
+                                                move_down = Some(i);
+                                            }
+                                            if i > 0
+                                                && ui.small_button(RichText::new("↑").size(8.0)).clicked()
+                                            {
+                                                move_up = Some(i);
+                                            }
+                                        },
+                                    );
+                                });
+                                let detail = step_detail(step);
+                                if !detail.is_empty() {
+                                    ui.label(RichText::new(detail).size(8.0).color(palette.text_muted));
+                                }
+                            });
+                        ui.add_space(2.0);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.workflow_step_tool_input)
+                                .hint_text("tool name")
+                                .desired_width(110.0),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.workflow_step_args_input)
+                                .hint_text("{\"json\":\"args\"}")
+                                .desired_width(ui.available_width() - 70.0),
+                        );
+                        if ui.button(RichText::new("+tool").size(9.0)).clicked() {
+                            add_tool = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.workflow_step_prompt_input)
+                                .hint_text("agent prompt")
+                                .desired_width(ui.available_width() - 70.0),
+                        );
+                        if ui.button(RichText::new("+agent").size(9.0)).clicked() {
+                            add_agent = true;
+                        }
+                    });
+                }
+            }
+        }
+
+        // Run log.
+        if let Some(runrec) = &self.workflow_last_run {
+            ui.add_space(6.0);
+            let status_color = match runrec.status {
+                RunStatus::Success => palette.success,
+                RunStatus::Failed => palette.error,
+                RunStatus::Partial => palette.warning,
+            };
+            ui.label(
+                RichText::new(format!("LAST RUN · {}", runrec.status.label()))
+                    .small()
+                    .strong()
+                    .color(status_color),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("workflow_run_log")
+                .max_height(140.0)
+                .show(ui, |ui| {
+                    for rec in &runrec.steps {
+                        let color = match rec.outcome {
+                            StepOutcome::Ok => palette.success,
+                            StepOutcome::Failed => palette.error,
+                            StepOutcome::Skipped => palette.text_muted,
+                        };
+                        ui.label(
+                            RichText::new(format!(
+                                "{}. {} [{}]",
+                                rec.index + 1,
+                                rec.kind,
+                                rec.outcome.label()
+                            ))
+                            .size(9.0)
+                            .color(color),
+                        );
+                        let snippet: String = rec.output.chars().take(120).collect();
+                        if !snippet.is_empty() {
+                            ui.label(RichText::new(snippet).size(8.0).color(palette.text_muted));
+                        }
+                    }
+                });
+        }
+
+        // Deferred mutations.
+        let ws = self.workspace_root.clone();
+        if create {
+            let name = self.workflow_name_input.trim().to_string();
+            if name.is_empty() {
+                self.toasts
+                    .push(crate::editor::toast::Toast::error("Workflow needs a name"));
+            } else {
+                let id = format!("wf-{}", crate::editor::triggers::now_secs());
+                self.workflows.add(Workflow::new(id.clone(), name));
+                let _ = self.workflows.save(&ws);
+                self.workflow_selected = Some(id);
+                self.workflow_name_input.clear();
+            }
+        }
+        if let Some(id) = select {
+            self.workflow_selected = Some(id);
+            self.workflow_last_run = None;
+        }
+        if let Some(id) = remove {
+            if self.workflows.remove(&id) {
+                let _ = self.workflows.save(&ws);
+                if self.workflow_selected.as_deref() == Some(id.as_str()) {
+                    self.workflow_selected = None;
+                }
+            }
+        }
+        if add_tool {
+            if let Some(sel) = self.workflow_selected.clone() {
+                let name = self.workflow_step_tool_input.trim().to_string();
+                if !name.is_empty() {
+                    let args_raw = self.workflow_step_args_input.trim().to_string();
+                    let parsed = if args_raw.is_empty() {
+                        Some(serde_json::json!({}))
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(&args_raw) {
+                            Ok(v) => Some(v),
+                            Err(e) => {
+                                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                                    "Invalid JSON args: {e}"
+                                )));
+                                None
+                            }
+                        }
+                    };
+                    if let Some(args) = parsed {
+                        if let Some(wf) = self.workflows.get_mut(&sel) {
+                            wf.steps.push(WorkflowStep::Tool { name, args });
+                        }
+                        let _ = self.workflows.save(&ws);
+                        self.workflow_step_tool_input.clear();
+                        self.workflow_step_args_input.clear();
+                    }
+                }
+            }
+        }
+        if add_agent {
+            if let Some(sel) = self.workflow_selected.clone() {
+                let prompt = self.workflow_step_prompt_input.trim().to_string();
+                if !prompt.is_empty() {
+                    if let Some(wf) = self.workflows.get_mut(&sel) {
+                        wf.steps.push(WorkflowStep::AgentTask { prompt, team: None });
+                    }
+                    let _ = self.workflows.save(&ws);
+                    self.workflow_step_prompt_input.clear();
+                }
+            }
+        }
+        if let Some(sel) = self.workflow_selected.clone() {
+            let mut mutated = false;
+            if let Some(i) = remove_step {
+                if let Some(wf) = self.workflows.get_mut(&sel) {
+                    if i < wf.steps.len() {
+                        wf.steps.remove(i);
+                        mutated = true;
+                    }
+                }
+            }
+            if let Some(i) = move_up {
+                if let Some(wf) = self.workflows.get_mut(&sel) {
+                    if i > 0 {
+                        wf.steps.swap(i, i - 1);
+                        mutated = true;
+                    }
+                }
+            }
+            if let Some(i) = move_down {
+                if let Some(wf) = self.workflows.get_mut(&sel) {
+                    if i + 1 < wf.steps.len() {
+                        wf.steps.swap(i, i + 1);
+                        mutated = true;
+                    }
+                }
+            }
+            if mutated {
+                let _ = self.workflows.save(&ws);
+            }
+        }
+        if let Some(id) = run {
+            if let Some(wf) = self.workflows.get(&id).cloned() {
+                let runrec = wf.execute(&ws);
+                self.toasts.push(crate::editor::toast::Toast::info(format!(
+                    "Workflow '{}' → {}",
+                    wf.name,
+                    runrec.status.label()
+                )));
+                self.workflow_last_run = Some(runrec);
+                self.workflow_selected = Some(id);
+            }
+        }
+    }
+}
+
+fn step_detail(step: &crate::editor::workflow::WorkflowStep) -> String {
+    use crate::editor::workflow::WorkflowStep;
+    match step {
+        WorkflowStep::AgentTask { prompt, .. } => prompt.chars().take(80).collect(),
+        WorkflowStep::Tool { args, .. } => args.to_string().chars().take(80).collect(),
+        WorkflowStep::Connector { req, .. } => req.to_string().chars().take(80).collect(),
+        WorkflowStep::Condition { require } => format!("require prior == {}", require.label()),
     }
 }
 

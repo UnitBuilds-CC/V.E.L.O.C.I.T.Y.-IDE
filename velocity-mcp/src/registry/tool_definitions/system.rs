@@ -218,5 +218,17 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["query"]
             }),
         },
+        // ── Workflows ───────────────────────────────────────────────────────
+        Tool {
+            name: "workflow_run".to_string(),
+            description: "Execute a saved workflow by id. Runs its steps in order (tool calls, agent tasks, conditions) and returns the run record with per-step status and output.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Id of the workflow to run (see .velocity/workflows/)." }
+                },
+                "required": ["id"]
+            }),
+        },
     ]
 }

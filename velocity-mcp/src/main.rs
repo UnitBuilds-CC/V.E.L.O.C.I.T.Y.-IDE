@@ -472,12 +472,25 @@ fn run_daemon() {
                     );
                 }
                 TriggerAction::RunWorkflow { workflow_id } => {
-                    // The workflow executor is wired in during Pillar 4; until
-                    // then a workflow trigger records its intent to the log.
-                    println!(
-                        "[daemon] trigger '{}' requests workflow '{}' (executor pending)",
-                        name, workflow_id
-                    );
+                    match editor::workflow::WorkflowRegistry::load(&workspace_root)
+                        .get(&workflow_id)
+                        .cloned()
+                    {
+                        Some(workflow) => {
+                            let run = workflow.execute(&workspace_root);
+                            println!(
+                                "[daemon] workflow '{}' finished: {} ({}/{} steps ok)",
+                                workflow.name,
+                                run.status.label(),
+                                run.ok_count(),
+                                run.steps.len()
+                            );
+                        }
+                        None => eprintln!(
+                            "[daemon] trigger '{}' references unknown workflow '{}'",
+                            name, workflow_id
+                        ),
+                    }
                 }
             }
             registry.mark_run(&id, now);

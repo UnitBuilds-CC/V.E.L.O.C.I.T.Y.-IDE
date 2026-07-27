@@ -318,6 +318,20 @@ pub struct VelocityApp {
     pub trigger_interval_input: String,
     /// Draft agent prompt for a new trigger in the Triggers panel.
     pub trigger_prompt_input: String,
+    /// Workflow composer registry shown in the Workflows panel.
+    pub workflows: crate::editor::workflow::WorkflowRegistry,
+    /// Draft workflow name in the Workflows panel create box.
+    pub workflow_name_input: String,
+    /// Id of the workflow currently open in the step editor.
+    pub workflow_selected: Option<String>,
+    /// Draft step: tool name in the Workflows panel add-step row.
+    pub workflow_step_tool_input: String,
+    /// Draft step: tool JSON args in the Workflows panel add-step row.
+    pub workflow_step_args_input: String,
+    /// Draft step: agent prompt in the Workflows panel add-step row.
+    pub workflow_step_prompt_input: String,
+    /// Last workflow run result rendered in the Workflows panel run log.
+    pub workflow_last_run: Option<crate::editor::workflow::WorkflowRun>,
 }
 
 impl VelocityApp {
@@ -847,6 +861,13 @@ impl VelocityApp {
             trigger_name_input: String::new(),
             trigger_interval_input: String::new(),
             trigger_prompt_input: String::new(),
+            workflows: crate::editor::workflow::WorkflowRegistry::load(&workspace_root),
+            workflow_name_input: String::new(),
+            workflow_selected: None,
+            workflow_step_tool_input: String::new(),
+            workflow_step_args_input: String::new(),
+            workflow_step_prompt_input: String::new(),
+            workflow_last_run: None,
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);

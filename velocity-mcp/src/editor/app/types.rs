@@ -53,6 +53,7 @@ impl Tab {
             TabKind::Voice => "Voice".into(),
             TabKind::Knowledge => "Knowledge".into(),
             TabKind::Triggers => "Triggers".into(),
+            TabKind::Workflows => "Workflows".into(),
         }
     }
 
@@ -104,6 +105,8 @@ pub enum TabKind {
     Knowledge,
     // Unattended execution triggers
     Triggers,
+    // Workflow composer
+    Workflows,
 }
 
 pub struct Command {

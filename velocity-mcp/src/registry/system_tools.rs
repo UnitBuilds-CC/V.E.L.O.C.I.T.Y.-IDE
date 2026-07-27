@@ -670,6 +670,18 @@ pub fn handle_system_tool(
                 "results": hits
             }))?
         }
+        // ── Workflows ───────────────────────────────────────────────────────
+        "workflow_run" => {
+            let id = arguments["id"].as_str().ok_or("id is required")?;
+            let reg = crate::editor::workflow::WorkflowRegistry::load(root);
+            match reg.get(id).cloned() {
+                Some(workflow) => {
+                    let run = workflow.execute(root);
+                    serde_json::to_string(&run)?
+                }
+                None => return Err(format!("Unknown workflow: {id}").into()),
+            }
+        }
         _ => return Ok(None),
     };
 
