@@ -2704,8 +2704,29 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
                 Some(JsValue::Array(a)) => a.clone(),
                 _ => Vec::new(),
             };
-            // Simplified: call as regular function (full ctor needs new-target)
-            call_function(&target, &call_args, &Scope::new_global()).unwrap_or(JsValue::Undefined)
+            match &target {
+                // Class object: run the real constructor with full prototype/instanceof setup,
+                // exactly like `new Class(...)`.
+                JsValue::Object(class_map) if class_map.get("__type__").map(to_string).as_deref() == Some("class") => {
+                    call_class_constructor(class_map, &call_args, &Scope::new_global()).unwrap_or(JsValue::Undefined)
+                }
+                // Function constructor: emulate `new` — bind a fresh `this`, run the body, and
+                // return `this` (or an explicit object return value) per JS constructor semantics.
+                JsValue::Function { params, body, closure, .. } => {
+                    let call_scope = Scope::new_child(closure);
+                    let this_obj = JsValue::Object(HashMap::new());
+                    Scope::declare(&call_scope, "this", this_obj.clone());
+                    for (i, p) in params.iter().enumerate() {
+                        Scope::declare(&call_scope, p, call_args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                    }
+                    Scope::declare(&call_scope, "arguments", JsValue::Array(call_args));
+                    match eval_stmt(body, &call_scope) {
+                        Err(Signal::Return(v)) if matches!(v, JsValue::Object(_)) => v,
+                        _ => Scope::resolve(&call_scope, "this").unwrap_or(this_obj),
+                    }
+                }
+                _ => call_function(&target, &call_args, &Scope::new_global()).unwrap_or(JsValue::Undefined),
+            }
         }
         _ => JsValue::Undefined,
     })
@@ -4326,6 +4347,37 @@ mod tests {
             var obj = { [i]: 'x' };
             obj['2']
         "), JsValue::String("x".to_string()));
+    }
+
+    #[test]
+    fn reflect_construct_class() {
+        assert_eq!(eval_full("
+            class Animal {
+                constructor(n) { this.name = n; }
+            }
+            var a = Reflect.construct(Animal, ['Rex']);
+            a.name
+        "), JsValue::String("Rex".to_string()));
+    }
+
+    #[test]
+    fn reflect_construct_class_instanceof() {
+        assert_eq!(eval_full("
+            class Animal {
+                constructor(n) { this.name = n; }
+            }
+            var a = Reflect.construct(Animal, ['Rex']);
+            a instanceof Animal
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn reflect_construct_function() {
+        assert_eq!(eval_full("
+            function Point(x, y) { this.x = x; this.y = y; }
+            var p = Reflect.construct(Point, [3, 4]);
+            p.x + p.y
+        "), JsValue::Number(7.0));
     }
 
     #[test]
