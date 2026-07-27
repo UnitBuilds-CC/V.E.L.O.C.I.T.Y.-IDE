@@ -1220,9 +1220,10 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
                             }
                         }
                     } else {
-                        // for-in: iterate over keys
-                        for key in map.keys() {
-                            Scope::declare(scope, var_name, JsValue::String(key.clone()));
+                        // for-in: iterate over enumerable own keys (internal `__x__`
+                        // bookkeeping keys and non-enumerable accessors are hidden).
+                        for key in enumerable_keys(map) {
+                            Scope::declare(scope, var_name, JsValue::String(key));
                             match eval_stmt(body, scope) {
                                 Ok(_) => {}
                                 Err(Signal::Break) => break,
@@ -2401,15 +2402,21 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             JsValue::String(json_stringify(&val))
         }
         "Object.keys" => {
-            if let Some(JsValue::Object(map)) = args.first() { JsValue::Array(map.keys().map(|k| JsValue::String(k.clone())).collect()) }
+            if let Some(JsValue::Object(map)) = args.first() { JsValue::Array(enumerable_keys(map).into_iter().map(JsValue::String).collect()) }
             else { JsValue::Array(Vec::new()) }
         }
         "Object.values" => {
-            if let Some(JsValue::Object(map)) = args.first() { JsValue::Array(map.values().cloned().collect()) }
+            if let Some(JsValue::Object(map)) = args.first() {
+                let obj = args.first().cloned().unwrap();
+                JsValue::Array(enumerable_keys(map).into_iter().map(|k| resolve_accessor(&map[&k], &obj)).collect())
+            }
             else { JsValue::Array(Vec::new()) }
         }
         "Object.entries" => {
-            if let Some(JsValue::Object(map)) = args.first() { JsValue::Array(map.iter().map(|(k, v)| JsValue::Array(vec![JsValue::String(k.clone()), v.clone()])).collect()) }
+            if let Some(JsValue::Object(map)) = args.first() {
+                let obj = args.first().cloned().unwrap();
+                JsValue::Array(enumerable_keys(map).into_iter().map(|k| JsValue::Array(vec![JsValue::String(k.clone()), resolve_accessor(&map[&k], &obj)])).collect())
+            }
             else { JsValue::Array(Vec::new()) }
         }
         "Object.assign" => {
@@ -2661,8 +2668,10 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
             match &target {
                 JsValue::Object(map) => {
+                    // ownKeys reports all non-internal own keys (enumerable or not),
+                    // matching JS semantics where ownKeys ignores enumerability.
                     let keys: Vec<JsValue> = map.keys()
-                        .filter(|k| !k.starts_with("__"))
+                        .filter(|k| !is_internal_key(k))
                         .map(|k| JsValue::String(k.clone()))
                         .collect();
                     JsValue::Array(keys)
@@ -3187,6 +3196,43 @@ fn resolve_accessor(val: &JsValue, this_obj: &JsValue) -> JsValue {
         }
     }
     val.clone()
+}
+
+/// Internal bookkeeping keys are double-underscore delimited (`__type__`, `__proto__`,
+/// `__instanceof__`, `__accessor__`, ...). They must never leak into user-visible
+/// enumeration (`for...in`, `Object.keys/values/entries`). A key like `__foo` (no
+/// trailing delimiter) is a legitimate user key and is NOT internal.
+fn is_internal_key(key: &str) -> bool {
+    key.len() >= 4 && key.starts_with("__") && key.ends_with("__")
+}
+
+/// Whether an accessor descriptor should appear in enumeration. Data properties are
+/// always enumerable; accessors honor their `enumerable` flag (default true for
+/// object-literal accessors, false for Object.defineProperty unless set).
+fn accessor_is_enumerable(desc: &HashMap<String, JsValue>) -> bool {
+    match desc.get("enumerable") {
+        Some(JsValue::Boolean(b)) => *b,
+        _ => true,
+    }
+}
+
+/// Enumerable own keys of an object: excludes internal `__x__` keys and non-enumerable
+/// accessors. Order is unspecified (HashMap), matching the engine's existing semantics.
+fn enumerable_keys(map: &HashMap<String, JsValue>) -> Vec<String> {
+    map.iter()
+        .filter(|(k, v)| {
+            if is_internal_key(k) {
+                return false;
+            }
+            if let JsValue::Object(desc) = v {
+                if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) {
+                    return accessor_is_enumerable(desc);
+                }
+            }
+            true
+        })
+        .map(|(k, _)| k.clone())
+        .collect()
 }
 
 fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
@@ -4378,6 +4424,67 @@ mod tests {
             var p = Reflect.construct(Point, [3, 4]);
             p.x + p.y
         "), JsValue::Number(7.0));
+    }
+
+    #[test]
+    fn object_keys_hides_internal_keys() {
+        // Class instances carry `__class_name__`/`__instanceof__` bookkeeping that
+        // must not leak into Object.keys.
+        assert_eq!(eval_full("
+            class Animal { constructor(n) { this.name = n; } }
+            var a = new Animal('rex');
+            Object.keys(a).length
+        "), JsValue::Number(1.0));
+        assert_eq!(eval_full("
+            class Animal { constructor(n) { this.name = n; } }
+            var a = new Animal('rex');
+            Object.keys(a).indexOf('name') >= 0
+        "), JsValue::Boolean(true));
+        assert_eq!(eval_full("
+            class Animal { constructor(n) { this.name = n; } }
+            var a = new Animal('rex');
+            Object.keys(a).indexOf('__instanceof__')
+        "), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn for_in_hides_internal_keys() {
+        assert_eq!(eval_full("
+            class Animal { constructor(n) { this.name = n; this.age = 5; } }
+            var a = new Animal('rex');
+            var count = 0;
+            for (var k in a) { count = count + 1; }
+            count
+        "), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn object_values_resolves_getter() {
+        assert_eq!(eval_full("
+            var o = { get x() { return 42; } };
+            Object.values(o)[0]
+        "), JsValue::Number(42.0));
+        assert_eq!(eval_full("
+            var o = { get x() { return 42; } };
+            Object.keys(o).indexOf('x') >= 0
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn object_entries_resolves_getter() {
+        assert_eq!(eval_full("
+            var o = { a: 1, get x() { return 9; } };
+            Object.entries(o).length
+        "), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn user_double_underscore_key_not_internal() {
+        // `__foo` (no trailing delimiter) is a legitimate user key and must survive.
+        assert_eq!(eval_full("
+            var o = { __foo: 7 };
+            Object.keys(o).indexOf('__foo') >= 0
+        "), JsValue::Boolean(true));
     }
 
     #[test]
