@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(compositor.dirty_rects.len(), 0);
 
         compositor.set_layer_opacity(layer, 0.5);
-        assert!(compositor.dirty_rects.len() > 0);
+        assert!(!compositor.dirty_rects.is_empty());
 
         compositor.composite_frame();
         assert_eq!(compositor.dirty_rects.len(), 0);

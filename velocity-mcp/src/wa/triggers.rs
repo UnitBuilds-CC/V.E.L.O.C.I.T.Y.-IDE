@@ -1,11 +1,10 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Scheduler and trigger system for Windows desktop automation.
 //!
 //! Provides time-based triggers, file-watcher triggers, window-appearance
 //! triggers, and process-start triggers that automatically kick off WA
 //! scripts when conditions are met.
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -118,6 +117,9 @@ pub struct TriggerManager {
     fire_history: Vec<TriggerFireResult>,
     /// Maximum history entries to keep.
     max_history: usize,
+    /// Last observed OS clipboard sequence number, used to dedupe
+    /// `ClipboardChanged` triggers so they fire once per actual change.
+    last_clipboard_seq: Option<u32>,
 }
 
 impl TriggerManager {
@@ -126,6 +128,7 @@ impl TriggerManager {
             triggers: Vec::new(),
             fire_history: Vec::new(),
             max_history: 100,
+            last_clipboard_seq: None,
         }
     }
 
@@ -205,6 +208,22 @@ impl TriggerManager {
         let mut fired = Vec::new();
         let mut to_fire = Vec::new();
 
+        // Clipboard-change triggers dedupe on the OS clipboard sequence number:
+        // they fire only when it advanced since the previous evaluation. The
+        // first observation establishes a baseline and does not fire.
+        let has_clipboard_trigger = self
+            .triggers
+            .iter()
+            .any(|t| t.enabled && matches!(t.kind, TriggerKind::ClipboardChanged));
+        let clipboard_changed = if has_clipboard_trigger {
+            let current = super::clipboard::ClipboardManager::sequence_number();
+            let changed = matches!(self.last_clipboard_seq, Some(prev) if prev != current);
+            self.last_clipboard_seq = Some(current);
+            changed
+        } else {
+            false
+        };
+
         for trigger in &self.triggers {
             if !trigger.enabled {
                 continue;
@@ -212,7 +231,7 @@ impl TriggerManager {
             if trigger.max_fires.map(|max| trigger.fire_count >= max).unwrap_or(false) {
                 continue;
             }
-            if self.should_fire(trigger) {
+            if self.should_fire(trigger, clipboard_changed) {
                 to_fire.push(trigger.id.clone());
             }
         }
@@ -226,7 +245,9 @@ impl TriggerManager {
     }
 
     /// Check whether a single trigger's condition is currently met.
-    fn should_fire(&self, trigger: &TriggerDefinition) -> bool {
+    /// `clipboard_changed` is precomputed by [`evaluate`] via clipboard
+    /// sequence-number dedupe (see there).
+    fn should_fire(&self, trigger: &TriggerDefinition, clipboard_changed: bool) -> bool {
         match &trigger.kind {
             TriggerKind::Delay(duration) => {
                 let elapsed = now_ms().saturating_sub(trigger.created_at_ms);
@@ -252,11 +273,7 @@ impl TriggerManager {
             TriggerKind::ProcessExits { pid } => {
                 !check_process_alive(*pid)
             }
-            TriggerKind::ClipboardChanged => {
-                // Clipboard change detection requires state tracking across polls
-                // For now, always fire (caller should track sequence numbers)
-                false
-            }
+            TriggerKind::ClipboardChanged => clipboard_changed,
             TriggerKind::SystemIdle { idle_threshold } => {
                 check_system_idle(idle_threshold.as_millis() as u64)
             }

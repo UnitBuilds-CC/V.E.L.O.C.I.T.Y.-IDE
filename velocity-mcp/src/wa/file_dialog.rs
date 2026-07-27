@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! File and folder dialog automation for Windows desktop automation.
 //!
 //! Handles interaction with common Open/Save/Browse dialogs, folder pickers,

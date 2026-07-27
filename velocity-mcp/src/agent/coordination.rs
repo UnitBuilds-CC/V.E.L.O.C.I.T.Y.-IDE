@@ -4,10 +4,13 @@
 //! Each agent thread receives a handle to the [`CoordinationBus`] and uses it
 //! to claim files before writing, broadcast state changes, and delegate work.
 //!
-//! NOTE: This is the coordination API surface for the multi-agent team
-//! architecture. Several broadcast variants and bus methods are not yet wired
-//! into the live agent loop, so their fields read as dead until integration.
-#![allow(dead_code)] // designed coordination API awaiting agent-loop integration
+//! Wired into the live loop today: `claim_file`/`release_file` (with their
+//! `FileClaimed`/`FileReleased` broadcasts) gate concurrent writes, and
+//! `report_progress` records per-agent progress. The remaining surface
+//! (`request_help`/`HelpRequested`, `drain`/`try_recv`, `all_progress`,
+//! `pending_help_for`, `reset`) is the delegation API for the multi-agent team
+//! runtime and is intentionally retained ahead of that integration.
+#![allow(dead_code)] // reserved multi-agent delegation API (see module docs)
 
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;

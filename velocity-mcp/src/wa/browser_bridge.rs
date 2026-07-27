@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Browser↔Desktop bridge for unified cross-context automation workflows.
 //!
 //! Coordinates between the velocity-browser CDP/WebSocket automation layer
@@ -6,11 +6,10 @@
 //! browser and native app interactions (e.g., download→open, copy→paste,
 //! upload via file dialog).
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 // ─── Bridge Model ────────────────────────────────────────────────────────────
 

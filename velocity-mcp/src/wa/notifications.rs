@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Windows notification and toast interception for desktop automation.
 //!
 //! Detects, reads, and dismisses Windows toast notifications, system tray
@@ -6,7 +6,7 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 // ─── Notification Model ──────────────────────────────────────────────────────
 

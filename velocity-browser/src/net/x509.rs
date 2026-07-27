@@ -4,16 +4,19 @@
 //! trust decisions that do not require large-integer / elliptic-curve crypto —
 //! namely the validity window (notBefore/notAfter), the subject CommonName, and
 //! the subjectAltName dNSName entries — plus it captures the signature algorithm
-//! OID and the raw subjectPublicKeyInfo so a future signature-verification layer
-//! can be bolted on without re-parsing.
+//! OID and the raw subjectPublicKeyInfo so the signature-verification layer
+//! ([`tls_sigverify`](super::tls_sigverify)) can consume them without re-parsing.
 //!
-//! What it deliberately does NOT do: verify the certificate signature or build a
-//! chain to a trust anchor. Those require RSA/ECDSA primitives that this
-//! from-scratch stack does not (yet) have. Because of that, [`verify`] never
-//! reports a peer as cryptographically `authenticated`; callers that require
-//! authentication must fail closed. This is intentional: silently trusting an
-//! unverified certificate is worse than an explicit, queryable "unauthenticated"
-//! verdict.
+//! What this module deliberately does NOT do by itself: verify the certificate
+//! signature or build a chain to a trust anchor. Those steps live elsewhere —
+//! the `CertificateVerify` signature is checked by
+//! [`tls_sigverify`](super::tls_sigverify), and the chain is validated against
+//! the Mozilla root program by [`tls_trust`](super::tls_trust). [`verify`] here
+//! therefore fills in only the hostname + validity fields and leaves
+//! `signature_verified`/`chain_verified`/`authenticated` for the handshake layer
+//! to complete. A peer is reported `authenticated` only once hostname, validity,
+//! chain, and signature have all passed; callers that require authentication
+//! must fail closed otherwise.
 
 /// Parsed subset of an X.509 certificate.
 #[derive(Debug, Clone, Default)]
@@ -334,14 +337,17 @@ fn civil_to_unix(year: i64, month: i64, day: i64, hour: i64, min: i64, sec: i64)
 
 /// The outcome of examining a peer certificate. `authenticated` is the only
 /// field callers should gate real trust on. [`verify`] fills in the hostname
-/// and validity checks and leaves `signature_verified`/`authenticated` false;
-/// the handshake layer (`tls_sigverify` via `tls_handshake`) performs the
-/// `CertificateVerify` signature check and upgrades the verdict on success.
+/// and validity checks and leaves `signature_verified`/`chain_verified`/
+/// `authenticated` false; the handshake layer performs the `CertificateVerify`
+/// signature check ([`tls_sigverify`](super::tls_sigverify)) and the chain build
+/// ([`tls_trust`](super::tls_trust)) and upgrades the verdict on success.
 #[derive(Debug, Clone)]
 pub struct CertVerdict {
     pub hostname_matched: bool,
     pub time_valid: bool,
     pub signature_verified: bool,
+    /// True once the leaf has been shown to chain to a trusted root.
+    pub chain_verified: bool,
     pub authenticated: bool,
     pub reason: String,
 }
@@ -356,7 +362,8 @@ pub fn verify(cert: &ParsedCertificate, hostname: &str, now_unix: i64) -> CertVe
     let time_valid = now_unix >= cert.not_before && now_unix <= cert.not_after;
     let hostname_matched = matches_hostname(cert, hostname);
     let signature_verified = false; // completed later by the handshake layer
-    let authenticated = signature_verified && time_valid && hostname_matched;
+    let chain_verified = false; // completed later by tls_trust
+    let authenticated = signature_verified && chain_verified && time_valid && hostname_matched;
 
     let reason = if !time_valid {
         format!("certificate not within validity window (now={now_unix})")
@@ -366,7 +373,14 @@ pub fn verify(cert: &ParsedCertificate, hostname: &str, now_unix: i64) -> CertVe
         "hostname and validity OK; signature/chain not verified".to_string()
     };
 
-    CertVerdict { hostname_matched, time_valid, signature_verified, authenticated, reason }
+    CertVerdict {
+        hostname_matched,
+        time_valid,
+        signature_verified,
+        chain_verified,
+        authenticated,
+        reason,
+    }
 }
 
 /// True if `hostname` matches the cert's SAN dNSNames (or CN as legacy fallback).

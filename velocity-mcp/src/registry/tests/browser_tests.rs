@@ -56,30 +56,27 @@ fn browser_session_wait_protocol_round_trip() {
 
     std::thread::spawn(move || {
         let mut idx = 0;
-        loop {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let _ = read_http_request(&mut stream);
-                let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
-                let response = if idx == 0 {
-                    format!(
+        while let Ok((mut stream, _)) = listener.accept() {
+            let _ = read_http_request(&mut stream);
+            let body =
+                "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
+            let response = if idx == 0 {
+                format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     )
-                } else {
-                    format!(
+            } else {
+                format!(
                         "HTTP/1.1 200 OK\r\nX-Velocity-Protocol-Events: event_stream|open|{0}events|connected;websocket|frame|{0}ws|hello\r\nContent-Length: {1}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{2}",
                         response_url,
                         body.len(),
                         body
                     )
-                };
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
-                idx += 1;
-            } else {
-                break;
-            }
+            };
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            idx += 1;
         }
     });
 
@@ -119,29 +116,26 @@ fn browser_session_wait_storage_round_trip() {
 
     std::thread::spawn(move || {
         let mut idx = 0;
-        loop {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let _ = read_http_request(&mut stream);
-                let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
-                let response = if idx == 0 {
-                    format!(
+        while let Ok((mut stream, _)) = listener.accept() {
+            let _ = read_http_request(&mut stream);
+            let body =
+                "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
+            let response = if idx == 0 {
+                format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     )
-                } else {
-                    format!(
+            } else {
+                format!(
                         "HTTP/1.1 200 OK\r\nX-Velocity-Session-Storage: csrf=token123\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     )
-                };
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
-                idx += 1;
-            } else {
-                break;
-            }
+            };
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            idx += 1;
         }
     });
 
@@ -182,30 +176,27 @@ fn browser_session_wait_stream_complete_round_trip() {
 
     std::thread::spawn(move || {
         let mut idx = 0;
-        loop {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let _ = read_http_request(&mut stream);
-                let body = "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
-                let response = if idx == 0 {
-                    format!(
+        while let Ok((mut stream, _)) = listener.accept() {
+            let _ = read_http_request(&mut stream);
+            let body =
+                "<html><head><title>Dashboard</title></head><body><p>Ready</p></body></html>";
+            let response = if idx == 0 {
+                format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     )
-                } else {
-                    format!(
+            } else {
+                format!(
                         "HTTP/1.1 200 OK\r\nX-Velocity-Protocol-Events: event_stream|open|{0}events|connected;event_stream|complete|{0}events|stream complete\r\nContent-Length: {1}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{2}",
                         response_url,
                         body.len(),
                         body
                     )
-                };
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
-                idx += 1;
-            } else {
-                break;
-            }
+            };
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            idx += 1;
         }
     });
 
@@ -359,22 +350,18 @@ fn test_web_navigate_native_parser() {
     let url = format!("http://127.0.0.1:{}/", port);
 
     std::thread::spawn(move || {
-        loop {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 1024];
-                let _ = stream.read(&mut buf);
+        while let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
 
-                let body = "<html><head><title>Egui Test</title></head><body><a href=\"/button\">Click Me</a></body></html>";
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
-            } else {
-                break;
-            }
+            let body = "<html><head><title>Egui Test</title></head><body><a href=\"/button\">Click Me</a></body></html>";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
         }
     });
 
@@ -393,8 +380,7 @@ fn test_web_navigate_native_parser() {
     assert!(compact.contains("\"title\": \"Egui Test\""));
     assert!(compact.contains("\"element_count\": 1"));
 
-    let snapshots =
-        call_tool_in_workspace(&root, "browser_list_snapshots", &json!({})).unwrap();
+    let snapshots = call_tool_in_workspace(&root, "browser_list_snapshots", &json!({})).unwrap();
     assert!(snapshots.contains(&url));
     assert!(snapshots.contains("Egui Test"));
 }

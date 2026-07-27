@@ -155,7 +155,7 @@ fn wa_virtual_desktop_script_generation() {
     assert!(switch_script.contains("keybd_event"));
     assert!(switch_script.contains("targetIdx = 2"));
 
-    let create_script = build_create_desktop_script(Some("Work".into()));
+    let create_script = build_create_desktop_script(Some("Work"));
     assert!(create_script.contains("VDCreate"));
     assert!(create_script.contains("0x44")); // D key
 

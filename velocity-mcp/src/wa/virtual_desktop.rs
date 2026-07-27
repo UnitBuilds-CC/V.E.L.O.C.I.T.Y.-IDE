@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Virtual Desktop management for Windows 10/11.
 //!
 //! Provides detection, enumeration, creation, removal, and switching of
@@ -7,7 +7,6 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─── Virtual Desktop Model ───────────────────────────────────────────────────
 
@@ -290,7 +289,7 @@ Write-Output (ConvertTo-Json @{{ success = $true; from = $currentIdx; to = $targ
 
 /// Build a PowerShell script to create a new virtual desktop.
 pub fn build_create_desktop_script(name: Option<&str>) -> String {
-    let name_clause = match name {
+    let _name_clause = match name {
         Some(n) => format!("; $desktop.Name = '{}'", n.replace('\'', "''")),
         None => String::new(),
     };

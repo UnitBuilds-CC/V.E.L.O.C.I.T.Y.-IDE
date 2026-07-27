@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Screenshot capture and visual verification for Windows desktop automation.
 //!
 //! Provides screen capture via Win32 GDI (BitBlt), image comparison using
@@ -6,9 +6,9 @@
 //! assertions for verifying UI state when accessibility tree is insufficient.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─── Screenshot Capture ──────────────────────────────────────────────────────
 

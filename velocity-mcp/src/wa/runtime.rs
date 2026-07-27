@@ -693,7 +693,7 @@ mod tests {
             0,
             |snapshot_name, step| {
                 if step.action == "click" {
-                    Err(IoError::new(ErrorKind::Other, "required action failed").into())
+                    Err(IoError::other("required action failed").into())
                 } else {
                     Ok(fake_action_report("desktop-auth", snapshot_name, step))
                 }

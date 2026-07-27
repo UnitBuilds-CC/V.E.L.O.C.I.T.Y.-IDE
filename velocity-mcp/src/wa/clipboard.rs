@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Clipboard management for Windows desktop automation.
 //!
 //! Provides read/write access to the system clipboard supporting text, image,
@@ -297,6 +297,7 @@ mod native {
     use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
     use windows::Win32::System::DataExchange::*;
     use windows::Win32::System::Memory::*;
+    use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
     // Clipboard format constants
     const CF_UNICODETEXT: u32 = 13;
@@ -340,7 +341,31 @@ mod native {
             // Check for files
             if IsClipboardFormatAvailable(CF_HDROP).is_ok() {
                 formats.push("CF_HDROP".to_string());
-                // File extraction would require DragQueryFile - simplified for now
+                if let Ok(handle) = GetClipboardData(CF_HDROP) {
+                    // The CF_HDROP handle is an HGLOBAL to a DROPFILES struct;
+                    // DragQueryFileW walks it for us (it locks internally).
+                    let hdrop = HDROP(handle.0 as *mut _);
+                    // Index 0xFFFFFFFF asks for the file count.
+                    let count = DragQueryFileW(hdrop, u32::MAX, None);
+                    let mut files = Vec::with_capacity(count as usize);
+                    for i in 0..count {
+                        // A null buffer returns the required length in UTF-16
+                        // code units (excluding the terminating NUL).
+                        let needed = DragQueryFileW(hdrop, i, None);
+                        if needed == 0 {
+                            continue;
+                        }
+                        let mut buf = vec![0u16; needed as usize + 1];
+                        let written = DragQueryFileW(hdrop, i, Some(&mut buf));
+                        if written > 0 {
+                            let s = String::from_utf16_lossy(&buf[..written as usize]);
+                            files.push(PathBuf::from(s));
+                        }
+                    }
+                    if !files.is_empty() {
+                        content = ClipboardContent::Files(files);
+                    }
+                }
             }
 
             let _ = CloseClipboard();
@@ -575,7 +600,7 @@ mod tests {
 
     #[test]
     fn clipboard_content_variants() {
-        let contents = vec![
+        let contents = [
             ClipboardContent::Text("hello".to_string()),
             ClipboardContent::Html { html: "<b>bold</b>".to_string(), source_url: None },
             ClipboardContent::Rtf("{\\rtf1}".to_string()),

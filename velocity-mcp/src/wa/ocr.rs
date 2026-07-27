@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! OCR/text recognition for Windows desktop automation.
 //!
 //! Provides text extraction from screen regions when UIAutomation tree
@@ -7,7 +7,6 @@
 //! PowerShell for zero external dependencies.
 
 use std::io::Write;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 

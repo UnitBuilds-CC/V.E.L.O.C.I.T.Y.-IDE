@@ -253,7 +253,7 @@ mod tests {
         let mut children = vec![make_box(1, 100.0, 50.0), make_box(2, 100.0, 50.0)];
         FlexLayoutEngine::compute_flex_children(&parent, &mut children, FlexDirection::RowReverse);
         // In reverse, second item should be positioned first (rightmost)
-        assert!(children[1].x < children[0].x || children[0].x > children[1].x);
+        assert!(children[1].x < children[0].x);
     }
 
     #[test]

@@ -49,6 +49,9 @@ pub fn run_agent_reasoning_loop(
 
     // Phase 2: Workspace checkpointing for safe, reversible tool operations
     let mut checkpoint_mgr = CheckpointManager::new(workspace_root);
+    // Checkpoint created before the most recent file-modifying batch, so a
+    // fully-failed batch can be rolled back.
+    let mut last_checkpoint_id: Option<usize> = None;
 
     // Phase 3: Persistent memory for cross-session learning
     let mut memory = PersistentMemory::open(workspace_root);
@@ -734,6 +737,7 @@ pub fn run_agent_reasoning_loop(
             if has_file_mod && checkpoint_mgr.enabled {
                 let label = format!("before tool batch (loop {})", loop_count);
                 if let Some(cp_id) = checkpoint_mgr.checkpoint(&label) {
+                    last_checkpoint_id = Some(cp_id);
                     ui_tx
                         .send(AgentToUiMessage::StatusUpdate(format!(
                             "Checkpoint #{} created: {}",
@@ -946,6 +950,32 @@ pub fn run_agent_reasoning_loop(
             }
 
             if any_error {
+                // Phase 2: a batch that produced errors and no successes left the
+                // workspace in a bad state (e.g. a failed run_command with partial
+                // side effects). Roll back to the pre-batch checkpoint so broken
+                // changes don't accumulate across loops.
+                if !any_success {
+                    if let Some(cp_id) = last_checkpoint_id.take() {
+                        match checkpoint_mgr.restore(cp_id) {
+                            Ok(()) => {
+                                ui_tx
+                                    .send(AgentToUiMessage::StatusUpdate(format!(
+                                        "Batch failed — rolled back to checkpoint #{}.",
+                                        cp_id
+                                    )))
+                                    .ok();
+                            }
+                            Err(e) => {
+                                ui_tx
+                                    .send(AgentToUiMessage::StatusUpdate(format!(
+                                        "Rollback to checkpoint #{} failed: {}",
+                                        cp_id, e
+                                    )))
+                                    .ok();
+                            }
+                        }
+                    }
+                }
                 write_handover_nda(
                     workspace_root,
                     "tool_error",
@@ -1025,15 +1055,27 @@ pub fn run_agent_reasoning_loop(
     // Phase 3: Persist memory to disk
     let _ = memory.save();
 
-    // Phase 2: Report checkpoint status
+    // Phase 2: Report checkpoint status, then tear down the session's snapshots.
     let cp_count = checkpoint_mgr.count();
     if cp_count > 0 {
-        ui_tx
-            .send(AgentToUiMessage::StatusUpdate(format!(
-                "Session complete. {} checkpoint(s) available for restore.",
+        let last_id = checkpoint_mgr.list().last().map(|c| c.id);
+        let diff_summary = last_id
+            .and_then(|id| checkpoint_mgr.diff_since(id).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let msg = match diff_summary {
+            Some(diff) => format!(
+                "Session complete. {} checkpoint(s) taken; changes since the last one:\n{}",
+                cp_count, diff
+            ),
+            None => format!(
+                "Session complete. {} checkpoint(s) taken; no net changes since the last one.",
                 cp_count
-            )))
-            .ok();
+            ),
+        };
+        ui_tx.send(AgentToUiMessage::StatusUpdate(msg)).ok();
+        // Snapshots are dangling git commits reclaimed by gc; drop our tracking.
+        checkpoint_mgr.cleanup();
     }
 
     if sitemap_needed {

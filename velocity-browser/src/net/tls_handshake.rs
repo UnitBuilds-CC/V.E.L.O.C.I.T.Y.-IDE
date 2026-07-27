@@ -463,10 +463,25 @@ impl Tls13Handshake {
                 }
                 HANDSHAKE_CERTIFICATE => {
                     self.transcript.extend_from_slice(full_msg);
-                    // Parse the leaf certificate and record a trust verdict.
-                    if let Some(leaf) = extract_leaf_certificate(&full_msg[4..]) {
+                    // Parse the leaf and validate the presented chain to a root.
+                    let chain = extract_all_certificates(&full_msg[4..]);
+                    if let Some(leaf) = chain.first() {
                         if let Ok(parsed) = x509::parse_certificate(leaf) {
-                            let verdict = x509::verify(&parsed, &self.hostname, self.now_unix);
+                            let mut verdict = x509::verify(&parsed, &self.hostname, self.now_unix);
+                            // Build and validate a chain to a trusted root using
+                            // rustls-webpki + the Mozilla root program.
+                            match crate::net::tls_trust::verify_chain_to_root(
+                                &chain,
+                                self.now_unix,
+                            ) {
+                                Ok(()) => verdict.chain_verified = true,
+                                Err(e) => {
+                                    verdict.chain_verified = false;
+                                    if verdict.time_valid && verdict.hostname_matched {
+                                        verdict.reason = format!("chain not trusted: {e}");
+                                    }
+                                }
+                            }
                             self.peer_certificate = Some(parsed);
                             self.cert_verdict = Some(verdict);
                         } else {
@@ -501,10 +516,17 @@ impl Tls13Handshake {
                             // validity also passed.
                             if let Some(v) = self.cert_verdict.as_mut() {
                                 v.signature_verified = true;
-                                v.authenticated = v.hostname_matched && v.time_valid;
+                                v.authenticated =
+                                    v.hostname_matched && v.time_valid && v.chain_verified;
                                 if v.authenticated {
                                     v.reason =
-                                        "hostname, validity and signature verified".to_string();
+                                        "hostname, validity, chain and signature verified"
+                                            .to_string();
+                                } else if !v.chain_verified {
+                                    v.reason = format!(
+                                        "signature valid but chain not trusted: {}",
+                                        v.reason
+                                    );
                                 }
                             }
                         }
@@ -736,42 +758,51 @@ fn unparseable_verdict() -> CertVerdict {
         hostname_matched: false,
         time_valid: false,
         signature_verified: false,
+        chain_verified: false,
         authenticated: false,
         reason: "certificate missing or unparseable".to_string(),
     }
 }
 
-/// Extract the leaf certificate DER from a TLS 1.3 Certificate message body
-/// (RFC 8446 §4.4.2), i.e. the handshake payload with the 4-byte header removed.
-fn extract_leaf_certificate(body: &[u8]) -> Option<&[u8]> {
-    // struct { opaque certificate_request_context<0..2^8-1>;
-    //          CertificateEntry certificate_list<0..2^24-1>; }
+/// Extract every certificate DER (leaf first, then intermediates) from a TLS
+/// 1.3 Certificate message body (RFC 8446 §4.4.2). Returns an empty vec on
+/// malformed input so the caller fails closed.
+fn extract_all_certificates(body: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
     if body.is_empty() {
-        return None;
+        return out;
     }
     let ctx_len = body[0] as usize;
     let mut off = 1 + ctx_len;
     if off + 3 > body.len() {
-        return None;
+        return out;
     }
     let list_len =
         ((body[off] as usize) << 16) | ((body[off + 1] as usize) << 8) | body[off + 2] as usize;
     off += 3;
     let list_end = off + list_len;
     if list_end > body.len() {
-        return None;
+        return out;
     }
-    // First CertificateEntry: opaque cert_data<1..2^24-1> then extensions<0..2^16-1>.
-    if off + 3 > body.len() {
-        return None;
+    // Each CertificateEntry: opaque cert_data<1..2^24-1> then extensions<0..2^16-1>.
+    while off + 3 <= list_end {
+        let cert_len = ((body[off] as usize) << 16)
+            | ((body[off + 1] as usize) << 8)
+            | body[off + 2] as usize;
+        off += 3;
+        if off + cert_len > list_end {
+            break;
+        }
+        out.push(body[off..off + cert_len].to_vec());
+        off += cert_len;
+        // Skip the per-entry extensions block.
+        if off + 2 > list_end {
+            break;
+        }
+        let ext_len = ((body[off] as usize) << 8) | body[off + 1] as usize;
+        off += 2 + ext_len;
     }
-    let cert_len =
-        ((body[off] as usize) << 16) | ((body[off + 1] as usize) << 8) | body[off + 2] as usize;
-    off += 3;
-    if off + cert_len > body.len() {
-        return None;
-    }
-    Some(&body[off..off + cert_len])
+    out
 }
 
 /// Generate 32 pseudo-random bytes for key generation.
@@ -895,13 +926,43 @@ mod tests {
     fn extracts_leaf_from_certificate_message() {
         let leaf = b"\x30\x03\x02\x01\x05"; // arbitrary DER-ish bytes
         let body = cert_message_body(leaf);
-        assert_eq!(extract_leaf_certificate(&body), Some(&leaf[..]));
+        let chain = extract_all_certificates(&body);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0], leaf.to_vec());
     }
 
     #[test]
-    fn extract_leaf_rejects_truncated() {
-        assert_eq!(extract_leaf_certificate(&[]), None);
-        assert_eq!(extract_leaf_certificate(&[0x00, 0x00, 0x00, 0x10]), None);
+    fn extract_all_rejects_truncated() {
+        assert!(extract_all_certificates(&[]).is_empty());
+        assert!(extract_all_certificates(&[0x00, 0x00, 0x00, 0x10]).is_empty());
+    }
+
+    #[test]
+    fn extracts_full_chain_leaf_first() {
+        // Two entries: leaf then one intermediate.
+        let leaf = b"\x30\x03\x02\x01\x05";
+        let inter = b"\x30\x04\x02\x02\x01\x02";
+        let mut entries = Vec::new();
+        for c in [&leaf[..], &inter[..]] {
+            let clen = c.len();
+            entries.push((clen >> 16) as u8);
+            entries.push((clen >> 8) as u8);
+            entries.push(clen as u8);
+            entries.extend_from_slice(c);
+            entries.extend_from_slice(&[0x00, 0x00]); // empty extensions
+        }
+        let mut body = Vec::new();
+        body.push(0x00); // empty certificate_request_context
+        let llen = entries.len();
+        body.push((llen >> 16) as u8);
+        body.push((llen >> 8) as u8);
+        body.push(llen as u8);
+        body.extend_from_slice(&entries);
+
+        let chain = extract_all_certificates(&body);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0], leaf.to_vec());
+        assert_eq!(chain[1], inter.to_vec());
     }
 
     #[test]

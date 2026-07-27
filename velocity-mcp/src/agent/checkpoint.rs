@@ -1,11 +1,15 @@
 //! Agent workspace checkpointing for safe, reversible operations.
 //!
-//! Before each file-modifying tool call, the agent creates a lightweight
-//! git-based checkpoint. On failure, it can restore to the last good state.
+//! Before each file-modifying tool batch, the agent creates a lightweight
+//! git-based checkpoint. If the whole batch fails it rolls back to the last
+//! good state (see `run_agent_reasoning_loop`), and on a clean session exit the
+//! checkpoints are dropped.
 //!
-//! NOTE: Some restore/diff/cleanup entry points are part of the checkpoint API
-//! surface and are not yet invoked from the live agent loop.
-#![allow(dead_code)] // checkpoint API awaiting agent-loop integration
+//! Snapshots are taken with `git stash create`, which produces a dangling stash
+//! commit *without* mutating the working tree or the stash stack. The earlier
+//! implementation used `stash push` + `stash pop`, which dropped the very stash
+//! it created — leaving `restore` with nothing to apply.
+#![allow(dead_code)] // a few entry points (restore_latest, list) are public API used situationally
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -81,21 +85,20 @@ impl CheckpointManager {
     }
 
     /// Restore the workspace to a specific checkpoint.
-    /// This applies the stash entry back, reverting any changes made after.
+    /// Overwrites tracked files in the working tree with the snapshot's content.
     pub fn restore(&mut self, checkpoint_id: usize) -> Result<(), String> {
-        let info = self
+        let git_ref = self
             .checkpoints
             .iter()
             .find(|c| c.id == checkpoint_id)
-            .ok_or_else(|| format!("Checkpoint {} not found", checkpoint_id))?;
+            .ok_or_else(|| format!("Checkpoint {} not found", checkpoint_id))?
+            .git_ref
+            .clone();
 
-        // Reset working tree to the checkpoint state
-        // First, discard all current changes
-        self.run_git(&["checkout", "--", "."])?;
-
-        // Apply the stash entry (without dropping it)
-        let stash_ref = &info.git_ref;
-        self.run_git(&["stash", "apply", stash_ref])?;
+        // `git checkout <ref> -- .` rewrites every tracked path to the state it
+        // had in the snapshot commit (or HEAD when the tree was clean at
+        // checkpoint time), discarding the changes made after it.
+        self.run_git(&["checkout", &git_ref, "--", "."])?;
 
         Ok(())
     }
@@ -140,48 +143,37 @@ impl CheckpointManager {
 
     /// Drop all checkpoints (cleanup at end of session).
     pub fn cleanup(&mut self) {
-        // Drop stash entries we created (in reverse order to maintain indices)
-        for info in self.checkpoints.iter().rev() {
-            let _ = self.run_git(&["stash", "drop", &info.git_ref]);
-        }
+        // Snapshots created with `git stash create` are dangling commits: they
+        // are not on the stash stack and carry no refs, so git's gc reclaims
+        // them automatically. We only need to clear our own tracking.
         self.checkpoints.clear();
         self.next_id = 1;
     }
 
     // ─── Internal helpers ────────────────────────────────────────────────────
 
-    fn create_stash_checkpoint(&self, label: &str) -> Option<String> {
-        // Create a stash entry with a message (keeps working tree intact)
-        let stash_msg = format!("velocity-checkpoint: {}", label);
+    fn create_stash_checkpoint(&self, _label: &str) -> Option<String> {
+        // `git stash create` builds a stash commit and prints its SHA without
+        // touching the working tree or pushing onto the stash stack. That SHA is
+        // a stable snapshot we can later restore from via `git checkout <sha> -- .`.
         let output = Command::new("git")
-            .args(["stash", "push", "--keep-index", "-m", &stash_msg])
+            .args(["stash", "create"])
             .current_dir(&self.workspace_root)
             .output()
             .ok()?;
 
         if !output.status.success() {
-            // If stash fails (e.g., nothing to stash), use HEAD as reference
+            // Fall back to HEAD (e.g. detached/edge states) so restore still works.
             return Some("HEAD".to_string());
         }
 
-        // Immediately pop it back (we just wanted the stash entry as a snapshot)
-        let _ = Command::new("git")
-            .args(["stash", "pop"])
-            .current_dir(&self.workspace_root)
-            .output();
-
-        // Get the stash reference
-        let list_output = Command::new("git")
-            .args(["stash", "list", "--format=%gd", "-1"])
-            .current_dir(&self.workspace_root)
-            .output()
-            .ok()?;
-
-        let stash_ref = String::from_utf8_lossy(&list_output.stdout).trim().to_string();
-        if stash_ref.is_empty() {
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if sha.is_empty() {
+            // Nothing to stash: the working tree is clean, so HEAD *is* the
+            // restore point.
             Some("HEAD".to_string())
         } else {
-            Some(stash_ref)
+            Some(sha)
         }
     }
 
@@ -251,5 +243,52 @@ mod tests {
         };
         assert_eq!(info.id, 1);
         assert_eq!(info.dirty_files, 3);
+    }
+
+    /// End-to-end proof that a checkpoint can actually be restored. The previous
+    /// implementation popped the stash it created, so this would have failed.
+    /// Skips (passes trivially) when git is unavailable.
+    #[test]
+    fn checkpoint_restore_reverts_working_tree() {
+        fn git(dir: &Path, args: &[&str]) -> Option<bool> {
+            let out = Command::new("git").args(args).current_dir(dir).output().ok()?;
+            Some(out.status.success())
+        }
+
+        // Unique temp workspace.
+        let base = std::env::temp_dir().join(format!(
+            "velocity_cp_test_{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        if std::fs::create_dir_all(&base).is_err() {
+            return;
+        }
+        // git init + local identity (stash create builds a commit object).
+        if git(&base, &["init", "--quiet"]) != Some(true) {
+            let _ = std::fs::remove_dir_all(&base);
+            return; // git not available — skip.
+        }
+        let _ = git(&base, &["config", "user.email", "t@t.local"]);
+        let _ = git(&base, &["config", "user.name", "t"]);
+
+        let file = base.join("f.txt");
+        std::fs::write(&file, "original").unwrap();
+        assert_eq!(git(&base, &["add", "."]), Some(true));
+        assert_eq!(git(&base, &["commit", "-m", "init", "--quiet"]), Some(true));
+
+        // Modify, then checkpoint that state.
+        std::fs::write(&file, "checkpointed").unwrap();
+        let mut mgr = CheckpointManager::new(&base);
+        assert!(mgr.enabled);
+        let cp = mgr.checkpoint("before edit").expect("checkpoint created");
+
+        // Make a further (bad) edit, then roll back.
+        std::fs::write(&file, "broken edit").unwrap();
+        mgr.restore(cp).expect("restore succeeds");
+
+        let restored = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(restored, "checkpointed", "restore must revert the later edit");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

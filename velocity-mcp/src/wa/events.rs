@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Accessibility tree event subscription for Windows desktop automation.
 //!
 //! Provides event-driven UI change detection using Windows UIAutomation
@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 // ─── Event Types ─────────────────────────────────────────────────────────────
 
@@ -237,10 +237,6 @@ pub fn build_event_listener_script(subscription: &EventSubscription) -> String {
         .map(|w| format!("$windowFilter = '{}'", w.replace('\'', "''")))
         .unwrap_or_else(|| "$windowFilter = $null".to_string());
 
-    let has_focus = subscription.event_kinds.iter().any(|k| matches!(k, UiaEventKind::FocusChanged));
-    let has_structure = subscription.event_kinds.iter().any(|k| matches!(k, UiaEventKind::StructureChanged));
-    let has_property = subscription.event_kinds.iter().any(|k| matches!(k, UiaEventKind::PropertyChanged { .. }));
-
     format!(
         r#"
 $ErrorActionPreference = 'Stop'
@@ -294,7 +290,7 @@ ConvertTo-Json $result -Compress -Depth 4
 
 /// Build a script that watches for structure changes (element add/remove).
 pub fn build_structure_watch_script(process_id: Option<u32>, duration_ms: u64) -> String {
-    let pid_filter = process_id
+    let _pid_filter = process_id
         .map(|p| format!("-Filter \"ProcessId={}\"", p))
         .unwrap_or_default();
     format!(

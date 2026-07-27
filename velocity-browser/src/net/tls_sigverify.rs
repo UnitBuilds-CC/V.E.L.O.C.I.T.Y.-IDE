@@ -177,7 +177,9 @@ pub fn verify_certificate_verify(
 mod tests {
     use super::*;
     use ring::rand::SystemRandom;
-    use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING};
+    use ring::signature::{
+        EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING, ECDSA_P384_SHA384_ASN1_SIGNING,
+    };
 
     #[test]
     fn signed_content_has_correct_prefix_and_layout() {
@@ -268,6 +270,80 @@ mod tests {
         let mut tampered = body.clone();
         *tampered.last_mut().unwrap() ^= 0x01;
         assert!(verify_certificate_verify(&spki, &transcript_hash, &tampered).is_err());
+    }
+
+    /// The P-384 path uses a different `ring` algorithm and hash than P-256, so
+    /// exercise it end-to-end too rather than assuming the mapping is correct.
+    #[test]
+    fn ecdsa_p384_roundtrip_verifies_and_rejects_tampering() {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P384_SHA384_ASN1_SIGNING, &rng).unwrap();
+        let key_pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P384_SHA384_ASN1_SIGNING, pkcs8.as_ref(), &rng)
+                .unwrap();
+        let public_point = key_pair.public_key().as_ref();
+
+        let alg_id = der_seq(&[0x05, 0x00]);
+        let mut bit_string_payload = vec![0x00u8];
+        bit_string_payload.extend_from_slice(public_point);
+        let mut spki_inner = alg_id;
+        spki_inner.extend_from_slice(&der_tlv(TAG_BIT_STRING, &bit_string_payload));
+        let spki = der_seq(&spki_inner);
+        assert_eq!(spki_public_key_bytes(&spki).unwrap(), public_point);
+
+        let transcript_hash = [0x33u8; 48];
+        let signed = tls13_server_signed_content(&transcript_hash);
+        let sig = key_pair.sign(&rng, &signed).unwrap();
+
+        let mut body = vec![0x05, 0x03]; // ecdsa_secp384r1_sha384
+        let sig_bytes = sig.as_ref();
+        body.push((sig_bytes.len() >> 8) as u8);
+        body.push((sig_bytes.len() & 0xff) as u8);
+        body.extend_from_slice(sig_bytes);
+
+        let scheme = verify_certificate_verify(&spki, &transcript_hash, &body).unwrap();
+        assert_eq!(scheme, ECDSA_SECP384R1_SHA384);
+
+        let mut tampered = body.clone();
+        *tampered.last_mut().unwrap() ^= 0x01;
+        assert!(verify_certificate_verify(&spki, &transcript_hash, &tampered).is_err());
+    }
+
+    #[test]
+    fn scheme_name_maps_known_schemes_and_flags_unknown() {
+        assert_eq!(scheme_name(ECDSA_SECP256R1_SHA256), "ecdsa_secp256r1_sha256");
+        assert_eq!(scheme_name(ECDSA_SECP384R1_SHA384), "ecdsa_secp384r1_sha384");
+        assert_eq!(scheme_name(RSA_PSS_RSAE_SHA256), "rsa_pss_rsae_sha256");
+        assert_eq!(scheme_name(RSA_PKCS1_SHA512), "rsa_pkcs1_sha512");
+        assert_eq!(scheme_name([0x00, 0x00]), "unknown");
+    }
+
+    #[test]
+    fn read_tlv_parses_long_form_length() {
+        // 200-byte OCTET STRING encodes length as 0x81 0xC8 (long form, 1 byte).
+        let mut der = vec![0x04, 0x81, 0xC8];
+        der.extend(std::iter::repeat_n(0xAAu8, 200));
+        let (tag, contents, consumed) = read_tlv(&der).unwrap();
+        assert_eq!(tag, 0x04);
+        assert_eq!(contents.len(), 200);
+        assert_eq!(consumed, 203);
+        // A long-form length that overruns the buffer must be rejected.
+        assert!(read_tlv(&[0x04, 0x82, 0xFF, 0xFF, 0x00]).is_none());
+    }
+
+    #[test]
+    fn spki_public_key_bytes_rejects_malformed_inputs() {
+        // Not a SEQUENCE at the top level.
+        assert!(spki_public_key_bytes(&[0x02, 0x01, 0x00]).is_none());
+        // SEQUENCE whose second element is not a BIT STRING.
+        let alg_id = der_seq(&[0x05, 0x00]);
+        let mut inner = alg_id.clone();
+        inner.extend_from_slice(&der_tlv(0x04, &[0x01, 0x02])); // OCTET STRING, not BIT STRING
+        assert!(spki_public_key_bytes(&der_seq(&inner)).is_none());
+        // BIT STRING present but empty (no unused-bits octet).
+        let mut inner2 = alg_id;
+        inner2.extend_from_slice(&der_tlv(TAG_BIT_STRING, &[]));
+        assert!(spki_public_key_bytes(&der_seq(&inner2)).is_none());
     }
 
     // --- tiny DER builders for the roundtrip test --------------------------

@@ -156,7 +156,7 @@ mod tests {
         let list = vec![
             DrawCommand::DrawImage { src: "logo.png".to_string(), dx: 10.0, dy: 20.0, dw: 100.0, dh: 50.0 },
             DrawCommand::FillRect { x: 0.0, y: 0.0, w: 50.0, h: 50.0, style: "red".to_string() },
-            DrawCommand::Arc { x: 25.0, y: 25.0, radius: 10.0, start_angle: 0.0, end_angle: 6.28 },
+            DrawCommand::Arc { x: 25.0, y: 25.0, radius: 10.0, start_angle: 0.0, end_angle: std::f64::consts::TAU },
         ];
         let canvas = CanvasElement::with_display_list("c2", 200, 200, list);
         let doc = CanvasExtractor::extract_canvases_document(&[canvas]);

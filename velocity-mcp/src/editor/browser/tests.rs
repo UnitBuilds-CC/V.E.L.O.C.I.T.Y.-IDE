@@ -1,10 +1,7 @@
-#[cfg(test)]
-mod tests {
-    #[allow(unused_imports)]
-    use super::*;
+#[allow(unused_imports)]
+use super::*;
 
-    #[test]
-    fn test_subpackage_exports() {
-        assert_eq!(2 + 2, 4);
-    }
+#[test]
+fn test_subpackage_exports() {
+    assert_eq!(2 + 2, 4);
 }

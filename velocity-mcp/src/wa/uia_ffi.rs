@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Direct COM/UIA FFI bindings for high-performance Windows automation.
 //!
 //! Provides Rust-native bindings to Windows UIAutomation COM interfaces,
@@ -12,7 +12,6 @@
 //! - Performance: ~100x faster than PowerShell for single-element lookups
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 // ─── UIA Element Model ───────────────────────────────────────────────────────
@@ -145,7 +144,7 @@ impl UiaPattern {
 
 /// In-memory cache of the UIAutomation tree for a specific process/window.
 /// Allows fast lookups without repeated COM calls.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CachedUiaTree {
     /// Root element of the cached tree.
     pub root: Option<CachedUiaElement>,
@@ -751,14 +750,18 @@ fn invoke_pattern_com(
         IUIAutomationInvokePattern, IUIAutomationValuePattern,
         IUIAutomationTogglePattern, IUIAutomationExpandCollapsePattern,
         IUIAutomationSelectionItemPattern, IUIAutomationRangeValuePattern,
-        IUIAutomationScrollPattern,
+        IUIAutomationScrollPattern, IUIAutomationTransformPattern,
+        IUIAutomationScrollItemPattern, IUIAutomationWindowPattern,
         UIA_AutomationIdPropertyId, UIA_NamePropertyId,
         UIA_InvokePatternId, UIA_ValuePatternId, UIA_TogglePatternId,
         UIA_ExpandCollapsePatternId, UIA_SelectionItemPatternId,
         UIA_RangeValuePatternId, UIA_ScrollPatternId,
+        UIA_TransformPatternId, UIA_ScrollItemPatternId, UIA_WindowPatternId,
         TreeScope_Descendants, ScrollAmount_NoAmount,
         ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement,
         ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement,
+        WindowVisualState_Normal, WindowVisualState_Maximized,
+        WindowVisualState_Minimized,
     };
     use windows::core::{BSTR, Interface, VARIANT};
 
@@ -854,6 +857,65 @@ fn invoke_pattern_com(
             unsafe { scroll.Scroll(h, v) }
                 .map_err(|e| format!("Scroll: {:?}", e))?;
         }
+        UiaPattern::Transform => {
+            let spec = value.unwrap_or("");
+            let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TransformPatternId) }
+                .map_err(|e| format!("GetTransformPattern: {:?}", e))?;
+            let tf: IUIAutomationTransformPattern = pattern_obj.cast()
+                .map_err(|e| format!("Cast TransformPattern: {:?}", e))?;
+            let (op, args) = spec.split_once(':').ok_or_else(|| {
+                format!("Transform expects 'move:X,Y' | 'resize:W,H' | 'rotate:DEG', got '{spec}'")
+            })?;
+            match op.trim().to_lowercase().as_str() {
+                "move" => {
+                    let (x, y) = args
+                        .split_once(',')
+                        .ok_or_else(|| "Transform move expects 'X,Y'".to_string())?;
+                    let x: f64 = x.trim().parse().map_err(|_| "invalid move X".to_string())?;
+                    let y: f64 = y.trim().parse().map_err(|_| "invalid move Y".to_string())?;
+                    unsafe { tf.Move(x, y) }.map_err(|e| format!("Move: {:?}", e))?;
+                }
+                "resize" => {
+                    let (w, h) = args
+                        .split_once(',')
+                        .ok_or_else(|| "Transform resize expects 'W,H'".to_string())?;
+                    let w: f64 = w.trim().parse().map_err(|_| "invalid resize W".to_string())?;
+                    let h: f64 = h.trim().parse().map_err(|_| "invalid resize H".to_string())?;
+                    unsafe { tf.Resize(w, h) }.map_err(|e| format!("Resize: {:?}", e))?;
+                }
+                "rotate" => {
+                    let deg: f64 = args
+                        .trim()
+                        .parse()
+                        .map_err(|_| "invalid rotate degrees".to_string())?;
+                    unsafe { tf.Rotate(deg) }.map_err(|e| format!("Rotate: {:?}", e))?;
+                }
+                other => return Err(format!("unknown Transform op '{other}'")),
+            }
+        }
+        UiaPattern::ScrollItem => {
+            let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollItemPatternId) }
+                .map_err(|e| format!("GetScrollItemPattern: {:?}", e))?;
+            let si: IUIAutomationScrollItemPattern = pattern_obj.cast()
+                .map_err(|e| format!("Cast ScrollItemPattern: {:?}", e))?;
+            unsafe { si.ScrollIntoView() }
+                .map_err(|e| format!("ScrollIntoView: {:?}", e))?;
+        }
+        UiaPattern::Window => {
+            let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_WindowPatternId) }
+                .map_err(|e| format!("GetWindowPattern: {:?}", e))?;
+            let win: IUIAutomationWindowPattern = pattern_obj.cast()
+                .map_err(|e| format!("Cast WindowPattern: {:?}", e))?;
+            match value.unwrap_or("Normal") {
+                "Close" => unsafe { win.Close() }.map_err(|e| format!("Close: {:?}", e))?,
+                "Maximize" => unsafe { win.SetWindowVisualState(WindowVisualState_Maximized) }
+                    .map_err(|e| format!("Maximize: {:?}", e))?,
+                "Minimize" => unsafe { win.SetWindowVisualState(WindowVisualState_Minimized) }
+                    .map_err(|e| format!("Minimize: {:?}", e))?,
+                _ => unsafe { win.SetWindowVisualState(WindowVisualState_Normal) }
+                    .map_err(|e| format!("Normal: {:?}", e))?,
+            }
+        }
         _ => {
             return Err(format!("Pattern {:?} not yet supported via direct COM", pattern));
         }
@@ -877,6 +939,9 @@ fn pattern_supported_via_com(pattern: UiaPattern) -> bool {
             | UiaPattern::SelectionItem
             | UiaPattern::RangeValue
             | UiaPattern::Scroll
+            | UiaPattern::Transform
+            | UiaPattern::ScrollItem
+            | UiaPattern::Window
     )
 }
 
@@ -910,19 +975,38 @@ fn build_tree_powershell(
     max_children: u32,
 ) -> Result<CachedUiaTree, String> {
     let script = build_capture_tree_script(pid, max_depth, max_children);
-    let result = super::process_mgmt::ProcessManager::launch(
-        &super::process_mgmt::LaunchConfig::new("powershell")
-            .arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-Command")
-            .arg(&script),
-    );
-    if !result.success {
-        return Err(format!("Tree capture failed: {}", result.detail));
+    // The capture script emits the tree as JSON on stdout, so we must run it
+    // with stdout captured (ProcessManager::launch is fire-and-forget and does
+    // not capture output).
+    let output = run_ps_capture(&script)?;
+    parse_tree_from_ps_output(&output, pid)
+}
+
+/// Run a PowerShell script and capture its stdout, returning an error on a
+/// non-zero exit. Mirrors the `run_ps_script` helpers used by the other `wa`
+/// PowerShell fallbacks (piping the script via stdin so `-Command -` executes
+/// on EOF rather than blocking).
+fn run_ps_capture(script: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn powershell: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
-    parse_tree_from_ps_output(&script, pid)
+    let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("PowerShell error: {}", stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Build a PowerShell script to capture the UIA tree for a process.
@@ -1264,29 +1348,110 @@ fn parse_transform_action(spec: &str) -> Option<String> {
     }
 }
 
-/// Parse tree output from PowerShell (simplified - builds a minimal tree).
-fn parse_tree_from_ps_output(_output: &str, pid: u32) -> Result<CachedUiaTree, String> {
-    // In the full implementation, this would parse the JSON output from
-    // build_capture_tree_script. For now, build a minimal tree that can
-    // be populated by subsequent find operations.
+/// Parse the JSON tree emitted by [`build_capture_tree_script`] into a
+/// [`CachedUiaTree`]. The script uses `ConvertTo-Json`, which has two quirks we
+/// tolerate: a single-element collection is serialized as the bare element (not
+/// a one-element array), and an empty collection may serialize as `null`. Both
+/// `supported_patterns` and `children` are therefore accepted as an array, a
+/// lone value, or absent.
+fn parse_tree_from_ps_output(output: &str, pid: u32) -> Result<CachedUiaTree, String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return Err("empty UIA capture output".to_string());
+    }
+    let json: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| format!("parse UIA JSON: {e}"))?;
+    if let Some(err) = json.get("error").and_then(|v| v.as_str()) {
+        return Err(format!("UIA capture: {err}"));
+    }
+    let root = parse_uia_element(&json, 0, 0)
+        .ok_or_else(|| "UIA capture: malformed root element".to_string())?;
     let mut tree = CachedUiaTree::new(pid, Duration::from_secs(30));
-    tree.root = Some(CachedUiaElement {
-        runtime_id: vec![1],
-        automation_id: String::new(),
-        name: format!("Process {}", pid),
-        control_type: "Window".to_string(),
-        class_name: String::new(),
-        bounding_rect: UiaRect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 },
-        is_enabled: true,
-        is_offscreen: false,
-        process_id: pid,
-        supported_patterns: Vec::new(),
-        child_index: 0,
-        depth: 0,
-        children: Vec::new(),
-    });
+    tree.root = Some(root);
     tree.rebuild_indices();
     Ok(tree)
+}
+
+/// Recursively convert one JSON node into a [`CachedUiaElement`]. `depth` and
+/// `child_index` are assigned from the traversal (the script's own values are
+/// ignored) so indices are always internally consistent.
+fn parse_uia_element(
+    v: &serde_json::Value,
+    depth: u32,
+    child_index: u32,
+) -> Option<CachedUiaElement> {
+    let obj = v.as_object()?;
+    let get_str = |k: &str| {
+        obj.get(k)
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let get_f64 = |k: &str| obj.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let get_bool = |k: &str| obj.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+
+    // supported_patterns: array of names, a single name, or null. Unknown
+    // pattern names are ignored rather than failing the whole parse.
+    let mut supported_patterns = Vec::new();
+    match obj.get("supported_patterns") {
+        Some(serde_json::Value::Array(arr)) => {
+            for p in arr {
+                if let Some(pat) = p.as_str().and_then(UiaPattern::from_str) {
+                    supported_patterns.push(pat);
+                }
+            }
+        }
+        Some(serde_json::Value::String(s)) => {
+            if let Some(pat) = UiaPattern::from_str(s) {
+                supported_patterns.push(pat);
+            }
+        }
+        _ => {}
+    }
+
+    // children: array of nodes, a single node, or null.
+    let mut children = Vec::new();
+    match obj.get("children") {
+        Some(serde_json::Value::Array(arr)) => {
+            for (i, c) in arr.iter().enumerate() {
+                if let Some(child) = parse_uia_element(c, depth + 1, i as u32) {
+                    children.push(child);
+                }
+            }
+        }
+        Some(single @ serde_json::Value::Object(_)) => {
+            if let Some(child) = parse_uia_element(single, depth + 1, 0) {
+                children.push(child);
+            }
+        }
+        _ => {}
+    }
+
+    let process_id = obj.get("process_id").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    // The PowerShell tree does not expose a stable RuntimeId, so synthesize one
+    // from the traversal path; it is unique within a single captured tree.
+    let runtime_id = vec![depth as i32, child_index as i32];
+
+    Some(CachedUiaElement {
+        runtime_id,
+        automation_id: get_str("automation_id"),
+        name: get_str("name"),
+        control_type: get_str("control_type"),
+        class_name: get_str("class_name"),
+        bounding_rect: UiaRect {
+            x: get_f64("x"),
+            y: get_f64("y"),
+            width: get_f64("width"),
+            height: get_f64("height"),
+        },
+        is_enabled: get_bool("is_enabled"),
+        is_offscreen: get_bool("is_offscreen"),
+        process_id,
+        supported_patterns,
+        child_index,
+        depth,
+        children,
+    })
 }
 
 // ─── Hybrid Strategy ─────────────────────────────────────────────────────────
@@ -1435,12 +1600,14 @@ mod tests {
             UiaPattern::SelectionItem,
             UiaPattern::RangeValue,
             UiaPattern::Scroll,
+            UiaPattern::Transform,
+            UiaPattern::ScrollItem,
+            UiaPattern::Window,
         ] {
             assert!(pattern_supported_via_com(p), "{p:?} should be COM-wired");
         }
-        // Selection has no direct-COM arm and must route to PowerShell.
+        // Patterns with no direct-COM arm must route to PowerShell.
         assert!(!pattern_supported_via_com(UiaPattern::Selection));
-        assert!(!pattern_supported_via_com(UiaPattern::Transform));
         assert!(!pattern_supported_via_com(UiaPattern::Grid));
     }
 
@@ -1573,5 +1740,64 @@ mod tests {
             recommended_strategy("full_tree_capture"),
             ExecutionStrategy::PowerShell
         );
+    }
+
+    #[test]
+    fn parse_ps_output_builds_nested_tree_and_indices() {
+        // Mirrors ConvertTo-Json output, including the single-element quirks:
+        // the root's `children` is a real array, but the leaf's
+        // `supported_patterns` is a bare string (one supported pattern).
+        let json = r#"{
+            "automation_id": "main_window",
+            "name": "Login",
+            "control_type": "Window",
+            "class_name": "WinForm",
+            "x": 0, "y": 0, "width": 400, "height": 300,
+            "is_enabled": true, "is_offscreen": false,
+            "process_id": 4321,
+            "supported_patterns": ["Window"],
+            "child_index": 0, "depth": 0,
+            "children": [
+                {
+                    "automation_id": "btn_ok",
+                    "name": "OK",
+                    "control_type": "Button",
+                    "class_name": "Button",
+                    "x": 10, "y": 10, "width": 80, "height": 30,
+                    "is_enabled": true, "is_offscreen": false,
+                    "process_id": 4321,
+                    "supported_patterns": "Invoke",
+                    "child_index": 0, "depth": 1,
+                    "children": null
+                }
+            ]
+        }"#;
+        let tree = parse_tree_from_ps_output(json, 4321).expect("should parse");
+        let root = tree.root.as_ref().expect("root present");
+        assert_eq!(root.name, "Login");
+        assert_eq!(root.process_id, 4321);
+        assert_eq!(root.bounding_rect.width, 400.0);
+        assert_eq!(root.children.len(), 1);
+        let leaf = &root.children[0];
+        assert_eq!(leaf.automation_id, "btn_ok");
+        assert_eq!(leaf.depth, 1);
+        assert_eq!(leaf.supported_patterns, vec![UiaPattern::Invoke]);
+        // Indices are rebuilt from the parsed tree.
+        assert_eq!(tree.element_count, 2);
+        assert!(tree.id_index.contains_key("btn_ok"));
+        assert!(tree.id_index.contains_key("main_window"));
+    }
+
+    #[test]
+    fn parse_ps_output_reports_capture_error() {
+        let json = r#"{"error":"Process 999 not found"}"#;
+        let err = parse_tree_from_ps_output(json, 999).unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn parse_ps_output_rejects_empty_and_garbage() {
+        assert!(parse_tree_from_ps_output("", 1).is_err());
+        assert!(parse_tree_from_ps_output("not json", 1).is_err());
     }
 }

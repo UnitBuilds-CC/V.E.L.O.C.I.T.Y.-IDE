@@ -1,11 +1,11 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Process lifecycle management for Windows desktop automation.
 //!
 //! Provides process launching, termination, enumeration, and wait-for-exit
 //! capabilities via native Win32 API (zero PowerShell overhead).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 // ─── Process Model ───────────────────────────────────────────────────────────
@@ -292,10 +292,9 @@ impl ProcessManager {
 #[cfg(target_os = "windows")]
 mod native {
     use super::*;
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Diagnostics::ToolHelp::*;
     use windows::Win32::System::Threading::*;
-    use windows::Win32::UI::WindowsAndMessaging::*;
 
     // SYNCHRONIZE access right for WaitForSingleObject
     const SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x00100000);
@@ -603,7 +602,7 @@ mod tests {
 
     #[test]
     fn wait_condition_variants() {
-        let conditions = vec![
+        let conditions = [
             ProcessWaitCondition::Exit,
             ProcessWaitCondition::WindowAppears { title_contains: "test".to_string() },
             ProcessWaitCondition::Idle { cpu_threshold: 5.0, stable_seconds: 3 },

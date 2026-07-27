@@ -1,11 +1,9 @@
-#![allow(dead_code, unused_imports, unused_variables)]
+#![allow(dead_code)] // Reserved WA automation API surface; awaiting full MCP dispatch wiring.
 //! Window management for Windows desktop automation.
 //!
 //! Provides window enumeration, positional control (move, resize, minimize,
 //! maximize, restore, close), z-order management, and window state queries
 //! via direct Win32 API calls (zero PowerShell overhead).
-
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─── Window Info Model ───────────────────────────────────────────────────────
 
