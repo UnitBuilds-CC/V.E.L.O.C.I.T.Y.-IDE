@@ -14,7 +14,7 @@ use std::path::Path;
 
 pub use http::{ConnectorRequest, ConnectorResponse, PreparedRequest};
 pub use registry::ConnectorRegistry;
-pub use types::ConnectorConfig;
+pub use types::{AuthScheme, ConnectorConfig};
 
 use crate::security::secrets::SecretStore;
 

@@ -85,6 +85,7 @@ impl VelocityApp {
             Command { label: "Knowledge", category: "Panels", shortcut: None, action: |a| a.toggle_knowledge(), modes: &[] },
             Command { label: "Triggers", category: "Panels", shortcut: None, action: |a| a.toggle_triggers(), modes: &[] },
             Command { label: "Workflows", category: "Panels", shortcut: None, action: |a| a.toggle_workflows(), modes: &[] },
+            Command { label: "Governance", category: "Panels", shortcut: None, action: |a| a.toggle_governance(), modes: &[] },
             Command { label: "Find / Replace", category: "Edit", shortcut: Some("Ctrl+H"), action: |a| a.open_find_replace_active(), modes: &[] },
             Command { label: "Find", category: "Edit", shortcut: Some("Ctrl+F"), action: |a| a.open_find_active(), modes: &[] },
             Command { label: "Request Inline Suggestion", category: "Agent", shortcut: Some("Ctrl+Shift+I"), action: |a| a.request_inline_suggestion(), modes: &[] },
@@ -841,6 +842,11 @@ impl VelocityApp {
     /// Open the Workflow composer panel.
     pub fn toggle_workflows(&mut self) {
         self.toggle_panel(TabKind::Workflows);
+    }
+
+    /// Open the Governance panel (policy, approvals, secrets, connectors).
+    pub fn toggle_governance(&mut self) {
+        self.toggle_panel(TabKind::Governance);
     }
 
     pub fn toggle_left_sidebar(&mut self) {

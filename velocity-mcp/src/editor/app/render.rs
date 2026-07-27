@@ -239,6 +239,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Workflows => {
                 self.app.render_workflows_panel(ui);
             }
+            TabKind::Governance => {
+                self.app.render_governance_panel(ui);
+            }
             // Mode-specific panel tabs - real content from orchestrator/timeline data
             _ => {
                 let palette = self.app.palette();

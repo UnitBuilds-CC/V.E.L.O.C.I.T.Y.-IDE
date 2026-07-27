@@ -332,6 +332,30 @@ pub struct VelocityApp {
     pub workflow_step_prompt_input: String,
     /// Last workflow run result rendered in the Workflows panel run log.
     pub workflow_last_run: Option<crate::editor::workflow::WorkflowRun>,
+    /// Governance policy engine edited in the Governance panel.
+    pub policy: crate::editor::governance::PolicyEngine,
+    /// Approval queue shown in the Governance panel.
+    pub approvals: crate::editor::governance::ApprovalQueue,
+    /// Secret store (handles only, masked) shown in the Governance panel.
+    pub secrets: crate::security::secrets::SecretStore,
+    /// Connector registry shown/edited in the Governance panel.
+    pub connectors: crate::connectors::ConnectorRegistry,
+    /// Draft rule tool name in the Governance policy editor.
+    pub gov_rule_tool_input: String,
+    /// Draft rule path prefix in the Governance policy editor.
+    pub gov_rule_path_input: String,
+    /// Draft new secret name in the Governance secrets section.
+    pub gov_secret_name_input: String,
+    /// Draft new secret value in the Governance secrets section.
+    pub gov_secret_value_input: String,
+    /// Draft connector id in the Governance connectors section.
+    pub gov_connector_id_input: String,
+    /// Draft connector base URL in the Governance connectors section.
+    pub gov_connector_url_input: String,
+    /// Draft connector secret handle in the Governance connectors section.
+    pub gov_connector_secret_input: String,
+    /// Transient status line shown at the top of the Governance panel.
+    pub gov_status: String,
 }
 
 impl VelocityApp {
@@ -868,6 +892,18 @@ impl VelocityApp {
             workflow_step_args_input: String::new(),
             workflow_step_prompt_input: String::new(),
             workflow_last_run: None,
+            policy: crate::editor::governance::PolicyEngine::load(&workspace_root),
+            approvals: crate::editor::governance::ApprovalQueue::load(&workspace_root),
+            secrets: crate::security::secrets::SecretStore::load(&workspace_root),
+            connectors: crate::connectors::ConnectorRegistry::load(&workspace_root),
+            gov_rule_tool_input: String::new(),
+            gov_rule_path_input: String::new(),
+            gov_secret_name_input: String::new(),
+            gov_secret_value_input: String::new(),
+            gov_connector_id_input: String::new(),
+            gov_connector_url_input: String::new(),
+            gov_connector_secret_input: String::new(),
+            gov_status: String::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);

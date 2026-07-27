@@ -1244,6 +1244,327 @@ impl VelocityApp {
             }
         }
     }
+
+    pub fn render_governance_panel(&mut self, ui: &mut egui::Ui) {
+        use crate::editor::governance::{Decision, Rule, RuleEffect};
+        let palette = self.palette();
+        Self::tier3_header(
+            ui,
+            "Governance",
+            &format!(
+                "{} rule(s) · {} pending · {} secret(s) · {} connector(s)",
+                self.policy.rules.len(),
+                self.approvals.pending().len(),
+                self.secrets.len(),
+                self.connectors.len()
+            ),
+            palette.accent,
+            palette.text_muted,
+        );
+        if !self.gov_status.is_empty() {
+            ui.label(RichText::new(&self.gov_status).size(9.0).color(palette.text_muted));
+        }
+
+        egui::ScrollArea::vertical()
+            .id_salt("governance_scroll")
+            .show(ui, |ui| {
+                // ── Policy ─────────────────────────────────────────────────
+                ui.add_space(4.0);
+                ui.label(RichText::new("POLICY").small().strong().color(palette.accent));
+                let mut cycle_default = false;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Default when no rule matches:").size(9.0).color(palette.text_muted));
+                    let (txt, col) = match self.policy.default_decision {
+                        Decision::Allow => ("allow", palette.success),
+                        Decision::Deny => ("deny", palette.error),
+                        Decision::NeedsApproval => ("needs-approval", palette.warning),
+                    };
+                    if ui.small_button(RichText::new(txt).size(9.0).color(col)).clicked() {
+                        cycle_default = true;
+                    }
+                });
+
+                // Budget quick-set.
+                let mut set_tokens: Option<Option<u64>> = None;
+                let mut set_cost: Option<Option<u64>> = None;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "Budget: tokens {}, cost {}¢",
+                            self.policy.budget.max_tokens.map(|t| t.to_string()).unwrap_or_else(|| "∞".into()),
+                            self.policy.budget.max_cost_cents.map(|c| c.to_string()).unwrap_or_else(|| "∞".into()),
+                        ))
+                        .size(9.0)
+                        .color(palette.text_muted),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("tokens:").size(8.0).color(palette.text_muted));
+                    if ui.small_button(RichText::new("∞").size(8.0)).clicked() { set_tokens = Some(None); }
+                    if ui.small_button(RichText::new("50k").size(8.0)).clicked() { set_tokens = Some(Some(50_000)); }
+                    if ui.small_button(RichText::new("200k").size(8.0)).clicked() { set_tokens = Some(Some(200_000)); }
+                    ui.label(RichText::new("cost¢:").size(8.0).color(palette.text_muted));
+                    if ui.small_button(RichText::new("∞").size(8.0)).clicked() { set_cost = Some(None); }
+                    if ui.small_button(RichText::new("100").size(8.0)).clicked() { set_cost = Some(Some(100)); }
+                    if ui.small_button(RichText::new("500").size(8.0)).clicked() { set_cost = Some(Some(500)); }
+                });
+
+                // Rule list.
+                let mut remove_rule: Option<usize> = None;
+                for (i, rule) in self.policy.rules.iter().enumerate() {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(4.0)
+                        .inner_margin(6.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let scope = match (&rule.path_prefix, &rule.domain) {
+                                    (Some(p), _) => format!(" path:{p}"),
+                                    (_, Some(d)) => format!(" domain:{d}"),
+                                    _ => String::new(),
+                                };
+                                ui.label(
+                                    RichText::new(format!("{} [{}]{}", rule.tool, rule.effect.label(), scope))
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                        remove_rule = Some(i);
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(2.0);
+                }
+                // Add-rule row.
+                let mut add_rule: Option<RuleEffect> = None;
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_rule_tool_input)
+                            .hint_text("tool or *")
+                            .desired_width(90.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_rule_path_input)
+                            .hint_text("path prefix (opt)")
+                            .desired_width(ui.available_width() - 150.0),
+                    );
+                    if ui.small_button(RichText::new("+allow").size(8.0)).clicked() { add_rule = Some(RuleEffect::Allow); }
+                    if ui.small_button(RichText::new("+deny").size(8.0)).clicked() { add_rule = Some(RuleEffect::Deny); }
+                    if ui.small_button(RichText::new("+approve").size(8.0)).clicked() { add_rule = Some(RuleEffect::RequireApproval); }
+                });
+
+                // ── Approvals ──────────────────────────────────────────────
+                ui.add_space(8.0);
+                ui.label(RichText::new("APPROVAL QUEUE").small().strong().color(palette.accent));
+                let mut approve: Option<String> = None;
+                let mut deny: Option<String> = None;
+                let pending: Vec<crate::editor::governance::ApprovalItem> =
+                    self.approvals.pending().into_iter().cloned().collect();
+                if pending.is_empty() {
+                    ui.label(RichText::new("No pending approvals.").size(9.0).color(palette.text_muted));
+                }
+                for item in &pending {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(4.0)
+                        .inner_margin(6.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&item.summary).size(9.0).color(palette.text));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(RichText::new("deny").size(8.0).color(palette.error)).clicked() {
+                                        deny = Some(item.id.clone());
+                                    }
+                                    if ui.small_button(RichText::new("approve").size(8.0).color(palette.success)).clicked() {
+                                        approve = Some(item.id.clone());
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(2.0);
+                }
+
+                // ── Secrets ────────────────────────────────────────────────
+                ui.add_space(8.0);
+                ui.label(RichText::new("SECRETS").small().strong().color(palette.accent));
+                let mut remove_secret: Option<String> = None;
+                let handles: Vec<String> = self.secrets.handles().into_iter().map(str::to_string).collect();
+                if handles.is_empty() {
+                    ui.label(RichText::new("No secrets stored.").size(9.0).color(palette.text_muted));
+                }
+                for handle in &handles {
+                    let masked = self.secrets.masked(handle).unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(handle).size(9.0).color(palette.text));
+                        ui.label(RichText::new(masked).size(8.0).color(palette.text_muted));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                remove_secret = Some(handle.clone());
+                            }
+                        });
+                    });
+                }
+                let mut add_secret = false;
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_secret_name_input)
+                            .hint_text("name")
+                            .desired_width(110.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_secret_value_input)
+                            .hint_text("value")
+                            .password(true)
+                            .desired_width(ui.available_width() - 70.0),
+                    );
+                    if ui.small_button(RichText::new("+add").size(8.0)).clicked() { add_secret = true; }
+                });
+
+                // ── Connectors ─────────────────────────────────────────────
+                ui.add_space(8.0);
+                ui.label(RichText::new("CONNECTORS").small().strong().color(palette.accent));
+                let mut remove_connector: Option<String> = None;
+                if self.connectors.is_empty() {
+                    ui.label(RichText::new("No connectors configured.").size(9.0).color(palette.text_muted));
+                }
+                for c in &self.connectors.connectors {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(4.0)
+                        .inner_margin(6.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&c.name).size(9.0).strong().color(palette.text));
+                                ui.label(RichText::new(&c.base_url).size(8.0).color(palette.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                        remove_connector = Some(c.id.clone());
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(2.0);
+                }
+                let mut add_connector = false;
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_connector_id_input)
+                            .hint_text("id/name")
+                            .desired_width(90.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_connector_url_input)
+                            .hint_text("https://base.url")
+                            .desired_width(ui.available_width() - 190.0),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.gov_connector_secret_input)
+                            .hint_text("secret handle (opt)")
+                            .desired_width(90.0),
+                    );
+                    if ui.small_button(RichText::new("+add").size(8.0)).clicked() { add_connector = true; }
+                });
+
+                // ── Deferred mutations ─────────────────────────────────────
+                let ws = self.workspace_root.clone();
+                if cycle_default {
+                    self.policy.default_decision = match self.policy.default_decision {
+                        Decision::Allow => Decision::Deny,
+                        Decision::Deny => Decision::NeedsApproval,
+                        Decision::NeedsApproval => Decision::Allow,
+                    };
+                    let _ = self.policy.save(&ws);
+                }
+                if let Some(t) = set_tokens {
+                    self.policy.budget.max_tokens = t;
+                    let _ = self.policy.save(&ws);
+                }
+                if let Some(c) = set_cost {
+                    self.policy.budget.max_cost_cents = c;
+                    let _ = self.policy.save(&ws);
+                }
+                if let Some(i) = remove_rule {
+                    if i < self.policy.rules.len() {
+                        self.policy.rules.remove(i);
+                        let _ = self.policy.save(&ws);
+                    }
+                }
+                if let Some(effect) = add_rule {
+                    let tool = self.gov_rule_tool_input.trim().to_string();
+                    if tool.is_empty() {
+                        self.gov_status = "Rule needs a tool name (or *).".to_string();
+                    } else {
+                        let path = self.gov_rule_path_input.trim();
+                        self.policy.rules.push(Rule {
+                            tool,
+                            effect,
+                            path_prefix: if path.is_empty() { None } else { Some(path.to_string()) },
+                            domain: None,
+                        });
+                        let _ = self.policy.save(&ws);
+                        self.gov_rule_tool_input.clear();
+                        self.gov_rule_path_input.clear();
+                        self.gov_status = "Rule added.".to_string();
+                    }
+                }
+                if let Some(id) = approve {
+                    self.approvals.approve(&id);
+                    let _ = self.approvals.save(&ws);
+                }
+                if let Some(id) = deny {
+                    self.approvals.deny(&id);
+                    let _ = self.approvals.save(&ws);
+                }
+                if add_secret {
+                    let name = self.gov_secret_name_input.trim().to_string();
+                    let value = self.gov_secret_value_input.clone();
+                    if name.is_empty() || value.is_empty() {
+                        self.gov_status = "Secret needs a name and value.".to_string();
+                    } else if self.secrets.set(name, value) {
+                        match self.secrets.save(&ws) {
+                            Ok(()) => {
+                                self.gov_secret_name_input.clear();
+                                self.gov_secret_value_input.clear();
+                                self.gov_status = "Secret saved (encrypted).".to_string();
+                            }
+                            Err(e) => self.gov_status = format!("Secret save failed: {e}"),
+                        }
+                    }
+                }
+                if let Some(name) = remove_secret {
+                    if self.secrets.remove(&name) {
+                        let _ = self.secrets.save(&ws);
+                    }
+                }
+                if add_connector {
+                    let id = self.gov_connector_id_input.trim().to_string();
+                    let url = self.gov_connector_url_input.trim().to_string();
+                    if id.is_empty() || url.is_empty() {
+                        self.gov_status = "Connector needs an id and base URL.".to_string();
+                    } else {
+                        let secret = self.gov_connector_secret_input.trim();
+                        let mut cfg = crate::connectors::ConnectorConfig::generic(id.clone(), id, url);
+                        if !secret.is_empty() {
+                            cfg.auth_secret = Some(secret.to_string());
+                            cfg.auth = crate::connectors::AuthScheme::Bearer;
+                        }
+                        self.connectors.add(cfg);
+                        let _ = self.connectors.save(&ws);
+                        self.gov_connector_id_input.clear();
+                        self.gov_connector_url_input.clear();
+                        self.gov_connector_secret_input.clear();
+                        self.gov_status = "Connector added.".to_string();
+                    }
+                }
+                if let Some(id) = remove_connector {
+                    if self.connectors.remove(&id) {
+                        let _ = self.connectors.save(&ws);
+                    }
+                }
+            });
+    }
 }
 
 fn step_detail(step: &crate::editor::workflow::WorkflowStep) -> String {

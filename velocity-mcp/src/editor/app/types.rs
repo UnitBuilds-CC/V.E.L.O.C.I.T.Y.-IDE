@@ -54,6 +54,7 @@ impl Tab {
             TabKind::Knowledge => "Knowledge".into(),
             TabKind::Triggers => "Triggers".into(),
             TabKind::Workflows => "Workflows".into(),
+            TabKind::Governance => "Governance".into(),
         }
     }
 
@@ -107,6 +108,8 @@ pub enum TabKind {
     Triggers,
     // Workflow composer
     Workflows,
+    // Governance: policy, approvals, secrets, connectors
+    Governance,
 }
 
 pub struct Command {

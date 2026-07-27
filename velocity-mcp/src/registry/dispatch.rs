@@ -13,6 +13,10 @@ pub fn call_tool_in_workspace(
 ) -> Result<String, Box<dyn Error>> {
     let root = root.canonicalize()?;
 
+    // Governance gate: deny or park-for-approval per the workspace policy. With
+    // no policy configured this allows everything (no behavior change).
+    crate::editor::governance::gate_tool_call(&root, name, arguments)?;
+
     if let Some(result) = handle_system_tool(&root, name, arguments)? {
         return Ok(result);
     }

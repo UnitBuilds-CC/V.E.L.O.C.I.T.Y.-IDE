@@ -53,6 +53,7 @@ pub mod diagnostics;
 pub mod extensions;
 pub mod find_replace;
 pub mod git_ui;
+pub mod governance;
 pub mod inline_suggestions;
 pub mod keybindings;
 pub mod knowledge_base;
