@@ -30,13 +30,13 @@ fn has_side_effects(node: &NdaNode) -> bool {
                 || then_body.iter().any(has_side_effects)
                 || else_body
                     .as_ref()
-                    .map_or(false, |eb| eb.iter().any(has_side_effects))
+                    .is_some_and(|eb| eb.iter().any(has_side_effects))
         }
         NdaNode::Add { lhs, rhs } => has_side_effects(lhs) || has_side_effects(rhs),
         NdaNode::Compare { lhs, rhs, .. } => has_side_effects(lhs) || has_side_effects(rhs),
         NdaNode::VecOp { operand, .. } => has_side_effects(operand),
         NdaNode::Bitwise { lhs, rhs, .. } => {
-            has_side_effects(lhs) || rhs.as_ref().map_or(false, |r| has_side_effects(r))
+            has_side_effects(lhs) || rhs.as_ref().is_some_and(|r| has_side_effects(r))
         }
         NdaNode::Math { lhs, rhs, .. } => has_side_effects(lhs) || has_side_effects(rhs),
         NdaNode::MathFunc { operand, .. } => has_side_effects(operand),

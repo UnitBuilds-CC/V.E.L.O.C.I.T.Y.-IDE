@@ -643,7 +643,7 @@ impl<'a> Interp<'a> {
             match op {
                 0x00 => prog.push(In::Unreachable),
                 0x01 => prog.push(In::Nop),
-                0x02 | 0x03 | 0x04 => {
+                0x02..=0x04 => {
                     let arity = Self::block_arity(body, &mut pos)?;
                     let idx = prog.len();
                     match op {
@@ -760,7 +760,7 @@ impl<'a> Interp<'a> {
                 *pos += 1;
                 Ok(0)
             }
-            0x7f | 0x7e | 0x7d | 0x7c => {
+            0x7c..=0x7f => {
                 *pos += 1;
                 Ok(1)
             }

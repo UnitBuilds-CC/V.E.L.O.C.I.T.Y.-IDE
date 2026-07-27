@@ -9,7 +9,7 @@ pub struct NdaVec {
 impl NdaVec {
     #[allow(dead_code)]
     pub fn zeros(len: usize, log2_scale: i8) -> Self {
-        let bytes = (len + 7) / 8;
+        let bytes = len.div_ceil(8);
         Self {
             len,
             log2_scale,
@@ -40,7 +40,7 @@ impl NdaVec {
 
     pub fn from_i32_slice(data: &[i32], log2_scale: i8) -> Self {
         let len = data.len();
-        let bytes = (len + 7) / 8;
+        let bytes = len.div_ceil(8);
         let mut sign = vec![0u8; bytes];
         let mut extra = vec![0u8; bytes];
 
@@ -82,7 +82,7 @@ impl NdaVec {
 
     #[inline]
     pub fn bitmap_bytes(&self) -> usize {
-        (self.len + 7) / 8
+        self.len.div_ceil(8)
     }
 }
 

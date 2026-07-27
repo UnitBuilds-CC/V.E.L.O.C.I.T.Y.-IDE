@@ -391,7 +391,7 @@ impl VulkanQwenLayer {
                     0,
                     params_bytes,
                 );
-                let workgroups = (n + 63) / 64u32;
+                let workgroups = n.div_ceil(64u32);
                 device.cmd_dispatch(cmd, workgroups, 1, 1);
             };
 
@@ -414,7 +414,7 @@ impl VulkanQwenLayer {
                     0,
                     params_bytes,
                 );
-                let workgroups = (n + 63) / 64u32;
+                let workgroups = n.div_ceil(64u32);
                 device.cmd_dispatch(cmd, workgroups, 1, 1);
             };
 

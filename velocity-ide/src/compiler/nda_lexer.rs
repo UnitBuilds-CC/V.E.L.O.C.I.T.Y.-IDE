@@ -183,7 +183,7 @@ impl NdaLexer {
         }
 
         // Numbers (integers and floats)
-        if ch.is_ascii_digit() || (ch == '.' && self.peek_next().map_or(false, |c| c.is_ascii_digit())) {
+        if ch.is_ascii_digit() || (ch == '.' && self.peek_next().is_some_and(|c| c.is_ascii_digit())) {
             return self.lex_number(line, col);
         }
 

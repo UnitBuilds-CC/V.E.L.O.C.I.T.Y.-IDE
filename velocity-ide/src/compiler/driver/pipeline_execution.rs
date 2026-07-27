@@ -100,7 +100,7 @@ pub fn record_and_execute_token(
                     0,
                     params_bytes,
                 );
-                device.cmd_dispatch(cmd, (hidden_size as u32 + 255) / 256, 1, 1);
+                device.cmd_dispatch(cmd, (hidden_size as u32).div_ceil(256), 1, 1);
             }
         }
         if let Some(ref bias_k_set) = pipeline.desc_sets_bias_k[i] {
@@ -123,7 +123,7 @@ pub fn record_and_execute_token(
                     0,
                     params_bytes,
                 );
-                device.cmd_dispatch(cmd, (kv_dim as u32 + 255) / 256, 1, 1);
+                device.cmd_dispatch(cmd, (kv_dim as u32).div_ceil(256), 1, 1);
             }
         }
         if let Some(ref bias_v_set) = pipeline.desc_sets_bias_v[i] {
@@ -146,7 +146,7 @@ pub fn record_and_execute_token(
                     0,
                     params_bytes,
                 );
-                device.cmd_dispatch(cmd, (kv_dim as u32 + 255) / 256, 1, 1);
+                device.cmd_dispatch(cmd, (kv_dim as u32).div_ceil(256), 1, 1);
             }
         }
         if pipeline.desc_sets_bias_q[i].is_some()
@@ -184,7 +184,7 @@ pub fn record_and_execute_token(
             );
 
             let total_q_pairs = n_heads * (head_dim / 2);
-            device.cmd_dispatch(cmd, (total_q_pairs as u32 + 63) / 64, 1, 1);
+            device.cmd_dispatch(cmd, (total_q_pairs as u32).div_ceil(64), 1, 1);
         }
         cmd_compute_barrier(device, cmd);
 
@@ -208,7 +208,7 @@ pub fn record_and_execute_token(
                 0,
                 params_bytes,
             );
-            device.cmd_dispatch(cmd, (kv_dim as u32 + 63) / 64, 1, 1);
+            device.cmd_dispatch(cmd, (kv_dim as u32).div_ceil(64), 1, 1);
         }
         cmd_compute_barrier(device, cmd);
 
@@ -288,7 +288,7 @@ pub fn record_and_execute_token(
                 0,
                 params_bytes,
             );
-            device.cmd_dispatch(cmd, (hidden_size as u32 + 255) / 256, 1, 1);
+            device.cmd_dispatch(cmd, (hidden_size as u32).div_ceil(256), 1, 1);
         }
         cmd_compute_barrier(device, cmd);
 
@@ -355,7 +355,7 @@ pub fn record_and_execute_token(
                 0,
                 params_bytes,
             );
-            device.cmd_dispatch(cmd, (_ffn_size as u32 + 255) / 256, 1, 1);
+            device.cmd_dispatch(cmd, (_ffn_size as u32).div_ceil(256), 1, 1);
         }
         cmd_compute_barrier(device, cmd);
 
@@ -400,7 +400,7 @@ pub fn record_and_execute_token(
                 0,
                 params_bytes,
             );
-            device.cmd_dispatch(cmd, (hidden_size as u32 + 255) / 256, 1, 1);
+            device.cmd_dispatch(cmd, (hidden_size as u32).div_ceil(256), 1, 1);
         }
         cmd_compute_barrier(device, cmd);
     }

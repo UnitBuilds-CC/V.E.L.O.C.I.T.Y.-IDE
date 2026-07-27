@@ -16,61 +16,58 @@ pub fn detect_and_compile_symbolic_loop(
     let mut accumulator_var = None;
 
     for node in body {
-        match node {
-            NdaNode::Store { name_hash, value } => {
-                if let NdaNode::Add { lhs, rhs } = &**value {
-                    let mut is_inc = false;
-                    let mut step = 0i32;
-                    if let NdaNode::Load { name_hash: l_hash } = &**lhs {
-                        if l_hash == name_hash {
-                            if let NdaNode::Int { value: val } = &**rhs {
+        if let NdaNode::Store { name_hash, value } = node {
+            if let NdaNode::Add { lhs, rhs } = &**value {
+                let mut is_inc = false;
+                let mut step = 0i32;
+                if let NdaNode::Load { name_hash: l_hash } = &**lhs {
+                    if l_hash == name_hash {
+                        if let NdaNode::Int { value: val } = &**rhs {
+                            is_inc = true;
+                            step = *val;
+                        }
+                    }
+                }
+                if !is_inc {
+                    if let NdaNode::Load { name_hash: r_hash } = &**rhs {
+                        if r_hash == name_hash {
+                            if let NdaNode::Int { value: val } = &**lhs {
                                 is_inc = true;
                                 step = *val;
                             }
                         }
                     }
-                    if !is_inc {
-                        if let NdaNode::Load { name_hash: r_hash } = &**rhs {
-                            if r_hash == name_hash {
-                                if let NdaNode::Int { value: val } = &**lhs {
-                                    is_inc = true;
-                                    step = *val;
-                                }
-                            }
-                        }
-                    }
-                    if is_inc {
-                        increment_var = Some((*name_hash, step));
-                        continue;
-                    }
+                }
+                if is_inc {
+                    increment_var = Some((*name_hash, step));
+                    continue;
+                }
 
-                    let mut is_acc = false;
-                    let mut other_var = None;
-                    if let NdaNode::Load { name_hash: l_hash } = &**lhs {
-                        if l_hash == name_hash {
-                            if let NdaNode::Load { name_hash: r_hash } = &**rhs {
-                                is_acc = true;
-                                other_var = Some(*r_hash);
-                            }
-                        }
-                    }
-                    if !is_acc {
+                let mut is_acc = false;
+                let mut other_var = None;
+                if let NdaNode::Load { name_hash: l_hash } = &**lhs {
+                    if l_hash == name_hash {
                         if let NdaNode::Load { name_hash: r_hash } = &**rhs {
-                            if r_hash == name_hash {
-                                if let NdaNode::Load { name_hash: l_hash } = &**lhs {
-                                    is_acc = true;
-                                    other_var = Some(*l_hash);
-                                }
-                            }
+                            is_acc = true;
+                            other_var = Some(*r_hash);
                         }
-                    }
-                    if is_acc {
-                        accumulator_var = Some((*name_hash, other_var.unwrap()));
-                        continue;
                     }
                 }
+                if !is_acc {
+                    if let NdaNode::Load { name_hash: r_hash } = &**rhs {
+                        if r_hash == name_hash {
+                            if let NdaNode::Load { name_hash: l_hash } = &**lhs {
+                                is_acc = true;
+                                other_var = Some(*l_hash);
+                            }
+                        }
+                    }
+                }
+                if is_acc {
+                    accumulator_var = Some((*name_hash, other_var.unwrap()));
+                    continue;
+                }
             }
-            _ => {}
         }
     }
 
@@ -89,7 +86,7 @@ pub fn detect_and_compile_symbolic_loop(
             let n_c = (n * step as i64) as i32;
             let sum_step = (step as i64 * n * (n - 1) / 2) as i32;
 
-            let modrm_mov = 0xC0 | ((i_reg as u8 & 7) << 3) | 0;
+            let modrm_mov = 0xC0 | ((i_reg as u8 & 7) << 3);
             emitter.emit_slice(&[0x44, 0x89, modrm_mov]);
 
             emitter.emit(0x69);
@@ -99,10 +96,10 @@ pub fn detect_and_compile_symbolic_loop(
             emitter.emit(0x05);
             emitter.emit_slice(&sum_step.to_le_bytes());
 
-            let modrm_add_sum = 0xC0 | (0 << 3) | (sum_reg as u8 & 7);
+            let modrm_add_sum = 0xC0 | (sum_reg as u8 & 7);
             emitter.emit_slice(&[0x41, 0x01, modrm_add_sum]);
 
-            let modrm_add_i = 0xC0 | (0 << 3) | (i_reg as u8 & 7);
+            let modrm_add_i = 0xC0 | (i_reg as u8 & 7);
             emitter.emit_slice(&[0x41, 0x81, modrm_add_i]);
             emitter.emit_slice(&n_c.to_le_bytes());
 

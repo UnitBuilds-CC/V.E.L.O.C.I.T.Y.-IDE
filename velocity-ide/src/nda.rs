@@ -108,7 +108,7 @@ impl NdaMatrix {
             let cols  = u32::from_le_bytes(data[10..14].try_into().unwrap()) as usize;
             let scale = f32::from_le_bytes(data[14..18].try_into().unwrap());
 
-            let bitmap_bytes = (rows * cols + 7) / 8;
+            let bitmap_bytes = (rows * cols).div_ceil(8);
             let expected = HDR + 2 * bitmap_bytes;
             if data.len() < expected {
                 bail!(
@@ -146,9 +146,9 @@ impl NdaMatrix {
 
             let q_scales_bytes = n_blocks;
             let codes_bytes = if version == NDA_VERSION_FP4 {
-                (rows * cols + 1) / 2
+                (rows * cols).div_ceil(2)
             } else {
-                (rows * cols + 3) / 4
+                (rows * cols).div_ceil(4)
             };
 
             let expected = HDR + q_scales_bytes + codes_bytes;
@@ -323,7 +323,7 @@ pub fn quantize_activations_v2_quad(x: &[f32]) -> (Vec<u8>, Vec<u8>, f32) {
     let scale = if amax < 1e-8 { 1.0 } else { amax / 2.0 };
     let inv_scale = 1.0 / scale;
     
-    let bitmap_bytes = (x.len() + 7) / 8;
+    let bitmap_bytes = x.len().div_ceil(8);
     let mut sign = vec![0u8; bitmap_bytes];
     let mut extra = vec![0u8; bitmap_bytes];
     
@@ -359,9 +359,9 @@ pub fn nda_gemv_v2_quad_quantized(
     act_scale: f32,
 ) -> Vec<f32> {
     debug_assert!(matrix.is_quad(), "nda_gemv_v2_quad_quantized requires v2 quad matrix");
-    debug_assert_eq!(x_sign.len(), (matrix.cols + 7) / 8);
+    debug_assert_eq!(x_sign.len(), matrix.cols.div_ceil(8));
 
-    let stride = (matrix.cols + 7) / 8;
+    let stride = matrix.cols.div_ceil(8);
     let out_scale = matrix.scale * act_scale;
     let mut out = vec![0.0_f32; matrix.rows];
 
@@ -415,7 +415,7 @@ pub fn nda_gemv_v1_tern(matrix: &NdaMatrix, x: &[f32]) -> Vec<f32> {
     debug_assert_eq!(x.len(), matrix.cols,
         "nda_gemv_v1: x.len()={} != cols={}", x.len(), matrix.cols);
 
-    let stride = (matrix.cols + 7) / 8;
+    let stride = matrix.cols.div_ceil(8);
     let scale  = matrix.scale;
     let mut out = vec![0.0_f32; matrix.rows];
 
@@ -474,7 +474,7 @@ pub fn nda_gemv_v2_i8(matrix: &NdaMatrix, q: &[i8], act_scale: f32) -> Vec<f32> 
     debug_assert!(matrix.is_quad(), "nda_gemv_v2_i8 requires v2 quad matrix");
     debug_assert_eq!(q.len(), matrix.cols);
 
-    let stride     = (matrix.cols + 7) / 8;
+    let stride     = matrix.cols.div_ceil(8);
     let out_scale  = matrix.scale * act_scale;
     let mut out    = vec![0.0_f32; matrix.rows];
 
@@ -531,7 +531,7 @@ pub fn run_nda_benchmark() {
         ("FFN down  3200×8640", 3200_usize, 8640_usize),
         ("LM head  32002×3200", 32002_usize, 3200_usize),
     ] {
-        let bitmap_bytes = (rows * cols + 7) / 8;
+        let bitmap_bytes = (rows * cols).div_ceil(8);
 
         // Synthetic v2 matrix: balanced {-2,-1,+1,+2} distribution (~25% each)
         // sign: random, extra: random → gives roughly equal 4-way split

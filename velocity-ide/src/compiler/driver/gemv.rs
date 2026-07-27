@@ -256,9 +256,9 @@ impl VulkanGemv {
             );
 
             let workgroup_count = if is_ternary {
-                (n + 255) / 256u32
+                n.div_ceil(256u32)
             } else {
-                (n + 63) / 64u32
+                n.div_ceil(64u32)
             };
             device.cmd_dispatch(command_buffer, workgroup_count, 1, 1);
             device.end_command_buffer(command_buffer)?;

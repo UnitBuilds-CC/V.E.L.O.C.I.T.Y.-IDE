@@ -1,4 +1,4 @@
-pub const DOT_4_LUT: [[i8; 256]; 256] = {
+pub static DOT_4_LUT: [[i8; 256]; 256] = {
     let mut table = [[0i8; 256]; 256];
 
     let mut q = 0;
@@ -18,17 +18,13 @@ pub const DOT_4_LUT: [[i8; 256]; 256] = {
                 let qe_bit = (qe >> bit) & 1;
                 let qv = if qs_bit == 1 {
                     if qe_bit == 1 { 2 } else { 1 }
-                } else {
-                    if qe_bit == 1 { -1 } else { -2 }
-                };
+                } else if qe_bit == 1 { -1 } else { -2 };
 
                 let ks_bit = (ks >> bit) & 1;
                 let ke_bit = (ke >> bit) & 1;
                 let kv = if ks_bit == 1 {
                     if ke_bit == 1 { 2 } else { 1 }
-                } else {
-                    if ke_bit == 1 { -1 } else { -2 }
-                };
+                } else if ke_bit == 1 { -1 } else { -2 };
 
                 dot += qv * kv;
                 bit += 1;
@@ -41,7 +37,7 @@ pub const DOT_4_LUT: [[i8; 256]; 256] = {
     table
 };
 
-pub const ADD_LUT_Q16: [u8; 65536] = {
+pub static ADD_LUT_Q16: [u8; 65536] = {
     let mut table = [0u8; 65536];
     let encode_table = [0, 0, 0, 1, 2, 2, 3, 3, 3];
 
@@ -64,15 +60,11 @@ pub const ADD_LUT_Q16: [u8; 65536] = {
 
             let xv = if x_s_bit == 1 {
                 if x_e_bit == 1 { 2 } else { 1 }
-            } else {
-                if x_e_bit == 1 { -1 } else { -2 }
-            };
+            } else if x_e_bit == 1 { -1 } else { -2 };
 
             let dv = if d_s_bit == 1 {
                 if d_e_bit == 1 { 2 } else { 1 }
-            } else {
-                if d_e_bit == 1 { -1 } else { -2 }
-            };
+            } else if d_e_bit == 1 { -1 } else { -2 };
 
             let sum = xv + dv;
             let clamped = (sum + 4) as usize;
@@ -93,7 +85,7 @@ pub const ADD_LUT_Q16: [u8; 65536] = {
     table
 };
 
-pub const SWIGLU_LUT_Q16: [u8; 65536] = {
+pub static SWIGLU_LUT_Q16: [u8; 65536] = {
     let mut table = [0u8; 65536];
     let encode_table = [0, 0, 0, 1, 2, 2, 3, 3, 3];
 
@@ -116,15 +108,11 @@ pub const SWIGLU_LUT_Q16: [u8; 65536] = {
 
             let gv = if g_s_bit == 1 {
                 if g_e_bit == 1 { 2 } else { 1 }
-            } else {
-                if g_e_bit == 1 { -1 } else { -2 }
-            };
+            } else if g_e_bit == 1 { -1 } else { -2 };
 
             let uv = if u_s_bit == 1 {
                 if u_e_bit == 1 { 2 } else { 1 }
-            } else {
-                if u_e_bit == 1 { -1 } else { -2 }
-            };
+            } else if u_e_bit == 1 { -1 } else { -2 };
 
             let prod = gv * uv;
             let val = prod + 4;

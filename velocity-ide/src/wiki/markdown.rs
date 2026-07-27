@@ -76,7 +76,7 @@ fn render_index(model: &WikiModel) -> String {
     if !model.file_pages.is_empty() {
         out.push_str("- [Files](#files)\n");
         let modules = group_by_module(&model.file_pages);
-        for (module, _) in &modules {
+        for module in modules.keys() {
             out.push_str(&format!("  - [{}](#module-{})\n", module, slugify_module(module)));
         }
     }

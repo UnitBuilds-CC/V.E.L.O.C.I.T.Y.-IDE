@@ -1,5 +1,4 @@
 use super::layer_gpu_gemvs::LayerGpuGemvs;
-use super::nda_gemv::*;
 use super::vulkan_init::*;
 use ash::vk;
 use ash::Device;
@@ -753,20 +752,14 @@ impl Drop for VulkanModelPipeline {
             for (buf, mem) in &self.layer_ffn_norms {
                 destroy_buffer_fn(&self.device, *buf, *mem, false);
             }
-            for bias in &self.layer_q_biases {
-                if let Some((buf, mem)) = bias {
-                    destroy_buffer_fn(&self.device, *buf, *mem, false);
-                }
+            for (buf, mem) in self.layer_q_biases.iter().flatten() {
+                destroy_buffer_fn(&self.device, *buf, *mem, false);
             }
-            for bias in &self.layer_k_biases {
-                if let Some((buf, mem)) = bias {
-                    destroy_buffer_fn(&self.device, *buf, *mem, false);
-                }
+            for (buf, mem) in self.layer_k_biases.iter().flatten() {
+                destroy_buffer_fn(&self.device, *buf, *mem, false);
             }
-            for bias in &self.layer_v_biases {
-                if let Some((buf, mem)) = bias {
-                    destroy_buffer_fn(&self.device, *buf, *mem, false);
-                }
+            for (buf, mem) in self.layer_v_biases.iter().flatten() {
+                destroy_buffer_fn(&self.device, *buf, *mem, false);
             }
             destroy_buffer_fn(
                 &self.device,

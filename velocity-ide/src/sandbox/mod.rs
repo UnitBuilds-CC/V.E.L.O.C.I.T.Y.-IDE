@@ -7,7 +7,7 @@ pub use jit_sandbox::NdaJitSandbox;
 
 use std::time::Instant;
 use crate::site_map::{NdaNode, SiteMap};
-use crate::site_map::verifier::{BitwiseOp, MathOp, MathFuncKind, AtomicOp, TypeKind};
+use crate::site_map::verifier::{BitwiseOp, MathOp, MathFuncKind};
 use crate::nda_int::NdaVec;
 use crate::nda::NdaMatrix;
 

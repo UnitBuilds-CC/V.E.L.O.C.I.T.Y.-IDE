@@ -69,7 +69,7 @@ impl VulkanNdaGemv {
                 params_bytes,
             );
 
-            let workgroup_count_y = (self.n + 15) / 16;
+            let workgroup_count_y = self.n.div_ceil(16);
             self.device.cmd_dispatch(cmd, 1, workgroup_count_y, 1);
         }
     }
@@ -319,7 +319,7 @@ impl VulkanNdaGemv {
                 params_bytes,
             );
 
-            let workgroup_count = (n + 63) / 64;
+            let workgroup_count = n.div_ceil(64);
             device.cmd_dispatch(command_buffer, workgroup_count, 1, 1);
             device.end_command_buffer(command_buffer)?;
         }
@@ -668,7 +668,7 @@ impl VulkanNdaGemv {
                 params_bytes,
             );
 
-            let workgroup_count_y = (n + 15) / 16;
+            let workgroup_count_y = n.div_ceil(16);
             device.cmd_dispatch(command_buffer, 1, workgroup_count_y, 1);
             device.end_command_buffer(command_buffer)?;
         }

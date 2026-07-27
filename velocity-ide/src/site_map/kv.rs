@@ -20,7 +20,7 @@ pub struct KvRecord {
 impl KvRecord {
     pub fn serialise(&self) -> Vec<u8> {
         let len = self.k.len as u16;
-        let mut buf = Vec::with_capacity(4 + 4 * ((self.k.len + 7) / 8));
+        let mut buf = Vec::with_capacity(4 + 4 * self.k.len.div_ceil(8));
         buf.extend_from_slice(&len.to_le_bytes());
         buf.push(self.k.log2_scale as u8);
         buf.push(0u8); // reserved
@@ -35,7 +35,7 @@ impl KvRecord {
         anyhow::ensure!(data.len() >= 4, "KV record too short");
         let len = u16::from_le_bytes([data[0], data[1]]) as usize;
         let log2_scale = data[2] as i8;
-        let bitmap_bytes = (len + 7) / 8;
+        let bitmap_bytes = len.div_ceil(8);
         anyhow::ensure!(
             data.len() >= 4 + 4 * bitmap_bytes,
             "KV record truncated (len={len}, expected {} bytes)",

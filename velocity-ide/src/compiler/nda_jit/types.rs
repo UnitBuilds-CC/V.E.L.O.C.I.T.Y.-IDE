@@ -13,6 +13,12 @@ pub struct VarRegistry {
     map: Arc<Mutex<HashMap<u64, usize>>>,
 }
 
+impl Default for VarRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VarRegistry {
     pub fn new() -> Self {
         VarRegistry {

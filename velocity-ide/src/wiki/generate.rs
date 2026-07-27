@@ -94,11 +94,10 @@ fn slugify(name: &str) -> String {
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
             slug.push(ch.to_ascii_lowercase());
-        } else if ch == '/' || ch == '\\' || ch == '.' || ch == ' ' || ch == ':' {
-            if !slug.ends_with('-') {
+        } else if (ch == '/' || ch == '\\' || ch == '.' || ch == ' ' || ch == ':')
+            && !slug.ends_with('-') {
                 slug.push('-');
             }
-        }
         // Drop any other characters.
     }
     let slug = slug.trim_matches('-').to_string();

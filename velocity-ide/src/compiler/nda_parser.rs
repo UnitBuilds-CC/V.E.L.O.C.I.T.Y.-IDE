@@ -21,7 +21,7 @@ pub fn hash_name(name: &str) -> u64 {
 pub fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
     let rows = rows.min(65535).max(1) as u16;
     let cols = cols.min(65535).max(1) as u16;
-    let bitmap_bytes = rows as usize * ((cols as usize + 7) / 8);
+    let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
     let sign: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
     let extra: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0x55 } else { 0xAA }).collect();
     NdaNode::Matrix { rows, cols, scale: 0, sign, extra }
@@ -30,7 +30,7 @@ pub fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
 /// Helper: build synthetic norm node of shape size.
 pub fn build_norm_node(size: usize) -> NdaNode {
     let size = size.min(65535).max(1) as u16;
-    let bitmap_bytes = (size as usize + 7) / 8;
+    let bitmap_bytes = (size as usize).div_ceil(8);
     let weight = vec![0xFF; bitmap_bytes];
     let bias = vec![0x00; bitmap_bytes];
     NdaNode::Norm { size, weight, bias }

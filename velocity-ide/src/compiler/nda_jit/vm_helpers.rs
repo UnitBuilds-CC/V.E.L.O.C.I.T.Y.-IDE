@@ -11,7 +11,7 @@ fn silu(x: f32) -> f32 {
 }
 
 pub fn broadcast_scalar(len: usize, val: i32, log2_scale: i8) -> NdaVec {
-    let bytes = (len + 7) / 8;
+    let bytes = len.div_ceil(8);
     let (s_byte, e_byte) = match val {
         -2 => (0x00, 0x00),
         -1 => (0x00, 0xFF),
@@ -181,7 +181,7 @@ pub fn compare_vals(op: CmpOp, lhs: &JitVal, rhs: &JitVal) -> JitVal {
                 JitVal::Float(val) => broadcast_float(len, *val),
             };
 
-            let bytes = (len + 7) / 8;
+            let bytes = len.div_ceil(8);
             let mut sign = vec![0u8; bytes];
             let mut extra = vec![0u8; bytes];
 

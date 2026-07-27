@@ -474,7 +474,7 @@ impl NdaPipeline {
                         if budget_pressure {
                             896
                         } else {
-                            let abs_sum: u64 = logits_i32.iter().map(|&x| x.abs() as u64).sum();
+                            let abs_sum: u64 = logits_i32.iter().map(|&x| x.unsigned_abs() as u64).sum();
                             match abs_sum % 4 {
                                 0 => 64,
                                 1 => 128,
@@ -489,8 +489,8 @@ impl NdaPipeline {
                         rows: rows as u16,
                         cols: cols as u16,
                         scale: 0,
-                        sign: vec![0xAA; rows as usize * ((cols as usize + 7) / 8)],
-                        extra: vec![0x55; rows as usize * ((cols as usize + 7) / 8)],
+                        sign: vec![0xAA; rows * cols.div_ceil(8)],
+                        extra: vec![0x55; rows * cols.div_ceil(8)],
                     };
                     self.verifier.push_leaf(&leaf);
                     nodes.push(leaf);
@@ -499,8 +499,8 @@ impl NdaPipeline {
                     let size = current_width;
                     let leaf = NdaNode::Norm {
                         size: size as u16,
-                        weight: vec![0xFF; (size + 7) / 8],
-                        bias: vec![0x00; (size + 7) / 8],
+                        weight: vec![0xFF; size.div_ceil(8)],
+                        bias: vec![0x00; size.div_ceil(8)],
                     };
                     self.verifier.push_leaf(&leaf);
                     nodes.push(leaf);

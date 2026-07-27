@@ -83,7 +83,7 @@ fn attention_head_zero(
     let head_dim = q.len;
 
     // ── Step 1: Q·K dot products → i32 scores (pure bitwise popcount) ────────
-    let _head_bytes = (head_dim + 7) / 8;
+    let _head_bytes = head_dim.div_ceil(8);
     let mut q_low = [0usize; 64];
     let mut q_high = [0usize; 64];
     let limit = _head_bytes.min(64);
@@ -141,11 +141,11 @@ fn attention_head_zero(
             gap << (8 - scale_shift)
         };
         let integer_part = (gap_q8 >> 8).clamp(0, 14) as u32;
-        let fractional_part = (gap_q8 & 0xFF) as i32;
+        let fractional_part = gap_q8 & 0xFF;
         
         let a = 16384i32 >> integer_part;
         let b = 16384i32 >> (integer_part + 1);
-        a - ((a - b) * fractional_part >> 8)
+        a - (((a - b) * fractional_part) >> 8)
     }).collect();
     
     if q_pos < 5 && head_idx == 0 {
@@ -158,7 +158,7 @@ fn attention_head_zero(
     // ── Step 4: Weighted V accumulation — pure integer add/subtract ──────────
     let mut out_i32 = vec![0i32; head_dim];
     let head_byte_start = h_start / 8;
-    let _head_bytes = (head_dim + 7) / 8;
+    let _head_bytes = head_dim.div_ceil(8);
 
     for (w, entry) in weights.iter().zip(kv_layer.entries.iter()) {
         if *w == 0 { continue; }
@@ -306,7 +306,7 @@ impl ZeroTransformer {
 
             // 4. Multi-head attention with ALiBi + bitwise Q·K popcount
             let kv_layer = &self.kv_cache[layer_idx];
-            let head_bytes = (hd + 7) / 8;
+            let head_bytes = hd.div_ceil(8);
             let mut attn_out_i32 = vec![0i32; h];
 
             // GQA: group Q heads over KV heads
@@ -491,7 +491,7 @@ fn norm_to_ndavec(w: &[f32]) -> NdaVec {
     let scale = (2.0_f32).powi(log2_scale as i32);
     let inv_s = 1.0 / scale;
 
-    let bytes = (w.len() + 7) / 8;
+    let bytes = w.len().div_ceil(8);
     let mut sign  = vec![0u8; bytes];
     let mut extra = vec![0u8; bytes];
 

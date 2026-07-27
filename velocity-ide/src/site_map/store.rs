@@ -606,8 +606,8 @@ impl SiteMap {
             }
         }
 
-        if !dict.contains_key(&hash) {
-            dict.insert(hash, s.to_string());
+        if let std::collections::hash_map::Entry::Vacant(e) = dict.entry(hash) {
+            e.insert(s.to_string());
             let dict_path = self.base.join("dictionary.json");
             let mut serializable = HashMap::new();
             for (k_num, v_str) in dict.iter() {

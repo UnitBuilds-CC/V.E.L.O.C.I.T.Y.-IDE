@@ -82,6 +82,12 @@ pub struct RustToNda {
     current_impl: Option<String>,
 }
 
+impl Default for RustToNda {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RustToNda {
     pub fn new() -> Self {
         Self {
@@ -484,7 +490,7 @@ fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
     // Clamp dimensions to u16 range (65535 max) and require non-zero.
     let rows = rows.min(65535).max(1) as u16;
     let cols = cols.min(65535).max(1) as u16;
-    let bitmap_bytes = rows as usize * ((cols as usize + 7) / 8);
+    let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
     // Alternating 0xAA / 0x55 gives a balanced {+2,+1,-1,-2} distribution.
     let sign:  Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
     let extra: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0x55 } else { 0xAA }).collect();
@@ -519,6 +525,8 @@ fn type_name_of(ty: &Type) -> String {
 /// that the main match arm doesn't explicitly handle.
 struct ExprCollector<'a> {
     nodes:   Vec<NdaNode>,
+    /// Retained for future call-graph surfacing; populated but not yet consumed.
+    #[allow(dead_code)]
     callees: &'a mut Vec<String>,
 }
 

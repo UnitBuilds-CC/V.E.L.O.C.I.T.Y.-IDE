@@ -13,6 +13,12 @@ pub struct X86Emitter {
     pub buf: Vec<u8>,
 }
 
+impl Default for X86Emitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl X86Emitter {
     pub fn new() -> Self {
         Self { buf: Vec::new() }
@@ -86,7 +92,7 @@ fn is_pure_scalar(node: &NdaNode) -> bool {
         } => {
             is_pure_scalar(cond)
                 && then_body.iter().all(is_pure_scalar)
-                && else_body.as_ref().map_or(true, |eb| eb.iter().all(is_pure_scalar))
+                && else_body.as_ref().is_none_or(|eb| eb.iter().all(is_pure_scalar))
         }
         NdaNode::Scope { children } => children.iter().all(is_pure_scalar),
         NdaNode::Return { value } => is_pure_scalar(value),
@@ -125,13 +131,9 @@ pub fn count_nodes(node: &NdaNode) -> usize {
 
 #[cfg(target_os = "windows")]
 const REG_VARS: u8 = 1; // RCX
-#[cfg(target_os = "windows")]
-const REG_STACK: u8 = 2; // RDX
 
 #[cfg(not(target_os = "windows"))]
 const REG_VARS: u8 = 7; // RDI
-#[cfg(not(target_os = "windows"))]
-const REG_STACK: u8 = 6; // RSI
 
 fn emit_mov_reg_rcx_disp(emitter: &mut X86Emitter, reg: u8, base_reg: u8, disp: i32) {
     let rex_r = (reg >= 8) as u8;
@@ -143,8 +145,8 @@ fn emit_mov_reg_rcx_disp(emitter: &mut X86Emitter, reg: u8, base_reg: u8, disp: 
     let reg_code = reg & 7;
     let base_code = base_reg & 7;
     let modrm = if disp == 0 {
-        0x00 | (reg_code << 3) | base_code
-    } else if disp >= -128 && disp <= 127 {
+        (reg_code << 3) | base_code
+    } else if (-128..=127).contains(&disp) {
         0x40 | (reg_code << 3) | base_code
     } else {
         0x80 | (reg_code << 3) | base_code
@@ -152,7 +154,7 @@ fn emit_mov_reg_rcx_disp(emitter: &mut X86Emitter, reg: u8, base_reg: u8, disp: 
     emitter.emit(0x8B);
     emitter.emit(modrm);
     if disp != 0 {
-        if disp >= -128 && disp <= 127 {
+        if (-128..=127).contains(&disp) {
             emitter.emit(disp as u8);
         } else {
             emitter.emit_slice(&disp.to_le_bytes());
@@ -170,8 +172,8 @@ fn emit_mov_rcx_disp_reg(emitter: &mut X86Emitter, base_reg: u8, disp: i32, reg:
     let reg_code = reg & 7;
     let base_code = base_reg & 7;
     let modrm = if disp == 0 {
-        0x00 | (reg_code << 3) | base_code
-    } else if disp >= -128 && disp <= 127 {
+        (reg_code << 3) | base_code
+    } else if (-128..=127).contains(&disp) {
         0x40 | (reg_code << 3) | base_code
     } else {
         0x80 | (reg_code << 3) | base_code
@@ -179,7 +181,7 @@ fn emit_mov_rcx_disp_reg(emitter: &mut X86Emitter, base_reg: u8, disp: i32, reg:
     emitter.emit(0x89);
     emitter.emit(modrm);
     if disp != 0 {
-        if disp >= -128 && disp <= 127 {
+        if (-128..=127).contains(&disp) {
             emitter.emit(disp as u8);
         } else {
             emitter.emit_slice(&disp.to_le_bytes());
@@ -228,12 +230,12 @@ fn compile_scalar_node(
             let src_reg = 12 + slot;
             let d = *stack_depth;
             if d == 0 {
-                let modrm = 0xC0 | ((src_reg as u8 & 7) << 3) | 0;
+                let modrm = 0xC0 | ((src_reg as u8 & 7) << 3);
                 emitter.emit_slice(&[0x44, 0x89, modrm]);
                 *stack_depth = 1;
             } else if d == 1 {
                 emitter.emit_slice(&[0x89, 0xC3]);
-                let modrm = 0xC0 | ((src_reg as u8 & 7) << 3) | 0;
+                let modrm = 0xC0 | ((src_reg as u8 & 7) << 3);
                 emitter.emit_slice(&[0x44, 0x89, modrm]);
                 *stack_depth = 2;
             } else {
@@ -263,7 +265,7 @@ fn compile_scalar_node(
                     "Let initialization must leave exactly 1 value on the stack".to_string(),
                 );
             }
-            let modrm = 0xC0 | (0 << 3) | (dest_reg as u8 & 7);
+            let modrm = 0xC0 | (dest_reg as u8 & 7);
             emitter.emit_slice(&[0x41, 0x89, modrm]);
         }
         NdaNode::Store { name_hash, value } => {
@@ -294,7 +296,7 @@ fn compile_scalar_node(
                 if let Some(other) = other_node {
                     if let NdaNode::Int { value: val } = other {
                         if *val == 1 {
-                            let modrm = 0xC0 | (0 << 3) | (dest_reg as u8 & 7);
+                            let modrm = 0xC0 | (dest_reg as u8 & 7);
                             emitter.emit_slice(&[0x41, 0xFF, modrm]);
                             pattern_matched = true;
                         } else if *val == -1 {
@@ -333,7 +335,7 @@ fn compile_scalar_node(
                 if *stack_depth != 1 {
                     return Err("Store value must leave exactly 1 value on the stack".to_string());
                 }
-                let modrm = 0xC0 | (0 << 3) | (dest_reg as u8 & 7);
+                let modrm = 0xC0 | (dest_reg as u8 & 7);
                 emitter.emit_slice(&[0x41, 0x89, modrm]);
             }
         }
@@ -850,7 +852,7 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
         next_label_id += 1;
 
         for node in nodes {
-            if let Err(_) = compile_scalar_node(
+            if compile_scalar_node(
                 node,
                 &mut emitter,
                 registry,
@@ -861,7 +863,7 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
                 &mut next_label_id,
                 epilogue_label,
                 &mut stack_depth,
-            ) {
+            ).is_err() {
                 return None;
             }
         }
@@ -922,10 +924,7 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
         }
 
         let code_len = emitter.buf.len();
-        let mut page = match ExecPage::allocate(code_len) {
-            Some(p) => p,
-            None => return None,
-        };
+        let mut page = ExecPage::allocate(code_len)?;
         page.write(0, &emitter.buf);
 
         let page = Arc::new(page);

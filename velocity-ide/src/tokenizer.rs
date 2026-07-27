@@ -293,7 +293,7 @@ impl Tokenizer {
             if raw.starts_with("<|") && raw.ends_with("|>") {
                 return String::new();
             }
-            let bytes: Vec<u8> = raw.chars().map(|c| unicode_to_byte(c)).collect();
+            let bytes: Vec<u8> = raw.chars().map(unicode_to_byte).collect();
             String::from_utf8(bytes).unwrap_or_else(|_| raw.to_string())
         } else {
             decode_raw_token_sp(raw)

@@ -9,7 +9,7 @@ pub fn nda_vec_add_inplace(x: &mut NdaVec, delta: &NdaVec) {
     let del_shift = (out_log2 - delta.log2_scale).max(0) as u32;
 
     let len = x.len;
-    let bytes = (len + 7) / 8;
+    let bytes = len.div_ceil(8);
 
     let mut sign_vec = x.sign.to_vec();
     let mut extra_vec = x.extra.to_vec();
@@ -37,7 +37,7 @@ pub fn nda_vec_add_inplace(x: &mut NdaVec, delta: &NdaVec) {
             extra_vec[byte_idx] = (res_low >> 4) | (res_high & 0xF0);
         }
 
-        if len % 8 != 0 {
+        if !len.is_multiple_of(8) {
             let last_idx = bytes - 1;
             let mask = (1u8 << (len % 8)) - 1;
             sign_vec[last_idx] &= mask;
@@ -139,7 +139,7 @@ pub fn rms_norm_nda(x: &NdaVec, w: &NdaVec, eps_shift: u32) -> NdaVec {
         sum_sq += 8 + (large_mask.count_ones() as i64) * 3;
     }
 
-    if n % 8 != 0 {
+    if !n.is_multiple_of(8) {
         let byte_idx = full_bytes;
         let xs = x.sign[byte_idx];
         let xe = x.extra[byte_idx];
@@ -264,7 +264,7 @@ impl SiluLut {
         for i in 0..sign.len() {
             extra[i] |= !sign[i];
         }
-        if x.len % 8 != 0 {
+        if !x.len.is_multiple_of(8) {
             if let Some(last) = extra.last_mut() {
                 let mask = (1u8 << (x.len % 8)) - 1;
                 *last &= mask;
@@ -290,7 +290,7 @@ pub fn swiglu_nda(gate: &NdaVec, up: &NdaVec, silu: &SiluLut) -> NdaVec {
     let gate_activated = silu.apply(gate);
 
     let len = gate.len;
-    let bytes = (len + 7) / 8;
+    let bytes = len.div_ceil(8);
     let mut sign = vec![0u8; bytes];
     let mut extra = vec![0u8; bytes];
 
@@ -316,7 +316,7 @@ pub fn swiglu_nda(gate: &NdaVec, up: &NdaVec, silu: &SiluLut) -> NdaVec {
         extra[byte_idx] = (res_low >> 4) | (res_high & 0xF0);
     }
 
-    if len % 8 != 0 {
+    if !len.is_multiple_of(8) {
         let last_idx = bytes - 1;
         let mask = (1u8 << (len % 8)) - 1;
         sign[last_idx] &= mask;
@@ -343,7 +343,7 @@ pub struct NdaEmbedding {
 
 impl NdaEmbedding {
     pub fn stride(&self) -> usize {
-        (self.hidden_size + 7) / 8
+        self.hidden_size.div_ceil(8)
     }
 
     #[allow(dead_code)]
@@ -368,7 +368,7 @@ impl NdaEmbedding {
         let scale = 2f32.powi(log2_scale as i32);
         let inv_scale = 1.0 / scale;
 
-        let stride = (hidden_size + 7) / 8;
+        let stride = hidden_size.div_ceil(8);
         let mut sign = vec![0u8; vocab_size * stride];
         let mut extra = vec![0u8; vocab_size * stride];
 

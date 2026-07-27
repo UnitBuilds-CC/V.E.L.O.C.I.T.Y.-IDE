@@ -674,17 +674,15 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                 };
                 let val = if let Some(v) = state.mmio.get(&a) {
                     v.clone()
+                } else if (a as usize) + 4 <= state.heap.len() {
+                    let v = i32::from_le_bytes(
+                        state.heap[a as usize..(a as usize) + 4]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    JitVal::Scalar(v, 0)
                 } else {
-                    if (a as usize) + 4 <= state.heap.len() {
-                        let v = i32::from_le_bytes(
-                            state.heap[a as usize..(a as usize) + 4]
-                                .try_into()
-                                .unwrap(),
-                        );
-                        JitVal::Scalar(v, 0)
-                    } else {
-                        return Err(format!("Out of bounds MMIO/heap read at address {}", a));
-                    }
+                    return Err(format!("Out of bounds MMIO/heap read at address {}", a));
                 };
                 state.stack.push(val);
                 Ok(JitControlFlow::Continue)
@@ -706,18 +704,16 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                 };
                 if state.mmio.contains_key(&a) || a >= 0xF0000000 {
                     state.mmio.insert(a, val);
+                } else if (a as usize) + 4 <= state.heap.len() {
+                    let int_val = match val {
+                        JitVal::Scalar(v, _) => v,
+                        JitVal::Float(v) => v as i32,
+                        _ => return Err("Poke value must be scalar".to_string()),
+                    };
+                    state.heap[a as usize..(a as usize) + 4]
+                        .copy_from_slice(&int_val.to_le_bytes());
                 } else {
-                    if (a as usize) + 4 <= state.heap.len() {
-                        let int_val = match val {
-                            JitVal::Scalar(v, _) => v,
-                            JitVal::Float(v) => v as i32,
-                            _ => return Err("Poke value must be scalar".to_string()),
-                        };
-                        state.heap[a as usize..(a as usize) + 4]
-                            .copy_from_slice(&int_val.to_le_bytes());
-                    } else {
-                        return Err(format!("Out of bounds MMIO/heap write at address {}", a));
-                    }
+                    return Err(format!("Out of bounds MMIO/heap write at address {}", a));
                 }
                 Ok(JitControlFlow::Continue)
             })
@@ -800,7 +796,7 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                 arg_vals.reverse();
                 match num {
                     1 => {
-                        if let Some(val) = arg_vals.get(0) {
+                        if let Some(val) = arg_vals.first() {
                             state
                                 .print_buf
                                 .push(format!("[syscall print] {:?}", val.to_f32_vec()));
@@ -846,7 +842,7 @@ fn is_pure_scalar(node: &NdaNode) -> bool {
         } => {
             is_pure_scalar(cond)
                 && then_body.iter().all(is_pure_scalar)
-                && else_body.as_ref().map_or(true, |eb| eb.iter().all(is_pure_scalar))
+                && else_body.as_ref().is_none_or(|eb| eb.iter().all(is_pure_scalar))
         }
         NdaNode::Scope { children } => children.iter().all(is_pure_scalar),
         NdaNode::Return { value } => is_pure_scalar(value),

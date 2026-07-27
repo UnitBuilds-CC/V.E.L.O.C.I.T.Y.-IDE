@@ -14,7 +14,7 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
             let row_start = row * matrix.cols;
             let mut acc = 0i32;
             let block_size = matrix.block_size;
-            let n_blocks = (matrix.cols + block_size - 1) / block_size;
+            let n_blocks = matrix.cols.div_ceil(block_size);
 
             for block_idx in 0..n_blocks {
                 let q_scale = matrix.q_scales[block_idx] as i32;
@@ -62,7 +62,7 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
             let row_start = row * matrix.cols;
             let mut acc = 0i32;
             let block_size = matrix.block_size;
-            let n_blocks = (matrix.cols + block_size - 1) / block_size;
+            let n_blocks = matrix.cols.div_ceil(block_size);
 
             for block_idx in 0..n_blocks {
                 let q_scale = matrix.q_scales[block_idx] as i32;
@@ -104,7 +104,7 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
     debug_assert!(matrix.is_quad(), "nda_gemv_nda_to_nda requires v2 quad matrix");
     debug_assert_eq!(x.len, matrix.cols);
 
-    let stride = (matrix.cols + 7) / 8;
+    let stride = matrix.cols.div_ceil(8);
     let mut out_i32 = vec![0i32; matrix.rows];
 
     let mat_log2 = matrix.scale.log2().round() as i8;
@@ -153,7 +153,7 @@ pub fn lm_head_nda_to_i32(matrix: &NdaMatrix, x: &NdaVec) -> Vec<i32> {
     debug_assert!(matrix.is_quad());
     debug_assert_eq!(x.len, matrix.cols);
 
-    let stride = (matrix.cols + 7) / 8;
+    let stride = matrix.cols.div_ceil(8);
     let mut out = vec![0i32; matrix.rows];
 
     out.par_iter_mut().enumerate().for_each(|(row, val)| {

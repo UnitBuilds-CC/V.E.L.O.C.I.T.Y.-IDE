@@ -25,7 +25,7 @@ pub fn deserialise_node(data: &[u8], offset: &mut usize) -> Result<NdaNode> {
             let cols = u16::from_le_bytes(data[*offset + 2..*offset + 4].try_into().unwrap());
             let scale = data[*offset + 4] as i8;
             *offset += 5;
-            let bitmap_bytes = rows as usize * ((cols as usize + 7) / 8);
+            let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
             if *offset + 2 * bitmap_bytes > data.len() {
                 anyhow::bail!("Truncated Matrix bitmaps");
             }
@@ -47,7 +47,7 @@ pub fn deserialise_node(data: &[u8], offset: &mut usize) -> Result<NdaNode> {
             }
             let size = u16::from_le_bytes(data[*offset..*offset + 2].try_into().unwrap());
             *offset += 2;
-            let bitmap_bytes = (size as usize + 7) / 8;
+            let bitmap_bytes = (size as usize).div_ceil(8);
             if *offset + 2 * bitmap_bytes > data.len() {
                 anyhow::bail!("Truncated Norm bitmaps");
             }

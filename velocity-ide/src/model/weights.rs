@@ -59,12 +59,12 @@ fn tile_weights_nda(matrix: &NdaMatrix) -> (Vec<u8>, Vec<u8>) {
     let rows = matrix.rows;
     let cols = matrix.cols;
     let num_col_words = cols / 32;
-    let num_col_words_padded = (num_col_words + 3) / 4 * 4;
+    let num_col_words_padded = num_col_words.div_ceil(4) * 4;
     
     let mut active_dest = vec![0u32; num_col_words_padded * rows];
     let mut pos_dest = vec![0u32; num_col_words_padded * rows];
     
-    let row_stride = (cols + 7) / 8;
+    let row_stride = cols.div_ceil(8);
     
     for row in 0..rows {
         for col_word in 0..num_col_words {
@@ -239,7 +239,7 @@ impl ModelWeights {
                 if let Some(ref driver) = vulkan {
                     if matrix.version == crate::nda::NDA_V2_QUAD {
                         let (act_bytes, pos_bytes) = tile_weights_nda(matrix);
-                        let num_col_words_padded = ((matrix.cols / 32) + 3) / 4 * 4;
+                        let num_col_words_padded = (matrix.cols / 32).div_ceil(4) * 4;
                         let k_padded = num_col_words_padded * 32;
                         VulkanNdaGemv::new_direct(driver, matrix.version as u32, k_padded as u32, matrix.rows as u32, &act_bytes, &pos_bytes).ok()
                     } else if matrix.version == crate::nda::NDA_VERSION_FP4 || matrix.version == crate::nda::NDA_VERSION_FP2 {

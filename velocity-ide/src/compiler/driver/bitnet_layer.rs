@@ -404,7 +404,7 @@ impl VulkanBitNetLayer {
                     0,
                     params_bytes,
                 );
-                let workgroups = (n + 255) / 256u32;
+                let workgroups = n.div_ceil(256u32);
                 device.cmd_dispatch(cmd, workgroups, 1, 1);
             };
 
@@ -427,7 +427,7 @@ impl VulkanBitNetLayer {
                     0,
                     params_bytes,
                 );
-                let workgroups = (n + 255) / 256u32;
+                let workgroups = n.div_ceil(256u32);
                 device.cmd_dispatch(cmd, workgroups, 1, 1);
             };
 

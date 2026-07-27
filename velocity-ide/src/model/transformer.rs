@@ -20,8 +20,8 @@ use crate::compiler::driver::VulkanNdaGemv;
 /// Pack a float32 vector to v2 quad sign+extra bitmaps (same as quantize_activations_v2_quad
 /// but operates on a slice of `len` elements and can zero-pad to `len` if needed).
 fn pack_vector_impl(v: &[f32], scale: f32, len: usize) -> (Vec<u8>, Vec<u8>) {
-    let mut sign_buf  = vec![0u8; (len + 7) / 8];
-    let mut extra_buf = vec![0u8; (len + 7) / 8];
+    let mut sign_buf  = vec![0u8; len.div_ceil(8)];
+    let mut extra_buf = vec![0u8; len.div_ceil(8)];
 
     let actual_scale = if scale < 1e-8 { 1.0 } else { scale };
     let inv_scale = 1.0 / actual_scale;
@@ -69,7 +69,7 @@ fn nda_gemv_gpu_or_cpu(
             
             // 2. Pad column count (only legacy quad format needs padding to 128-element boundaries)
             let cols_padded = if cpu_gemv.version == crate::nda::NDA_V2_QUAD {
-                let num_col_words_padded = ((cpu_gemv.cols / 32) + 3) / 4 * 4;
+                let num_col_words_padded = (cpu_gemv.cols / 32).div_ceil(4) * 4;
                 num_col_words_padded * 32
             } else {
                 cpu_gemv.cols
@@ -183,8 +183,8 @@ impl NdaKvBlock {
     pub fn compute_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(self.prev_hash);
-        hasher.update(&self.k_scale.to_le_bytes());
-        hasher.update(&self.v_scale.to_le_bytes());
+        hasher.update(self.k_scale.to_le_bytes());
+        hasher.update(self.v_scale.to_le_bytes());
         hasher.update(&self.k_sign);
         hasher.update(&self.k_extra);
         hasher.update(&self.v_sign);
@@ -301,7 +301,7 @@ fn attention_head(
     scale:    f32,
 ) -> Vec<f32> {
     let head_dim       = h_end - h_start;
-    let head_bytes     = (head_dim + 7) / 8;
+    let head_bytes     = head_dim.div_ceil(8);
     // Byte offset into the full-width KV bitmaps where this head starts
     let head_byte_start = h_start / 8;
     // Precompute q_scale × attn_scale (constant for entire head)
@@ -487,6 +487,7 @@ fn sample_token(logits: &[f32], temperature: f32, top_p: f32, rng: &mut impl Rng
 }
 
 /// Sample the next token using top-k filtering before top-p.
+#[cfg(test)]
 fn sample_token_top_k(logits: &[f32], temperature: f32, top_p: f32, top_k: usize, rng: &mut impl Rng) -> u32 {
     if top_k == 0 || top_k >= logits.len() {
         return sample_token(logits, temperature, top_p, rng);
@@ -520,6 +521,7 @@ fn sample_token_top_k(logits: &[f32], temperature: f32, top_p: f32, top_k: usize
 }
 
 /// Apply frequency penalty to logits based on token occurrence counts.
+#[cfg(test)]
 fn apply_frequency_penalty(logits: &mut [f32], token_counts: &std::collections::HashMap<u32, usize>, penalty: f32) {
     for (&tok, &count) in token_counts.iter() {
         let idx = tok as usize;
@@ -530,6 +532,7 @@ fn apply_frequency_penalty(logits: &mut [f32], token_counts: &std::collections::
 }
 
 /// Apply presence penalty to logits based on token occurrence.
+#[cfg(test)]
 fn apply_presence_penalty(logits: &mut [f32], token_counts: &std::collections::HashMap<u32, usize>, penalty: f32) {
     for (&tok, _) in token_counts.iter() {
         let idx = tok as usize;

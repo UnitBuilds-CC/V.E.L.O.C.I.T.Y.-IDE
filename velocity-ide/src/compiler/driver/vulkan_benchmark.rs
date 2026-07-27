@@ -2,7 +2,6 @@ use std::ffi::CString;
 use std::time::Instant;
 
 use ash::vk;
-use ash::Device;
 
 use super::vulkan_init::*;
 
