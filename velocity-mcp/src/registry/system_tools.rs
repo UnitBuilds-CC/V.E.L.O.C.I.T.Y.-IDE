@@ -142,9 +142,10 @@ pub fn handle_system_tool(
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
     let result = match name {
-        "convert_to_nda" | "read_nda" | "execute_nda" => {
-            execute_csharp_mcp_tool(name, arguments)?
-        }
+        // Native Rust NDA document path (portable NDA1 with in-file history).
+        "convert_to_nda" => native_convert_to_nda(root, arguments)?,
+        "read_nda" => native_read_nda(root, arguments)?,
+        "execute_nda" => execute_csharp_mcp_tool(name, arguments)?,
         "read_file" => {
             let rel_path = arguments["relativeFilePath"]
                 .as_str()
@@ -727,6 +728,89 @@ pub fn handle_system_tool(
     Ok(Some(result))
 }
 
+/// Native `convert_to_nda`: convert any file to a portable NDA1 document
+/// (text → wrapped DrawText lines + content triples; image → a DrawImage
+/// command carrying a data-url), with an optional seal toggle.
+fn native_convert_to_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+    let output_path = arguments["outputPath"].as_str().unwrap_or("");
+    let seal = arguments["seal"].as_bool().unwrap_or(false);
+
+    let src = PathBuf::from(file_path);
+    let final_output = if output_path.is_empty() {
+        format!("{file_path}.nda")
+    } else {
+        output_path.to_string()
+    };
+    let out = PathBuf::from(&final_output);
+
+    let doc = crate::editor::nda_document::convert_file_to_doc(&src)?;
+    // Record an origin revision so the produced document carries provenance.
+    let mut doc = doc;
+    let author = crate::editor::nda_document::resolve_author(root);
+    let origin = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "workspace".to_string());
+    doc.commit_revision(
+        &author.name,
+        &author.email,
+        &author.source,
+        &crate::editor::nda_document::now_rfc3339(),
+        "converted via convert_to_nda",
+        &origin,
+    );
+    crate::editor::nda_document::save_to_disk(root, &out, &doc, seal)?;
+
+    Ok(format!(
+        "Success: converted {} to {} ({} triples, {} commands, sealed={}).",
+        file_path,
+        final_output,
+        doc.triples.len(),
+        doc.commands.len(),
+        seal
+    ))
+}
+
+/// Native `read_nda`: parse a portable or sealed NDA1 document and summarize
+/// its title, counts, provenance, and (bounded) triples.
+fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
+    let nda_path = arguments["ndaPath"].as_str().ok_or("ndaPath is required")?;
+    let path = PathBuf::from(nda_path);
+    let (doc, kind) = crate::editor::nda_document::load_from_disk(root, &path)
+        .map_err(|e| format!("failed to read NDA: {e}"))?;
+
+    let mut out = String::new();
+    out.push_str(&format!("NDA document: {nda_path}\n"));
+    out.push_str(&format!("Kind: {kind:?}\n"));
+    out.push_str(&format!("Title: {}\n", doc.title().unwrap_or("(untitled)")));
+    out.push_str(&format!(
+        "Triples: {} · Commands: {} · Revisions: {}\n",
+        doc.triples.len(),
+        doc.commands.len(),
+        doc.revisions().len()
+    ));
+    out.push_str(&format!(
+        "History chain: {}\n",
+        if doc.verify_history().is_ok() { "valid" } else { "BROKEN" }
+    ));
+    for r in doc.revisions() {
+        out.push_str(&format!(
+            "  rev {} — {} <{}> [{}] {} {}\n",
+            r.id, r.author_name, r.author_email, r.author_source, r.timestamp, r.message
+        ));
+    }
+    out.push_str("Triples:\n");
+    for (i, (s, p, o)) in doc.triples.iter().enumerate() {
+        if i >= 200 {
+            out.push_str(&format!("  … {} more\n", doc.triples.len() - 200));
+            break;
+        }
+        out.push_str(&format!("  {s} → {p} → {o}\n"));
+    }
+    Ok(out)
+}
+
 fn execute_csharp_mcp_tool(
     tool_name: &str,
     arguments: &Value,
@@ -1266,4 +1350,59 @@ fn run_in_dll_sandbox(
         .output();
 
     Ok(run_output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_convert_then_read_round_trips() {
+        let dir = std::env::temp_dir().join(format!("nda_tool_test_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let src = dir.join("note.txt");
+        fs::write(&src, "alpha\nbeta\ngamma").unwrap();
+        let out = dir.join("note.nda");
+
+        let conv = native_convert_to_nda(
+            &dir,
+            &json!({ "filePath": src.to_string_lossy(), "outputPath": out.to_string_lossy() }),
+        )
+        .unwrap();
+        assert!(conv.contains("Success"), "convert output: {conv}");
+        assert!(out.exists());
+
+        // The produced file is a portable NDA1 document with a genesis revision.
+        let (doc, kind) = crate::editor::nda_document::load_from_disk(&dir, &out).unwrap();
+        assert_eq!(kind, crate::editor::nda_document::LoadedKind::Portable);
+        assert_eq!(doc.revisions().len(), 1);
+        assert!(doc.verify_history().is_ok());
+        assert_eq!(doc.commands.len(), 3);
+
+        let read = native_read_nda(&dir, &json!({ "ndaPath": out.to_string_lossy() })).unwrap();
+        assert!(read.contains("Revisions: 1"), "read output: {read}");
+        assert!(read.contains("History chain: valid"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn native_convert_seal_produces_sealed_doc() {
+        let dir = std::env::temp_dir().join(format!("nda_tool_seal_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let src = dir.join("secret.txt");
+        fs::write(&src, "classified").unwrap();
+        let out = dir.join("secret.nda");
+
+        native_convert_to_nda(
+            &dir,
+            &json!({ "filePath": src.to_string_lossy(), "outputPath": out.to_string_lossy(), "seal": true }),
+        )
+        .unwrap();
+
+        let raw = fs::read(&out).unwrap();
+        // Sealed envelope sets ENCRYPTED|RAW flags, so it is not a plain portable doc.
+        assert!(velocity_browser::nda_portable::NdaPortableDoc::from_portable_bytes(&raw).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

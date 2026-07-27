@@ -5,12 +5,13 @@ pub fn get_system_tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "convert_to_nda".to_string(),
-            description: "Convert any file (e.g. C# source code, PDF, CSV, Excel, Image, Zip archive) into a cryptographically signed NDA (.nda) binary document.".to_string(),
+            description: "Convert any file (text, code, CSV, image) into a portable, browser-viewable NDA1 (.nda) document with self-contained provenance. Text becomes wrapped draw-text commands plus content triples; images become a draw-image command. Optionally seal (AES-256-GCM) for confidentiality.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "filePath": { "type": "string", "description": "Absolute path to the input file to convert." },
-                    "outputPath": { "type": "string", "description": "Optional absolute path to write the compiled .nda file. Defaults to input path with .nda extension." }
+                    "outputPath": { "type": "string", "description": "Optional absolute path to write the compiled .nda file. Defaults to input path with .nda extension." },
+                    "seal": { "type": "boolean", "description": "Optional. If true, seal the document at rest with the workspace AES-256-GCM key (not browser-viewable until opened in velocity). Defaults to false (portable)." }
                 },
                 "required": ["filePath"]
             }),
