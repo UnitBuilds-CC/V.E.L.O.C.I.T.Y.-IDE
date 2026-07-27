@@ -52,6 +52,7 @@ impl Tab {
             TabKind::Pipeline => "Pipeline".into(),
             TabKind::Voice => "Voice".into(),
             TabKind::Knowledge => "Knowledge".into(),
+            TabKind::Triggers => "Triggers".into(),
         }
     }
 
@@ -101,6 +102,8 @@ pub enum TabKind {
     Voice,
     // Knowledge / RAG panel
     Knowledge,
+    // Unattended execution triggers
+    Triggers,
 }
 
 pub struct Command {

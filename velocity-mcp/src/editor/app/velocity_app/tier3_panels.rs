@@ -734,4 +734,218 @@ impl VelocityApp {
             }
         }
     }
+
+    pub fn render_triggers_panel(&mut self, ui: &mut egui::Ui) {
+        use crate::editor::triggers::{now_secs, parse_schedule, Trigger, TriggerAction, TriggerKind};
+        let palette = self.palette();
+        Self::tier3_header(
+            ui,
+            "Triggers",
+            &format!("{} trigger(s) · headless via --daemon", self.triggers.len()),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Add a schedule trigger: name · spec · prompt.
+        let mut add = false;
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.trigger_name_input)
+                    .hint_text("name…")
+                    .desired_width(120.0),
+            );
+            ui.add(
+                egui::TextEdit::singleline(&mut self.trigger_interval_input)
+                    .hint_text("5m · 1h · daily@09:00")
+                    .desired_width(140.0),
+            );
+            if ui.button(RichText::new("Add").size(10.0)).clicked() {
+                add = true;
+            }
+        });
+        ui.add_space(4.0);
+        ui.add(
+            egui::TextEdit::multiline(&mut self.trigger_prompt_input)
+                .hint_text("agent prompt to run when this schedule fires…")
+                .desired_rows(2)
+                .desired_width(ui.available_width()),
+        );
+        if self.trigger_interval_input.trim().is_empty()
+            || parse_schedule(self.trigger_interval_input.trim()).is_some()
+        {
+            // valid or empty — no warning
+        } else {
+            ui.label(
+                RichText::new("unrecognized schedule spec")
+                    .size(8.0)
+                    .color(palette.error),
+            );
+        }
+        ui.add_space(8.0);
+
+        // Trigger list.
+        let now = now_secs();
+        let mut toggle: Option<String> = None;
+        let mut remove: Option<String> = None;
+        let mut run_now: Option<String> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("triggers_list_scroll")
+            .max_height(320.0)
+            .show(ui, |ui| {
+                if self.triggers.is_empty() {
+                    ui.label(
+                        RichText::new("No triggers yet. Add a schedule above.")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                }
+                for t in &self.triggers.triggers {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(5.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let dot = if t.enabled { "●" } else { "○" };
+                                ui.label(
+                                    RichText::new(dot)
+                                        .size(10.0)
+                                        .color(if t.enabled { palette.success } else { palette.text_muted }),
+                                );
+                                ui.label(RichText::new(&t.name).size(10.0).strong().color(palette.text));
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                            remove = Some(t.id.clone());
+                                        }
+                                        let label = if t.enabled { "Disable" } else { "Enable" };
+                                        if ui.small_button(RichText::new(label).size(8.0)).clicked() {
+                                            toggle = Some(t.id.clone());
+                                        }
+                                        if ui.small_button(RichText::new("Run now").size(8.0)).clicked() {
+                                            run_now = Some(t.id.clone());
+                                        }
+                                    },
+                                );
+                            });
+                            ui.label(
+                                RichText::new(trigger_kind_label(&t.kind))
+                                    .size(8.5)
+                                    .color(palette.accent),
+                            );
+                            ui.label(
+                                RichText::new(trigger_action_label(&t.action))
+                                    .size(8.5)
+                                    .color(palette.text_muted),
+                            );
+                            let due = match t.seconds_until_due(now) {
+                                Some(0) => "due now".to_string(),
+                                Some(secs) => format!("next in {}", human_secs(secs)),
+                                None => "external / manual".to_string(),
+                            };
+                            ui.label(RichText::new(due).size(8.0).color(palette.text_muted));
+                        });
+                    ui.add_space(4.0);
+                }
+            });
+
+        // Deferred mutations (avoid borrowing self during rendering).
+        if add {
+            let name = self.trigger_name_input.trim().to_string();
+            let spec = self.trigger_interval_input.trim().to_string();
+            let prompt = self.trigger_prompt_input.trim().to_string();
+            if name.is_empty() || spec.is_empty() || prompt.is_empty() {
+                self.toasts.push(crate::editor::toast::Toast::error(
+                    "Trigger needs a name, schedule spec, and prompt",
+                ));
+            } else if parse_schedule(&spec).is_none() {
+                self.toasts.push(crate::editor::toast::Toast::error(format!(
+                    "Invalid schedule spec: {spec}"
+                )));
+            } else {
+                let id = format!("trg-{}", now_secs());
+                self.triggers.add(Trigger::new(
+                    id,
+                    name.clone(),
+                    TriggerKind::Schedule { interval: spec },
+                    TriggerAction::AgentPrompt { prompt },
+                ));
+                let ws = self.workspace_root.clone();
+                let _ = self.triggers.save(&ws);
+                self.trigger_name_input.clear();
+                self.trigger_interval_input.clear();
+                self.trigger_prompt_input.clear();
+                self.toasts
+                    .push(crate::editor::toast::Toast::info(format!("Added trigger '{name}'")));
+            }
+        }
+        if let Some(id) = toggle {
+            self.triggers.toggle(&id);
+            let ws = self.workspace_root.clone();
+            let _ = self.triggers.save(&ws);
+        }
+        if let Some(id) = remove {
+            if self.triggers.remove(&id) {
+                let ws = self.workspace_root.clone();
+                let _ = self.triggers.save(&ws);
+                self.toasts
+                    .push(crate::editor::toast::Toast::info("Trigger removed"));
+            }
+        }
+        if let Some(id) = run_now {
+            let action = self.triggers.get(&id).map(|t| t.action.clone());
+            match action {
+                Some(TriggerAction::AgentPrompt { prompt }) => {
+                    let _ = self
+                        .agent_tx
+                        .send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
+                    self.triggers.mark_run(&id, now_secs());
+                    let ws = self.workspace_root.clone();
+                    let _ = self.triggers.save(&ws);
+                    self.toasts
+                        .push(crate::editor::toast::Toast::info("Trigger dispatched to agent"));
+                }
+                Some(TriggerAction::RunWorkflow { .. }) => {
+                    self.toasts.push(crate::editor::toast::Toast::info(
+                        "Workflow execution is wired in Pillar 4",
+                    ));
+                }
+                None => {}
+            }
+        }
+    }
+}
+
+fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {
+    use crate::editor::triggers::TriggerKind;
+    match kind {
+        TriggerKind::Schedule { interval } => format!("schedule · {interval}"),
+        TriggerKind::FileWatch { path, glob } => format!("file-watch · {path}/{glob}"),
+        TriggerKind::Webhook { .. } => "webhook".to_string(),
+        TriggerKind::Manual => "manual".to_string(),
+    }
+}
+
+fn trigger_action_label(action: &crate::editor::triggers::TriggerAction) -> String {
+    use crate::editor::triggers::TriggerAction;
+    match action {
+        TriggerAction::RunWorkflow { workflow_id } => format!("→ workflow {workflow_id}"),
+        TriggerAction::AgentPrompt { prompt } => {
+            let p: String = prompt.chars().take(60).collect();
+            format!("→ agent: {p}")
+        }
+    }
+}
+
+fn human_secs(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
+    }
 }

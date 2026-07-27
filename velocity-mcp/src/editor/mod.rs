@@ -65,4 +65,5 @@ pub mod snippets;
 pub mod speculative_precomp;
 pub mod terminal;
 pub mod test_generator;
+pub mod triggers;
 pub mod voice_commands;

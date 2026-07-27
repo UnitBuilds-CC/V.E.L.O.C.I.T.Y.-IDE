@@ -83,6 +83,7 @@ impl VelocityApp {
             Command { label: "Deploy Pipeline", category: "Build", shortcut: None, action: |a| a.toggle_pipeline(), modes: &[WorkspaceProfile::Coder] },
             Command { label: "Voice Commands", category: "Panels", shortcut: None, action: |a| a.toggle_voice(), modes: &[] },
             Command { label: "Knowledge", category: "Panels", shortcut: None, action: |a| a.toggle_knowledge(), modes: &[] },
+            Command { label: "Triggers", category: "Panels", shortcut: None, action: |a| a.toggle_triggers(), modes: &[] },
             Command { label: "Find / Replace", category: "Edit", shortcut: Some("Ctrl+H"), action: |a| a.open_find_replace_active(), modes: &[] },
             Command { label: "Find", category: "Edit", shortcut: Some("Ctrl+F"), action: |a| a.open_find_active(), modes: &[] },
             Command { label: "Request Inline Suggestion", category: "Agent", shortcut: Some("Ctrl+Shift+I"), action: |a| a.request_inline_suggestion(), modes: &[] },
@@ -829,6 +830,11 @@ impl VelocityApp {
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);
+    }
+
+    /// Open the unattended-execution Triggers panel.
+    pub fn toggle_triggers(&mut self) {
+        self.toggle_panel(TabKind::Triggers);
     }
 
     pub fn toggle_left_sidebar(&mut self) {

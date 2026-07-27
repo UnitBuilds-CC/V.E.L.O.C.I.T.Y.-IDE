@@ -85,6 +85,7 @@ fn main() {
     let mut benchmark_mode = false;
     let mut editor_mode = args.len() == 1;
     let mut tokenize_prompt = None;
+    let mut daemon_mode = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -128,6 +129,11 @@ fn main() {
                 editor_mode = true;
                 i += 1;
             }
+            "--daemon" => {
+                daemon_mode = true;
+                editor_mode = false;
+                i += 1;
+            }
             "--check" => {
                 automation::run_self_check();
                 return;
@@ -151,6 +157,11 @@ fn main() {
 
     if benchmark_mode {
         benchmark::run_benchmarks();
+        return;
+    }
+
+    if daemon_mode {
+        run_daemon();
         return;
     }
 
@@ -415,6 +426,67 @@ fn main() {
     }
 }
 
+/// Headless daemon: repeatedly evaluate the trigger registry and fire due
+/// triggers without a GUI. Reloads the registry each tick so edits made in the
+/// editor take effect live. Runs until interrupted.
+fn run_daemon() {
+    use editor::triggers::{now_secs, TriggerAction, TriggerRegistry};
+
+    let workspace_root =
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let poll = std::time::Duration::from_secs(30);
+    println!("Starting V.E.L.O.C.I.T.Y. daemon (headless trigger loop)...");
+    println!("  Workspace: {}", workspace_root.display());
+    println!("  Poll interval: {}s. Press Ctrl+C to stop.", poll.as_secs());
+
+    loop {
+        let mut registry = TriggerRegistry::load(&workspace_root);
+        let now = now_secs();
+        let due = registry.due_triggers(now);
+        for id in due {
+            let Some((name, action)) =
+                registry.get(&id).map(|t| (t.name.clone(), t.action.clone()))
+            else {
+                continue;
+            };
+            println!("[daemon] firing trigger '{}' ({})", name, id);
+            match action {
+                TriggerAction::AgentPrompt { prompt } => {
+                    let request = agent::HeadlessSubAgentRequest {
+                        workspace_root: workspace_root.clone(),
+                        provider: agent::AiProvider::CloudflareWorkersAi,
+                        model: agent::provider::default_provider_model(
+                            agent::AiProvider::CloudflareWorkersAi,
+                        ),
+                        thinking: false,
+                        prompt,
+                        cancel_rx: None,
+                        progress: None,
+                        scoped_files: None,
+                    };
+                    let result = agent::run_headless_subagent(request);
+                    println!(
+                        "[daemon] trigger '{}' finished ({} status update(s))",
+                        name,
+                        result.status_updates.len()
+                    );
+                }
+                TriggerAction::RunWorkflow { workflow_id } => {
+                    // The workflow executor is wired in during Pillar 4; until
+                    // then a workflow trigger records its intent to the log.
+                    println!(
+                        "[daemon] trigger '{}' requests workflow '{}' (executor pending)",
+                        name, workflow_id
+                    );
+                }
+            }
+            registry.mark_run(&id, now);
+        }
+        let _ = registry.save(&workspace_root);
+        std::thread::sleep(poll);
+    }
+}
+
 fn resolve_presence_file(workspace_root: &std::path::Path) -> std::path::PathBuf {
     let candidates = [
         workspace_root
@@ -445,6 +517,7 @@ fn print_help() {
     println!("  --buffer-path <path>        Path to mapped buffer file. Only used in shmem mode.");
     println!("  --benchmark                 Run the performance benchmark suite");
     println!("  --tokenize <prompt>         Run the NDA-embedded tokenizer demonstration on the text prompt");
+    println!("  --daemon                    Run headless: evaluate the trigger registry and fire due triggers");
     println!("  --check                     Run `cargo check` and exit with a summary");
     println!("  -h, --help                  Print this help screen");
 }

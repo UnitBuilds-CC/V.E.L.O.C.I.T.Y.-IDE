@@ -403,6 +403,10 @@ semantic_search_active: false,
         knowledge_query: String::new(),
         knowledge_ingest_input: String::new(),
         knowledge_results: Vec::new(),
+        triggers: crate::editor::triggers::TriggerRegistry::new(),
+        trigger_name_input: String::new(),
+        trigger_interval_input: String::new(),
+        trigger_prompt_input: String::new(),
     };
 
     app.mirror_worker_events_into_timeline(&first_snapshot);
@@ -586,6 +590,10 @@ semantic_search_active: false,
         knowledge_query: String::new(),
         knowledge_ingest_input: String::new(),
         knowledge_results: Vec::new(),
+        triggers: crate::editor::triggers::TriggerRegistry::new(),
+        trigger_name_input: String::new(),
+        trigger_interval_input: String::new(),
+        trigger_prompt_input: String::new(),
     };
 
     app.mirror_worker_events_into_timeline(&snapshot);

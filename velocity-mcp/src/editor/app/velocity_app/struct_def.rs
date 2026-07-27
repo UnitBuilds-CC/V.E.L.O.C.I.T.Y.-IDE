@@ -310,6 +310,14 @@ pub struct VelocityApp {
     pub knowledge_ingest_input: String,
     /// Last ranked results rendered in the Knowledge panel.
     pub knowledge_results: Vec<crate::editor::knowledge_base::KnowledgeHit>,
+    /// Unattended-execution trigger registry shown in the Triggers panel.
+    pub triggers: crate::editor::triggers::TriggerRegistry,
+    /// Draft trigger name in the Triggers panel add box.
+    pub trigger_name_input: String,
+    /// Draft schedule spec (e.g. "5m", "daily@09:00") in the Triggers panel.
+    pub trigger_interval_input: String,
+    /// Draft agent prompt for a new trigger in the Triggers panel.
+    pub trigger_prompt_input: String,
 }
 
 impl VelocityApp {
@@ -835,6 +843,10 @@ impl VelocityApp {
             knowledge_query: String::new(),
             knowledge_ingest_input: String::new(),
             knowledge_results: Vec::new(),
+            triggers: crate::editor::triggers::TriggerRegistry::load(&workspace_root),
+            trigger_name_input: String::new(),
+            trigger_interval_input: String::new(),
+            trigger_prompt_input: String::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);
