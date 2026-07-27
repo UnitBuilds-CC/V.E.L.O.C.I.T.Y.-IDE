@@ -193,6 +193,9 @@ pub struct NdaDocumentView {
     identity_name: String,
     identity_email: String,
     identity_loaded: bool,
+    /// Decoded image textures for DrawImage commands, keyed by command index;
+    /// the stored content string detects staleness when the doc edits.
+    image_textures: std::collections::HashMap<usize, (String, egui::TextureId)>,
     last_error: Option<String>,
 }
 
@@ -222,6 +225,7 @@ impl NdaDocumentView {
             identity_name: String::new(),
             identity_email: String::new(),
             identity_loaded: false,
+            image_textures: std::collections::HashMap::new(),
             last_error: None,
         }
     }
@@ -236,6 +240,7 @@ impl NdaDocumentView {
                 self.kind = kind;
                 self.path = Some(path.to_path_buf());
                 self.dirty = false;
+                self.image_textures.clear();
                 self.last_error = None;
             }
             Err(e) => {
@@ -345,12 +350,26 @@ impl NdaDocumentView {
 
     // --- Sub-views ---------------------------------------------------------
 
-    fn render_canvas(&self, ui: &mut egui::Ui, palette: IdePalette) {
+    fn render_canvas(&mut self, ui: &mut egui::Ui, palette: IdePalette) {
         let size = egui::vec2(ui.available_width().max(320.0), 420.0);
         let (rect, _resp) = ui.allocate_exact_size(size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, egui::CornerRadius::same(4), egui::Color32::from_rgb(13, 17, 23));
-        for c in &self.doc.commands {
+        let ctx = ui.ctx().clone();
+        // Precompute wrapped text galleys (layout needs &mut Fonts via the ctx closure).
+        let galleys: std::collections::HashMap<usize, std::sync::Arc<egui::Galley>> = ui.ctx().fonts_mut(|f| {
+            self.doc
+                .commands
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| CommandKind::from_u8(c.kind) == Some(CommandKind::DrawText) && c.w > 0)
+                .map(|(i, c)| {
+                    let g = f.layout(c.content.clone(), egui::FontId::monospace(14.0), color_from_u32(c.color), c.w as f32);
+                    (i, g)
+                })
+                .collect()
+        });
+        for (idx, c) in self.doc.commands.iter().enumerate() {
             let color = color_from_u32(c.color);
             let min = rect.min + egui::vec2(c.x as f32, c.y as f32);
             match CommandKind::from_u8(c.kind) {
@@ -359,20 +378,56 @@ impl NdaDocumentView {
                     painter.rect_filled(r, egui::CornerRadius::ZERO, color);
                 }
                 Some(CommandKind::DrawText) => {
-                    painter.text(
-                        min,
-                        egui::Align2::LEFT_TOP,
-                        &c.content,
-                        egui::FontId::monospace(14.0),
-                        color,
-                    );
+                    let font_id = egui::FontId::monospace(14.0);
+                    if let Some(galley) = galleys.get(&idx) {
+                        painter.galley(min, galley.clone(), color);
+                    } else {
+                        painter.text(min, egui::Align2::LEFT_TOP, &c.content, font_id, color);
+                    }
                 }
                 Some(CommandKind::DrawImage) => {
-                    let r = egui::Rect::from_min_size(min, egui::vec2(c.w.max(120) as f32, c.h.max(80) as f32));
-                    painter.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
-                    painter.text(min + egui::vec2(4.0, 4.0), egui::Align2::LEFT_TOP, "[image]", egui::FontId::monospace(11.0), color);
+                    let w = if c.w > 0 { c.w as f32 } else { 120.0 };
+                    let h = if c.h > 0 { c.h as f32 } else { 80.0 };
+                    let r = egui::Rect::from_min_size(min, egui::vec2(w, h));
+                    // Resolve (and cache) the decoded texture for this command.
+                    let cached = self
+                        .image_textures
+                        .get(&idx)
+                        .filter(|(content, _)| content == &c.content)
+                        .map(|(_, id)| *id);
+                    let tex = match cached {
+                        Some(id) => Some(id),
+                        None => decode_data_url(&c.content).and_then(|bytes| {
+                            image::load_from_memory(&bytes).ok().map(|img| {
+                                let rgba = img.to_rgba8();
+                                let dims = [rgba.width() as usize, rgba.height() as usize];
+                                let image = egui::ColorImage::from_rgba_unmultiplied(dims, rgba.as_raw());
+                                ctx.load_texture(format!("nda-img-{idx}"), image, egui::TextureOptions::LINEAR).id()
+                            })
+                        }),
+                    };
+                    if let Some(id) = tex {
+                        self.image_textures.insert(idx, (c.content.clone(), id));
+                        painter.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                    } else {
+                        painter.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+                        painter.text(min + egui::vec2(4.0, 4.0), egui::Align2::LEFT_TOP, "[image]", egui::FontId::monospace(11.0), color);
+                    }
                 }
-                Some(CommandKind::DrawVector) | None => {
+                Some(CommandKind::DrawVector) => {
+                    let pts = velocity_browser::nda_portable::parse_vector_points(&c.content);
+                    let points: Vec<egui::Pos2> = pts
+                        .iter()
+                        .map(|(dx, dy)| min + egui::vec2(*dx as f32, *dy as f32))
+                        .collect();
+                    let stroke_w = if c.h > 0 { c.h as f32 } else { 1.0 };
+                    if points.len() >= 2 {
+                        painter.add(egui::Shape::line(points, egui::Stroke::new(stroke_w, color)));
+                    } else if points.len() == 1 {
+                        painter.circle_filled(points[0], stroke_w.max(1.0), color);
+                    }
+                }
+                None => {
                     let r = egui::Rect::from_min_size(min, egui::vec2(c.w as f32, c.h as f32));
                     painter.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
                 }
@@ -732,6 +787,53 @@ fn color_from_u32(c: u32) -> egui::Color32 {
     )
 }
 
+/// Decode a `data:<mime>;base64,<payload>` URL into raw bytes. Returns `None`
+/// for non-data URLs or invalid base64.
+pub fn decode_data_url(url: &str) -> Option<Vec<u8>> {
+    let rest = url.strip_prefix("data:")?;
+    let b64 = rest.split_once(',')?.1;
+    from_base64(b64)
+}
+
+/// Standard base64 decode (padding-tolerant); inverse of
+/// [`crate::editor::nda_viewer::base64_encode`].
+pub fn from_base64(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes: Vec<u32> = input
+        .bytes()
+        .filter(|&b| b != b'=' && !b.is_ascii_whitespace())
+        .map(val)
+        .collect::<Option<_>>()?;
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let n = chunk.len();
+        let mut acc: u32 = 0;
+        for &v in chunk {
+            acc = (acc << 6) | v;
+        }
+        acc <<= (4 - n) * 6;
+        if n >= 2 {
+            out.push(((acc >> 16) & 0xFF) as u8);
+        }
+        if n >= 3 {
+            out.push(((acc >> 8) & 0xFF) as u8);
+        }
+        if n >= 4 {
+            out.push((acc & 0xFF) as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -775,5 +877,33 @@ mod tests {
         assert_eq!(doc.commands.len(), 3);
         assert!(doc.commands.iter().all(|c| c.kind == CommandKind::DrawText as u8));
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn from_base64_inverts_encoder() {
+        for sample in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", b"\x00\x01\xff\xfe"] {
+            let enc = crate::editor::nda_viewer::base64_encode(sample);
+            assert_eq!(from_base64(&enc).unwrap(), sample.to_vec(), "sample {sample:?}");
+        }
+    }
+
+    #[test]
+    fn decode_data_url_extracts_payload() {
+        let url = format!("data:text/plain;base64,{}", crate::editor::nda_viewer::base64_encode(b"hello nda"));
+        assert_eq!(decode_data_url(&url).unwrap(), b"hello nda");
+        assert!(decode_data_url("https://example.com/x.png").is_none());
+        assert!(decode_data_url("data:image/png;base64,!!!not-base64!!!").is_none());
+    }
+
+    #[test]
+    fn decode_data_url_decodes_real_png() {
+        // Encode a 2x2 PNG via the image crate, wrap as a data-url, decode back.
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));
+        let mut png: Vec<u8> = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let url = format!("data:image/png;base64,{}", crate::editor::nda_viewer::base64_encode(&png));
+        let decoded = decode_data_url(&url).unwrap();
+        let reloaded = image::load_from_memory(&decoded).unwrap();
+        assert_eq!((reloaded.width(), reloaded.height()), (2, 2));
     }
 }
