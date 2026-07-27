@@ -212,12 +212,20 @@ pub struct ImportSpecifier {
     pub local: String,     // the local binding name
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassMemberKind {
+    Method,
+    Getter,
+    Setter,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClassMethod {
     pub name: String,
     pub params: Vec<String>,
     pub body: Stmt,
     pub is_static: bool,
+    pub kind: ClassMemberKind,
 }
 
 #[derive(Debug, Clone)]
@@ -498,9 +506,16 @@ impl Parser {
                 Token::Ident(n) => { self.advance(); n }
                 _ => { self.advance(); "unknown".to_string() }
             };
+            // Detect accessor members: `get x() {}` / `set x(v) {}`. The keyword is only a
+            // prefix when followed by another identifier (the real property name).
+            let mut kind = ClassMemberKind::Method;
             // If next token is ( it's a method; if next is an ident, this was a keyword prefix
             let final_name = if self.at(&Token::LParen) {
                 method_name
+            } else if (method_name == "get" || method_name == "set") && matches!(self.peek(), Token::Ident(_)) {
+                let Token::Ident(n) = self.advance() else { unreachable!() };
+                kind = if method_name == "get" { ClassMemberKind::Getter } else { ClassMemberKind::Setter };
+                n
             } else if let Token::Ident(n) = self.peek().clone() {
                 self.advance(); n
             } else {
@@ -508,7 +523,7 @@ impl Parser {
             };
             let params = if self.at(&Token::LParen) { self.parse_params()? } else { vec![] };
             let body = if self.at(&Token::LBrace) { self.parse_block()? } else { Stmt::Block(vec![]) };
-            methods.push(ClassMethod { name: final_name, params, body, is_static });
+            methods.push(ClassMethod { name: final_name, params, body, is_static, kind });
         }
         self.expect(&Token::RBrace)?;
         Ok(Stmt::ClassDecl { name, parent, methods })
@@ -2078,7 +2093,14 @@ fn eval_class_decl(name: &str, parent: &Option<String>, methods: &[ClassMethod],
         } else if m.is_static {
             statics.insert(m.name.clone(), func);
         } else {
-            proto.insert(m.name.clone(), func);
+            match m.kind {
+                // Class getters/setters become accessor descriptors on the prototype so
+                // instances honor them via get_property/set_property (same model as
+                // object-literal accessors).
+                ClassMemberKind::Getter => install_literal_accessor(&mut proto, &m.name, "get", func),
+                ClassMemberKind::Setter => install_literal_accessor(&mut proto, &m.name, "set", func),
+                ClassMemberKind::Method => { proto.insert(m.name.clone(), func); }
+            }
         }
     }
     class_obj.insert("__proto_methods__".to_string(), JsValue::Object(proto));
@@ -4114,6 +4136,54 @@ mod tests {
             class Sub extends Base {}
             Sub.hello()
         "), JsValue::String("hi".to_string()));
+    }
+
+    #[test]
+    fn class_getter() {
+        assert_eq!(eval_full("
+            class C {
+                get x() { return 42; }
+            }
+            var c = new C();
+            c.x
+        "), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn class_getter_uses_this() {
+        assert_eq!(eval_full("
+            class C {
+                constructor() { this._v = 7; }
+                get x() { return this._v; }
+            }
+            var c = new C();
+            c.x
+        "), JsValue::Number(7.0));
+    }
+
+    #[test]
+    fn class_getter_setter_pair() {
+        assert_eq!(eval_full("
+            class C {
+                set x(v) { this._v = v * 3; }
+                get x() { return this._v; }
+            }
+            var c = new C();
+            c.x = 4;
+            c.x
+        "), JsValue::Number(12.0));
+    }
+
+    #[test]
+    fn class_getter_inherited() {
+        assert_eq!(eval_full("
+            class Base {
+                get kind() { return 'base'; }
+            }
+            class Sub extends Base {}
+            var s = new Sub();
+            s.kind
+        "), JsValue::String("base".to_string()));
     }
 
     #[test]
