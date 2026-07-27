@@ -1598,6 +1598,13 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
 
     // Method call: obj.method(args)
     if let Expr::Member(obj_expr, method) = callee {
+        // super.method(args): look the method up in the parent class's prototype chain
+        // and invoke it with the current `this`.
+        if matches!(obj_expr.as_ref(), Expr::Super) {
+            let parent = Scope::resolve(scope, "__super__").unwrap_or(JsValue::Undefined);
+            let this_val = Scope::resolve(scope, "this").unwrap_or_else(|| JsValue::Object(HashMap::new()));
+            return call_super_method(&parent, method, &evaluated_args, this_val, scope);
+        }
         // Handle static built-in calls: Promise.resolve, Object.keys, etc.
         if let Expr::Ident(obj_name) = obj_expr.as_ref() {
             let native_name = format!("{}.{}", obj_name, method);
@@ -1706,8 +1713,69 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         }
     }
 
+    // super(args): invoke the parent class constructor with the current `this`.
+    if matches!(callee, Expr::Super) {
+        let parent = Scope::resolve(scope, "__super__").unwrap_or(JsValue::Undefined);
+        let this_val = Scope::resolve(scope, "this").unwrap_or_else(|| JsValue::Object(HashMap::new()));
+        return call_super_constructor(&parent, &evaluated_args, this_val, scope);
+    }
+
     let func = eval_expr_node(callee, scope)?;
     call_function(&func, &evaluated_args, scope)
+}
+
+/// Invoke a parent class constructor (`super(args)`) with `this` bound to the current
+/// instance, writing any mutations back into the caller's `this` binding.
+fn call_super_constructor(parent_class: &JsValue, args: &[JsValue], this_val: JsValue, scope: &ScopeRef) -> EvalResult {
+    if let JsValue::Object(parent_map) = parent_class {
+        if let Some(JsValue::Function { params, body, closure, .. }) = parent_map.get("__constructor__") {
+            let ctor_scope = Scope::new_child(closure);
+            Scope::declare(&ctor_scope, "this", this_val);
+            // Expose the grandparent so chained super() calls work.
+            if let Some(grandparent) = parent_map.get("__parent__") {
+                Scope::declare(&ctor_scope, "__super__", grandparent.clone());
+            }
+            for (i, p) in params.iter().enumerate() {
+                Scope::declare(&ctor_scope, p, args.get(i).cloned().unwrap_or(JsValue::Undefined));
+            }
+            Scope::declare(&ctor_scope, "arguments", JsValue::Array(args.to_vec()));
+            let _ = eval_stmt(body, &ctor_scope);
+            if let Some(updated) = Scope::resolve(&ctor_scope, "this") {
+                Scope::assign(scope, "this", updated);
+            }
+        }
+    }
+    Ok(JsValue::Undefined)
+}
+
+/// Invoke a parent class method (`super.method(args)`) with `this` bound to the current
+/// instance, writing any mutations back into the caller's `this` binding.
+fn call_super_method(parent_class: &JsValue, method: &str, args: &[JsValue], this_val: JsValue, scope: &ScopeRef) -> EvalResult {
+    if let Some(func) = find_proto_method(parent_class, method) {
+        let (result, updated_this) = call_method_with_this_writeback(&func, args, scope, this_val);
+        Scope::assign(scope, "this", updated_this);
+        return result;
+    }
+    Ok(JsValue::Undefined)
+}
+
+/// Walk a class object's ancestry looking for `method` in each class's `__proto_methods__`.
+fn find_proto_method(class_val: &JsValue, method: &str) -> Option<JsValue> {
+    let mut current = class_val.clone();
+    let mut depth = 0;
+    loop {
+        if depth > 64 { return None; }
+        let JsValue::Object(cm) = &current else { return None };
+        if let Some(JsValue::Object(proto)) = cm.get("__proto_methods__") {
+            if let Some(func) = proto.get(method) {
+                return Some(func.clone());
+            }
+        }
+        match cm.get("__parent__") {
+            Some(parent) => { current = parent.clone(); depth += 1; }
+            None => return None,
+        }
+    }
 }
 
 /// Template literal interpolation: scans for ${...} and evaluates embedded expressions.
@@ -2139,6 +2207,17 @@ fn call_method_with_this_writeback(func: &JsValue, args: &[JsValue], _scope: &Sc
         JsValue::Function { params, body, closure, .. } => {
             let call_scope = Scope::new_child(closure);
             Scope::declare(&call_scope, "this", this_val.clone());
+            // Provide __super__ for `super.method()` calls inside instance methods: resolve
+            // the instance's class from the method's closure, then expose its parent class.
+            if let JsValue::Object(this_map) = &this_val {
+                if let Some(JsValue::String(class_name)) = this_map.get("__class_name__") {
+                    if let Some(JsValue::Object(class_obj)) = Scope::resolve(closure, class_name) {
+                        if let Some(parent) = class_obj.get("__parent__") {
+                            Scope::declare(&call_scope, "__super__", parent.clone());
+                        }
+                    }
+                }
+            }
             for (i, p) in params.iter().enumerate() {
                 let val = args.get(i).cloned().unwrap_or(JsValue::Undefined);
                 Scope::declare(&call_scope, p, val);
@@ -3919,6 +3998,60 @@ mod tests {
             var o = { a: 1 };
             o instanceof Animal
         "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn super_constructor_call() {
+        assert_eq!(eval_full("
+            class Animal {
+                constructor(n) { this.name = n; }
+            }
+            class Dog extends Animal {
+                constructor(n) { super(n); this.kind = 'dog'; }
+            }
+            var d = new Dog('Rex');
+            d.name + '/' + d.kind
+        "), JsValue::String("Rex/dog".to_string()));
+    }
+
+    #[test]
+    fn super_method_call() {
+        assert_eq!(eval_full("
+            class Animal {
+                speak() { return 'generic'; }
+            }
+            class Dog extends Animal {
+                speak() { return super.speak() + ' woof'; }
+            }
+            var d = new Dog();
+            d.speak()
+        "), JsValue::String("generic woof".to_string()));
+    }
+
+    #[test]
+    fn super_method_uses_this() {
+        assert_eq!(eval_full("
+            class Base {
+                greet() { return 'hi ' + this.name; }
+            }
+            class Sub extends Base {
+                constructor() { this.name = 'vel'; }
+                greet() { return super.greet() + '!'; }
+            }
+            var s = new Sub();
+            s.greet()
+        "), JsValue::String("hi vel!".to_string()));
+    }
+
+    #[test]
+    fn super_chained_constructors() {
+        assert_eq!(eval_full("
+            class A { constructor() { this.a = 1; } }
+            class B extends A { constructor() { super(); this.b = 2; } }
+            class C extends B { constructor() { super(); this.c = 3; } }
+            var x = new C();
+            x.a + x.b + x.c
+        "), JsValue::Number(6.0));
     }
 
     #[test]
