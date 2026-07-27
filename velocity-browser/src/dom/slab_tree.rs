@@ -20,6 +20,7 @@ pub struct UnmanagedSlabArena {
     pub attributes: Vec<HashMap<String, String>>,
     pub text_content: Vec<String>,
     pub free_head: Option<u32>,
+    pub allocated_count: usize,
 }
 
 impl UnmanagedSlabArena {
@@ -46,6 +47,7 @@ impl UnmanagedSlabArena {
             attributes,
             text_content,
             free_head: None,
+            allocated_count: 0,
         }
     }
 
@@ -68,6 +70,7 @@ impl UnmanagedSlabArena {
         });
         self.attributes.push(HashMap::new());
         self.text_content.push(String::new());
+        self.allocated_count += 1;
         slot_id
     }
 
@@ -95,5 +98,236 @@ impl SlabDomTree {
         let mut arena = UnmanagedSlabArena::with_capacity(capacity);
         let root_slot = arena.allocate_node("html");
         Self { arena, root_slot }
+    }
+
+    /// Append a child node under a parent. Returns the new child's slot id.
+    pub fn append_child(&mut self, parent_slot: u32, tag: &str) -> u32 {
+        let child_slot = self.arena.allocate_node(tag);
+        let child_idx = child_slot as usize;
+        let parent_idx = parent_slot as usize;
+
+        if child_idx < self.arena.slots.len() && parent_idx < self.arena.slots.len() {
+            self.arena.slots[child_idx].parent_slot = parent_slot;
+
+            // Link as last child
+            let first = self.arena.slots[parent_idx].first_child_slot;
+            if first == u32::MAX {
+                self.arena.slots[parent_idx].first_child_slot = child_slot;
+            } else {
+                // Walk sibling chain to end
+                let mut sibling = first;
+                loop {
+                    let next = self.arena.slots[sibling as usize].next_sibling_slot;
+                    if next == u32::MAX {
+                        self.arena.slots[sibling as usize].next_sibling_slot = child_slot;
+                        break;
+                    }
+                    sibling = next;
+                }
+            }
+            self.arena.slots[parent_idx].flags |= SLAB_NODE_DIRTY;
+        }
+        child_slot
+    }
+
+    /// Set text content for a node.
+    pub fn set_text_content(&mut self, slot_id: u32, text: &str) {
+        if (slot_id as usize) < self.arena.slots.len() {
+            self.arena.text_content[slot_id as usize] = text.to_string();
+            self.arena.slots[slot_id as usize].flags |= SLAB_NODE_DIRTY;
+        }
+    }
+
+    /// Get the tag hash for a node.
+    pub fn tag_hash(&self, slot_id: u32) -> u64 {
+        if (slot_id as usize) < self.arena.slots.len() {
+            self.arena.slots[slot_id as usize].tag_hash
+        } else {
+            0
+        }
+    }
+
+    /// Get text content for a node.
+    pub fn text_content(&self, slot_id: u32) -> &str {
+        if (slot_id as usize) < self.arena.slots.len() {
+            &self.arena.text_content[slot_id as usize]
+        } else {
+            ""
+        }
+    }
+
+    /// Get an attribute value for a node.
+    pub fn get_attribute(&self, slot_id: u32, key: &str) -> Option<&str> {
+        if (slot_id as usize) < self.arena.attributes.len() {
+            self.arena.attributes[slot_id as usize].get(key).map(|s| s.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// Parent slot id, or u32::MAX if root/orphan.
+    pub fn parent(&self, slot_id: u32) -> u32 {
+        if (slot_id as usize) < self.arena.slots.len() {
+            self.arena.slots[slot_id as usize].parent_slot
+        } else {
+            u32::MAX
+        }
+    }
+
+    /// First child slot id, or u32::MAX if leaf.
+    pub fn first_child(&self, slot_id: u32) -> u32 {
+        if (slot_id as usize) < self.arena.slots.len() {
+            self.arena.slots[slot_id as usize].first_child_slot
+        } else {
+            u32::MAX
+        }
+    }
+
+    /// Next sibling slot id, or u32::MAX if last.
+    pub fn next_sibling(&self, slot_id: u32) -> u32 {
+        if (slot_id as usize) < self.arena.slots.len() {
+            self.arena.slots[slot_id as usize].next_sibling_slot
+        } else {
+            u32::MAX
+        }
+    }
+
+    /// Depth-first traversal returning all slot ids in DFS order.
+    pub fn dfs(&self) -> Vec<u32> {
+        let mut result = Vec::new();
+        let mut stack = vec![self.root_slot];
+        while let Some(slot) = stack.pop() {
+            result.push(slot);
+            // Push children in reverse so leftmost is processed first
+            let mut children = Vec::new();
+            let mut child = self.first_child(slot);
+            while child != u32::MAX {
+                children.push(child);
+                child = self.next_sibling(child);
+            }
+            for &c in children.iter().rev() {
+                stack.push(c);
+            }
+        }
+        result
+    }
+
+    /// Breadth-first traversal returning all slot ids in BFS order.
+    pub fn bfs(&self) -> Vec<u32> {
+        let mut result = Vec::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(self.root_slot);
+        while let Some(slot) = queue.pop_front() {
+            result.push(slot);
+            let mut child = self.first_child(slot);
+            while child != u32::MAX {
+                queue.push_back(child);
+                child = self.next_sibling(child);
+            }
+        }
+        result
+    }
+
+    /// Find all nodes matching a tag hash.
+    pub fn query_by_tag_hash(&self, tag_hash: u64) -> Vec<u32> {
+        self.dfs().into_iter().filter(|&s| self.tag_hash(s) == tag_hash).collect()
+    }
+
+    /// Collect all text content from the tree (DFS order).
+    pub fn collect_all_text(&self) -> Vec<String> {
+        self.dfs().into_iter()
+            .filter(|&s| !self.text_content(s).is_empty())
+            .map(|s| self.text_content(s).to_string())
+            .collect()
+    }
+
+    /// Total number of allocated nodes.
+    pub fn node_count(&self) -> usize {
+        self.arena.allocated_count
+    }
+
+    /// Check if a slot is valid (within bounds and not freed).
+    pub fn is_valid_slot(&self, slot_id: u32) -> bool {
+        (slot_id as usize) < self.arena.slots.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_tree_has_root() {
+        let tree = SlabDomTree::new(16);
+        assert!(tree.is_valid_slot(tree.root_slot));
+        assert_eq!(tree.node_count(), 1);
+    }
+
+    #[test]
+    fn test_append_child_and_traverse() {
+        let mut tree = SlabDomTree::new(16);
+        let body = tree.append_child(tree.root_slot, "body");
+        let div1 = tree.append_child(body, "div");
+        let div2 = tree.append_child(body, "div");
+        let _p = tree.append_child(div1, "p");
+
+        // DFS from root: root, body, div1, p, div2
+        let dfs = tree.dfs();
+        assert_eq!(dfs.len(), 5);
+        assert_eq!(dfs[0], tree.root_slot);
+        assert_eq!(dfs[1], body);
+        assert_eq!(dfs[4], div2);
+
+        // BFS: root, body, div1, div2, p
+        let bfs = tree.bfs();
+        assert_eq!(bfs.len(), 5);
+        assert_eq!(bfs[0], tree.root_slot);
+        assert_eq!(bfs[1], body);
+    }
+
+    #[test]
+    fn test_parent_child_navigation() {
+        let mut tree = SlabDomTree::new(16);
+        let child = tree.append_child(tree.root_slot, "head");
+        assert_eq!(tree.parent(child), tree.root_slot);
+        assert_eq!(tree.first_child(tree.root_slot), child);
+        assert_eq!(tree.next_sibling(child), u32::MAX); // only child
+    }
+
+    #[test]
+    fn test_text_content() {
+        let mut tree = SlabDomTree::new(16);
+        let p = tree.append_child(tree.root_slot, "p");
+        tree.set_text_content(p, "Hello world");
+        assert_eq!(tree.text_content(p), "Hello world");
+        let texts = tree.collect_all_text();
+        assert_eq!(texts, vec!["Hello world".to_string()]);
+    }
+
+    #[test]
+    fn test_attributes() {
+        let mut tree = SlabDomTree::new(16);
+        let div = tree.append_child(tree.root_slot, "div");
+        tree.arena.set_attribute(div, "class", "container");
+        assert_eq!(tree.get_attribute(div, "class"), Some("container"));
+        assert_eq!(tree.get_attribute(div, "id"), None);
+    }
+
+    #[test]
+    fn test_query_by_tag() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut tree = SlabDomTree::new(16);
+        tree.append_child(tree.root_slot, "div");
+        tree.append_child(tree.root_slot, "span");
+        tree.append_child(tree.root_slot, "div");
+
+        let mut hasher = DefaultHasher::new();
+        "div".hash(&mut hasher);
+        let div_hash = hasher.finish();
+
+        let matches = tree.query_by_tag_hash(div_hash);
+        assert_eq!(matches.len(), 2);
     }
 }

@@ -161,7 +161,7 @@ impl WindowManager {
             return Vec::new();
         }
         let cols = (hwnds.len() as f64).sqrt().ceil() as u32;
-        let rows = ((hwnds.len() as u32) + cols - 1) / cols;
+        let rows = (hwnds.len() as u32).div_ceil(cols);
         let tile_w = monitor_width / cols;
         let tile_h = monitor_height / rows;
 

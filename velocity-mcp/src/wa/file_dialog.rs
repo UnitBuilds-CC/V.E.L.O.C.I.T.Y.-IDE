@@ -369,7 +369,9 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    // Write the script, then close stdin (drop the pipe) so `powershell -Command -`
+    // receives EOF and executes instead of blocking forever waiting for more input.
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
@@ -473,6 +475,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "integration: performs live Windows UIAutomation (enumerates all desktop windows) and can block on unresponsive windows; run explicitly with --ignored on an interactive session"]
     fn quick_set_path_returns_result() {
         let result = FileDialogManager::quick_set_path(
             Path::new("C:\\test.txt"),

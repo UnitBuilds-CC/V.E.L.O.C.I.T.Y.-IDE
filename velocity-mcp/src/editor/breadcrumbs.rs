@@ -181,18 +181,15 @@ pub fn load_view_states(workspace_root: &Path) -> ViewStateMap {
 
 /// Word wrap configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum WordWrapMode {
+    #[default]
     Off,
     On,
     /// Wrap at a specific column.
     Column(u16),
 }
 
-impl Default for WordWrapMode {
-    fn default() -> Self {
-        Self::Off
-    }
-}
 
 impl WordWrapMode {
     pub fn label(&self) -> &'static str {

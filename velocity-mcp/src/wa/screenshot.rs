@@ -86,14 +86,14 @@ impl Screenshot {
 
     /// Save as raw BMP to disk (for debugging/archival).
     pub fn save_bmp(&self, path: &Path) -> std::io::Result<()> {
-        let row_size = ((self.width * 3 + 3) / 4) * 4; // BMP rows padded to 4 bytes
+        let row_size = (self.width * 3).div_ceil(4) * 4; // BMP rows padded to 4 bytes
         let pixel_data_size = row_size * self.height;
         let file_size = 54 + pixel_data_size;
 
         let mut data = Vec::with_capacity(file_size as usize);
         // BMP Header
         data.extend_from_slice(b"BM");
-        data.extend_from_slice(&(file_size as u32).to_le_bytes());
+        data.extend_from_slice(&file_size.to_le_bytes());
         data.extend_from_slice(&[0u8; 4]); // reserved
         data.extend_from_slice(&54u32.to_le_bytes()); // pixel data offset
         // DIB Header (BITMAPINFOHEADER)
@@ -119,7 +119,7 @@ impl Screenshot {
             }
             // Padding to 4-byte boundary
             let padding = (row_size - self.width * 3) as usize;
-            data.extend(std::iter::repeat(0u8).take(padding));
+            data.extend(std::iter::repeat_n(0u8, padding));
         }
 
         std::fs::write(path, &data)
@@ -410,7 +410,7 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
@@ -431,14 +431,13 @@ fn parse_capture_result(json: &str) -> Screenshot {
     }
     match serde_json::from_str::<CaptureResult>(json) {
         Ok(r) => {
-            let width = r.width.unwrap_or(0);
-            let height = r.height.unwrap_or(0);
             let source = r.source.unwrap_or_else(|| "capture".to_string());
-            // Decode base64 PNG into raw RGBA pixels
-            let pixels = if let Some(b64) = r.png_base64 {
-                decode_png_to_rgba(&b64, width, height)
-            } else {
-                Vec::new()
+            // Decode the base64 PNG into raw RGBA pixels, preferring the PNG's
+            // own dimensions (authoritative) over the JSON-reported size.
+            let (width, height, pixels) = match r.png_base64 {
+                Some(b64) => decode_png_rgba(&b64)
+                    .unwrap_or_else(|| (r.width.unwrap_or(0), r.height.unwrap_or(0), Vec::new())),
+                None => (r.width.unwrap_or(0), r.height.unwrap_or(0), Vec::new()),
             };
             Screenshot {
                 pixels,
@@ -455,34 +454,17 @@ fn parse_capture_result(json: &str) -> Screenshot {
     }
 }
 
-/// Decode a base64-encoded PNG into raw RGBA pixel data.
-/// Falls back to a zero-filled buffer if the PNG cannot be decoded.
-fn decode_png_to_rgba(b64: &str, width: u32, height: u32) -> Vec<u8> {
-    // Simple base64 decode
+/// Decode a base64-encoded PNG into `(width, height, RGBA8 pixels)`.
+/// Returns `None` if the base64 or PNG payload cannot be decoded.
+fn decode_png_rgba(b64: &str) -> Option<(u32, u32, Vec<u8>)> {
     let bytes = base64_decode(b64);
     if bytes.is_empty() {
-        return vec![0u8; (width * height * 4) as usize];
+        return None;
     }
-    // PNG decoding: skip signature + IHDR, find IDAT chunks, decompress zlib
-    // For robustness, return zero-filled if we can't parse the PNG
-    // (full PNG decoding would require a dependency; we store raw for now)
-    let pixel_count = (width * height) as usize;
-    if bytes.len() >= pixel_count * 3 {
-        // Assume raw BGR data from GDI (fallback path)
-        let mut rgba = Vec::with_capacity(pixel_count * 4);
-        for i in 0..pixel_count {
-            let offset = i * 3;
-            if offset + 2 < bytes.len() {
-                rgba.push(bytes[offset + 2]); // R
-                rgba.push(bytes[offset + 1]); // G
-                rgba.push(bytes[offset]);     // B
-                rgba.push(255);               // A
-            }
-        }
-        rgba
-    } else {
-        vec![0u8; pixel_count * 4]
-    }
+    let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Some((w, h, rgba.into_raw()))
 }
 
 fn base64_decode(input: &str) -> Vec<u8> {
@@ -574,6 +556,67 @@ mod tests {
             captured_at_ms: 0,
             source: "test".to_string(),
         }
+    }
+
+    fn base64_encode(data: &[u8]) -> String {
+        const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in data.chunks(3) {
+            let b0 = chunk[0];
+            let b1 = *chunk.get(1).unwrap_or(&0);
+            let b2 = *chunk.get(2).unwrap_or(&0);
+            let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | b2 as u32;
+            out.push(T[((n >> 18) & 63) as usize] as char);
+            out.push(T[((n >> 12) & 63) as usize] as char);
+            out.push(if chunk.len() > 1 { T[((n >> 6) & 63) as usize] as char } else { '=' });
+            out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+        }
+        out
+    }
+
+    #[test]
+    fn decode_png_rgba_roundtrips_real_png() {
+        // Build a 2x1 PNG (red, green) with the image crate, base64-encode it as
+        // the PowerShell capture path does, then verify our decoder recovers it.
+        let mut img: image::RgbaImage = image::ImageBuffer::new(2, 1);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255]));
+        let mut png_bytes: Vec<u8> = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
+            .unwrap();
+        let b64 = base64_encode(&png_bytes);
+
+        let (w, h, rgba) = decode_png_rgba(&b64).expect("PNG should decode");
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&rgba[4..8], &[0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn decode_png_rgba_rejects_garbage() {
+        assert!(decode_png_rgba("").is_none());
+        assert!(decode_png_rgba(&base64_encode(b"not a png")).is_none());
+    }
+
+    #[test]
+    fn parse_capture_result_uses_png_dimensions() {
+        let mut img: image::RgbaImage = image::ImageBuffer::new(3, 2);
+        for p in img.pixels_mut() {
+            *p = image::Rgba([10, 20, 30, 255]);
+        }
+        let mut png_bytes: Vec<u8> = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
+            .unwrap();
+        let b64 = base64_encode(&png_bytes);
+        // Deliberately report wrong dims in JSON; the PNG's own dims must win.
+        let json = format!(
+            r#"{{"width":999,"height":999,"source":"full_screen","png_base64":"{b64}"}}"#
+        );
+        let shot = parse_capture_result(&json);
+        assert_eq!((shot.width, shot.height), (3, 2));
+        assert_eq!(shot.pixels.len(), 3 * 2 * 4);
     }
 
     #[test]

@@ -163,3 +163,146 @@ fn pseudo_random(seed: u64, channel: u64) -> f64 {
     let state = xorshift64(seed.wrapping_mul(6364136223846793005).wrapping_add(channel));
     ((state % 2000) as f64 - 1000.0) / 1000.0
 }
+
+/// Canvas fingerprint noise injection for anti-fingerprinting.
+/// Adds subtle per-pixel noise to canvas readback so that fingerprinting
+/// libraries get a unique result each session without visible artifacts.
+pub struct CanvasFingerprintRandomizer {
+    session_seed: u64,
+}
+
+impl CanvasFingerprintRandomizer {
+    pub fn new() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0xDEADBEEF);
+        Self { session_seed: seed }
+    }
+
+    /// Create with a deterministic seed (for testing).
+    pub fn with_seed(seed: u64) -> Self {
+        Self { session_seed: seed }
+    }
+
+    /// Apply noise to RGBA pixel data in-place. The noise is very subtle
+    /// (±1-2 in each channel) so it doesn't affect visual rendering but
+    /// changes the canvas fingerprint hash.
+    pub fn apply_noise(&self, pixels: &mut [u8]) {
+        let mut state = self.session_seed;
+        // Only noise every 4th pixel to keep performance reasonable
+        for i in (0..pixels.len().saturating_sub(3)).step_by(16) {
+            state = xorshift64(state);
+            let noise = (state % 5) as i8 - 2; // -2..+2
+            for ch in 0..4 {
+                let idx = i + ch;
+                if idx < pixels.len() {
+                    let val = pixels[idx] as i16 + noise as i16;
+                    pixels[idx] = val.clamp(0, 255) as u8;
+                }
+            }
+        }
+    }
+
+    /// Generate a fake WebGL renderer string that varies per session.
+    pub fn spoofed_webgl_renderer(&self) -> String {
+        let mut state = self.session_seed;
+        let vendors = ["ANGLE (Intel", "ANGLE (NVIDIA", "ANGLE (AMD", "ANGLE (Apple"];
+        let renderers = [
+            "Intel(R) UHD Graphics 630",
+            "NVIDIA GeForce RTX 3070",
+            "AMD Radeon RX 6800 XT",
+            "Apple M1 Pro",
+            "Intel(R) Iris(R) Xe Graphics",
+            "NVIDIA GeForce GTX 1660 SUPER",
+        ];
+        state = xorshift64(state);
+        let vendor_idx = (state % vendors.len() as u64) as usize;
+        state = xorshift64(state);
+        let renderer_idx = (state % renderers.len() as u64) as usize;
+        format!("{}) Direct3D11 vs_5_0 ps_5_0, {} via D3D11", vendors[vendor_idx], renderers[renderer_idx])
+    }
+
+    /// Slightly perturb audio context sample rate for audio fingerprint resistance.
+    pub fn perturb_audio_sample_rate(&self, base_rate: u32) -> u32 {
+        let mut state = self.session_seed;
+        state = xorshift64(state);
+        let offset = (state % 3) as i32 - 1; // -1, 0, or +1 Hz
+        (base_rate as i32 + offset).max(0) as u32
+    }
+}
+
+impl Default for CanvasFingerprintRandomizer {
+    fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bezier_trajectory() {
+        let path = StealthHumanBehavior::generate_bezier_trajectory((0.0, 0.0), (100.0, 100.0), 20);
+        assert_eq!(path.len(), 21); // steps + 1
+        // Should start near (0,0) and end near (100,100)
+        assert!((path[0].x - 0.0).abs() < 5.0);
+        assert!((path[20].x - 100.0).abs() < 5.0);
+    }
+
+    #[test]
+    fn test_typing_jitter() {
+        let delays = StealthHumanBehavior::compute_typing_jitter(50);
+        assert_eq!(delays.len(), 50);
+        // All delays should be at least 20ms
+        assert!(delays.iter().all(|&d| d >= 20));
+    }
+
+    #[test]
+    fn test_scroll_pattern() {
+        let scroll = StealthHumanBehavior::generate_scroll_pattern(500.0, 30);
+        assert_eq!(scroll.len(), 30);
+        // All deltas should be positive for downward scroll
+        assert!(scroll.iter().all(|&(d, _)| d >= 0.0));
+    }
+
+    #[test]
+    fn test_canvas_noise_changes_pixels() {
+        let mut pixels = vec![128u8; 64]; // 16 RGBA pixels
+        let original = pixels.clone();
+        let rand = CanvasFingerprintRandomizer::with_seed(42);
+        rand.apply_noise(&mut pixels);
+        // At least some pixels should have changed
+        assert_ne!(pixels, original);
+        // But not by much (max ±2 per channel)
+        for (a, b) in pixels.iter().zip(original.iter()) {
+            assert!((*a as i16 - *b as i16).abs() <= 2);
+        }
+    }
+
+    #[test]
+    fn test_canvas_noise_deterministic() {
+        let mut p1 = vec![100u8; 128];
+        let mut p2 = p1.clone();
+        let r1 = CanvasFingerprintRandomizer::with_seed(999);
+        let r2 = CanvasFingerprintRandomizer::with_seed(999);
+        r1.apply_noise(&mut p1);
+        r2.apply_noise(&mut p2);
+        assert_eq!(p1, p2); // same seed = same noise
+    }
+
+    #[test]
+    fn test_spoofed_webgl_renderer() {
+        let r = CanvasFingerprintRandomizer::with_seed(12345);
+        let renderer = r.spoofed_webgl_renderer();
+        assert!(renderer.contains("ANGLE"));
+        assert!(renderer.contains("Direct3D11"));
+    }
+
+    #[test]
+    fn test_perturb_audio_sample_rate() {
+        let r = CanvasFingerprintRandomizer::with_seed(777);
+        let perturbed = r.perturb_audio_sample_rate(48000);
+        // Should be within ±1 Hz
+        assert!((perturbed as i32 - 48000).abs() <= 1);
+    }
+}

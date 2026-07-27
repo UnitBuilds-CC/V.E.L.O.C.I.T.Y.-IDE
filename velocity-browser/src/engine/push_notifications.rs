@@ -199,3 +199,61 @@ impl PushNotificationManager {
         triples
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_request_permission() {
+        let mut mgr = PushNotificationManager::new();
+        assert!(!mgr.permission_granted);
+        assert!(mgr.request_permission());
+        assert!(mgr.permission_granted);
+    }
+
+    #[test]
+    fn test_subscribe_and_active() {
+        let mut mgr = PushNotificationManager::new();
+        mgr.subscribe("https://push.example.com/sub1", "p256dh_key", "auth_secret");
+        mgr.subscribe("https://push.example.com/sub2", "p256dh_key2", "auth_secret2");
+        assert_eq!(mgr.active_subscriptions().len(), 2);
+        mgr.unsubscribe("https://push.example.com/sub1");
+        assert_eq!(mgr.active_subscriptions().len(), 1);
+    }
+
+    #[test]
+    fn test_show_and_dismiss_notification() {
+        let mut mgr = PushNotificationManager::new();
+        let id1 = mgr.show_notification("Alert", "Something happened", None, Some("alert-tag"), false);
+        let id2 = mgr.show_notification("Info", "FYI", Some("/icon.png"), None, true);
+        assert_eq!(mgr.active_notifications().len(), 2);
+        mgr.dismiss_notification(id1);
+        assert_eq!(mgr.active_notifications().len(), 1);
+        assert_eq!(mgr.active_notifications()[0].id, id2);
+    }
+
+    #[test]
+    fn test_dispatch_push_event() {
+        let mut mgr = PushNotificationManager::new();
+        mgr.dispatch_push_event("https://push.example.com/sub1", "New msg", "Hello", b"data");
+        assert_eq!(mgr.unread_events().len(), 1);
+        mgr.mark_all_read();
+        assert_eq!(mgr.unread_events().len(), 0);
+    }
+
+    #[test]
+    fn test_dismiss_nonexistent() {
+        let mut mgr = PushNotificationManager::new();
+        assert!(!mgr.dismiss_notification(999));
+    }
+
+    #[test]
+    fn test_export_push_nda() {
+        let mut mgr = PushNotificationManager::new();
+        mgr.subscribe("https://push.example.com/s1", "k", "a");
+        mgr.dispatch_push_event("https://push.example.com/s1", "Title", "Body", b"");
+        let triples = mgr.export_push_nda("session1");
+        assert_eq!(triples.len(), 2); // 1 subscription + 1 unread event
+    }
+}

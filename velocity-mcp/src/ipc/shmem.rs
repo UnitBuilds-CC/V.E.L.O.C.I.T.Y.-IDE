@@ -64,6 +64,7 @@ impl SharedMemoryBuffer {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false) // preserve existing buffer content; set_len handles sizing
             .open(&path)?;
 
         file.set_len(TOTAL_BUFFER_SIZE as u64)?;

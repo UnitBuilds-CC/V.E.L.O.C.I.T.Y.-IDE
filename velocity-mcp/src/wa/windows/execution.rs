@@ -49,7 +49,7 @@ pub fn capture_windows_snapshot_report(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(build_capture_script().as_bytes())?;
     }
 
@@ -128,7 +128,7 @@ pub fn execute_windows_action_report(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(build_action_script().as_bytes())?;
     }
 
@@ -220,7 +220,7 @@ pub fn wait_for_windows_condition_report(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(build_wait_script().as_bytes())?;
     }
 

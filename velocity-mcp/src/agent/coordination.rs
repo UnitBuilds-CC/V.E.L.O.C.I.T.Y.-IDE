@@ -3,6 +3,11 @@
 //!
 //! Each agent thread receives a handle to the [`CoordinationBus`] and uses it
 //! to claim files before writing, broadcast state changes, and delegate work.
+//!
+//! NOTE: This is the coordination API surface for the multi-agent team
+//! architecture. Several broadcast variants and bus methods are not yet wired
+//! into the live agent loop, so their fields read as dead until integration.
+#![allow(dead_code)] // designed coordination API awaiting agent-loop integration
 
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;

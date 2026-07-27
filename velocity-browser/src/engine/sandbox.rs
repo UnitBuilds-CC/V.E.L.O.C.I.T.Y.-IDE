@@ -204,3 +204,179 @@ impl TabSandbox {
         triples
     }
 }
+
+/// Parsed Content-Security-Policy directives.
+#[derive(Debug, Clone, Default)]
+pub struct ContentSecurityPolicy {
+    pub script_src: Vec<String>,
+    pub style_src: Vec<String>,
+    pub img_src: Vec<String>,
+    pub connect_src: Vec<String>,
+    pub font_src: Vec<String>,
+    pub media_src: Vec<String>,
+    pub object_src: Vec<String>,
+    pub default_src: Vec<String>,
+    pub report_uri: Option<String>,
+    pub report_only: bool,
+}
+
+impl ContentSecurityPolicy {
+    /// Parse a CSP header string into directives.
+    pub fn parse(header: &str, report_only: bool) -> Self {
+        let mut csp = ContentSecurityPolicy { report_only, ..Default::default() };
+        for directive in header.split(';') {
+            let parts: Vec<&str> = directive.split_whitespace().collect();
+            if parts.is_empty() { continue; }
+            let (name, values) = (parts[0], &parts[1..]);
+            let src_list: Vec<String> = values.iter().map(|s| s.to_string()).collect();
+            match name {
+                "script-src" => csp.script_src = src_list,
+                "style-src" => csp.style_src = src_list,
+                "img-src" => csp.img_src = src_list,
+                "connect-src" => csp.connect_src = src_list,
+                "font-src" => csp.font_src = src_list,
+                "media-src" => csp.media_src = src_list,
+                "object-src" => csp.object_src = src_list,
+                "default-src" => csp.default_src = src_list,
+                "report-uri" => csp.report_uri = values.first().map(|s| s.to_string()),
+                _ => {}
+            }
+        }
+        csp
+    }
+
+    /// Check if a URL is allowed by a given source list.
+    fn is_allowed(source_list: &[String], url: &str) -> bool {
+        if source_list.is_empty() { return true; } // no restriction
+        for src in source_list {
+            if src == "'self'" {
+                // Allow same-origin (simplified: same scheme+host)
+                if !url.contains("://") || url.starts_with("same-origin") {
+                    return true;
+                }
+            } else if src == "'unsafe-inline'" || src == "'unsafe-eval'" || src == "'none'" {
+                continue;
+            } else if src == "*" || url.contains(src) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a script load is allowed.
+    pub fn allows_script(&self, url: &str) -> bool {
+        let list = if !self.script_src.is_empty() { &self.script_src } else { &self.default_src };
+        Self::is_allowed(list, url)
+    }
+
+    /// Check if a style load is allowed.
+    pub fn allows_style(&self, url: &str) -> bool {
+        let list = if !self.style_src.is_empty() { &self.style_src } else { &self.default_src };
+        Self::is_allowed(list, url)
+    }
+
+    /// Check if an image load is allowed.
+    pub fn allows_image(&self, url: &str) -> bool {
+        let list = if !self.img_src.is_empty() { &self.img_src } else { &self.default_src };
+        Self::is_allowed(list, url)
+    }
+
+    /// Check if a fetch/XHR connection is allowed.
+    pub fn allows_connect(&self, url: &str) -> bool {
+        let list = if !self.connect_src.is_empty() { &self.connect_src } else { &self.default_src };
+        Self::is_allowed(list, url)
+    }
+
+    /// Serialize back to a CSP header string.
+    pub fn to_header_string(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.default_src.is_empty() { parts.push(format!("default-src {}", self.default_src.join(" "))); }
+        if !self.script_src.is_empty() { parts.push(format!("script-src {}", self.script_src.join(" "))); }
+        if !self.style_src.is_empty() { parts.push(format!("style-src {}", self.style_src.join(" "))); }
+        if !self.img_src.is_empty() { parts.push(format!("img-src {}", self.img_src.join(" "))); }
+        if !self.connect_src.is_empty() { parts.push(format!("connect-src {}", self.connect_src.join(" "))); }
+        if let Some(uri) = &self.report_uri { parts.push(format!("report-uri {}", uri)); }
+        parts.join("; ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strict_sandbox_violations() {
+        let caps = SandboxCapabilities::strict_isolation()
+            .with_network_allowlist(vec!["api.example.com".into()]);
+        let mut sb = TabSandbox::new("tab1", caps);
+        assert!(sb.check_network_access("api.example.com").is_ok());
+        assert!(sb.check_network_access("evil.com").is_err());
+        assert!(sb.check_file_access("/etc/passwd").is_err());
+        assert_eq!(sb.violation_count(), 2);
+    }
+
+    #[test]
+    fn test_permissive_sandbox() {
+        let caps = SandboxCapabilities::permissive();
+        let mut sb = TabSandbox::new("tab2", caps);
+        assert!(sb.check_network_access("anything.com").is_ok());
+        assert!(sb.check_file_access("/any/path").is_ok());
+        assert!(sb.is_clean());
+    }
+
+    #[test]
+    fn test_violations_by_category() {
+        let caps = SandboxCapabilities::strict_isolation()
+            .with_network_allowlist(vec!["allowed.com".into()]);
+        let mut sb = TabSandbox::new("tab3", caps);
+        let _ = sb.check_network_access("blocked1.com");
+        let _ = sb.check_network_access("blocked2.com");
+        let _ = sb.check_file_access("/secret");
+        assert_eq!(sb.violations_by_category(&ViolationCategory::Network).len(), 2);
+        assert_eq!(sb.violations_by_category(&ViolationCategory::FileSystem).len(), 1);
+    }
+
+    #[test]
+    fn test_csp_parse() {
+        let csp = ContentSecurityPolicy::parse(
+            "default-src 'self'; script-src https://cdn.example.com; img-src *",
+            false,
+        );
+        assert_eq!(csp.default_src, vec!["'self'"]);
+        assert_eq!(csp.script_src, vec!["https://cdn.example.com"]);
+        assert_eq!(csp.img_src, vec!["*"]);
+        assert!(!csp.report_only);
+    }
+
+    #[test]
+    fn test_csp_allows_script() {
+        let csp = ContentSecurityPolicy::parse(
+            "script-src https://cdn.example.com 'self'",
+            false,
+        );
+        assert!(csp.allows_script("https://cdn.example.com/app.js"));
+        assert!(!csp.allows_script("https://evil.com/malware.js"));
+    }
+
+    #[test]
+    fn test_csp_wildcard() {
+        let csp = ContentSecurityPolicy::parse("img-src *", false);
+        assert!(csp.allows_image("https://any-image-host.com/photo.png"));
+    }
+
+    #[test]
+    fn test_csp_fallback_to_default() {
+        let csp = ContentSecurityPolicy::parse("default-src https://trusted.com", false);
+        // No script-src set, falls back to default-src
+        assert!(csp.allows_script("https://trusted.com/app.js"));
+        assert!(!csp.allows_script("https://untrusted.com/app.js"));
+    }
+
+    #[test]
+    fn test_csp_to_header() {
+        let csp = ContentSecurityPolicy::parse("default-src 'self'; script-src https://cdn.com", false);
+        let header = csp.to_header_string();
+        assert!(header.contains("default-src"));
+        assert!(header.contains("script-src"));
+    }
+}

@@ -220,7 +220,7 @@ impl SoftwareRasterizer {
             for x in 0..width {
                 let cx = x / cell_size;
                 let cy = y / cell_size;
-                let color = if (cx + cy) % 2 == 0 { c1 } else { c2 };
+                let color = if (cx + cy).is_multiple_of(2) { c1 } else { c2 };
                 buf.set_pixel(x, y, color[0], color[1], color[2], color[3]);
             }
         }
@@ -241,5 +241,255 @@ impl SoftwareRasterizer {
             }
         }
         buf
+    }
+
+    /// Render a horizontal linear gradient.
+    pub fn render_gradient_h(width: usize, height: usize, left: [u8; 4], right: [u8; 4]) -> PixelBuffer {
+        let mut buf = PixelBuffer::new(width, height);
+        for x in 0..width {
+            let t = if width > 1 { x as f32 / (width - 1) as f32 } else { 0.0 };
+            let r = (left[0] as f32 * (1.0 - t) + right[0] as f32 * t) as u8;
+            let g = (left[1] as f32 * (1.0 - t) + right[1] as f32 * t) as u8;
+            let b = (left[2] as f32 * (1.0 - t) + right[2] as f32 * t) as u8;
+            let a = (left[3] as f32 * (1.0 - t) + right[3] as f32 * t) as u8;
+            for y in 0..height {
+                buf.set_pixel(x, y, r, g, b, a);
+            }
+        }
+        buf
+    }
+
+    /// Draw an ellipse outline on a PixelBuffer using the midpoint ellipse algorithm.
+    pub fn stroke_ellipse(buf: &mut PixelBuffer, cx: i32, cy: i32, rx: i32, ry: i32, r: u8, g: u8, b: u8, a: u8) {
+        if rx <= 0 || ry <= 0 { return; }
+        let mut x = 0i32;
+        let mut y = ry;
+        let rx2 = rx * rx;
+        let ry2 = ry * ry;
+        // Region 1
+        let mut p = (ry2 as f32) - (rx2 as f32) * (ry as f32) + 0.25 * (rx2 as f32);
+        while ry2 * x < rx2 * y {
+            for &(px, py) in &[(cx+x,cy+y),(cx-x,cy+y),(cx+x,cy-y),(cx-x,cy-y)] {
+                if px >= 0 && py >= 0 { buf.set_pixel(px as usize, py as usize, r, g, b, a); }
+            }
+            x += 1;
+            if p < 0.0 {
+                p += 2.0 * (ry2 as f32) * (x as f32) + (ry2 as f32);
+            } else {
+                y -= 1;
+                p += 2.0 * (ry2 as f32) * (x as f32) - 2.0 * (rx2 as f32) * (y as f32) + (ry2 as f32);
+            }
+        }
+        // Region 2
+        let mut p2 = (ry2 as f32) * ((x as f32) + 0.5).powi(2) + (rx2 as f32) * ((y as f32) - 1.0).powi(2) - (rx2 as f32) * (ry2 as f32);
+        while y >= 0 {
+            for &(px, py) in &[(cx+x,cy+y),(cx-x,cy+y),(cx+x,cy-y),(cx-x,cy-y)] {
+                if px >= 0 && py >= 0 { buf.set_pixel(px as usize, py as usize, r, g, b, a); }
+            }
+            y -= 1;
+            if p2 > 0.0 {
+                p2 -= 2.0 * (rx2 as f32) * (y as f32) + (rx2 as f32);
+            } else {
+                x += 1;
+                p2 += 2.0 * (ry2 as f32) * (x as f32) - 2.0 * (rx2 as f32) * (y as f32) + (rx2 as f32);
+            }
+        }
+    }
+
+    /// Copy a rectangular region within the same buffer.
+    pub fn copy_within(buf: &mut PixelBuffer, src_x: usize, src_y: usize, dst_x: usize, dst_y: usize, w: usize, h: usize) {
+        let tmp = buf.crop(src_x, src_y, w, h);
+        buf.blit(&tmp, dst_x, dst_y, 0, 0, w, h);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_buffer_is_white() {
+        let buf = PixelBuffer::new(4, 4);
+        assert_eq!(buf.get_pixel(0, 0), [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(3, 3), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_set_get_pixel() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.set_pixel(3, 4, 255, 0, 0, 255);
+        assert_eq!(buf.get_pixel(3, 4), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_out_of_bounds_returns_white() {
+        let buf = PixelBuffer::new(4, 4);
+        assert_eq!(buf.get_pixel(10, 10), [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(100, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_out_of_bounds_set_is_noop() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.set_pixel(10, 10, 0, 0, 0, 0);
+        assert_eq!(buf.get_pixel(3, 3), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.clear(0, 128, 255, 200);
+        assert_eq!(buf.get_pixel(0, 0), [0, 128, 255, 200]);
+        assert_eq!(buf.get_pixel(3, 3), [0, 128, 255, 200]);
+    }
+
+    #[test]
+    fn test_fill_rect() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.fill_rect(2, 2, 3, 3, 255, 0, 0, 255);
+        assert_eq!(buf.get_pixel(2, 2), [255, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(4, 4), [255, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(5, 5), [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(1, 1), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_stroke_rect_corners() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.stroke_rect(1, 1, 4, 4, 0, 0, 0, 255);
+        assert_eq!(buf.get_pixel(1, 1), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(4, 1), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(1, 4), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(4, 4), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(2, 2), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_draw_line_horizontal() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.draw_line(0, 3, 5, 3, 0, 0, 0, 255);
+        for x in 0..=5 {
+            assert_eq!(buf.get_pixel(x, 3), [0, 0, 0, 255]);
+        }
+    }
+
+    #[test]
+    fn test_draw_line_vertical() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.draw_line(2, 0, 2, 5, 0, 0, 0, 255);
+        for y in 0..=5 {
+            assert_eq!(buf.get_pixel(2, y), [0, 0, 0, 255]);
+        }
+    }
+
+    #[test]
+    fn test_fill_circle_center() {
+        let mut buf = PixelBuffer::new(16, 16);
+        buf.fill_circle(8, 8, 3, 255, 0, 0, 255);
+        assert_eq!(buf.get_pixel(8, 8), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_stroke_circle_points() {
+        let mut buf = PixelBuffer::new(20, 20);
+        buf.stroke_circle(10, 10, 5, 0, 0, 0, 255);
+        assert_eq!(buf.get_pixel(15, 10), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(5, 10), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(10, 5), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(10, 15), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_blend_pixel_opaque() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.clear(0, 0, 0, 255);
+        buf.blend_pixel(0, 0, 255, 0, 0, 255);
+        assert_eq!(buf.get_pixel(0, 0), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_blend_pixel_semi_transparent() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.clear(0, 0, 0, 255);
+        buf.blend_pixel(0, 0, 255, 255, 255, 128);
+        let px = buf.get_pixel(0, 0);
+        assert!(px[0] > 100 && px[0] < 200);
+    }
+
+    #[test]
+    fn test_blit() {
+        let mut src = PixelBuffer::new(4, 4);
+        src.clear(0, 0, 0, 0);
+        src.set_pixel(0, 0, 255, 0, 0, 255);
+        let mut dst = PixelBuffer::new(8, 8);
+        dst.blit(&src, 2, 2, 0, 0, 4, 4);
+        assert_eq!(dst.get_pixel(2, 2), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_crop() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.clear(255, 255, 255, 255);
+        buf.set_pixel(3, 3, 0, 0, 0, 255);
+        let cropped = buf.crop(2, 2, 4, 4);
+        assert_eq!(cropped.width, 4);
+        assert_eq!(cropped.height, 4);
+        assert_eq!(cropped.get_pixel(1, 1), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_compute_hash_differs() {
+        let buf1 = PixelBuffer::new(4, 4);
+        let mut buf2 = PixelBuffer::new(4, 4);
+        buf2.set_pixel(0, 0, 0, 0, 0, 0);
+        assert_ne!(buf1.compute_hash(), buf2.compute_hash());
+    }
+
+    #[test]
+    fn test_render_blank() {
+        let buf = SoftwareRasterizer::render_blank(10, 10);
+        assert_eq!(buf.width, 10);
+        assert_eq!(buf.height, 10);
+        assert_eq!(buf.get_pixel(0, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_render_checkerboard() {
+        let buf = SoftwareRasterizer::render_checkerboard(4, 4, 2, [0, 0, 0, 255], [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(2, 0), [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(0, 2), [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(2, 2), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_render_gradient_v() {
+        let buf = SoftwareRasterizer::render_gradient_v(4, 3, [0, 0, 0, 255], [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(0, 2), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_render_gradient_h() {
+        let buf = SoftwareRasterizer::render_gradient_h(3, 4, [0, 0, 0, 255], [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(2, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_stroke_ellipse() {
+        let mut buf = PixelBuffer::new(20, 20);
+        SoftwareRasterizer::stroke_ellipse(&mut buf, 10, 10, 5, 3, 0, 0, 0, 255);
+        assert_eq!(buf.get_pixel(15, 10), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(5, 10), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_copy_within() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.clear(255, 255, 255, 255);
+        buf.set_pixel(0, 0, 255, 0, 0, 255);
+        SoftwareRasterizer::copy_within(&mut buf, 0, 0, 4, 4, 1, 1);
+        assert_eq!(buf.get_pixel(4, 4), [255, 0, 0, 255]);
     }
 }

@@ -6,7 +6,10 @@ pub fn hash_str(s: &str) -> u64 {
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     let d = h.finalize();
-    u64::from_le_bytes(d[..8].try_into().unwrap())
+    // SHA-256 always yields 32 bytes, so the first 8 are guaranteed present.
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&d[..8]);
+    u64::from_le_bytes(bytes)
 }
 
 pub fn pack_ndav(filename: &str, payload: &[u8]) -> Vec<u8> {
@@ -909,5 +912,184 @@ pub fn convert_jsonl_to_nda(workspace_root: &std::path::Path) {
         let nda_path = transcript_path.with_extension("nda");
         let _ = std::fs::write(nda_path, &nda_payload);
         write_workspace_transcript_nda(workspace_root, &content);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_str_deterministic() {
+        let h1 = hash_str("hello");
+        let h2 = hash_str("hello");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_hash_str_different_inputs() {
+        let h1 = hash_str("hello");
+        let h2 = hash_str("world");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_pack_unpack_ndav_roundtrip() {
+        let payload = b"test payload data";
+        let packed = pack_ndav("test.txt", payload);
+        let (filename, data) = unpack_ndav(&packed).unwrap();
+        assert_eq!(filename, "test.txt");
+        assert_eq!(data, payload);
+    }
+
+    #[test]
+    fn test_unpack_ndav_invalid_magic() {
+        let data = b"XXXX\x00\x00\x00\x00test";
+        assert!(unpack_ndav(data).is_none());
+    }
+
+    #[test]
+    fn test_unpack_ndav_too_short() {
+        let data = b"NDA";
+        assert!(unpack_ndav(data).is_none());
+    }
+
+    #[test]
+    fn test_encode_decode_nda_text() {
+        let original = "hello\tworld\nfoo\\bar\r\n";
+        let encoded = encode_nda_text(original);
+        let decoded = decode_nda_text(&encoded);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_encode_nda_text_escapes() {
+        assert_eq!(encode_nda_text("a\tb"), "a\\tb");
+        assert_eq!(encode_nda_text("a\nb"), "a\\nb");
+        assert_eq!(encode_nda_text("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_decode_optional_nda_text() {
+        assert_eq!(decode_optional_nda_text("-"), None);
+        assert_eq!(decode_optional_nda_text("hello"), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_encode_optional_nda_text() {
+        assert_eq!(encode_optional_nda_text(None), "-");
+        assert_eq!(encode_optional_nda_text(Some("hello")), "hello");
+    }
+
+    #[test]
+    fn test_nda_atom_simple() {
+        assert_eq!(nda_atom("Hello World"), "hello-world");
+    }
+
+    #[test]
+    fn test_nda_atom_multiple_separators() {
+        assert_eq!(nda_atom("foo__bar__baz"), "foo-bar-baz");
+    }
+
+    #[test]
+    fn test_nda_atom_empty() {
+        assert_eq!(nda_atom("___"), "empty");
+    }
+
+    #[test]
+    fn test_api_style_name() {
+        assert_eq!(api_style_name(ApiStyle::OpenAiTools), "openai-tools");
+        assert_eq!(api_style_name(ApiStyle::OpenAiChat), "openai-chat");
+        assert_eq!(api_style_name(ApiStyle::PromptCompletion), "prompt-completion");
+    }
+
+    #[test]
+    fn test_parse_chatlogs_v3_empty() {
+        let text = "chatlogs version 3\nmessage_count 0\n";
+        let messages = parse_chatlogs_nda(text);
+        assert_eq!(messages.len(), 0);
+    }
+
+    #[test]
+    fn test_serialize_parse_chatlogs_v3_roundtrip() {
+        let messages = vec![
+            ChatMessage {
+                role: "user".to_string(),
+                content: "Hello!".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "Hi there!".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ];
+        let serialized = serialize_chatlogs_nda(&messages);
+        assert!(serialized.starts_with("chatlogs version 3"));
+        let parsed = parse_chatlogs_nda(&serialized);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].role, "user");
+        assert_eq!(parsed[0].content, "Hello!");
+        assert_eq!(parsed[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_parse_changelog_v2_empty() {
+        let text = "changelog version 2\nentry_count 0\n";
+        let entries = parse_changelog_entries(text);
+        assert_eq!(entries.len(), 0);
+    }
+
+    #[test]
+    fn test_serialize_parse_changelog_roundtrip() {
+        let entries = vec![
+            (1000u64, "src/main.rs".to_string(), "modified".to_string()),
+            (1001u64, "src/lib.rs".to_string(), "created".to_string()),
+        ];
+        let serialized = serialize_changelog_nda(&entries);
+        let parsed = parse_changelog_entries(&serialized);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0, 1000);
+        assert_eq!(parsed[0].1, "src/main.rs");
+        assert_eq!(parsed[0].2, "modified");
+    }
+
+    #[test]
+    fn test_serialize_transcript_nda() {
+        let content = b"line1\nline2\nline3\n";
+        let serialized = serialize_transcript_nda(content);
+        assert!(serialized.contains("transcript version 2"));
+        assert!(serialized.contains("line_count 3"));
+    }
+
+    #[test]
+    fn test_append_nda_json_rows_string() {
+        let mut lines = Vec::new();
+        let value = Value::String("hello".to_string());
+        append_nda_json_rows(&mut lines, "prefix".to_string(), "$", &value);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("string"));
+    }
+
+    #[test]
+    fn test_append_nda_json_rows_object() {
+        let mut lines = Vec::new();
+        let mut map = serde_json::Map::new();
+        map.insert("key".to_string(), Value::Number(42.into()));
+        let value = Value::Object(map);
+        append_nda_json_rows(&mut lines, "prefix".to_string(), "$", &value);
+        assert!(lines.len() >= 2);
+    }
+
+    #[test]
+    fn test_append_nda_json_rows_null() {
+        let mut lines = Vec::new();
+        append_nda_json_rows(&mut lines, "p".to_string(), "$", &Value::Null);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("null"));
     }
 }

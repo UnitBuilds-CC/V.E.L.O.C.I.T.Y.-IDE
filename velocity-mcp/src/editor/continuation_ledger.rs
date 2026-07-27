@@ -119,6 +119,7 @@ impl RelationshipKind {
 /// Precise record of what edits were made (or attempted) before handoff.
 /// This is the critical piece for mid-edit continuation.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct EditJournal {
     /// Completed edits: files that were fully and correctly modified.
     pub completed_edits: Vec<FileEdit>,
@@ -131,16 +132,6 @@ pub struct EditJournal {
     pub deleted_files: Vec<PathBuf>,
 }
 
-impl Default for EditJournal {
-    fn default() -> Self {
-        Self {
-            completed_edits: Vec::new(),
-            partial_edit: None,
-            created_files: Vec::new(),
-            deleted_files: Vec::new(),
-        }
-    }
-}
 
 /// A completed file edit with before/after state.
 #[derive(Debug, Clone)]
@@ -688,18 +679,16 @@ fn extract_key_decisions(transcript: &str) -> Vec<String> {
     for line in transcript.lines() {
         let trimmed = line.trim();
         // Look for decision indicators
-        if trimmed.starts_with("Decision:")
+        if (trimmed.starts_with("Decision:")
             || trimmed.starts_with("Approach:")
             || trimmed.starts_with("Strategy:")
             || trimmed.contains("I'll ")
             || trimmed.contains("I will ")
             || trimmed.contains("decided to")
-            || trimmed.contains("choosing")
-        {
-            if trimmed.len() > 10 && trimmed.len() < 200 {
+            || trimmed.contains("choosing"))
+            && trimmed.len() > 10 && trimmed.len() < 200 {
                 decisions.push(trimmed.to_string());
             }
-        }
     }
     // Cap at 5 most recent decisions
     if decisions.len() > 5 {

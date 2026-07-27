@@ -411,4 +411,37 @@ mod tests {
         assert_eq!(div.width, 200.0);
         assert_eq!(div.height, 100.0);
     }
+
+    #[test]
+    fn inline_tags_default_to_inline_display() {
+        let (tree, boxes) = layout("<span>hi</span><a href=\"#\">link</a>", StyleCascader::new());
+        let span = box_for_tag(&tree, &boxes, "span");
+        let a = box_for_tag(&tree, &boxes, "a");
+        assert_eq!(span.display, DisplayMode::Inline);
+        assert_eq!(a.display, DisplayMode::Inline);
+    }
+
+    #[test]
+    fn padding_and_margin_are_parsed() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("padding".to_string(), "10px".to_string());
+        decl.insert("margin".to_string(), "5px".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>content</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.padding, [10.0; 4]);
+        assert_eq!(div.margin, [5.0; 4]);
+    }
+
+    #[test]
+    fn z_index_is_extracted_from_style() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("z-index".to_string(), "42".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>layered</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.z_index, 42);
+    }
 }

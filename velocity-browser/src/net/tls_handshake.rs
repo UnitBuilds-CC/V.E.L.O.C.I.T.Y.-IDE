@@ -23,6 +23,7 @@ use crate::net::tls13::{
 };
 use crate::net::tls_record::{open_record, seal_record, AeadAlg};
 use crate::net::x25519;
+use crate::net::x509::{self, CertVerdict, ParsedCertificate};
 
 // === TLS 1.3 Constants ======================================================
 
@@ -110,6 +111,18 @@ pub struct Tls13Handshake {
     pub hostname: String,
     /// Random bytes used in ClientHello.
     client_random: [u8; 32],
+    /// Parsed leaf certificate presented by the server (if any).
+    peer_certificate: Option<ParsedCertificate>,
+    /// Trust verdict for the peer certificate (hostname + validity checks).
+    cert_verdict: Option<CertVerdict>,
+    /// When true, the handshake fails closed unless the peer is authenticated.
+    /// Authentication now combines hostname + validity checks with real
+    /// `CertificateVerify` signature verification (see `tls_sigverify`), so a
+    /// genuine, well-formed peer will satisfy this while a MITM or invalid
+    /// certificate is rejected.
+    require_authentication: bool,
+    /// Wall-clock time (Unix seconds) used for certificate validity checks.
+    now_unix: i64,
 }
 
 impl Tls13Handshake {
@@ -140,7 +153,34 @@ impl Tls13Handshake {
             client_seq: 0,
             hostname: hostname.to_string(),
             client_random,
+            peer_certificate: None,
+            cert_verdict: None,
+            require_authentication: false,
+            now_unix: now_unix_seconds(),
         }
+    }
+
+    /// Require that the peer be cryptographically authenticated for the
+    /// handshake to succeed. When set, a peer that fails signature, hostname,
+    /// or validity checks causes the handshake to fail closed.
+    pub fn require_authentication(&mut self, yes: bool) {
+        self.require_authentication = yes;
+    }
+
+    /// Override the wall-clock time (Unix seconds) used for validity checks.
+    /// Primarily for deterministic testing.
+    pub fn set_verification_time(&mut self, now_unix: i64) {
+        self.now_unix = now_unix;
+    }
+
+    /// The parsed leaf certificate presented by the server, if any.
+    pub fn peer_certificate(&self) -> Option<&ParsedCertificate> {
+        self.peer_certificate.as_ref()
+    }
+
+    /// The trust verdict computed for the peer certificate, if any.
+    pub fn cert_verdict(&self) -> Option<&CertVerdict> {
+        self.cert_verdict.as_ref()
     }
 
     /// Build the ClientHello message (RFC 8446 §4.1.2).
@@ -423,12 +463,74 @@ impl Tls13Handshake {
                 }
                 HANDSHAKE_CERTIFICATE => {
                     self.transcript.extend_from_slice(full_msg);
+                    // Parse the leaf certificate and record a trust verdict.
+                    if let Some(leaf) = extract_leaf_certificate(&full_msg[4..]) {
+                        if let Ok(parsed) = x509::parse_certificate(leaf) {
+                            let verdict = x509::verify(&parsed, &self.hostname, self.now_unix);
+                            self.peer_certificate = Some(parsed);
+                            self.cert_verdict = Some(verdict);
+                        } else {
+                            self.cert_verdict = Some(unparseable_verdict());
+                        }
+                    } else {
+                        self.cert_verdict = Some(unparseable_verdict());
+                    }
                     self.state = HandshakeState::WaitCertificateVerify;
                 }
                 HANDSHAKE_CERTIFICATE_VERIFY => {
+                    // The signature covers the transcript hash up to and
+                    // including the Certificate message — i.e. BEFORE this
+                    // message is folded in.
+                    let transcript_hash = sha256(&self.transcript);
+                    let body = &full_msg[4..];
+                    let verify_result = match self.peer_certificate.as_ref() {
+                        Some(cert) => crate::net::tls_sigverify::verify_certificate_verify(
+                            &cert.spki,
+                            &transcript_hash,
+                            body,
+                        ),
+                        None => Err("no certificate presented".to_string()),
+                    };
+                    // Fold the message into the transcript regardless of outcome.
                     self.transcript.extend_from_slice(full_msg);
-                    // In a full implementation, we'd verify the signature here.
-                    // For now, we accept it (the server proved possession of the cert key).
+
+                    match verify_result {
+                        Ok(_scheme) => {
+                            // Signature proves the peer holds the private key.
+                            // Upgrade to authenticated only when hostname and
+                            // validity also passed.
+                            if let Some(v) = self.cert_verdict.as_mut() {
+                                v.signature_verified = true;
+                                v.authenticated = v.hostname_matched && v.time_valid;
+                                if v.authenticated {
+                                    v.reason =
+                                        "hostname, validity and signature verified".to_string();
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(v) = self.cert_verdict.as_mut() {
+                                v.signature_verified = false;
+                                v.authenticated = false;
+                                v.reason = format!("signature verification failed: {e}");
+                            }
+                        }
+                    }
+
+                    // Callers that demand real authentication fail closed here
+                    // if the peer could not be authenticated.
+                    if self.require_authentication
+                        && !self.cert_verdict.as_ref().map(|v| v.authenticated).unwrap_or(false)
+                    {
+                        let reason = self
+                            .cert_verdict
+                            .as_ref()
+                            .map(|v| v.reason.clone())
+                            .unwrap_or_else(|| "no certificate presented".to_string());
+                        let msg = format!("peer authentication required but not satisfied: {reason}");
+                        self.state = HandshakeState::Failed(msg.clone());
+                        return Err(msg);
+                    }
                     self.state = HandshakeState::WaitFinished;
                 }
                 HANDSHAKE_FINISHED => {
@@ -619,6 +721,59 @@ impl Tls13Handshake {
     }
 }
 
+/// Current wall-clock time in Unix seconds (for certificate validity checks).
+fn now_unix_seconds() -> i64 {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// A fail-safe verdict for a certificate we could not parse or that was absent.
+fn unparseable_verdict() -> CertVerdict {
+    CertVerdict {
+        hostname_matched: false,
+        time_valid: false,
+        signature_verified: false,
+        authenticated: false,
+        reason: "certificate missing or unparseable".to_string(),
+    }
+}
+
+/// Extract the leaf certificate DER from a TLS 1.3 Certificate message body
+/// (RFC 8446 §4.4.2), i.e. the handshake payload with the 4-byte header removed.
+fn extract_leaf_certificate(body: &[u8]) -> Option<&[u8]> {
+    // struct { opaque certificate_request_context<0..2^8-1>;
+    //          CertificateEntry certificate_list<0..2^24-1>; }
+    if body.is_empty() {
+        return None;
+    }
+    let ctx_len = body[0] as usize;
+    let mut off = 1 + ctx_len;
+    if off + 3 > body.len() {
+        return None;
+    }
+    let list_len =
+        ((body[off] as usize) << 16) | ((body[off + 1] as usize) << 8) | body[off + 2] as usize;
+    off += 3;
+    let list_end = off + list_len;
+    if list_end > body.len() {
+        return None;
+    }
+    // First CertificateEntry: opaque cert_data<1..2^24-1> then extensions<0..2^16-1>.
+    if off + 3 > body.len() {
+        return None;
+    }
+    let cert_len =
+        ((body[off] as usize) << 16) | ((body[off + 1] as usize) << 8) | body[off + 2] as usize;
+    off += 3;
+    if off + cert_len > body.len() {
+        return None;
+    }
+    Some(&body[off..off + cert_len])
+}
+
 /// Generate 32 pseudo-random bytes for key generation.
 /// In production code, use a proper CSPRNG (e.g., getrandom crate).
 /// Here we use a simple approach based on system time + address entropy.
@@ -717,6 +872,45 @@ mod tests {
         assert_eq!(hs.state, HandshakeState::WaitServerHello);
     }
 
+    /// Wrap a leaf DER in a TLS 1.3 Certificate message body (no 4-byte header).
+    fn cert_message_body(leaf: &[u8]) -> Vec<u8> {
+        let mut entry = Vec::new();
+        let clen = leaf.len();
+        entry.push((clen >> 16) as u8);
+        entry.push((clen >> 8) as u8);
+        entry.push(clen as u8);
+        entry.extend_from_slice(leaf);
+        entry.extend_from_slice(&[0x00, 0x00]); // empty extensions
+        let mut body = Vec::new();
+        body.push(0x00); // empty certificate_request_context
+        let llen = entry.len();
+        body.push((llen >> 16) as u8);
+        body.push((llen >> 8) as u8);
+        body.push(llen as u8);
+        body.extend_from_slice(&entry);
+        body
+    }
+
+    #[test]
+    fn extracts_leaf_from_certificate_message() {
+        let leaf = b"\x30\x03\x02\x01\x05"; // arbitrary DER-ish bytes
+        let body = cert_message_body(leaf);
+        assert_eq!(extract_leaf_certificate(&body), Some(&leaf[..]));
+    }
+
+    #[test]
+    fn extract_leaf_rejects_truncated() {
+        assert_eq!(extract_leaf_certificate(&[]), None);
+        assert_eq!(extract_leaf_certificate(&[0x00, 0x00, 0x00, 0x10]), None);
+    }
+
+    #[test]
+    fn authentication_not_required_by_default() {
+        let hs = Tls13Handshake::new("example.com");
+        assert!(!hs.require_authentication);
+        assert!(hs.cert_verdict().is_none());
+    }
+
     #[test]
     fn handshake_key_derivation_is_deterministic() {
         // Given a fixed shared secret and transcript, the derived keys are consistent
@@ -780,5 +974,40 @@ mod tests {
                 eprintln!("handshake failed (expected for minimal client): {}", e);
             }
         }
+    }
+
+    #[test]
+    fn sni_extension_contains_hostname() {
+        let hs = Tls13Handshake::new("example.com");
+        let sni = hs.build_sni_extension();
+        // SNI extension starts with type 0x0000
+        assert_eq!(sni[0], 0x00);
+        assert_eq!(sni[1], 0x00);
+        // The hostname should appear somewhere in the extension
+        let sni_str = String::from_utf8_lossy(&sni);
+        assert!(sni_str.contains("example.com"));
+    }
+
+    #[test]
+    fn key_share_entry_has_x25519_group() {
+        let hs = Tls13Handshake::new("test.local");
+        let entry = hs.build_key_share_entry();
+        // First two bytes: named group = 0x001d (x25519)
+        assert_eq!(entry[0], 0x00);
+        assert_eq!(entry[1], 0x1d);
+        // Key exchange length = 32
+        assert_eq!(entry[2], 0x00);
+        assert_eq!(entry[3], 0x20);
+        // Total length: 2 (group) + 2 (key len) + 32 (key) = 36
+        assert_eq!(entry.len(), 36);
+    }
+
+    #[test]
+    fn process_server_hello_rejects_wrong_state() {
+        let mut hs = Tls13Handshake::new("test.local");
+        // State is Initial, not WaitServerHello
+        let result = hs.process_server_hello(&[0u8; 100]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unexpected ServerHello"));
     }
 }

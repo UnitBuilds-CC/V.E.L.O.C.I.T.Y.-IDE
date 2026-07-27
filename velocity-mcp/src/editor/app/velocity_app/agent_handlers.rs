@@ -512,13 +512,11 @@ impl VelocityApp {
                     // Auto-checkpoint on first file-modifying tool in a session
                     if self.agent_ui_state.metrics.tool_call_count == 1 {
                         let label = format!("Before agent: {}", tool_name);
-                        match self.checkpoint_manager.create_checkpoint(&label) {
-                            Ok(_) => {
-                                self.toasts.push(crate::editor::toast::Toast::info(
-                                    format!("\u{1F4BE} Checkpoint: {}", label),
-                                ));
-                            }
-                            Err(_) => {} // Clean workspace or no git — skip silently
+                        // Clean workspace or no git — skip silently on error
+                        if self.checkpoint_manager.create_checkpoint(&label).is_ok() {
+                            self.toasts.push(crate::editor::toast::Toast::info(
+                                format!("\u{1F4BE} Checkpoint: {}", label),
+                            ));
                         }
                     }
 

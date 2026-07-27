@@ -284,6 +284,7 @@ pub struct VelocityApp {
     /// Whether to show minimap in editor.
     pub show_minimap: bool,
     /// Whether to show breadcrumbs above editor.
+    #[allow(dead_code)]
     pub show_breadcrumbs: bool,
     /// Whether word wrap is enabled.
     #[allow(dead_code)]

@@ -138,4 +138,57 @@ mod tests {
             .collect();
         assert_eq!(texts, vec!["Checkout@12,34".to_string()]);
     }
+
+    #[test]
+    fn metadata_nda_export() {
+        let canvas = CanvasElement::new("c1", "2d", 640, 480);
+        let triples = CanvasExtractor::extract_canvases_nda(&[canvas]);
+        assert_eq!(triples.len(), 3);
+        // Verify predicates are present
+        let predicates: Vec<u16> = triples.iter().map(|t| t.predicate_id).collect();
+        assert!(predicates.contains(&CANVAS_CONTEXT));
+        assert!(predicates.contains(&CANVAS_SIZE));
+        assert!(predicates.contains(&CANVAS_DRAW_CALLS));
+    }
+
+    #[test]
+    fn document_captures_images_and_shapes() {
+        let list = vec![
+            DrawCommand::DrawImage { src: "logo.png".to_string(), dx: 10.0, dy: 20.0, dw: 100.0, dh: 50.0 },
+            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 50.0, h: 50.0, style: "red".to_string() },
+            DrawCommand::Arc { x: 25.0, y: 25.0, radius: 10.0, start_angle: 0.0, end_angle: 6.28 },
+        ];
+        let canvas = CanvasElement::with_display_list("c2", 200, 200, list);
+        let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
+        let images: Vec<String> = doc.facts.iter()
+            .filter(|f| f.predicate == CANVAS_IMAGE)
+            .filter_map(|f| doc.object_display(f))
+            .collect();
+        assert_eq!(images.len(), 1);
+        assert!(images[0].contains("logo.png"));
+        let shapes: Vec<String> = doc.facts.iter()
+            .filter(|f| f.predicate == CANVAS_SHAPE)
+            .filter_map(|f| doc.object_display(f))
+            .collect();
+        assert_eq!(shapes.len(), 2); // fillRect + arc
+    }
+
+    #[test]
+    fn summary_counts_are_accurate() {
+        let list = vec![
+            DrawCommand::FillText { text: "A".to_string(), x: 0.0, y: 0.0, font: "12px".to_string(), style: "".to_string() },
+            DrawCommand::StrokeText { text: "B".to_string(), x: 10.0, y: 10.0, font: "12px".to_string(), style: "".to_string() },
+            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 10.0, h: 10.0, style: "".to_string() },
+        ];
+        let canvas = CanvasElement::with_display_list("c3", 100, 100, list);
+        let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
+        let summary: Vec<String> = doc.facts.iter()
+            .filter(|f| f.predicate == CANVAS_SUMMARY)
+            .filter_map(|f| doc.object_display(f))
+            .collect();
+        assert_eq!(summary.len(), 1);
+        assert!(summary[0].contains("2 texts"));
+        assert!(summary[0].contains("1 shapes"));
+        assert!(summary[0].contains("0 images"));
+    }
 }

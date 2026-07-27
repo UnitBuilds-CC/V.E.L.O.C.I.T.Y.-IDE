@@ -30,7 +30,7 @@ impl IndentStyle {
             } else if line.starts_with(' ') {
                 space_lines += 1;
                 let leading = line.len() - line.trim_start_matches(' ').len();
-                if leading >= 1 && leading <= 8 {
+                if (1..=8).contains(&leading) {
                     space_widths[leading] += 1;
                 }
             }

@@ -187,4 +187,76 @@ mod tests {
         let result = InterstitialClassifier::classify_page("Home", "<p>Welcome to our site</p>");
         assert_eq!(result, InterstitialKind::None);
     }
+
+    #[test]
+    fn classify_hcaptcha() {
+        let result = InterstitialClassifier::classify_page("Verify", "<div class=\"hcaptcha\"></div>");
+        assert_eq!(result, InterstitialKind::Hcaptcha);
+    }
+
+    #[test]
+    fn classify_datadome() {
+        let result = InterstitialClassifier::classify_page_with_signals(
+            "Blocked", "<p>datadome security check</p>"
+        );
+        assert_eq!(result.kind, InterstitialKind::DataDome);
+        assert!(result.confidence >= 0.9);
+        assert!(result.signals.iter().any(|s| s == "datadome_detected"));
+    }
+
+    #[test]
+    fn classify_session_expired() {
+        let result = InterstitialClassifier::classify_page("Session", "Your session has timed out. Please re-authenticate.");
+        assert_eq!(result, InterstitialKind::SessionExpired);
+    }
+
+    #[test]
+    fn classify_geo_blocked() {
+        let result = InterstitialClassifier::classify_page("Error", "This content is not available in your region.");
+        assert_eq!(result, InterstitialKind::GeoBlocked);
+    }
+
+    #[test]
+    fn classify_akamai_access_denied() {
+        let result = InterstitialClassifier::classify_page_with_signals("Error", "Access Denied");
+        assert_eq!(result.kind, InterstitialKind::Akamai);
+        assert!(result.signals.iter().any(|s| s == "akamai_detected"));
+    }
+
+    #[test]
+    fn bypass_strategies_are_correct() {
+        // Cloudflare → WaitAndRetry
+        let cf = InterstitialClassifier::classify_page_with_signals("Just a moment...", "");
+        assert!(matches!(cf.suggested_strategy, BypassStrategy::WaitAndRetry { delay_ms: 5000, max_retries: 3 }));
+
+        // reCAPTCHA → SolveCaptcha
+        let rc = InterstitialClassifier::classify_page_with_signals("", "g-recaptcha");
+        assert!(matches!(rc.suggested_strategy, BypassStrategy::SolveCaptcha));
+
+        // Rate limited → WaitAndRetry 30s
+        let rl = InterstitialClassifier::classify_page_with_signals("", "429 Too Many Requests");
+        assert!(matches!(rl.suggested_strategy, BypassStrategy::WaitAndRetry { delay_ms: 30000, max_retries: 2 }));
+
+        // GeoBlocked → RotateFingerprint
+        let gb = InterstitialClassifier::classify_page_with_signals("", "geo-blocked");
+        assert!(matches!(gb.suggested_strategy, BypassStrategy::RotateFingerprint));
+
+        // Auth → GiveUp
+        let auth = InterstitialClassifier::classify_page_with_signals("Sign In", "Please sign in");
+        assert!(matches!(auth.suggested_strategy, BypassStrategy::GiveUp));
+
+        // None → GiveUp
+        let none = InterstitialClassifier::classify_page_with_signals("Home", "Welcome");
+        assert!(matches!(none.suggested_strategy, BypassStrategy::GiveUp));
+    }
+
+    #[test]
+    fn confidence_is_capped_at_one() {
+        // Multiple signals could push score above 1.0
+        let result = InterstitialClassifier::classify_page_with_signals(
+            "Just a moment... Cloudflare", "<div class=\"cf-challenge\">cloudflare</div>"
+        );
+        assert!(result.confidence <= 1.0);
+        assert_eq!(result.kind, InterstitialKind::CloudflareTurnstile);
+    }
 }

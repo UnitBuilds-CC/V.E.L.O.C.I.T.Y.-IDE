@@ -485,9 +485,7 @@ impl KeyframesRule {
         for (prop, upper_val) in &upper.declarations {
             if let Some(lower_val) = lower.declarations.get(prop) {
                 result.insert(prop.clone(), interpolate_value(lower_val, upper_val, t));
-            } else {
-                if t >= 0.5 { result.insert(prop.clone(), upper_val.clone()); }
-            }
+            } else if t >= 0.5 { result.insert(prop.clone(), upper_val.clone()); }
         }
         result
     }

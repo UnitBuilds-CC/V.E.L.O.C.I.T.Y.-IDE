@@ -144,6 +144,13 @@ impl BrowserSession {
         }
     }
 
+    /// Configure a proxy for all HTTP/HTTPS connections in this session.
+    /// Updates both the session-level resolver and the embedded HTTP client.
+    pub fn set_proxy(&mut self, resolver: ProxyResolver) {
+        self.proxy_resolver = ProxyResolver { proxy_type: resolver.proxy_type.clone() };
+        self.http_client.proxy = resolver;
+    }
+
     /// Predict next optimal action target using local feature vectors
     pub fn predict_action(&self) -> Option<PredictedActionTarget> {
         if let Some(tree) = &self.dom_tree {
@@ -186,7 +193,8 @@ impl BrowserSession {
     pub fn load_html(&mut self, url: &str, html: &str) -> Vec<NdaTriple> {
         self.current_url = url.to_string();
         self.history_stack.push_state(url, "{}", "");
-        let _stream_tokens = StreamJitTokenizer::tokenize_stream_chunk(html.as_bytes());
+        let mut _stream_tokenizer = StreamJitTokenizer::new();
+        let _stream_tokens = _stream_tokenizer.tokenize_stream_chunk(html.as_bytes());
         let _fast_rules = FastCssParser::parse_rules_fast(html);
         let nodes = HtmlParser::parse_html5(html);
         let tree = DomTree::new(nodes);
@@ -271,7 +279,7 @@ impl BrowserSession {
                     let fetch_resp = crate::js::web_apis::build_fetch_response(r.status_code, &r.body);
                     return Ok(format!("{:?}", fetch_resp));
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
 
@@ -822,7 +830,8 @@ impl BrowserSession {
             };
             FlexLayoutEngine::compute_flex_children(&root_box, &mut boxes, FlexDirection::Row);
             FlexAlignmentSolver::align_main_axis(1920.0, &mut boxes, JustifyContent::FlexStart);
-            self.parallel_layout.compute_parallel_subtrees(&mut root_box);
+            let mut parallel_eng = ParallelLayoutEngine::new(4);
+            parallel_eng.compute_parallel_subtrees(&mut root_box);
 
             for t in layout_engine.export_layout_nda(&boxes) {
                 encoder.triples.push(t);

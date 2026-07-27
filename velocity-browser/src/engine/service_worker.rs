@@ -273,3 +273,88 @@ impl ServiceWorkerManager {
         self.sync_registrations.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_put_and_match() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put("v1", "/index.html", 200, "<html>Hello</html>");
+        let resp = cache.match_url("v1", "/index.html").unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body, "<html>Hello</html>");
+    }
+
+    #[test]
+    fn test_cache_match_any() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put("v1", "/a.html", 200, "a");
+        cache.put("v2", "/b.html", 200, "b");
+        assert!(cache.match_any("/b.html").is_some());
+        assert!(cache.match_any("/c.html").is_none());
+    }
+
+    #[test]
+    fn test_cache_delete() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put("v1", "/x.html", 200, "x");
+        assert!(cache.delete("v1", "/x.html"));
+        assert!(cache.match_url("v1", "/x.html").is_none());
+    }
+
+    #[test]
+    fn test_lifecycle_transitions() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        assert_eq!(sw.state, ServiceWorkerState::Installing);
+        sw.advance_lifecycle(); // Installing -> Installed
+        assert_eq!(sw.state, ServiceWorkerState::Installed);
+        sw.advance_lifecycle(); // Installed -> Activating
+        assert_eq!(sw.state, ServiceWorkerState::Activating);
+        sw.advance_lifecycle(); // Activating -> Activated
+        assert_eq!(sw.state, ServiceWorkerState::Activated);
+    }
+
+    #[test]
+    fn test_fetch_intercept_cache_first() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.cache_storage.put("assets", "/logo.png", 200, "PNG_DATA");
+        sw.add_fetch_rule("/logo.png", "assets", CacheStrategy::CacheFirst);
+        match sw.intercept_fetch("/logo.png") {
+            FetchInterceptResult::CachedResponse(r) => assert_eq!(r.status, 200),
+            _ => panic!("Expected cached response"),
+        }
+    }
+
+    #[test]
+    fn test_fetch_intercept_cache_only_miss() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.add_fetch_rule("/missing", "assets", CacheStrategy::CacheOnly);
+        match sw.intercept_fetch("/missing") {
+            FetchInterceptResult::CustomResponse { status, .. } => assert_eq!(status, 504),
+            _ => panic!("Expected 504 for cache-only miss"),
+        }
+    }
+
+    #[test]
+    fn test_background_sync() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.register_sync("sync-messages", 5000);
+        sw.register_sync("send-email", 10000);
+        assert_eq!(sw.pending_sync_tags(), vec!["sync-messages", "send-email"]);
+        sw.complete_sync("sync-messages");
+        assert_eq!(sw.pending_sync_tags(), vec!["send-email"]);
+    }
+
+    #[test]
+    fn test_push_dispatch_and_drain() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.dispatch_push("New message", "Hello!", "{}", None);
+        assert_eq!(sw.push_queue.len(), 1);
+        let drained = sw.drain_push_queue();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].title, "New message");
+        assert!(sw.push_queue.is_empty());
+    }
+}

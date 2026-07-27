@@ -1,3 +1,16 @@
+// Structural patterns that are intentional in this codebase
+#![allow(clippy::too_many_arguments)]         // Tool dispatch / WA functions take many params
+#![allow(clippy::type_complexity)]            // Channel/callback types are inherently complex
+#![allow(clippy::result_large_err)]           // Error types carry diagnostic context
+#![allow(clippy::ptr_arg)]                    // &PathBuf kept for API symmetry in places
+#![allow(clippy::needless_range_loop)]        // Index-based loops clearer for parallel arrays
+#![allow(clippy::field_reassign_with_default)] // Stepwise struct config for readability
+#![allow(clippy::manual_strip)]               // Explicit prefix/suffix handling for clarity
+#![allow(clippy::enum_variant_names)]         // Shared-prefix variants are intentional
+#![allow(clippy::upper_case_acronyms)]        // Windows FFI type names (STARTUPINFOW, etc.)
+#![allow(clippy::only_used_in_recursion)]     // Recursion params kept for signature clarity
+#![allow(clippy::manual_c_str_literals)]      // Explicit nul-terminated construction for FFI
+
 use eframe::egui;
 use std::env;
 use std::process;

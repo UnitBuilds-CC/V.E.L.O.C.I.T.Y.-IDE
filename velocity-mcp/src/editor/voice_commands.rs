@@ -266,6 +266,7 @@ fn extract_params(rest: &str, extractor: ParamExtractor) -> HashMap<String, Stri
 
 /// Voice input state for the IDE.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct VoiceInputState {
     pub registry: VoiceCommandRegistry,
     pub listening: bool,
@@ -276,19 +277,6 @@ pub struct VoiceInputState {
     pub successful_commands: usize,
 }
 
-impl Default for VoiceInputState {
-    fn default() -> Self {
-        Self {
-            registry: VoiceCommandRegistry::new(),
-            listening: false,
-            last_transcription: String::new(),
-            last_command: None,
-            command_history: Vec::new(),
-            total_commands: 0,
-            successful_commands: 0,
-        }
-    }
-}
 
 impl VoiceInputState {
     pub fn new() -> Self {

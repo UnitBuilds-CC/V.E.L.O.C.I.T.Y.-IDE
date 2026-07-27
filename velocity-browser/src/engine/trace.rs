@@ -237,3 +237,169 @@ impl TraceCollector {
         triples
     }
 }
+
+/// A tracing span with nesting support and duration tracking.
+#[derive(Debug, Clone)]
+pub struct TraceSpan {
+    pub name: String,
+    pub start_ms: u64,
+    pub end_ms: Option<u64>,
+    pub depth: u32,
+    pub children: Vec<TraceSpan>,
+}
+
+impl TraceSpan {
+    pub fn duration_ms(&self) -> u64 {
+        self.end_ms.map(|e| e.saturating_sub(self.start_ms)).unwrap_or(0)
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.end_ms.is_none()
+    }
+}
+
+/// Span-based tracing collector with nesting.
+pub struct SpanTracer {
+    span_stack: Vec<TraceSpan>,
+    pub completed_spans: Vec<TraceSpan>,
+}
+
+impl Default for SpanTracer {
+    fn default() -> Self { Self::new() }
+}
+
+impl SpanTracer {
+    pub fn new() -> Self {
+        Self { span_stack: Vec::new(), completed_spans: Vec::new() }
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Begin a new span. Nested calls increase depth.
+    pub fn start_span(&mut self, name: &str) {
+        let depth = self.span_stack.len() as u32;
+        self.span_stack.push(TraceSpan {
+            name: name.to_string(),
+            start_ms: Self::now_ms(),
+            end_ms: None,
+            depth,
+            children: Vec::new(),
+        });
+    }
+
+    /// End the current (innermost) span and record its duration.
+    pub fn end_span(&mut self) -> Option<TraceSpan> {
+        if let Some(mut span) = self.span_stack.pop() {
+            span.end_ms = Some(Self::now_ms());
+            // Attach as child of parent if one exists
+            if let Some(parent) = self.span_stack.last_mut() {
+                parent.children.push(span.clone());
+            }
+            self.completed_spans.push(span.clone());
+            Some(span)
+        } else {
+            None
+        }
+    }
+
+    /// Current nesting depth.
+    pub fn depth(&self) -> u32 {
+        self.span_stack.len() as u32
+    }
+
+    /// Get all completed spans flattened (including children).
+    pub fn all_spans(&self) -> Vec<&TraceSpan> {
+        let mut result = Vec::new();
+        for span in &self.completed_spans {
+            result.push(span);
+            for child in &span.children {
+                result.push(child);
+            }
+        }
+        result
+    }
+
+    /// Total duration of all top-level spans.
+    pub fn total_duration_ms(&self) -> u64 {
+        self.completed_spans.iter().map(|s| s.duration_ms()).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trace_collector_console() {
+        let mut tc = TraceCollector::new();
+        tc.record_console("info", "Page loaded");
+        tc.record_console("error", "404 Not Found");
+        tc.record_console("warn", "Deprecated API");
+        assert_eq!(tc.total_count(), 3);
+        assert_eq!(tc.errors().len(), 1);
+        assert_eq!(tc.warnings().len(), 1);
+    }
+
+    #[test]
+    fn test_trace_collector_limits() {
+        let mut tc = TraceCollector::new();
+        tc.set_limits(2, 100, 100, 100);
+        tc.record_console("info", "a");
+        tc.record_console("info", "b");
+        tc.record_console("info", "c");
+        assert_eq!(tc.console_traces.len(), 2); // oldest evicted
+    }
+
+    #[test]
+    fn test_trace_network_stats() {
+        let mut tc = TraceCollector::new();
+        tc.record_network("r1", "GET", "http://x.com/a", 200, 1000, 50);
+        tc.record_network("r2", "GET", "http://x.com/b", 404, 200, 30);
+        tc.record_network("r3", "POST", "http://x.com/c", 500, 0, 100);
+        assert_eq!(tc.failed_requests().len(), 2);
+        assert_eq!(tc.total_bytes_transferred(), 1200);
+    }
+
+    #[test]
+    fn test_span_tracer_nesting() {
+        let mut tracer = SpanTracer::new();
+        tracer.start_span("request");
+        assert_eq!(tracer.depth(), 1);
+        tracer.start_span("parse_body");
+        assert_eq!(tracer.depth(), 2);
+        tracer.end_span(); // end parse_body
+        assert_eq!(tracer.depth(), 1);
+        tracer.end_span(); // end request
+        assert_eq!(tracer.depth(), 0);
+        // Both spans are recorded in completed_spans
+        assert_eq!(tracer.completed_spans.len(), 2);
+        // The parent (request) has the child (parse_body) attached
+        let parent = tracer.completed_spans.iter().find(|s| s.name == "request").unwrap();
+        assert_eq!(parent.children.len(), 1);
+        assert_eq!(parent.children[0].name, "parse_body");
+    }
+
+    #[test]
+    fn test_span_duration() {
+        let span = TraceSpan {
+            name: "test".into(),
+            start_ms: 100,
+            end_ms: Some(250),
+            depth: 0,
+            children: vec![],
+        };
+        assert_eq!(span.duration_ms(), 150);
+        assert!(!span.is_open());
+    }
+
+    #[test]
+    fn test_end_span_empty_stack() {
+        let mut tracer = SpanTracer::new();
+        assert!(tracer.end_span().is_none());
+    }
+}

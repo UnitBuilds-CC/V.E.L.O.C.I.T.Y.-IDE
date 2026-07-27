@@ -240,7 +240,7 @@ fn parse_lsp_symbols_recursive(file: &Path, value: &serde_json::Value, out: &mut
 /// Generate a test skeleton for a single function.
 fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -> GeneratedTest {
     let test_name = format!("test_{}", func.name);
-    let (setup, assertion, confidence) = analyze_function_signature(func);
+    let (setup, assertion, confidence) = analyze_function_signature(func, config.framework);
     let test_body = match config.framework {
         TestFramework::RustBuiltin => {
             if config.include_assertions {
@@ -301,7 +301,15 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
 }
 
 /// Analyze a function signature to generate appropriate setup and assertion code.
-fn analyze_function_signature(func: &TestableFunction) -> (String, String, f32) {
+///
+/// The emitted assertion is written in the target framework's language so the
+/// generated skeleton is syntactically valid (e.g. Python `assert` for Pytest,
+/// `expect(...)` for Jest, `assert.ok(...)` for Mocha, JUnit assertions, and
+/// Rust `assert!`/`assert_eq!` for the built-in framework).
+fn analyze_function_signature(
+    func: &TestableFunction,
+    framework: TestFramework,
+) -> (String, String, f32) {
     let sig = &func.signature;
     let has_return = sig.contains("->") || sig.contains(": ");
     let returns_bool = sig.contains("bool") || sig.contains("Boolean");
@@ -312,35 +320,158 @@ fn analyze_function_signature(func: &TestableFunction) -> (String, String, f32) 
     let returns_number = sig.contains("f64") || sig.contains("f32") || sig.contains("i32")
         || sig.contains("u32") || sig.contains("usize") || sig.contains("int") || sig.contains("float");
 
-    let setup = String::new();
-
-    let assertion = if returns_bool {
-        match func.name.to_lowercase() {
-            n if n.starts_with("is_") || n.starts_with("has_") || n.starts_with("can_") =>
-                "    assert!(result, \"Expected {} to return true\");\n".to_string(),
-            n if n.starts_with("should_") =>
-                "    assert!(result, \"Expected {} to return true\");\n".to_string(),
-            _ => "    // Assert expected boolean result\n    // assert!(result);\n".to_string(),
-        }
-    } else if returns_option {
-        "    assert!(result.is_some(), \"Expected Some value\");\n".to_string()
-    } else if returns_result {
-        "    assert!(result.is_ok(), \"Expected Ok result\");\n".to_string()
-    } else if returns_vec {
-        "    // Assert collection is non-empty or has expected length\n    // assert!(!result.is_empty());\n".to_string()
-    } else if returns_string {
-        "    assert!(!result.is_empty(), \"Expected non-empty string\");\n".to_string()
-    } else if returns_number {
-        "    // Assert expected numeric result\n    // assert_eq!(result, expected_value);\n".to_string()
-    } else if has_return {
-        "    assert!(result, \"Expected valid result\");\n".to_string()
-    } else {
-        "    // Function returns void; verify side effects\n    // assert!(condition_after_call);\n".to_string()
+    let is_bool_predicate = {
+        let n = func.name.to_lowercase();
+        n.starts_with("is_") || n.starts_with("has_") || n.starts_with("can_") || n.starts_with("should_")
     };
 
+    let kind = if returns_bool {
+        ReturnKind::Bool
+    } else if returns_option {
+        ReturnKind::Option
+    } else if returns_result {
+        ReturnKind::Result
+    } else if returns_vec {
+        ReturnKind::Collection
+    } else if returns_string {
+        ReturnKind::StringLike
+    } else if returns_number {
+        ReturnKind::Number
+    } else if has_return {
+        ReturnKind::Other
+    } else {
+        ReturnKind::Void
+    };
+
+    let setup = String::new();
+    let assertion = framework_assertion(framework, kind, is_bool_predicate);
     let confidence = if has_return { 0.8 } else { 0.5 };
     (setup, assertion, confidence)
 }
+
+/// Classification of a function's return value used to pick an assertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnKind {
+    Bool,
+    Option,
+    Result,
+    Collection,
+    StringLike,
+    Number,
+    Other,
+    Void,
+}
+
+/// Produce a language-correct assertion line for the given framework and return kind.
+fn framework_assertion(
+    framework: TestFramework,
+    kind: ReturnKind,
+    is_bool_predicate: bool,
+) -> String {
+    match framework {
+        TestFramework::RustBuiltin => match kind {
+            ReturnKind::Bool if is_bool_predicate =>
+                "    assert!(result, \"Expected {} to return true\");\n".to_string(),
+            ReturnKind::Bool =>
+                "    // Assert expected boolean result\n    // assert!(result);\n".to_string(),
+            ReturnKind::Option =>
+                "    assert!(result.is_some(), \"Expected Some value\");\n".to_string(),
+            ReturnKind::Result =>
+                "    assert!(result.is_ok(), \"Expected Ok result\");\n".to_string(),
+            ReturnKind::Collection =>
+                "    // Assert collection is non-empty or has expected length\n    // assert!(!result.is_empty());\n".to_string(),
+            ReturnKind::StringLike =>
+                "    assert!(!result.is_empty(), \"Expected non-empty string\");\n".to_string(),
+            ReturnKind::Number =>
+                "    // Assert expected numeric result\n    // assert_eq!(result, expected_value);\n".to_string(),
+            ReturnKind::Other =>
+                "    assert!(result, \"Expected valid result\");\n".to_string(),
+            ReturnKind::Void =>
+                "    // Function returns void; verify side effects\n    // assert!(condition_after_call);\n".to_string(),
+        },
+        TestFramework::Pytest => match kind {
+            ReturnKind::Bool if is_bool_predicate =>
+                "    assert result is True\n".to_string(),
+            ReturnKind::Bool =>
+                "    assert result in (True, False)\n".to_string(),
+            ReturnKind::Option =>
+                "    assert result is not None\n".to_string(),
+            ReturnKind::Result =>
+                "    assert result is not None\n".to_string(),
+            ReturnKind::Collection =>
+                "    assert len(result) >= 0\n".to_string(),
+            ReturnKind::StringLike =>
+                "    assert isinstance(result, str)\n".to_string(),
+            ReturnKind::Number =>
+                "    assert result is not None  # TODO: assert expected numeric value\n".to_string(),
+            ReturnKind::Other =>
+                "    assert result is not None\n".to_string(),
+            ReturnKind::Void =>
+                "    assert True  # TODO: verify side effects\n".to_string(),
+        },
+        TestFramework::Jest => match kind {
+            ReturnKind::Bool if is_bool_predicate =>
+                "  expect(result).toBe(true);\n".to_string(),
+            ReturnKind::Bool =>
+                "  expect(typeof result).toBe('boolean');\n".to_string(),
+            ReturnKind::Option =>
+                "  expect(result).not.toBeNull();\n".to_string(),
+            ReturnKind::Result =>
+                "  expect(result).toBeDefined();\n".to_string(),
+            ReturnKind::Collection =>
+                "  expect(Array.isArray(result)).toBe(true);\n".to_string(),
+            ReturnKind::StringLike =>
+                "  expect(typeof result).toBe('string');\n".to_string(),
+            ReturnKind::Number =>
+                "  expect(typeof result).toBe('number');\n".to_string(),
+            ReturnKind::Other =>
+                "  expect(result).toBeDefined();\n".to_string(),
+            ReturnKind::Void =>
+                "  expect(true).toBe(true); // TODO: verify side effects\n".to_string(),
+        },
+        TestFramework::Mocha => match kind {
+            ReturnKind::Bool if is_bool_predicate =>
+                "  assert.strictEqual(result, true);\n".to_string(),
+            ReturnKind::Bool =>
+                "  assert.strictEqual(typeof result, 'boolean');\n".to_string(),
+            ReturnKind::Option =>
+                "  assert.notStrictEqual(result, null);\n".to_string(),
+            ReturnKind::Result =>
+                "  assert.ok(result !== undefined);\n".to_string(),
+            ReturnKind::Collection =>
+                "  assert.ok(Array.isArray(result));\n".to_string(),
+            ReturnKind::StringLike =>
+                "  assert.strictEqual(typeof result, 'string');\n".to_string(),
+            ReturnKind::Number =>
+                "  assert.strictEqual(typeof result, 'number');\n".to_string(),
+            ReturnKind::Other =>
+                "  assert.ok(result !== undefined);\n".to_string(),
+            ReturnKind::Void =>
+                "  assert.ok(true); // TODO: verify side effects\n".to_string(),
+        },
+        TestFramework::JUnit => match kind {
+            ReturnKind::Bool if is_bool_predicate =>
+                "    assertTrue(result);\n".to_string(),
+            ReturnKind::Bool =>
+                "    assertNotNull(result);\n".to_string(),
+            ReturnKind::Option =>
+                "    assertNotNull(result);\n".to_string(),
+            ReturnKind::Result =>
+                "    assertNotNull(result);\n".to_string(),
+            ReturnKind::Collection =>
+                "    assertNotNull(result);\n".to_string(),
+            ReturnKind::StringLike =>
+                "    assertFalse(result.isEmpty());\n".to_string(),
+            ReturnKind::Number =>
+                "    assertNotNull(result); // TODO: assert expected numeric value\n".to_string(),
+            ReturnKind::Other =>
+                "    assertNotNull(result);\n".to_string(),
+            ReturnKind::Void =>
+                "    assertTrue(true); // TODO: verify side effects\n".to_string(),
+        },
+    }
+}
+
 
 /// Generate default argument expressions for a function call.
 fn generate_default_args(signature: &str, framework: TestFramework) -> String {

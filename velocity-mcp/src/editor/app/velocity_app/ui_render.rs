@@ -1535,12 +1535,10 @@ impl eframe::App for VelocityApp {
                 if let Some(state) = egui::widgets::text_edit::TextEditState::load(&ctx, editor_id) {
                     if let Some(cursor_range) = state.cursor.char_range() {
                         let char_idx = cursor_range.primary.index.into();
-                        cursor_pos = Some(get_cursor_pos(
-                            buf.content(),
-                            char_idx,
-                        ));
+                        let pos = get_cursor_pos(buf.content(), char_idx);
                         // Update current cursor line
-                        self.current_cursor_line = cursor_pos.unwrap().0;
+                        self.current_cursor_line = pos.0;
+                        cursor_pos = Some(pos);
                     }
                 }
             }
@@ -2245,12 +2243,13 @@ impl eframe::App for VelocityApp {
         );
 
         egui::CentralPanel::default().show(ui, |ui| {
-            let mut dock_state = self.dock_state.take().expect("dock state");
-            let mut viewer = TabViewerImpl { app: self };
-            egui_dock::DockArea::new(&mut dock_state)
-                .style(egui_dock::Style::from_egui(ui.style().as_ref()))
-                .show_inside(ui, &mut viewer);
-            self.dock_state = Some(dock_state);
+            if let Some(mut dock_state) = self.dock_state.take() {
+                let mut viewer = TabViewerImpl { app: self };
+                egui_dock::DockArea::new(&mut dock_state)
+                    .style(egui_dock::Style::from_egui(ui.style().as_ref()))
+                    .show_inside(ui, &mut viewer);
+                self.dock_state = Some(dock_state);
+            }
         });
 
         // ─── Bottom Panel: Terminal | Problems | Debug | Output ───

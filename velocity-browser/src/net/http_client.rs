@@ -10,10 +10,9 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 
 use crate::net::inflate;
-use crate::net::tls::NativeTlsStream;
+use crate::net::tls::{NativeTlsStream, ProxyResolver};
 use crate::session_cookie_store::{CookieRecord, CookieStore, SameSitePolicy};
 
 const MAX_REDIRECTS: usize = 5;
@@ -43,6 +42,8 @@ pub struct ParsedSetCookie {
 pub struct HttpClient {
     pub cookie_jar: HashMap<String, String>,
     pub cookie_store: CookieStore,
+    /// Connection router: direct by default, or through an HTTP/SOCKS5 proxy.
+    pub proxy: ProxyResolver,
 }
 
 impl Default for HttpClient {
@@ -56,7 +57,14 @@ impl HttpClient {
         Self {
             cookie_jar: HashMap::new(),
             cookie_store: CookieStore::new(),
+            proxy: ProxyResolver::direct(),
         }
+    }
+
+    /// Route all connections through `resolver` (HTTP CONNECT or SOCKS5).
+    pub fn with_proxy(mut self, resolver: ProxyResolver) -> Self {
+        self.proxy = resolver;
+        self
     }
 
     /// Perform a GET, following redirects up to [`MAX_REDIRECTS`].
@@ -171,15 +179,14 @@ impl HttpClient {
         port: u16,
         request: &str,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        let addr = format!("{}:{}", host, port);
         let mut buffer = Vec::new();
         if scheme == "https" {
-            let mut tls = NativeTlsStream::connect(&addr, host)?;
+            let mut tls = NativeTlsStream::connect_via(&self.proxy, host, port)?;
             tls.write_all(request.as_bytes())?;
             tls.flush()?;
             tls.read_to_end(&mut buffer)?;
         } else {
-            let mut stream = TcpStream::connect(&addr)?;
+            let mut stream = self.proxy.connect_tcp(host, port)?;
             stream.write_all(request.as_bytes())?;
             stream.flush()?;
             stream.read_to_end(&mut buffer)?;
@@ -527,5 +534,51 @@ mod tests {
         let resp = client.get("https://example.com/").expect("https GET should succeed");
         assert_eq!(resp.status_code, 200);
         assert!(resp.body.to_ascii_lowercase().contains("<!doctype html") || !resp.body.is_empty());
+    }
+
+    #[test]
+    fn parse_url_defaults() {
+        // No scheme → http
+        let (s, h, p, pa) = parse_url("example.com/path").unwrap();
+        assert_eq!(s, "http");
+        assert_eq!(h, "example.com");
+        assert_eq!(p, 80);
+        assert_eq!(pa, "/path");
+
+        // HTTPS with no path
+        let (s2, _, p2, pa2) = parse_url("https://secure.com").unwrap();
+        assert_eq!(s2, "https");
+        assert_eq!(p2, 443);
+        assert_eq!(pa2, "/");
+    }
+
+    #[test]
+    fn dechunk_empty_chunks() {
+        let data = b"0\r\n\r\n";
+        let result = dechunk(data).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_set_cookie_minimal() {
+        let parsed = parse_set_cookie_full("simple=value", "example.com");
+        assert_eq!(parsed.name, "simple");
+        assert_eq!(parsed.value, "value");
+        assert_eq!(parsed.domain, "example.com");
+        assert_eq!(parsed.path, "/");
+        assert!(!parsed.secure);
+        assert!(!parsed.http_only);
+        assert_eq!(parsed.same_site, SameSitePolicy::Lax);
+        assert!(parsed.max_age.is_none());
+    }
+
+    #[test]
+    fn secure_cookie_rejected_over_http() {
+        let mut client = HttpClient::new();
+        let raw = b"HTTP/1.1 200 OK\r\nSet-Cookie: token=abc; Secure\r\n\r\nOK";
+        let resp = client.build_response(raw, "http", "example.com").unwrap();
+        // Secure cookie should be skipped over plain HTTP
+        assert!(resp.set_cookies.is_empty());
+        assert!(!client.cookie_jar.contains_key("token"));
     }
 }

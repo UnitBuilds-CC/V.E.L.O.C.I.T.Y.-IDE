@@ -288,7 +288,7 @@ fn run_ps_quick(script: &str) -> Option<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn().ok()?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).ok()?;
     }
     let output = child.wait_with_output().ok()?;

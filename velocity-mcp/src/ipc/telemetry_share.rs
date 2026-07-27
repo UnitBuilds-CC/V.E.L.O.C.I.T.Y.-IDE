@@ -132,7 +132,7 @@ impl TelemetryServer {
                 }
             };
 
-            if let Err(_) = self.shmem.write_output(&res_str) {
+            if self.shmem.write_output(&res_str).is_err() {
                 self.shmem.set_state(STATE_ERROR);
                 let _ = self.shmem.flush();
                 self.shmem.signal_response();

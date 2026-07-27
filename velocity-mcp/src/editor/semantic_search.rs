@@ -25,21 +25,13 @@ pub struct SemanticHit {
 
 /// TF-IDF semantic search index for a workspace.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct SemanticIndex {
     documents: Vec<Document>,
     idf: HashMap<String, f32>,
     total_docs: usize,
 }
 
-impl Default for SemanticIndex {
-    fn default() -> Self {
-        Self {
-            documents: Vec::new(),
-            idf: HashMap::new(),
-            total_docs: 0,
-        }
-    }
-}
 
 impl SemanticIndex {
     pub fn new() -> Self {
@@ -183,11 +175,9 @@ fn tokenize(content: &str) -> Vec<String> {
     for ch in content.chars() {
         if ch.is_alphanumeric() || ch == '_' {
             current.push(ch);
-        } else {
-            if !current.is_empty() {
-                emit_tokens(&current, &mut tokens);
-                current.clear();
-            }
+        } else if !current.is_empty() {
+            emit_tokens(&current, &mut tokens);
+            current.clear();
         }
     }
     if !current.is_empty() {

@@ -311,7 +311,7 @@ impl WebAudioEngine {
             .find(|n| n.node_type == AudioNodeType::Destination)
             .map(|n| n.node_id);
 
-        let dest_id = match dest_id {
+        let _dest_id = match dest_id {
             Some(id) => id,
             None => return output,
         };

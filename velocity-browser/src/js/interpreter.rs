@@ -545,8 +545,8 @@ impl Parser {
             let local = match self.advance() { Token::Ident(n) => n, _ => "_".into() };
             specifiers.push(ImportSpecifier { imported: "default".into(), local });
             // Could also have: import x, { a, b } from '...'
-            if self.eat(&Token::Comma) {
-                if self.at(&Token::LBrace) {
+            if self.eat(&Token::Comma)
+                && self.at(&Token::LBrace) {
                     self.advance();
                     while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
                         let imported = match self.advance() { Token::Ident(n) => n, _ => "_".into() };
@@ -558,7 +558,6 @@ impl Parser {
                     }
                     self.expect(&Token::RBrace)?;
                 }
-            }
         }
         // from 'source'
         self.expect(&Token::From)?;
@@ -580,7 +579,7 @@ impl Parser {
             self.advance();
             let mut named = Vec::new();
             while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
-                match self.advance() { Token::Ident(n) => named.push(n), _ => {} }
+                if let Token::Ident(n) = self.advance() { named.push(n) }
                 if self.eat(&Token::As) { self.advance(); } // skip alias for now
                 if !self.at(&Token::RBrace) { self.eat(&Token::Comma); }
             }
@@ -600,7 +599,7 @@ impl Parser {
         let mut params = Vec::new();
         while !self.at(&Token::RParen) && !self.at(&Token::Eof) {
             self.eat(&Token::DotDotDot); // rest param
-            match self.advance() { Token::Ident(n) => params.push(n), _ => {} }
+            if let Token::Ident(n) = self.advance() { params.push(n) }
             if self.at(&Token::Eq) { self.advance(); let _ = self.parse_expr()?; } // default value
             if !self.at(&Token::RParen) { self.expect(&Token::Comma)?; }
         }
@@ -964,7 +963,7 @@ impl Parser {
             self.eat(&Token::DotDotDot);
             match self.advance() { Token::Ident(n) => params.push(n), _ => { self.pos = saved; return Err("not arrow".into()); } }
             if self.at(&Token::Eq) { self.advance(); let _ = self.parse_assign()?; }
-            if !self.at(&Token::RParen) { if !self.eat(&Token::Comma) { self.pos = saved; return Err("not arrow".into()); } }
+            if !self.at(&Token::RParen) && !self.eat(&Token::Comma) { self.pos = saved; return Err("not arrow".into()); }
         }
         if !self.eat(&Token::RParen) { self.pos = saved; return Err("not arrow".into()); }
         if !self.eat(&Token::Arrow) { self.pos = saved; return Err("not arrow".into()); }
@@ -1432,7 +1431,7 @@ fn eval_unary(op: &Token, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
         Token::Minus => JsValue::Number(-to_number(&val)),
         Token::Plus => JsValue::Number(to_number(&val)),
         Token::Bang => JsValue::Boolean(!to_boolean(&val)),
-        Token::Tilde => JsValue::Number(!((to_number(&val) as i32)) as f64),
+        Token::Tilde => JsValue::Number(!(to_number(&val) as i32) as f64),
         Token::PlusPlus => {
             let n = to_number(&val) + 1.0;
             if let Expr::Ident(name) = rhs { Scope::assign(scope, name, JsValue::Number(n)); }
@@ -3074,7 +3073,7 @@ fn call_date_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsVal
     let ts = if let Some(JsValue::Number(n)) = map.get("__value__") { *n } else { 0.0 };
     Ok(match method {
         "getTime" | "valueOf" => JsValue::Number(ts),
-        "toISOString" | "toJSON" => JsValue::String(format!("1970-01-01T00:00:00.000Z")), // simplified
+        "toISOString" | "toJSON" => JsValue::String("1970-01-01T00:00:00.000Z".to_string()), // simplified
         "toString" => JsValue::String(format!("Date({})", ts)),
         _ => JsValue::Undefined,
     })

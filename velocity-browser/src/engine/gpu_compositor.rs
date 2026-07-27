@@ -138,8 +138,8 @@ impl GpuTileCompositor {
 
     /// Compute the number of tiles needed to cover the viewport.
     pub fn tile_count(&self) -> (usize, usize) {
-        let tiles_x = (self.viewport_width + self.tile_size - 1) / self.tile_size;
-        let tiles_y = (self.viewport_height + self.tile_size - 1) / self.tile_size;
+        let tiles_x = self.viewport_width.div_ceil(self.tile_size);
+        let tiles_y = self.viewport_height.div_ceil(self.tile_size);
         (tiles_x, tiles_y)
     }
 
@@ -376,7 +376,7 @@ mod tests {
 
         compositor.composite_frame();
 
-        let (r, g, b, a) = compositor.read_pixel(0, 0);
+        let (r, g, _b, a) = compositor.read_pixel(0, 0);
         // Layer 2 (green, 50% opacity) blends over layer 1 (red)
         assert!(g > 0); // Some green should be visible
         assert!(r > 0); // Some red should still be visible

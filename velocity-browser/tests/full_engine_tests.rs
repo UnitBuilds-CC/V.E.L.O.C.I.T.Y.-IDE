@@ -15,8 +15,9 @@ fn test_52_pure_rust_engine_modules() {
     assert_eq!(tab.session_id, "swarm_tab_1");
     assert_eq!(swarm.active_swarm_count(), 1);
 
-    let stream_tokens = StreamJitTokenizer::tokenize_stream_chunk(b"<div>stream</div>");
-    assert_eq!(stream_tokens.len(), 1);
+    let mut stream_tokenizer = StreamJitTokenizer::new();
+    let stream_tokens = stream_tokenizer.tokenize_stream_chunk(b"<div>stream</div>");
+    assert_eq!(stream_tokens.len(), 3); // open tag + text + close tag
 
     let mut session = BrowserSession::new("sess_52_modules".to_string());
     let _ = session.load_html("https://example.com", "<html><body><button id='b1'>Submit</button></body></html>");

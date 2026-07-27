@@ -168,3 +168,57 @@ impl FileManager {
         triples
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_download_progress() {
+        let d = DownloadStreamArtifact {
+            guid: "d1".into(), url: "http://x.com/f".into(), file_name: "f.zip".into(),
+            total_bytes: 1000, received_bytes: 500, save_path: "/tmp/f.zip".into(),
+            is_complete: false, started_at_ms: 0,
+        };
+        assert!((d.progress() - 0.5).abs() < 1e-6);
+        assert!(d.is_in_progress());
+    }
+
+    #[test]
+    fn test_download_complete() {
+        let d = DownloadStreamArtifact {
+            guid: "d2".into(), url: "http://x.com/f".into(), file_name: "f.zip".into(),
+            total_bytes: 100, received_bytes: 100, save_path: "/tmp/f.zip".into(),
+            is_complete: true, started_at_ms: 0,
+        };
+        assert!(!d.is_in_progress());
+        assert!((d.progress() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_start_and_update_download() {
+        let mut fm = FileManager::new();
+        fm.start_download("g1", "http://x.com/big", "big.zip", 2000, "/tmp/big.zip");
+        assert_eq!(fm.active_downloads().len(), 1);
+        fm.update_download_progress("g1", 2000);
+        assert_eq!(fm.active_downloads().len(), 0);
+        assert!(fm.get_download("g1").unwrap().is_complete);
+    }
+
+    #[test]
+    fn test_record_download() {
+        let mut fm = FileManager::new();
+        fm.record_download("r1", "http://x.com/small", "small.txt", 100, "/tmp/small.txt");
+        assert_eq!(fm.downloads.len(), 1);
+        assert!(fm.downloads[0].is_complete);
+    }
+
+    #[test]
+    fn test_export_files_nda() {
+        let mut fm = FileManager::new();
+        fm.attached_files.insert("input1".into(), "/path/to/file.txt".into());
+        fm.record_download("dl1", "http://x.com/f", "f.txt", 100, "/tmp/f.txt");
+        let triples = fm.export_files_nda();
+        assert_eq!(triples.len(), 3); // 1 file + 2 download
+    }
+}

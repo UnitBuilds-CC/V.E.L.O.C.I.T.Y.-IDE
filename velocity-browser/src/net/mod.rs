@@ -11,8 +11,10 @@ pub mod tls13;
 pub mod tls_fingerprint;
 pub mod tls_handshake;
 pub mod tls_record;
+pub mod tls_sigverify;
 pub mod webrtc;
 pub mod x25519;
+pub mod x509;
 
 pub use bluetooth::{BluetoothDevice, WebBluetoothTransport};
 pub use http_client::{HttpClient, HttpResponse};

@@ -419,7 +419,7 @@ fn unquote(s: &str) -> String {
 pub fn build_fetch_response(status: u16, body: &str) -> JsValue {
     let mut resp = HashMap::new();
     resp.insert("status".to_string(), JsValue::Number(status as f64));
-    resp.insert("ok".to_string(), JsValue::Boolean(status >= 200 && status < 300));
+    resp.insert("ok".to_string(), JsValue::Boolean((200..300).contains(&status)));
     resp.insert("statusText".to_string(), JsValue::String(
         if status == 200 { "OK".to_string() } else { format!("{}", status) }
     ));

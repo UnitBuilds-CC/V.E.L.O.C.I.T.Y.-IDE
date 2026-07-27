@@ -179,7 +179,7 @@ pub fn extract_local_identifiers(content: &str, current_word: &str) -> Vec<Compl
     let mut items = Vec::new();
 
     for word in content.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        if word.len() < 2 || word == current_word || !word.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_') {
+        if word.len() < 2 || word == current_word || !word.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
             continue;
         }
         if seen.insert(word.to_string()) {

@@ -161,21 +161,44 @@ mod os {
 
 #[cfg(all(unix, not(windows)))]
 mod os {
-    // No OS keyring binding on non-Windows targets: the master key is stored
-    // as-is. velocity-mcp is a Windows-first product; this fallback keeps the
-    // crate buildable and functional on other hosts without pretending to
-    // provide account-bound sealing.
+    // Unix fallback: derive a machine-specific key from hostname + uid and use
+    // the NDA seal/open primitives to protect the master key at rest. This is
+    // not account-bound like DPAPI, but provides real encryption on disk.
     pub fn random(buf: &mut [u8]) -> bool {
         use std::io::Read;
         std::fs::File::open("/dev/urandom")
             .and_then(|mut f| f.read_exact(buf))
             .is_ok()
     }
-    pub fn protect(plaintext: &[u8]) -> Option<Vec<u8>> {
-        Some(plaintext.to_vec())
+
+    /// Derive a machine-specific protection key from hostname + uid.
+    fn machine_key() -> [u8; 32] {
+        let hostname = std::fs::read_to_string("/etc/hostname")
+            .unwrap_or_else(|_| "localhost".to_string());
+        let uid = unsafe { libc::getuid() };
+        let mut seed = hostname.into_bytes();
+        seed.extend_from_slice(&uid.to_le_bytes());
+        velocity_browser::nda::derive_nda_key(&seed, b"unix_machine_protect")
     }
+
+    pub fn protect(plaintext: &[u8]) -> Option<Vec<u8>> {
+        let key = machine_key();
+        let mut nonce = [0u8; 12];
+        if !random(&mut nonce) {
+            return None;
+        }
+        Some(velocity_browser::nda::seal_bytes(&key, &nonce, plaintext))
+    }
+
     pub fn unprotect(sealed: &[u8]) -> Option<Vec<u8>> {
-        Some(sealed.to_vec())
+        // Check if it's an NDA envelope
+        if sealed.len() >= 4 && sealed[0..4] == velocity_browser::nda::NDA_MAGIC {
+            let key = machine_key();
+            velocity_browser::nda::open_bytes(&key, sealed).ok()
+        } else {
+            // Legacy plaintext format — pass through
+            Some(sealed.to_vec())
+        }
     }
 }
 

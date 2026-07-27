@@ -521,4 +521,33 @@ mod tests {
         let items = tree.query_selector_all("li");
         assert_eq!(items.len(), 3);
     }
+
+    #[test]
+    fn attribute_selector_exact_match() {
+        let tree = make_tree("<input type=\"text\" id=\"a\"><input type=\"password\" id=\"b\">");
+        let results = tree.query_selector_all("[type=\"password\"]");
+        assert_eq!(results.len(), 1);
+        let node = tree.get_node(results[0]).unwrap();
+        assert_eq!(node.attributes.get("id").map(|s| s.as_str()), Some("b"));
+    }
+
+    #[test]
+    fn compound_tag_class_selector() {
+        let tree = make_tree("<div class=\"active\">1</div><span class=\"active\">2</span><div class=\"other\">3</div>");
+        let results = tree.query_selector_all("div.active");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn clone_node_creates_independent_copy() {
+        let mut tree = make_tree("<div id=\"orig\" class=\"box\"><span>inner</span></div>");
+        let orig = tree.query_selector("#orig").unwrap();
+        let cloned = tree.clone_node(orig, true);
+        assert_ne!(cloned, orig);
+        // Cloned node should have same tag and attributes
+        let orig_node = tree.get_node(orig).unwrap();
+        let clone_node = tree.get_node(cloned).unwrap();
+        assert_eq!(clone_node.tag_name, orig_node.tag_name);
+        assert_eq!(clone_node.attributes.get("class"), orig_node.attributes.get("class"));
+    }
 }

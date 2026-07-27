@@ -139,7 +139,7 @@ impl RecordingSession {
         let steps: Vec<WaScriptStep> = self
             .events
             .iter()
-            .filter_map(|evt| event_to_script_step(evt))
+            .filter_map(event_to_script_step)
             .collect();
         WaScript {
             name: script_name.to_string(),

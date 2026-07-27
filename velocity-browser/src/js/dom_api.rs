@@ -450,4 +450,74 @@ mod tests {
         let mut t = tree("<div></div>");
         assert!(eval_dom(&mut t, "1 + 2").is_none());
     }
+
+    #[test]
+    fn create_element_returns_handle() {
+        let mut t = tree("<div></div>");
+        let res = eval_dom(&mut t, "document.createElement('span')").unwrap().unwrap();
+        match res {
+            JsValue::Object(ref obj) => {
+                assert!(obj.contains_key("__node_id__"));
+            }
+            _ => panic!("expected object handle"),
+        }
+    }
+
+    #[test]
+    fn classlist_add_remove_toggle_contains() {
+        let mut t = tree("<div id=\"el\" class=\"foo\"></div>");
+        // add
+        eval_dom(&mut t, "document.getElementById('el').classList.add('bar')").unwrap().unwrap();
+        // contains
+        let has = eval_dom(&mut t, "document.getElementById('el').classList.contains('bar')").unwrap().unwrap();
+        assert_eq!(has, JsValue::Boolean(true));
+        // toggle (remove)
+        let toggled = eval_dom(&mut t, "document.getElementById('el').classList.toggle('bar')").unwrap().unwrap();
+        assert_eq!(toggled, JsValue::Boolean(false));
+        // contains after toggle-off
+        let has2 = eval_dom(&mut t, "document.getElementById('el').classList.contains('bar')").unwrap().unwrap();
+        assert_eq!(has2, JsValue::Boolean(false));
+        // remove foo
+        eval_dom(&mut t, "document.getElementById('el').classList.remove('foo')").unwrap().unwrap();
+        let has3 = eval_dom(&mut t, "document.getElementById('el').classList.contains('foo')").unwrap().unwrap();
+        assert_eq!(has3, JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn has_and_remove_attribute() {
+        let mut t = tree("<div id=\"x\" data-val=\"123\"></div>");
+        let has = eval_dom(&mut t, "document.getElementById('x').hasAttribute('data-val')").unwrap().unwrap();
+        assert_eq!(has, JsValue::Boolean(true));
+        eval_dom(&mut t, "document.getElementById('x').removeAttribute('data-val')").unwrap().unwrap();
+        let has2 = eval_dom(&mut t, "document.getElementById('x').hasAttribute('data-val')").unwrap().unwrap();
+        assert_eq!(has2, JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn innerhtml_getter_and_setter() {
+        let mut t = tree("<div id=\"box\"><span>old</span></div>");
+        let html = eval_dom(&mut t, "document.getElementById('box').innerHTML").unwrap().unwrap();
+        assert!(matches!(html, JsValue::String(ref s) if s.contains("old")));
+        eval_dom(&mut t, "document.getElementById('box').innerHTML='<b>new</b>'").unwrap().unwrap();
+        let html2 = eval_dom(&mut t, "document.getElementById('box').innerHTML").unwrap().unwrap();
+        assert!(matches!(html2, JsValue::String(ref s) if s.contains("new")));
+    }
+
+    #[test]
+    fn parent_and_children_properties() {
+        let mut t = tree("<div id=\"parent\"><p id=\"child\">text</p></div>");
+        let parent = eval_dom(&mut t, "document.getElementById('child').parentNode").unwrap().unwrap();
+        assert!(matches!(parent, JsValue::Object(_)));
+        let children = eval_dom(&mut t, "document.getElementById('parent').children").unwrap().unwrap();
+        assert!(matches!(children, JsValue::Array(ref arr) if !arr.is_empty()));
+    }
+
+    #[test]
+    fn tagname_and_classname_properties() {
+        let mut t = tree("<div id=\"el\" class=\"active\"></div>");
+        let tag = eval_dom(&mut t, "document.getElementById('el').tagName").unwrap().unwrap();
+        assert_eq!(tag, JsValue::String("DIV".to_string()));
+        let cls = eval_dom(&mut t, "document.getElementById('el').className").unwrap().unwrap();
+        assert_eq!(cls, JsValue::String("active".to_string()));
+    }
 }

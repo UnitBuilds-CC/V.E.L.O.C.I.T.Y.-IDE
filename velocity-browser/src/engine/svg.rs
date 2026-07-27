@@ -64,6 +64,12 @@ pub struct SvgPathBuilder {
     commands: Vec<SvgPathCommand>,
 }
 
+impl Default for SvgPathBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SvgPathBuilder {
     pub fn new() -> Self {
         Self { commands: Vec::new() }
@@ -134,7 +140,6 @@ impl SvgPathBuilder {
             let mut s = cmd.cmd_type.to_string();
             for (i, arg) in cmd.args.iter().enumerate() {
                 if i > 0 { s.push(' '); }
-                else { s.push(' '); }
                 // Format: remove trailing zeros
                 if *arg == arg.round() {
                     s.push_str(&format!("{}", *arg as i32));
@@ -355,5 +360,111 @@ impl SvgVectorEngine {
             length += (dx * dx + dy * dy).sqrt();
         }
         length
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transform_identity() {
+        let t = SvgTransform::identity();
+        let (x, y) = t.apply(10.0, 20.0);
+        assert!((x - 10.0).abs() < 1e-5);
+        assert!((y - 20.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_transform_translate() {
+        let t = SvgTransform::translate(5.0, -3.0);
+        let (x, y) = t.apply(10.0, 20.0);
+        assert!((x - 15.0).abs() < 1e-5);
+        assert!((y - 17.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_transform_scale() {
+        let t = SvgTransform::scale(2.0, 3.0);
+        let (x, y) = t.apply(5.0, 10.0);
+        assert!((x - 10.0).abs() < 1e-5);
+        assert!((y - 30.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_transform_multiply() {
+        let t1 = SvgTransform::translate(10.0, 0.0);
+        let t2 = SvgTransform::scale(2.0, 2.0);
+        let combined = t1.multiply(&t2);
+        // scale first, then translate: (5*2 + 10, 5*2) = (20, 10)
+        let (x, y) = combined.apply(5.0, 5.0);
+        assert!((x - 20.0).abs() < 1e-5);
+        assert!((y - 10.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_parse_path_d() {
+        let cmds = SvgVectorEngine::parse_path_d("M 10 20 L 30 40 L 50 60 Z");
+        assert_eq!(cmds.len(), 4); // M, L, L, Z
+        assert_eq!(cmds[0].cmd_type, 'M');
+        assert_eq!(cmds[0].args, vec![10.0, 20.0]);
+        assert!(!cmds[0].relative);
+        assert_eq!(cmds[3].cmd_type, 'Z');
+    }
+
+    #[test]
+    fn test_parse_relative_path() {
+        let cmds = SvgVectorEngine::parse_path_d("m 10 20 l 5 5");
+        assert_eq!(cmds.len(), 2);
+        assert!(cmds[1].relative);
+        assert_eq!(cmds[1].cmd_type, 'l');
+    }
+
+    #[test]
+    fn test_compute_vector_bounds() {
+        let cmds = SvgVectorEngine::parse_path_d("M 10 20 L 50 60 L 30 40");
+        let (x, y, w, h) = SvgVectorEngine::compute_vector_bounds(&cmds);
+        assert!((x - 10.0).abs() < 1e-5);
+        assert!((y - 20.0).abs() < 1e-5);
+        assert!((w - 40.0).abs() < 1e-5); // 50 - 10
+        assert!((h - 40.0).abs() < 1e-5); // 60 - 20
+    }
+
+    #[test]
+    fn test_flatten_rect() {
+        let rect = SvgVectorEngine::make_rect(0.0, 0.0, 10.0, 5.0);
+        let pts = SvgVectorEngine::flatten_shape(&rect, 1.0);
+        assert_eq!(pts.len(), 5); // 4 corners + close
+        assert_eq!(pts[0], (0.0, 0.0));
+        assert_eq!(pts[4], (0.0, 0.0)); // closed
+    }
+
+    #[test]
+    fn test_flatten_line() {
+        let line = SvgVectorEngine::make_line(0.0, 0.0, 100.0, 100.0);
+        let pts = SvgVectorEngine::flatten_shape(&line, 1.0);
+        assert_eq!(pts.len(), 2);
+        assert_eq!(pts[0], (0.0, 0.0));
+        assert_eq!(pts[1], (100.0, 100.0));
+    }
+
+    #[test]
+    fn test_path_length_line() {
+        let cmds = SvgVectorEngine::parse_path_d("M 0 0 L 3 4");
+        let len = SvgVectorEngine::path_length(&cmds);
+        assert!((len - 5.0).abs() < 1e-3); // 3-4-5 triangle
+    }
+
+    #[test]
+    fn test_path_builder_to_d_string() {
+        let path = SvgPathBuilder::new()
+            .move_to(10.0, 20.0)
+            .line_to(30.0, 40.0)
+            .close()
+            .build();
+        let d = SvgPathBuilder::to_d_string(&path);
+        assert!(d.contains("M"));
+        assert!(d.contains("L"));
+        assert!(d.contains("Z"));
     }
 }

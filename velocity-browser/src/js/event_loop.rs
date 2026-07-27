@@ -148,11 +148,10 @@ impl JsEventLoopScheduler {
                 continue;
             }
             // If interval, re-queue for next firing
-            if task.kind == TaskKind::Interval {
-                if self.interval_registry.iter().any(|t| t.id == task.id) {
+            if task.kind == TaskKind::Interval
+                && self.interval_registry.iter().any(|t| t.id == task.id) {
                     self.task_queue.push_back(task.clone());
                 }
-            }
             return Some(task);
         }
         None

@@ -1,3 +1,10 @@
+//! CSS/XPath selector resolution for Windows Automation node trees.
+//!
+//! NOTE: The CSS/XPath parsing and scoring API is built out ahead of its
+//! wiring into the WA action pipeline, so several parsers and helpers read as
+//! dead until the resolver is invoked from tool dispatch.
+#![allow(dead_code)] // selector resolver API awaiting WA-pipeline integration
+
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
@@ -298,8 +305,7 @@ pub fn parse_xpath(xpath: &str) -> Option<XPathExpr> {
         }
     }
     // //role[@name='X']
-    if xpath.starts_with("//") {
-        let rest = &xpath[2..];
+    if let Some(rest) = xpath.strip_prefix("//") {
         if let Some(bracket_pos) = rest.find('[') {
             let role = &rest[..bracket_pos];
             let attr_part = &rest[bracket_pos..];
@@ -360,7 +366,7 @@ pub fn resolve_xpath(
             snapshot.nodes.iter()
                 .filter(|n| {
                     n.role.eq_ignore_ascii_case(role)
-                        && name_filter.as_ref().map_or(true, |nf| contains_case_insensitive(&n.name, nf))
+                        && name_filter.as_ref().is_none_or(|nf| contains_case_insensitive(&n.name, nf))
                 })
                 .map(|n| (500i32 + (n.confidence * 100.0) as i32, n.clone()))
                 .collect()

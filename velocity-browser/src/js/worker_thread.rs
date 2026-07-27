@@ -216,7 +216,7 @@ impl WebWorkerPool {
     /// Send a message through a channel from worker A to worker B.
     pub fn send_channel_message(&mut self, channel_id: &str, from_worker: &str, payload: &str) -> bool {
         let channel = match self.channels.iter().find(|c| c.channel_id == channel_id) {
-            Some(c) => c.clone(),
+            Some(c) => c,
             None => return false,
         };
         // Determine target: if from is A, send to B, and vice versa

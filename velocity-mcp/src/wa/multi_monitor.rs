@@ -206,7 +206,7 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;

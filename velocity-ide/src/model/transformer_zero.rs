@@ -493,3 +493,62 @@ fn norm_to_ndavec(w: &[f32]) -> NdaVec {
 
     NdaVec { len: w.len(), log2_scale, sign: sign.into(), extra: extra.into() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_norm_to_ndavec_positive_values() {
+        let w = vec![1.0, 1.0, 1.0, 1.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 4);
+        // All positive -> sign bits all set
+        assert_eq!(v.sign[0] & 0x0F, 0x0F);
+    }
+
+    #[test]
+    fn test_norm_to_ndavec_negative_values() {
+        let w = vec![-1.0, -1.0, -1.0, -1.0];
+        let v = norm_to_ndavec(&w);
+        // All negative -> sign bits all clear
+        assert_eq!(v.sign[0] & 0x0F, 0x00);
+    }
+
+    #[test]
+    fn test_norm_to_ndavec_mixed() {
+        let w = vec![1.0, -1.0, 1.0, -1.0];
+        let v = norm_to_ndavec(&w);
+        // Bit 0 and 2 should be set (positive)
+        assert_eq!(v.sign[0] & 0x01, 1);
+        assert_eq!(v.sign[0] & 0x02, 0);
+        assert_eq!(v.sign[0] & 0x04, 4);
+        assert_eq!(v.sign[0] & 0x08, 0);
+    }
+
+    #[test]
+    fn test_norm_to_ndavec_zero() {
+        let w = vec![0.0, 0.0];
+        let v = norm_to_ndavec(&w);
+        assert_eq!(v.len, 2);
+        assert_eq!(v.log2_scale, 0);
+    }
+
+    #[test]
+    fn test_norm_to_ndavec_large_values() {
+        let w = vec![4.0, -4.0];
+        let v = norm_to_ndavec(&w);
+        // Values >= 1.5 * scale should have extra bit set
+        assert!(v.log2_scale > 0);
+    }
+
+    #[test]
+    fn test_zero_kv_layer_push() {
+        let mut layer = ZeroKvLayer::new();
+        assert_eq!(layer.len(), 0);
+        let k = NdaVec { len: 4, log2_scale: 0, sign: vec![0b10101010].into(), extra: vec![0b01010101].into() };
+        let v = NdaVec { len: 4, log2_scale: 0, sign: vec![0b11110000].into(), extra: vec![0b00001111].into() };
+        layer.push(k, v);
+        assert_eq!(layer.len(), 1);
+    }
+}

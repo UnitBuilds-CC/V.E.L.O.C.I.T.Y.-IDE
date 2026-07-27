@@ -516,7 +516,7 @@ impl LineWindow {
     pub fn scroll_to(&mut self, line: usize) {
         if line >= self.total_lines { return; }
         let half = self.visible_count / 2;
-        self.first_visible = if line > half { line - half } else { 0 };
+        self.first_visible = line.saturating_sub(half);
         if self.first_visible + self.visible_count > self.total_lines {
             self.first_visible = self.total_lines.saturating_sub(self.visible_count);
         }

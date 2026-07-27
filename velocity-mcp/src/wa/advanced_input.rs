@@ -413,7 +413,7 @@ pub fn execute_sequence(sequence: &InputSequence) -> InputExecutionResult {
     // T3d: Prefer native SendInput on Windows (no PowerShell overhead)
     #[cfg(target_os = "windows")]
     {
-        return execute_sequence_native(sequence);
+        execute_sequence_native(sequence)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -564,7 +564,7 @@ fn native_send_mouse(flags: u32, data: u32) {
         input.r#type = INPUT_MOUSE;
         input.Anonymous.mi.dwFlags = MOUSE_EVENT_FLAGS(flags);
         input.Anonymous.mi.mouseData = data;
-        SendInput(&mut [input], std::mem::size_of::<INPUT>() as i32);
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
     }
 }
 
@@ -578,7 +578,7 @@ fn native_send_key(vk_code: u16, key_up: bool) {
         if key_up {
             input.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
         }
-        SendInput(&mut [input], std::mem::size_of::<INPUT>() as i32);
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
     }
 }
 
@@ -590,7 +590,7 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;

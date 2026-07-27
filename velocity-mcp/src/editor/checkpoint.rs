@@ -67,7 +67,7 @@ impl CheckpointManager {
         )?;
 
         // Get the stash ref (always stash@{0} after a push)
-        let stash_ref = format!("stash@{{0}}");
+        let stash_ref = "stash@{0}".to_string();
 
         let checkpoint = Checkpoint {
             stash_ref: stash_ref.clone(),

@@ -1,4 +1,9 @@
 //! Decompose a project brief into a directed acyclic graph of work packages.
+//!
+//! NOTE: Some graph query methods (len/is_empty/get/dependents/leaves) are part
+//! of the task-graph API and are exercised by tests ahead of full orchestrator
+//! wiring, so they read as dead in the non-test build.
+#![allow(dead_code)] // task-graph query API awaiting orchestrator integration
 
 use std::collections::{HashMap, HashSet};
 
@@ -153,5 +158,153 @@ impl TaskGraph {
         );
 
         g
+    }
+
+    /// Return the total number of tasks in the graph.
+    pub fn len(&self) -> usize {
+        self.tasks.len()
+    }
+
+    /// Check if the graph has no tasks.
+    pub fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    /// Find a task by ID.
+    pub fn get(&self, id: TaskId) -> Option<&Task> {
+        self.tasks.get(&id)
+    }
+
+    /// Return all tasks that depend on the given task.
+    pub fn dependents(&self, id: TaskId) -> Vec<&Task> {
+        self.tasks
+            .values()
+            .filter(|t| t.dependencies.contains(&id))
+            .collect()
+    }
+
+    /// Return all leaf tasks (no other task depends on them).
+    pub fn leaves(&self) -> Vec<&Task> {
+        let all_deps: HashSet<TaskId> = self
+            .tasks
+            .values()
+            .flat_map(|t| t.dependencies.iter().copied())
+            .collect();
+        self.tasks
+            .values()
+            .filter(|t| !all_deps.contains(&t.id))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_graph() -> TaskGraph {
+        let mut g = TaskGraph::default();
+        g.root = TaskId(1);
+        g.add(TaskId(1), "Root", "root task", vec![], vec![], None);
+        g.add(TaskId(2), "Child A", "first child", vec!["a.rs".into()], vec![TaskId(1)], None);
+        g.add(TaskId(3), "Child B", "second child", vec!["b.rs".into()], vec![TaskId(1)], None);
+        g.add(
+            TaskId(4),
+            "Grandchild",
+            "depends on A and B",
+            vec![],
+            vec![TaskId(2), TaskId(3)],
+            None,
+        );
+        g
+    }
+
+    #[test]
+    fn ready_returns_tasks_with_satisfied_deps() {
+        let g = make_graph();
+        let completed = HashSet::new();
+        let ready = g.ready(&completed);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, TaskId(1));
+    }
+
+    #[test]
+    fn ready_excludes_completed_tasks() {
+        let g = make_graph();
+        let mut completed = HashSet::new();
+        completed.insert(TaskId(1));
+        let ready = g.ready(&completed);
+        assert_eq!(ready.len(), 2);
+        let ids: HashSet<TaskId> = ready.iter().map(|t| t.id).collect();
+        assert!(ids.contains(&TaskId(2)));
+        assert!(ids.contains(&TaskId(3)));
+    }
+
+    #[test]
+    fn ready_with_all_completed_returns_empty() {
+        let g = make_graph();
+        let completed: HashSet<TaskId> = g.tasks.keys().copied().collect();
+        let ready = g.ready(&completed);
+        assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn add_with_parent_wires_dependency() {
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "Parent", "", vec![], vec![], None);
+        g.add(TaskId(2), "Child", "", vec![], vec![], Some(TaskId(1)));
+        let parent = g.get(TaskId(1)).unwrap();
+        assert!(parent.dependencies.contains(&TaskId(2)));
+    }
+
+    #[test]
+    fn add_self_parent_is_ignored() {
+        let mut g = TaskGraph::default();
+        g.add(TaskId(1), "Self", "", vec![], vec![], Some(TaskId(1)));
+        let task = g.get(TaskId(1)).unwrap();
+        assert!(task.dependencies.is_empty());
+    }
+
+    #[test]
+    fn example_game_has_nine_tasks() {
+        let g = TaskGraph::example_game();
+        assert_eq!(g.len(), 9);
+        assert_eq!(g.root, TaskId(1));
+    }
+
+    #[test]
+    fn example_game_root_is_first_ready() {
+        let g = TaskGraph::example_game();
+        let completed = HashSet::new();
+        let ready = g.ready(&completed);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, TaskId(1));
+    }
+
+    #[test]
+    fn example_game_leaves_include_launcher() {
+        let g = TaskGraph::example_game();
+        let leaves = g.leaves();
+        assert!(leaves.iter().any(|t| t.id == TaskId(9)));
+    }
+
+    #[test]
+    fn dependents_returns_correct_tasks() {
+        let g = make_graph();
+        let deps = g.dependents(TaskId(1));
+        assert_eq!(deps.len(), 2);
+        let ids: HashSet<TaskId> = deps.iter().map(|t| t.id).collect();
+        assert!(ids.contains(&TaskId(2)));
+        assert!(ids.contains(&TaskId(3)));
+    }
+
+    #[test]
+    fn len_and_is_empty() {
+        let g = make_graph();
+        assert_eq!(g.len(), 4);
+        assert!(!g.is_empty());
+
+        let empty = TaskGraph::default();
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
     }
 }

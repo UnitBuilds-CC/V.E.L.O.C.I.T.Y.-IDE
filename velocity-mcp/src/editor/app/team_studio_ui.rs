@@ -66,15 +66,13 @@ impl VelocityApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new(format!("{} members", member_count))
                                             .size(9.0).color(palette.text_muted));
-                                        if !is_preset {
-                                            if ui.small_button(RichText::new("\u{2715}").size(9.0).color(palette.error)).clicked() {
+                                        if !is_preset
+                                            && ui.small_button(RichText::new("\u{2715}").size(9.0).color(palette.error)).clicked() {
                                                 self.expert_teams.remove(idx);
                                                 let _ = save_expert_teams(&self.workspace_root, &self.expert_teams);
                                                 self.team_gallery_expanded = None;
                                                 let _ = self.agent_tx.send(crate::agent::UiToAgentMessage::ReloadTeams);
-                                                return;
                                             }
-                                        }
                                     });
                                 });
 

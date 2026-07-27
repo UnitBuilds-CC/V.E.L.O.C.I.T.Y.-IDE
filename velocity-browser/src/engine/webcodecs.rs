@@ -202,6 +202,32 @@ impl VelocityCodecsEngine {
         packet
     }
 
+    /// Encode an audio frame into a packet (simplified: wraps PCM samples with header).
+    pub fn encode_audio_packet(&mut self, sample_rate: u32, channels: u16, timestamp_us: u64, pcm_data: &[u8]) -> EncodedPacket {
+        let mut packet_data = Vec::with_capacity(8 + pcm_data.len());
+        // Header: sample_rate(2) + channels(1) + flags(1) + reserved(4)
+        packet_data.extend_from_slice(&(sample_rate as u16).to_le_bytes());
+        packet_data.push(channels as u8);
+        packet_data.push(0x01); // flags: raw PCM marker
+        packet_data.extend_from_slice(&[0u8; 4]);
+        packet_data.extend_from_slice(pcm_data);
+        let packet = EncodedPacket {
+            data: packet_data,
+            timestamp_us,
+            is_keyframe: true, // audio packets are always independently decodable
+            codec: self.codec,
+        };
+        self.encoded_packets.push(packet.clone());
+        packet
+    }
+
+    /// Flush all buffered encoded packets, returning them and clearing the buffer.
+    pub fn flush(&mut self) -> Vec<EncodedPacket> {
+        let packets = std::mem::take(&mut self.encoded_packets);
+        self.encoding_active = false;
+        packets
+    }
+
     /// Get encoding stats.
     pub fn stats(&self) -> CodecStats {
         CodecStats {
@@ -209,6 +235,8 @@ impl VelocityCodecsEngine {
             audio_frames_decoded: self.audio_ring.frames.len(),
             packets_encoded: self.encoded_packets.len(),
             frames_since_keyframe: self.ring_buffer.frames_since_keyframe(),
+            audio_packets_encoded: self.encoded_packets.iter().filter(|p| p.codec.is_audio()).count(),
+            video_packets_encoded: self.encoded_packets.iter().filter(|p| p.codec.is_video()).count(),
             codec: self.codec,
         }
     }
@@ -227,6 +255,51 @@ pub struct CodecStats {
     pub video_frames_decoded: usize,
     pub audio_frames_decoded: usize,
     pub packets_encoded: usize,
+    pub video_packets_encoded: usize,
+    pub audio_packets_encoded: usize,
     pub frames_since_keyframe: usize,
     pub codec: CodecKind,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_audio_packet() {
+        let mut engine = VelocityCodecsEngine::new("opus");
+        let pcm_data = vec![0u8; 960]; // 20ms @ 48kHz, 16-bit mono
+        let packet = engine.encode_audio_packet(48000, 1, 0, &pcm_data);
+        assert_eq!(packet.data.len(), 8 + 960);
+        assert!(packet.is_keyframe);
+        assert_eq!(packet.codec, CodecKind::Opus);
+        assert_eq!(engine.encoded_packets.len(), 1);
+    }
+
+    #[test]
+    fn test_flush_packets() {
+        let mut engine = VelocityCodecsEngine::new("h264");
+        engine.encoding_active = true;
+        engine.encode_video_frame(1920, 1080, 0, &[0u8; 100]);
+        engine.encode_video_frame(1920, 1080, 16666, &[0u8; 100]);
+        assert_eq!(engine.encoded_packets.len(), 2);
+        let packets = engine.flush();
+        assert_eq!(packets.len(), 2);
+        assert_eq!(engine.encoded_packets.len(), 0);
+        assert!(!engine.encoding_active);
+    }
+
+    #[test]
+    fn test_stats_breakdown() {
+        let mut engine = VelocityCodecsEngine::new("h264");
+        engine.encode_video_frame(1920, 1080, 0, &[0u8; 100]);
+        // Switch to audio codec for audio packet
+        engine.codec = CodecKind::Opus;
+        engine.encode_audio_packet(48000, 2, 0, &[0u8; 1920]);
+        let stats = engine.stats();
+        assert_eq!(stats.video_packets_encoded, 1);
+        assert_eq!(stats.audio_packets_encoded, 1);
+        assert_eq!(stats.packets_encoded, 2);
+    }
+}
+

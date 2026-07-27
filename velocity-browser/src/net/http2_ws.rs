@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use crate::net::tls::ProxyResolver;
 
 /// WebSocket opcodes per RFC 6455.
 #[allow(dead_code)]
@@ -43,6 +44,35 @@ impl NativeWsClient {
     pub fn connect(host: &str, port: u16, path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let addr = format!("{}:{}", host, port);
         let mut stream = TcpStream::connect(&addr)?;
+
+        let key = base64_ws_key();
+        let handshake = format!(
+            "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n\r\n",
+            path, host, key
+        );
+        stream.write_all(handshake.as_bytes())?;
+        stream.flush()?;
+
+        let mut buf = [0u8; 1024];
+        let n = stream.read(&mut buf)?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        if !response.contains("101") && !response.contains("Switching Protocols") {
+            return Err("WebSocket handshake failed".into());
+        }
+
+        Ok(Self { stream, is_connected: true })
+    }
+
+    /// Connect through a proxy resolver (HTTP CONNECT / SOCKS5 tunnel first,
+    /// then WebSocket upgrade over the tunneled stream).
+    pub fn connect_via(
+        resolver: &ProxyResolver,
+        host: &str,
+        port: u16,
+        path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let mut stream = resolver.connect_tcp(host, port)?;
 
         let key = base64_ws_key();
         let handshake = format!(

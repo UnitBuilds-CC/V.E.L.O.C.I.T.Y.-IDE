@@ -74,6 +74,38 @@ impl Canvas2DContext {
     }
 
     pub fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        let (r, g, b, a) = parse_css_color(&self.stroke_style);
+        // Rasterize the 4 edges of the rectangle outline (1px stroke width)
+        let x0 = x.max(0.0) as usize;
+        let y0 = y.max(0.0) as usize;
+        let x1 = ((x + w).max(0.0) as usize).min(self.width);
+        let y1 = ((y + h).max(0.0) as usize).min(self.height);
+        // Top edge
+        if y0 < self.height {
+            for cx in x0..x1 {
+                self.pixel_buffer.set_pixel(cx, y0, r, g, b, a);
+            }
+        }
+        // Bottom edge
+        if y1 > 0 && y1 <= self.height {
+            let by = (y1 - 1).min(self.height - 1);
+            for cx in x0..x1 {
+                self.pixel_buffer.set_pixel(cx, by, r, g, b, a);
+            }
+        }
+        // Left edge
+        if x0 < self.width {
+            for cy in y0..y1 {
+                self.pixel_buffer.set_pixel(x0, cy, r, g, b, a);
+            }
+        }
+        // Right edge
+        if x1 > 0 && x1 <= self.width {
+            let rx = (x1 - 1).min(self.width - 1);
+            for cy in y0..y1 {
+                self.pixel_buffer.set_pixel(rx, cy, r, g, b, a);
+            }
+        }
         self.display_list.push(DrawCommand::StrokeRect { x, y, w, h, style: self.stroke_style.clone() });
     }
 
@@ -177,7 +209,7 @@ impl Canvas2DContext {
     fn encode_bmp(&self) -> Vec<u8> {
         let w = self.width;
         let h = self.height;
-        let row_size = ((w * 3 + 3) / 4) * 4; // rows padded to 4-byte boundary
+        let row_size = (w * 3).div_ceil(4) * 4; // rows padded to 4-byte boundary
         let pixel_data_size = row_size * h;
         let file_size = 54 + pixel_data_size;
 
@@ -252,7 +284,7 @@ fn parse_css_color(s: &str) -> (u8, u8, u8, u8) {
 /// Minimal base64 encoder (no external deps).
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };

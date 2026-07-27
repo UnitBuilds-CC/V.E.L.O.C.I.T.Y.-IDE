@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod canvas;
 pub mod canvas_context;
+pub mod captcha;
 pub mod captcha_solver;
 pub mod crypto;
 pub mod files;
@@ -26,6 +27,11 @@ pub mod webgpu;
 pub use audio::{AudioContextNode, WebAudioEngine};
 pub use canvas::{CanvasElement, CanvasExtractor};
 pub use canvas_context::{Canvas2DContext, DrawCommand};
+pub use captcha::{
+    CaptchaOrchestrator, ChallengeArchetype, ChallengeDescriptor, ChallengeObserver,
+    ProviderFingerprinter, SolveResult, SolveTemplate, TemplateStore, VisualFingerprint,
+    VisualFingerprinter,
+};
 pub use captcha_solver::{CaptchaSolverEngine, CaptchaType};
 pub use crypto::WebCryptoEngine;
 pub use files::{DownloadStreamArtifact, FileChooserEvent, FileManager};

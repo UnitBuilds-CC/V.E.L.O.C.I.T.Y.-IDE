@@ -206,3 +206,89 @@ impl PaymentRequestEngine {
         triples
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_subtotal_and_total() {
+        let mut engine = PaymentRequestEngine::new("TestShop");
+        engine.add_item("Widget", 9.99, "USD");
+        engine.add_item("Gadget", 19.99, "USD");
+        assert!((engine.subtotal() - 29.98).abs() < 1e-6);
+        assert!((engine.total() - 29.98).abs() < 1e-6); // no shipping
+    }
+
+    #[test]
+    fn test_shipping_cost() {
+        let mut engine = PaymentRequestEngine::new("TestShop");
+        engine.add_item("Item", 50.0, "USD");
+        engine.add_shipping_option("std", "Standard", 5.99, "USD");
+        engine.add_shipping_option("exp", "Express", 14.99, "USD");
+        assert!((engine.shipping_cost() - 5.99).abs() < 1e-6); // first auto-selected
+        engine.select_shipping("exp");
+        assert!((engine.shipping_cost() - 14.99).abs() < 1e-6);
+        assert!((engine.total() - 64.99).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_remove_item() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("A", 10.0, "USD");
+        engine.add_item("B", 20.0, "USD");
+        assert!(engine.remove_item("A"));
+        assert!((engine.subtotal() - 20.0).abs() < 1e-6);
+        assert!(!engine.remove_item("C")); // not found
+    }
+
+    #[test]
+    fn test_validate_empty_items() {
+        let engine = PaymentRequestEngine::new("Shop");
+        assert!(!engine.is_valid());
+        let errors = engine.validate();
+        assert!(errors.errors.iter().any(|(k, _)| k == "items"));
+    }
+
+    #[test]
+    fn test_validate_negative_amount() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("Bad", -5.0, "USD");
+        let errors = engine.validate();
+        assert!(errors.errors.iter().any(|(k, _)| k == "Bad"));
+    }
+
+    #[test]
+    fn test_validate_shipping_required() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("Item", 10.0, "USD");
+        engine.require_shipping = true;
+        let errors = engine.validate();
+        assert!(errors.errors.iter().any(|(k, _)| k == "shipping"));
+    }
+
+    #[test]
+    fn test_show_success() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("Item", 25.0, "USD");
+        let result = engine.show();
+        assert!(result.is_ok());
+        assert!(engine.is_resolved);
+    }
+
+    #[test]
+    fn test_show_validation_failure() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        let result = engine.show();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_export_nda_only_when_resolved() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("X", 10.0, "USD");
+        assert!(engine.export_payment_nda("s1").is_empty());
+        engine.show().ok();
+        assert!(!engine.export_payment_nda("s1").is_empty());
+    }
+}

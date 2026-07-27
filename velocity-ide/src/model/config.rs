@@ -105,3 +105,78 @@ impl ModelConfig {
         !self.alibi_shifts.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bitnet_3b_config() {
+        let cfg = ModelConfig::bitnet_3b();
+        assert_eq!(cfg.n_layers, 26);
+        assert_eq!(cfg.hidden_size, 3200);
+        assert_eq!(cfg.ffn_size, 8640);
+        assert_eq!(cfg.n_heads, 32);
+        assert_eq!(cfg.n_kv_heads, 32);
+        assert_eq!(cfg.head_dim, 100);
+        assert_eq!(cfg.vocab_size, 32_000);
+        assert_eq!(cfg.max_seq_len, 2048);
+        assert_eq!(cfg.eos_token_id, 2);
+        assert_eq!(cfg.bos_token_id, 1);
+        assert!(!cfg.uses_alibi());
+    }
+
+    #[test]
+    fn test_qwen_coder_05b_config() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        assert_eq!(cfg.n_layers, 24);
+        assert_eq!(cfg.hidden_size, 896);
+        assert_eq!(cfg.ffn_size, 4864);
+        assert_eq!(cfg.n_heads, 14);
+        assert_eq!(cfg.n_kv_heads, 2);
+        assert_eq!(cfg.head_dim, 64);
+        assert_eq!(cfg.vocab_size, 151_936);
+        assert!(cfg.uses_alibi());
+        assert_eq!(cfg.alibi_shifts.len(), 14);
+    }
+
+    #[test]
+    fn test_head_dim_invariant() {
+        let bitnet = ModelConfig::bitnet_3b();
+        assert_eq!(bitnet.head_dim, bitnet.hidden_size / bitnet.n_heads);
+
+        let qwen = ModelConfig::qwen_coder_05b();
+        assert_eq!(qwen.head_dim, qwen.hidden_size / qwen.n_heads);
+    }
+
+    #[test]
+    fn test_ternary_param_count_positive() {
+        let cfg = ModelConfig::bitnet_3b();
+        let count = cfg.ternary_param_count();
+        assert!(count > 0);
+        assert!(count > 1_000_000_000);
+    }
+
+    #[test]
+    fn test_ternary_param_count_qwen() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        let count = cfg.ternary_param_count();
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn test_alibi_shifts_bounded() {
+        let cfg = ModelConfig::qwen_coder_05b();
+        for &shift in &cfg.alibi_shifts {
+            assert!(shift >= 1);
+            assert!(shift <= 30);
+        }
+    }
+
+    #[test]
+    fn test_bitnet_no_alibi() {
+        let cfg = ModelConfig::bitnet_3b();
+        assert!(cfg.alibi_shifts.is_empty());
+        assert!(!cfg.uses_alibi());
+    }
+}

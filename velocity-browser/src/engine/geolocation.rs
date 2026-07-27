@@ -192,4 +192,44 @@ mod tests {
         let d = haversine_distance(37.7749, -122.4194, 34.0522, -118.2437);
         assert!(d > 500_000.0 && d < 600_000.0);
     }
+
+    #[test]
+    fn provider_constructors() {
+        let sf = GeolocationProvider::mock_sf();
+        assert!((sf.current_coords.latitude - 37.7749).abs() < 0.001);
+        assert!((sf.current_coords.longitude - (-122.4194)).abs() < 0.001);
+
+        let custom = GeolocationProvider::from_coords(48.8566, 2.3522);
+        assert!((custom.current_coords.latitude - 48.8566).abs() < 0.001);
+        assert!((custom.current_coords.accuracy_meters - 10.0).abs() < 0.01);
+
+        let config = GeolocationConfig { latitude: 51.5074, longitude: -0.1278, accuracy_meters: 15.0 };
+        let london = GeolocationProvider::from_config(&config);
+        assert!((london.current_coords.latitude - 51.5074).abs() < 0.001);
+    }
+
+    #[test]
+    fn set_position_updates_coords() {
+        let mut provider = GeolocationProvider::mock_sf();
+        provider.set_position(40.7128, -74.0060, 20.0);
+        let pos = provider.get_current_position();
+        assert!((pos.latitude - 40.7128).abs() < 0.001);
+        assert!((pos.longitude - (-74.0060)).abs() < 0.001);
+        assert!((pos.accuracy_meters - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn default_config_is_sf() {
+        let config = GeolocationConfig::default();
+        assert!((config.latitude - 37.7749).abs() < 0.001);
+        assert!((config.longitude - (-122.4194)).abs() < 0.001);
+        assert!((config.accuracy_meters - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn haversine_antipodal_points() {
+        // North pole to south pole = half Earth circumference ≈ 20,015 km
+        let d = haversine_distance(90.0, 0.0, -90.0, 0.0);
+        assert!(d > 20_000_000.0 && d < 20_020_000.0);
+    }
 }

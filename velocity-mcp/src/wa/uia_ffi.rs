@@ -455,7 +455,9 @@ impl UiaDirectClient {
     }
 
     /// Invoke a pattern on an element via direct COM (~1ms).
-    /// Falls back to PowerShell if COM is unavailable.
+    /// Patterns not wired for direct COM fall back to the PowerShell path
+    /// (which covers a different, overlapping set — e.g. `Selection`), so a
+    /// working pattern is never rejected just because COM lacks it.
     pub fn invoke_pattern(
         &self,
         element: &CachedUiaElement,
@@ -464,13 +466,13 @@ impl UiaDirectClient {
     ) -> Result<(), String> {
         #[cfg(windows)]
         {
-            if self.com_initialized {
+            if self.com_initialized && pattern_supported_via_com(pattern) {
                 if let Some(auto) = &self.automation {
                     return invoke_pattern_com(auto, element, pattern, value);
                 }
             }
         }
-        // Fallback: PowerShell
+        // Fallback: PowerShell (COM unavailable or pattern not COM-wired).
         invoke_pattern_powershell(element, pattern, value)
     }
 
@@ -861,6 +863,23 @@ fn invoke_pattern_com(
 
 // ─── PowerShell Fallback ─────────────────────────────────────────────────────
 
+/// Whether a pattern has a direct-COM implementation in [`invoke_pattern_com`].
+/// Patterns outside this set are routed to the PowerShell fallback instead of
+/// being rejected. Keep this in sync with the `match` in `invoke_pattern_com`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn pattern_supported_via_com(pattern: UiaPattern) -> bool {
+    matches!(
+        pattern,
+        UiaPattern::Invoke
+            | UiaPattern::Value
+            | UiaPattern::Toggle
+            | UiaPattern::ExpandCollapse
+            | UiaPattern::SelectionItem
+            | UiaPattern::RangeValue
+            | UiaPattern::Scroll
+    )
+}
+
 /// Invoke a UIA pattern via PowerShell (fallback, ~150ms).
 fn invoke_pattern_powershell(
     element: &CachedUiaElement,
@@ -1128,10 +1147,120 @@ if ($null -ne $el) {{
 "#
             )
         }
-        _ => format!(
-            r#"Write-Output '{{"success":false,"error":"pattern {} not yet wired for direct invoke"}}'"#,
-            pattern.as_str()
-        ),
+        UiaPattern::Window => {
+            let body = match value.unwrap_or("Normal") {
+                "Close" => "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)\n    $pattern.Close()\n    Write-Output '{\"success\":true}'".to_string(),
+                other => {
+                    let state = match other {
+                        "Maximize" | "Maximized" => "Maximized",
+                        "Minimize" | "Minimized" => "Minimized",
+                        _ => "Normal",
+                    };
+                    format!("    $pattern = $el.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)\n    $pattern.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::{state})\n    Write-Output '{{\"success\":true}}'")
+                }
+            };
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::Transform => {
+            let body = match parse_transform_action(value.unwrap_or("")) {
+                Some(call) => format!("    $pattern = $el.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)\n    {call}\n    Write-Output '{{\"success\":true}}'"),
+                None => "    Write-Output '{\"success\":false,\"error\":\"invalid transform spec (use move:X,Y | resize:W,H | rotate:DEG)\"}'".to_string(),
+            };
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::Dock => {
+            let pos = match value.unwrap_or("None") {
+                "Top" => "Top",
+                "Bottom" => "Bottom",
+                "Left" => "Left",
+                "Right" => "Right",
+                "Fill" => "Fill",
+                _ => "None",
+            };
+            let body = format!("    $pattern = $el.GetCurrentPattern([System.Windows.Automation.DockPattern]::Pattern)\n    $pattern.SetDockPosition([System.Windows.Automation.DockPosition]::{pos})\n    Write-Output '{{\"success\":true}}'");
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::ScrollItem => {
+            let body = "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern)\n    $pattern.ScrollIntoView()\n    Write-Output '{\"success\":true}'".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::VirtualizedItem => {
+            let body = "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.VirtualizedItemPattern]::Pattern)\n    $pattern.Realize()\n    Write-Output '{\"success\":true}'".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::Text => {
+            let body = "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern)\n    $text = $pattern.DocumentRange.GetText(-1)\n    Write-Output (ConvertTo-Json @{ success = $true; text = $text } -Compress)".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        // Container/query patterns are read-oriented: they return row/column
+        // metadata or a container lookup result as JSON rather than mutating the
+        // element. Grid/GridItem/Table/TableItem need no extra context; the
+        // `ItemContainer` search key is carried in `value`.
+        UiaPattern::Grid => {
+            let body = "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.GridPattern]::Pattern)\n    Write-Output (ConvertTo-Json @{ success = $true; row_count = $pattern.Current.RowCount; column_count = $pattern.Current.ColumnCount } -Compress)".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::GridItem => {
+            let body = "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.GridItemPattern]::Pattern)\n    Write-Output (ConvertTo-Json @{ success = $true; row = $pattern.Current.Row; column = $pattern.Current.Column; row_span = $pattern.Current.RowSpan; column_span = $pattern.Current.ColumnSpan } -Compress)".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::Table => {
+            let body = "    $grid = $el.GetCurrentPattern([System.Windows.Automation.GridPattern]::Pattern)\n    $tbl = $el.GetCurrentPattern([System.Windows.Automation.TablePattern]::Pattern)\n    Write-Output (ConvertTo-Json @{ success = $true; row_count = $grid.Current.RowCount; column_count = $grid.Current.ColumnCount; row_or_column_major = $tbl.Current.RowOrColumnMajor.ToString() } -Compress)".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::TableItem => {
+            let body = "    $pattern = $el.GetCurrentPattern([System.Windows.Automation.TableItemPattern]::Pattern)\n    $rowHeaders = @(); foreach ($h in $pattern.Current.GetRowHeaderItems()) { $rowHeaders += $h.Current.Name }\n    $colHeaders = @(); foreach ($h in $pattern.Current.GetColumnHeaderItems()) { $colHeaders += $h.Current.Name }\n    Write-Output (ConvertTo-Json @{ success = $true; row_headers = ($rowHeaders -join ','); column_headers = ($colHeaders -join ',') } -Compress)".to_string();
+            uia_element_action_script(automation_id, name, &body)
+        }
+        UiaPattern::ItemContainer => {
+            let search = value.unwrap_or("");
+            let body = format!("    $pattern = $el.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)\n    $found = $pattern.FindItemByProperty($null, [System.Windows.Automation.AutomationElement]::NameProperty, '{search}')\n    if ($null -ne $found) {{ Write-Output (ConvertTo-Json @{{ success = $true; found = $found.Current.Name }} -Compress) }} else {{ Write-Output '{{\"success\":false,\"error\":\"item not found\"}}' }}");
+            uia_element_action_script(automation_id, name, &body)
+        }
+    }
+}
+
+/// Build the standard "find element by AutomationId (then Name), run `body`" UIA
+/// PowerShell script. `body` is the PowerShell executed when the element is found;
+/// it may contain literal `{`/`}` (they are inserted verbatim, not re-formatted).
+fn uia_element_action_script(automation_id: &str, name: &str, body: &str) -> String {
+    format!(
+        r#"
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '{automation_id}')
+$el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+if ($null -eq $el) {{ $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '{name}'); $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond) }}
+if ($null -ne $el) {{
+{body}
+}} else {{ Write-Output '{{"success":false,"error":"element not found"}}' }}
+"#
+    )
+}
+
+/// Parse a `Transform` pattern spec into the PowerShell method call.
+/// Accepts `move:X,Y`, `resize:W,H`, or `rotate:DEG` (whitespace tolerant).
+/// Returns `None` for an unrecognized or malformed spec.
+fn parse_transform_action(spec: &str) -> Option<String> {
+    let (op, args) = spec.split_once(':')?;
+    match op.trim().to_lowercase().as_str() {
+        "move" => {
+            let (x, y) = args.split_once(',')?;
+            let x: f64 = x.trim().parse().ok()?;
+            let y: f64 = y.trim().parse().ok()?;
+            Some(format!("$pattern.Move({x}, {y})"))
+        }
+        "resize" => {
+            let (w, h) = args.split_once(',')?;
+            let w: f64 = w.trim().parse().ok()?;
+            let h: f64 = h.trim().parse().ok()?;
+            Some(format!("$pattern.Resize({w}, {h})"))
+        }
+        "rotate" => {
+            let deg: f64 = args.trim().parse().ok()?;
+            Some(format!("$pattern.Rotate({deg})"))
+        }
+        _ => None,
     }
 }
 
@@ -1293,6 +1422,137 @@ mod tests {
         assert_eq!(UiaPattern::from_str("Invoke"), Some(UiaPattern::Invoke));
         assert_eq!(UiaPattern::from_str("Value"), Some(UiaPattern::Value));
         assert_eq!(UiaPattern::Toggle.as_str(), "Toggle");
+    }
+
+    #[test]
+    fn com_capability_matches_direct_patterns() {
+        // COM-wired patterns.
+        for p in [
+            UiaPattern::Invoke,
+            UiaPattern::Value,
+            UiaPattern::Toggle,
+            UiaPattern::ExpandCollapse,
+            UiaPattern::SelectionItem,
+            UiaPattern::RangeValue,
+            UiaPattern::Scroll,
+        ] {
+            assert!(pattern_supported_via_com(p), "{p:?} should be COM-wired");
+        }
+        // Selection has no direct-COM arm and must route to PowerShell.
+        assert!(!pattern_supported_via_com(UiaPattern::Selection));
+        assert!(!pattern_supported_via_com(UiaPattern::Transform));
+        assert!(!pattern_supported_via_com(UiaPattern::Grid));
+    }
+
+    fn sample_element() -> CachedUiaElement {
+        CachedUiaElement {
+            runtime_id: vec![1, 2],
+            automation_id: "el_1".to_string(),
+            name: "Sample".to_string(),
+            control_type: "Window".to_string(),
+            class_name: String::new(),
+            bounding_rect: UiaRect { x: 0.0, y: 0.0, width: 100.0, height: 40.0 },
+            is_enabled: true,
+            is_offscreen: false,
+            process_id: 1234,
+            supported_patterns: Vec::new(),
+            child_index: 0,
+            depth: 0,
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn window_pattern_script_sets_visual_state() {
+        let el = sample_element();
+        let s = build_pattern_invoke_script(&el, UiaPattern::Window, Some("Maximize"));
+        assert!(s.contains("WindowPattern"));
+        assert!(s.contains("SetWindowVisualState"));
+        assert!(s.contains("Maximized"));
+        // Element-finding preamble is present.
+        assert!(s.contains("AutomationIdProperty"));
+        assert!(s.contains("el_1"));
+    }
+
+    #[test]
+    fn window_pattern_close_uses_close_method() {
+        let el = sample_element();
+        let s = build_pattern_invoke_script(&el, UiaPattern::Window, Some("Close"));
+        assert!(s.contains("$pattern.Close()"));
+    }
+
+    #[test]
+    fn transform_move_resize_rotate_and_invalid() {
+        let el = sample_element();
+        let mv = build_pattern_invoke_script(&el, UiaPattern::Transform, Some("move:10,20"));
+        assert!(mv.contains("TransformPattern"));
+        assert!(mv.contains("$pattern.Move(10, 20)"));
+        let rs = build_pattern_invoke_script(&el, UiaPattern::Transform, Some(" resize : 100 , 50 "));
+        assert!(rs.contains("$pattern.Resize(100, 50)"));
+        let rot = build_pattern_invoke_script(&el, UiaPattern::Transform, Some("rotate:90"));
+        assert!(rot.contains("$pattern.Rotate(90)"));
+        let bad = build_pattern_invoke_script(&el, UiaPattern::Transform, Some("nonsense"));
+        assert!(bad.contains("invalid transform spec"));
+    }
+
+    #[test]
+    fn dock_scrollitem_virtualized_text_are_wired() {
+        let el = sample_element();
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Dock, Some("Top"))
+            .contains("SetDockPosition([System.Windows.Automation.DockPosition]::Top)"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::ScrollItem, None)
+            .contains("$pattern.ScrollIntoView()"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::VirtualizedItem, None)
+            .contains("$pattern.Realize()"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Text, None)
+            .contains("DocumentRange.GetText(-1)"));
+    }
+
+    #[test]
+    fn container_patterns_emit_read_scripts() {
+        let el = sample_element();
+        // Grid/Table return row/column counts.
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Grid, None)
+            .contains("GridPattern"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Grid, None)
+            .contains("RowCount"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Table, None)
+            .contains("TablePattern"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Table, None)
+            .contains("RowOrColumnMajor"));
+        // GridItem/TableItem return cell coordinates / headers.
+        assert!(build_pattern_invoke_script(&el, UiaPattern::GridItem, None)
+            .contains("GridItemPattern"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::TableItem, None)
+            .contains("GetRowHeaderItems"));
+        // ItemContainer uses the value as the search key.
+        let ic = build_pattern_invoke_script(&el, UiaPattern::ItemContainer, Some("Row 5"));
+        assert!(ic.contains("ItemContainerPattern"));
+        assert!(ic.contains("FindItemByProperty"));
+        assert!(ic.contains("Row 5"));
+        // None of them should report the old "not yet wired" sentinel.
+        for p in [
+            UiaPattern::Grid,
+            UiaPattern::GridItem,
+            UiaPattern::Table,
+            UiaPattern::TableItem,
+            UiaPattern::ItemContainer,
+        ] {
+            let s = build_pattern_invoke_script(&el, p, None);
+            assert!(!s.contains("not yet wired"), "{p:?} must now be wired");
+        }
+    }
+
+    #[test]
+    fn parse_transform_action_rejects_malformed() {
+        assert!(parse_transform_action("").is_none());
+        assert!(parse_transform_action("move:10").is_none());
+        assert!(parse_transform_action("resize:abc,def").is_none());
+        assert!(parse_transform_action("spin:90").is_none());
+        assert_eq!(
+            parse_transform_action("move:1,2"),
+            Some("$pattern.Move(1, 2)".to_string())
+        );
     }
 
     #[test]

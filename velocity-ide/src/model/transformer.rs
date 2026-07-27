@@ -486,6 +486,59 @@ fn sample_token(logits: &[f32], temperature: f32, top_p: f32, rng: &mut impl Rng
     indexed[0].0 as u32
 }
 
+/// Sample the next token using top-k filtering before top-p.
+fn sample_token_top_k(logits: &[f32], temperature: f32, top_p: f32, top_k: usize, rng: &mut impl Rng) -> u32 {
+    if top_k == 0 || top_k >= logits.len() {
+        return sample_token(logits, temperature, top_p, rng);
+    }
+    // Keep only top-k logits
+    let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
+    indexed.sort_unstable_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    indexed.truncate(top_k);
+    // Rebuild filtered logits
+    let max_l = indexed.iter().map(|(_, l)| *l).fold(f32::NEG_INFINITY, f32::max);
+    let mut probs: Vec<f32> = indexed.iter().map(|(_, l)| ((*l - max_l) / temperature).exp()).collect();
+    let sum_p: f32 = probs.iter().sum();
+    probs.iter_mut().for_each(|p| *p /= sum_p);
+    // Top-p on filtered
+    let mut cum = 0.0_f32;
+    let mut cutoff = probs.len();
+    for (i, &p) in probs.iter().enumerate() {
+        cum += p;
+        if cum >= top_p { cutoff = i + 1; break; }
+    }
+    probs.truncate(cutoff);
+    let nucleus_sum: f32 = probs.iter().sum();
+    let inv = nucleus_sum.recip();
+    let target: f32 = rng.gen::<f32>() * nucleus_sum;
+    let mut acc = 0.0_f32;
+    for (idx, p) in indexed[..cutoff].iter().zip(probs.iter()) {
+        acc += p * inv * nucleus_sum;
+        if acc >= target { return idx.0 as u32; }
+    }
+    indexed[0].0 as u32
+}
+
+/// Apply frequency penalty to logits based on token occurrence counts.
+fn apply_frequency_penalty(logits: &mut [f32], token_counts: &std::collections::HashMap<u32, usize>, penalty: f32) {
+    for (&tok, &count) in token_counts.iter() {
+        let idx = tok as usize;
+        if idx < logits.len() {
+            logits[idx] -= penalty * count as f32;
+        }
+    }
+}
+
+/// Apply presence penalty to logits based on token occurrence.
+fn apply_presence_penalty(logits: &mut [f32], token_counts: &std::collections::HashMap<u32, usize>, penalty: f32) {
+    for (&tok, _) in token_counts.iter() {
+        let idx = tok as usize;
+        if idx < logits.len() {
+            logits[idx] -= penalty;
+        }
+    }
+}
+
 // ─── Transformer ───────────────────────────────────────────────────────────
 
 pub struct TransformerScratch {
@@ -778,5 +831,140 @@ impl Transformer {
             last_hidden = hidden;
         }
         last_hidden
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rms_norm_unit_rms() {
+        let mut x = vec![1.0, 2.0, 3.0, 4.0];
+        let weight = vec![1.0; 4];
+        rms_norm(&mut x, &weight, 1e-6);
+        let rms = (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
+        assert!((rms - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_rms_norm_preserves_direction() {
+        let mut x = vec![2.0, 2.0, 2.0, 2.0];
+        let weight = vec![1.0; 4];
+        rms_norm(&mut x, &weight, 1e-6);
+        // All elements should be equal after normalization with uniform weights
+        for &xi in &x {
+            assert!((xi - x[0]).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_rms_norm_to() {
+        let x = vec![1.0, 2.0, 3.0, 4.0];
+        let mut out = vec![0.0; 4];
+        let weight = vec![1.0; 4];
+        rms_norm_to(&x, &mut out, &weight, 1e-6);
+        let rms = (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt();
+        assert!((rms - 1.0).abs() < 0.01);
+        // Original should be unchanged
+        assert_eq!(x, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_silu_zero() {
+        assert!((silu(0.0) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_silu_positive() {
+        let y = silu(1.0);
+        assert!(y > 0.7 && y < 0.8);
+    }
+
+    #[test]
+    fn test_silu_large() {
+        let y = silu(10.0);
+        assert!((y - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_apply_rope_head_pos_zero() {
+        let mut head = vec![1.0, 0.0, 1.0, 0.0];
+        apply_rope_head(&mut head, 0, 4, 10000.0);
+        // At pos=0, angle=0, so cos=1, sin=0 -> identity transform
+        assert!((head[0] - 1.0).abs() < 1e-5);
+        assert!((head[1] - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_sample_token_greedy() {
+        let logits = vec![1.0, 5.0, 3.0, 2.0];
+        let mut rng = rand::thread_rng();
+        let tok = sample_token(&logits, 0.0, 1.0, &mut rng);
+        assert_eq!(tok, 1);
+    }
+
+    #[test]
+    fn test_sample_token_temperature() {
+        let logits = vec![0.0, 10.0, 0.0, 0.0];
+        let mut rng = rand::thread_rng();
+        // With very high temperature, distribution is more uniform
+        let tok = sample_token(&logits, 100.0, 1.0, &mut rng);
+        assert!(tok < 4);
+    }
+
+    #[test]
+    fn test_sample_token_top_p() {
+        let logits = vec![0.0, 10.0, 0.0, 0.0];
+        let mut rng = rand::thread_rng();
+        // With top_p=0.5, only the highest logit token should be selected
+        let tok = sample_token(&logits, 0.1, 0.5, &mut rng);
+        assert_eq!(tok, 1);
+    }
+
+    #[test]
+    fn test_sample_token_top_k() {
+        let logits = vec![0.0, 10.0, 5.0, 0.0];
+        let mut rng = rand::thread_rng();
+        let tok = sample_token_top_k(&logits, 0.1, 1.0, 2, &mut rng);
+        assert!(tok == 1 || tok == 2);
+    }
+
+    #[test]
+    fn test_frequency_penalty() {
+        let mut logits = vec![5.0, 5.0, 5.0];
+        let mut counts = std::collections::HashMap::new();
+        counts.insert(0, 3);
+        apply_frequency_penalty(&mut logits, &counts, 1.0);
+        assert!((logits[0] - 2.0).abs() < 1e-5);
+        assert!((logits[1] - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_presence_penalty() {
+        let mut logits = vec![5.0, 5.0, 5.0];
+        let mut counts = std::collections::HashMap::new();
+        counts.insert(1, 10);
+        apply_presence_penalty(&mut logits, &counts, 2.0);
+        assert!((logits[0] - 5.0).abs() < 1e-5);
+        assert!((logits[1] - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_lm_head_small() {
+        let hidden = vec![1.0, 0.0, 0.0];
+        let weights = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let logits = lm_head(&hidden, &weights, 2, 3);
+        assert_eq!(logits.len(), 2);
+        assert!((logits[0] - 1.0).abs() < 1e-5);
+        assert!((logits[1] - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_pack_vector_impl() {
+        let v = vec![1.0, -1.0, 2.0, -2.0];
+        let (sign, extra) = pack_vector_impl(&v, 2.0, 4);
+        assert_eq!(sign.len(), 1);
+        assert_eq!(extra.len(), 1);
     }
 }

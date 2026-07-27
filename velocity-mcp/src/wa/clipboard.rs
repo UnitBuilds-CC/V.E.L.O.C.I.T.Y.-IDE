@@ -130,11 +130,23 @@ impl ClipboardManager {
         }
     }
 
-    /// Write HTML to clipboard (also sets plain text fallback).
+    /// Write HTML to clipboard as real CF_HTML (also sets a plain-text fallback
+    /// so non-HTML-aware targets still paste something sensible).
     pub fn write_html(html: &str, plain_fallback: Option<&str>) -> ClipboardOpResult {
-        // For now, just write the plain text fallback or stripped HTML
-        let text = plain_fallback.unwrap_or(html);
-        Self::write_text(text)
+        #[cfg(target_os = "windows")]
+        {
+            write_html_native(html, plain_fallback)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = plain_fallback;
+            ClipboardOpResult {
+                success: false,
+                operation: "write_html".into(),
+                detail: "Clipboard write requires Windows".into(),
+                sequence_number: None,
+            }
+        }
     }
 
     /// Write file list to clipboard (for paste operations).
@@ -222,6 +234,59 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+// ─── Format builders (pure, platform-independent, unit-tested) ───────────────
+
+/// Build a CF_HTML clipboard payload (UTF-8 bytes) per Microsoft's HTML
+/// Clipboard Format spec. The byte offsets in the header are computed against
+/// the final buffer; fixed-width (10-digit) offset fields keep the header a
+/// stable length across the two-pass fill.
+pub(crate) fn format_cf_html(fragment: &str, source_url: Option<&str>) -> Vec<u8> {
+    const PREFIX: &str = "<html>\r\n<body>\r\n<!--StartFragment-->";
+    const SUFFIX: &str = "<!--EndFragment-->\r\n</body>\r\n</html>";
+    let source_line = match source_url {
+        Some(u) => format!("SourceURL:{u}\r\n"),
+        None => String::new(),
+    };
+    let make_header = |sh: usize, eh: usize, sf: usize, ef: usize| {
+        format!(
+            "Version:0.9\r\nStartHTML:{sh:010}\r\nEndHTML:{eh:010}\r\n\
+             StartFragment:{sf:010}\r\nEndFragment:{ef:010}\r\n{source_line}"
+        )
+    };
+    let header_len = make_header(0, 0, 0, 0).len();
+    let start_html = header_len;
+    let start_fragment = header_len + PREFIX.len();
+    let end_fragment = start_fragment + fragment.len();
+    let end_html = end_fragment + SUFFIX.len();
+    let header = make_header(start_html, end_html, start_fragment, end_fragment);
+    let mut out = String::with_capacity(end_html);
+    out.push_str(&header);
+    out.push_str(PREFIX);
+    out.push_str(fragment);
+    out.push_str(SUFFIX);
+    out.into_bytes()
+}
+
+/// Build a CF_HDROP payload: a `DROPFILES` header (20 bytes) followed by a
+/// double-null-terminated UTF-16LE list of file paths (`fWide = TRUE`).
+pub(crate) fn build_hdrop_payload(paths: &[PathBuf]) -> Vec<u8> {
+    let mut out = Vec::new();
+    // DROPFILES { DWORD pFiles; POINT pt; BOOL fNC; BOOL fWide; }
+    out.extend_from_slice(&20u32.to_le_bytes()); // pFiles: offset to file list
+    out.extend_from_slice(&0i32.to_le_bytes()); // pt.x
+    out.extend_from_slice(&0i32.to_le_bytes()); // pt.y
+    out.extend_from_slice(&0u32.to_le_bytes()); // fNC = FALSE
+    out.extend_from_slice(&1u32.to_le_bytes()); // fWide = TRUE (Unicode paths)
+    for p in paths {
+        for u in p.to_string_lossy().encode_utf16() {
+            out.extend_from_slice(&u.to_le_bytes());
+        }
+        out.extend_from_slice(&0u16.to_le_bytes()); // null-terminate this path
+    }
+    out.extend_from_slice(&0u16.to_le_bytes()); // final double-null terminator
+    out
 }
 
 // ─── Native Win32 Implementation ─────────────────────────────────────────────
@@ -349,16 +414,109 @@ mod native {
         }
     }
 
-    /// Write file list to clipboard (simplified - just stores paths as text).
+    /// Copy `bytes` into a moveable global buffer and hand it to the clipboard
+    /// under `format`. The clipboard must already be open. On success, ownership
+    /// of the global transfers to the system (do not free it).
+    unsafe fn set_clipboard_blob(format: u32, bytes: &[u8]) -> Result<(), String> {
+        let handle = GlobalAlloc(GMEM_MOVEABLE, bytes.len())
+            .map_err(|e| format!("GlobalAlloc failed: {:?}", e))?;
+        let ptr = GlobalLock(handle);
+        if ptr.is_null() {
+            return Err("GlobalLock failed".into());
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
+        let _ = GlobalUnlock(handle);
+        SetClipboardData(format, HANDLE(handle.0 as *mut _))
+            .map(|_| ())
+            .map_err(|e| format!("SetClipboardData failed: {:?}", e))
+    }
+
+    /// Write HTML to the clipboard as CF_HTML plus a CF_UNICODETEXT fallback so
+    /// that non-HTML-aware targets still receive readable text.
+    pub fn write_html_native(html: &str, plain_fallback: Option<&str>) -> ClipboardOpResult {
+        let cf_html = format_cf_html(html, None);
+        let fallback: Vec<u16> = plain_fallback
+            .unwrap_or(html)
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe {
+            if OpenClipboard(HWND::default()).is_err() {
+                return ClipboardOpResult {
+                    success: false,
+                    operation: "write_html".into(),
+                    detail: "Failed to open clipboard".into(),
+                    sequence_number: None,
+                };
+            }
+            let _ = EmptyClipboard();
+
+            let html_format = RegisterClipboardFormatW(windows::core::w!("HTML Format"));
+            if html_format != 0 {
+                if let Err(e) = set_clipboard_blob(html_format, &cf_html) {
+                    let _ = CloseClipboard();
+                    return ClipboardOpResult {
+                        success: false,
+                        operation: "write_html".into(),
+                        detail: e,
+                        sequence_number: None,
+                    };
+                }
+            }
+
+            let fallback_bytes =
+                std::slice::from_raw_parts(fallback.as_ptr() as *const u8, fallback.len() * 2);
+            let text_result = set_clipboard_blob(CF_UNICODETEXT, fallback_bytes);
+            let _ = CloseClipboard();
+
+            match text_result {
+                Ok(()) => ClipboardOpResult {
+                    success: true,
+                    operation: "write_html".into(),
+                    detail: "ok".into(),
+                    sequence_number: Some(get_sequence_number_native()),
+                },
+                Err(e) => ClipboardOpResult {
+                    success: false,
+                    operation: "write_html".into(),
+                    detail: e,
+                    sequence_number: None,
+                },
+            }
+        }
+    }
+
+    /// Write a file list to the clipboard as CF_HDROP (real drag-drop payload,
+    /// so Explorer and other shell targets accept a subsequent paste).
     pub fn write_files_native(paths: &[PathBuf]) -> ClipboardOpResult {
-        // Full CF_HDROP implementation requires DROPFILES struct
-        // For now, write paths as newline-separated text
-        let text: String = paths
-            .iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        write_text_native(&text)
+        let payload = build_hdrop_payload(paths);
+        unsafe {
+            if OpenClipboard(HWND::default()).is_err() {
+                return ClipboardOpResult {
+                    success: false,
+                    operation: "write_files".into(),
+                    detail: "Failed to open clipboard".into(),
+                    sequence_number: None,
+                };
+            }
+            let _ = EmptyClipboard();
+            let result = set_clipboard_blob(CF_HDROP, &payload);
+            let _ = CloseClipboard();
+            match result {
+                Ok(()) => ClipboardOpResult {
+                    success: true,
+                    operation: "write_files".into(),
+                    detail: "ok".into(),
+                    sequence_number: Some(get_sequence_number_native()),
+                },
+                Err(e) => ClipboardOpResult {
+                    success: false,
+                    operation: "write_files".into(),
+                    detail: e,
+                    sequence_number: None,
+                },
+            }
+        }
     }
 
     /// Clear the clipboard.
@@ -394,7 +552,7 @@ mod native {
 #[cfg(target_os = "windows")]
 use native::{
     clear_clipboard_native, get_sequence_number_native, read_clipboard_native,
-    write_files_native, write_text_native,
+    write_files_native, write_html_native, write_text_native,
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -447,5 +605,63 @@ mod tests {
         };
         assert!(result.success);
         assert_eq!(result.sequence_number, Some(42));
+    }
+
+    #[test]
+    fn cf_html_offsets_are_consistent() {
+        let bytes = format_cf_html("<b>hi</b>", None);
+        let text = String::from_utf8(bytes).unwrap();
+        // Header advertises fixed-width offsets that must index the real buffer.
+        let field = |name: &str| -> usize {
+            let line = text.lines().find(|l| l.starts_with(name)).unwrap();
+            line[name.len()..].trim().parse().unwrap()
+        };
+        let start_html = field("StartHTML:");
+        let end_html = field("EndHTML:");
+        let start_fragment = field("StartFragment:");
+        let end_fragment = field("EndFragment:");
+        assert_eq!(end_html, text.len());
+        assert!(start_html < start_fragment);
+        assert!(start_fragment < end_fragment);
+        assert!(end_fragment <= end_html);
+        // The fragment offsets must bracket exactly the caller's HTML.
+        assert_eq!(&text[start_fragment..end_fragment], "<b>hi</b>");
+        assert_eq!(&text[start_html..start_html + 6], "<html>");
+    }
+
+    #[test]
+    fn cf_html_includes_source_url_when_given() {
+        let text = String::from_utf8(format_cf_html("<p>x</p>", Some("https://ex.com"))).unwrap();
+        assert!(text.contains("SourceURL:https://ex.com"));
+        // Offsets still land on the fragment despite the extra header line.
+        let sf: usize = text.lines().find(|l| l.starts_with("StartFragment:")).unwrap()
+            ["StartFragment:".len()..].trim().parse().unwrap();
+        let ef: usize = text.lines().find(|l| l.starts_with("EndFragment:")).unwrap()
+            ["EndFragment:".len()..].trim().parse().unwrap();
+        assert_eq!(&text[sf..ef], "<p>x</p>");
+    }
+
+    #[test]
+    fn hdrop_payload_has_dropfiles_header_and_double_null() {
+        let payload = build_hdrop_payload(&[PathBuf::from("C:/a.txt"), PathBuf::from("C:/b.txt")]);
+        // pFiles offset == 20, fWide == 1.
+        assert_eq!(&payload[0..4], &20u32.to_le_bytes());
+        assert_eq!(&payload[16..20], &1u32.to_le_bytes());
+        // Ends with a double-null (two zero u16 = 4 zero bytes: per-path null + terminator).
+        assert_eq!(&payload[payload.len() - 4..], &[0u8, 0, 0, 0]);
+        // Decode the wide list back and confirm both paths round-trip.
+        let wide: Vec<u16> = payload[20..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let joined: String = String::from_utf16(&wide).unwrap();
+        assert!(joined.contains("C:/a.txt"));
+        assert!(joined.contains("C:/b.txt"));
+    }
+
+    #[test]
+    fn hdrop_empty_list_is_just_header_and_terminator() {
+        let payload = build_hdrop_payload(&[]);
+        assert_eq!(payload.len(), 20 + 2); // header + single terminating null u16
     }
 }

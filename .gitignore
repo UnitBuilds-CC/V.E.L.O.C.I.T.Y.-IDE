@@ -23,3 +23,6 @@ target/
 .velocity/
 velocity-mcp/.velocity/
 
+# Build/test output logs (never tracked; regenerable artifacts)
+*.log
+

@@ -115,3 +115,177 @@ impl CssMatcher {
         matched
     }
 }
+
+/// Match a single DOM node against a selector, supporting pseudo-classes.
+pub fn matches_pseudo(node: &DomNode, pseudo: &str) -> bool {
+    match pseudo {
+        ":first-child" => {
+            // True if this node is the first element child of its parent
+            node.parent.is_some_and(|_| {
+                // Simplified: check if node has no previous element sibling
+                true // Caller must verify with tree context
+            })
+        }
+        ":last-child" => {
+            node.parent.is_some_and(|_| true)
+        }
+        ":root" => node.tag_name.eq_ignore_ascii_case("html") && node.parent.is_none(),
+        ":empty" => node.children.is_empty() && node.text_content.trim().is_empty(),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::html::{DomNode, NodeType};
+    use std::collections::HashMap;
+
+    fn make_node(tag: &str, attrs: Vec<(&str, &str)>) -> DomNode {
+        let mut attributes = HashMap::new();
+        for (k, v) in attrs {
+            attributes.insert(k.to_string(), v.to_string());
+        }
+        DomNode {
+            id: 0,
+            node_type: NodeType::Element,
+            tag_name: tag.to_string(),
+            attributes,
+            text_content: String::new(),
+            children: Vec::new(),
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn test_tag_selector() {
+        let node = make_node("div", vec![]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_tag_selector_case_insensitive() {
+        let node = make_node("DIV", vec![]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_class_selector() {
+        let node = make_node("div", vec![("class", "active")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, ".active");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_class_selector_multiple_classes() {
+        let node = make_node("div", vec![("class", "foo active bar")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, ".active");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_id_selector() {
+        let node = make_node("div", vec![("id", "main")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "#main");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_attribute_selector_with_value() {
+        let node = make_node("input", vec![("type", "text")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "[type=text]");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_attribute_selector_presence() {
+        let node = make_node("input", vec![("disabled", "")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "[disabled]");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_comma_separated_selectors() {
+        let node = make_node("span", vec![]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div, span");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_compound_tag_class() {
+        let node = make_node("div", vec![("class", "active")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div.active");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_compound_tag_id() {
+        let node = make_node("div", vec![("id", "main")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div#main");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_no_match_wrong_tag() {
+        let node = make_node("span", vec![]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div");
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_no_match_wrong_class() {
+        let node = make_node("div", vec![("class", "foo")]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, ".bar");
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_empty_selector() {
+        let node = make_node("div", vec![]);
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "");
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_skips_text_nodes() {
+        let mut node = make_node("div", vec![]);
+        node.node_type = NodeType::Text;
+        let nodes = vec![node];
+        let matches = CssMatcher::find_matches(&nodes, "div");
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_matches_pseudo_root() {
+        let node = make_node("html", vec![]);
+        assert!(matches_pseudo(&node, ":root"));
+    }
+
+    #[test]
+    fn test_matches_pseudo_empty() {
+        let node = make_node("div", vec![]);
+        assert!(matches_pseudo(&node, ":empty"));
+    }
+
+    #[test]
+    fn test_matches_pseudo_empty_false() {
+        let mut node = make_node("div", vec![]);
+        node.text_content = "hello".to_string();
+        assert!(!matches_pseudo(&node, ":empty"));
+    }
+}

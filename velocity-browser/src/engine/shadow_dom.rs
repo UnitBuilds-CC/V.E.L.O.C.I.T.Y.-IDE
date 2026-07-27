@@ -181,3 +181,78 @@ fn extract_attribute_value(tag: &str, attr_name: &str) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_shadow_hosts_nda() {
+        let hosts = vec![ShadowHost {
+            host_id: "host1".into(),
+            mode: "open".into(),
+            shadow_root_id: "shadow1".into(),
+            children: vec![ShadowNode {
+                node_id: "n1".into(),
+                tag: "div".into(),
+                slot: None,
+                attributes: vec![("class".into(), "inner".into())],
+                text_content: Some("Hello".into()),
+                children: vec![],
+            }],
+            slot_assignments: vec![SlotAssignment {
+                slot_name: "default".into(),
+                assigned_node_ids: vec!["light1".into()],
+                fallback_content: None,
+            }],
+        }];
+        let triples = ShadowFrameExtractor::extract_shadow_hosts_nda(&hosts);
+        assert!(triples.len() >= 4); // host mode + shadow root + child + slot
+    }
+
+    #[test]
+    fn test_find_shadow_hosts() {
+        let html = r#"
+            <div id="my-component" attachShadow></div>
+            <span>normal</span>
+        "#;
+        let hosts = ShadowFrameExtractor::find_shadow_hosts(html);
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0], "my-component");
+    }
+
+    #[test]
+    fn test_find_frames() {
+        let html = r#"
+            <iframe src="https://example.com/page" sandbox="allow-scripts"></iframe>
+            <iframe src="/relative/path"></iframe>
+        "#;
+        let frames = ShadowFrameExtractor::find_frames(html, "https://mysite.com");
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].url, "https://example.com/page");
+        assert!(frames[0].is_sandboxed);
+        assert_eq!(frames[1].url, "/relative/path");
+        assert!(!frames[1].is_sandboxed);
+    }
+
+    #[test]
+    fn test_extract_frames_nda() {
+        let frames = vec![FrameTarget {
+            frame_id: "f0".into(),
+            parent_id: Some("parent".into()),
+            url: "https://example.com".into(),
+            security_origin: "https://example.com".into(),
+            sandbox_flags: vec!["allow-scripts".into()],
+            is_sandboxed: true,
+        }];
+        let triples = ShadowFrameExtractor::extract_frames_nda(&frames);
+        assert!(triples.len() >= 3); // url + origin + parent + sandbox
+    }
+
+    #[test]
+    fn test_extract_attribute_value() {
+        assert_eq!(extract_attribute_value(r#"<div src="hello.html">"#, "src"), Some("hello.html".into()));
+        assert_eq!(extract_attribute_value("<div src='single.html'>", "src"), Some("single.html".into()));
+        assert_eq!(extract_attribute_value("<div class='x'>", "src"), None);
+    }
+}

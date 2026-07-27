@@ -178,14 +178,14 @@ impl WasmInterpreter {
     // ── Memory helpers ──
 
     fn load_bytes(&self, addr: usize, n: usize) -> Result<&[u8], String> {
-        if addr.checked_add(n).map_or(true, |end| end > self.memory.len()) {
+        if addr.checked_add(n).is_none_or(|end| end > self.memory.len()) {
             return Err("memory out of bounds".into());
         }
         Ok(&self.memory[addr..addr + n])
     }
     fn store_bytes(&mut self, addr: usize, bytes: &[u8]) -> WasmResult {
         let n = bytes.len();
-        if addr.checked_add(n).map_or(true, |end| end > self.memory.len()) {
+        if addr.checked_add(n).is_none_or(|end| end > self.memory.len()) {
             return Err("memory out of bounds".into());
         }
         self.memory[addr..addr + n].copy_from_slice(bytes);
@@ -382,11 +382,11 @@ impl WasmInterpreter {
             op::I32_AND => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a & b)); }
             op::I32_OR => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a | b)); }
             op::I32_XOR => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a ^ b)); }
-            op::I32_SHL => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_shl(b % 32) as i32)); }
+            op::I32_SHL => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_shl(b % 32))); }
             op::I32_SHR_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_shr((b % 32) as u32))); }
             op::I32_SHR_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(a.wrapping_shr(b % 32) as i32)); }
-            op::I32_ROTL => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.rotate_left(b % 32) as i32)); }
-            op::I32_ROTR => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.rotate_right(b % 32) as i32)); }
+            op::I32_ROTL => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.rotate_left(b % 32))); }
+            op::I32_ROTR => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.rotate_right(b % 32))); }
             op::I32_CLZ => { let a = self.pop_i32()?; self.push(WasmValue::I32(a.leading_zeros() as i32)); }
             op::I32_CTZ => { let a = self.pop_i32()?; self.push(WasmValue::I32(a.trailing_zeros() as i32)); }
             op::I32_POPCNT => { let a = self.pop_i32()?; self.push(WasmValue::I32(a.count_ones() as i32)); }

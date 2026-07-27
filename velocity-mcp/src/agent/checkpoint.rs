@@ -2,6 +2,10 @@
 //!
 //! Before each file-modifying tool call, the agent creates a lightweight
 //! git-based checkpoint. On failure, it can restore to the last good state.
+//!
+//! NOTE: Some restore/diff/cleanup entry points are part of the checkpoint API
+//! surface and are not yet invoked from the live agent loop.
+#![allow(dead_code)] // checkpoint API awaiting agent-loop integration
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -222,7 +226,6 @@ impl Drop for CheckpointManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn checkpoint_manager_creation() {

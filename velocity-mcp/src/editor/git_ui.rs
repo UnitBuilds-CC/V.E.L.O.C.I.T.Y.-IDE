@@ -102,7 +102,7 @@ impl GitState {
         }
         // Ahead/behind
         if let Some(output) = run_git(root, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]) {
-            let parts: Vec<&str> = output.trim().split_whitespace().collect();
+            let parts: Vec<&str> = output.split_whitespace().collect();
             self.ahead = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             self.behind = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         }

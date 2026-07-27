@@ -9,19 +9,59 @@ impl WebCryptoEngine {
     }
 
     pub fn get_random_values(len: usize) -> Vec<u8> {
-        // Use a simple xorshift64 PRNG seeded from system time.
-        // Not cryptographically secure, but far better than deterministic.
+        // Use OS-provided cryptographically secure random bytes.
+        // Windows: BCryptGenRandom, Unix: /dev/urandom, fallback: xorshift64.
+        let mut buf = vec![0u8; len];
+        if Self::os_random(&mut buf) {
+            return buf;
+        }
+        // Fallback: xorshift64 seeded from system time (NOT cryptographically secure)
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0xdeadbeef);
-        let mut state = seed | 1; // must be non-zero
-        (0..len).map(|_| {
+        let mut state = seed | 1;
+        for byte in buf.iter_mut() {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
-            state as u8
-        }).collect()
+            *byte = state as u8;
+        }
+        buf
+    }
+
+    /// Attempt to fill buffer with OS-level cryptographically secure random bytes.
+    fn os_random(buf: &mut [u8]) -> bool {
+        #[cfg(windows)]
+        {
+            // BCryptGenRandom via FFI
+            #[link(name = "bcrypt")]
+            extern "system" {
+                fn BCryptGenRandom(
+                    h_algorithm: usize,
+                    pb_buffer: *mut u8,
+                    cb_buffer: u32,
+                    dw_flags: u32,
+                ) -> u32;
+            }
+            const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x00000002;
+            let status = unsafe {
+                BCryptGenRandom(0, buf.as_mut_ptr(), buf.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+            };
+            status == 0 // STATUS_SUCCESS
+        }
+        #[cfg(all(unix, not(windows)))]
+        {
+            use std::io::Read;
+            std::fs::File::open("/dev/urandom")
+                .and_then(|mut f| f.read_exact(buf))
+                .is_ok()
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = buf;
+            false
+        }
     }
 
     /// HMAC-SHA256: keyed-hash message authentication code (RFC 2104).
@@ -140,3 +180,90 @@ impl WebCryptoEngine {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sha256_empty() {
+        // NIST FIPS 180-4: SHA-256("") = e3b0c44298fc1c14...
+        let hash = WebCryptoEngine::digest_sha256(b"");
+        assert_eq!(&hash[..16], "e3b0c44298fc1c14");
+    }
+
+    #[test]
+    fn test_sha256_abc() {
+        // NIST: SHA-256("abc") = ba7816bf8f01cfea...
+        let hash = WebCryptoEngine::digest_sha256(b"abc");
+        assert_eq!(&hash[..16], "ba7816bf8f01cfea");
+    }
+
+    #[test]
+    fn test_hmac_sha256_rfc4231() {
+        // RFC 4231 Test Case 1 - verify HMAC is deterministic and verifiable
+        let key = [0x0bu8; 20];
+        let data = b"Hi There";
+        let mac1 = WebCryptoEngine::hmac_sha256(&key, data);
+        let mac2 = WebCryptoEngine::hmac_sha256(&key, data);
+        // Deterministic: same input -> same output
+        assert_eq!(mac1, mac2);
+        // Different key -> different MAC
+        let mac3 = WebCryptoEngine::hmac_sha256(&[0x0cu8; 20], data);
+        assert_ne!(mac1, mac3);
+        // Verify works
+        assert!(WebCryptoEngine::hmac_sha256_verify(&key, data, &mac1));
+    }
+
+    #[test]
+    fn test_subtle_encrypt_decrypt_roundtrip() {
+        let key = b"supersecretkey12345678901234567890"; // 32 bytes
+        let nonce = b"unique_nonce12";
+        let plaintext = b"Hello, World! This is a test message.";
+        let (ciphertext, tag) = WebCryptoEngine::subtle_encrypt(key, nonce, plaintext);
+        assert_ne!(&ciphertext, plaintext);
+        let decrypted = WebCryptoEngine::subtle_decrypt(key, nonce, &ciphertext, &tag);
+        assert_eq!(decrypted.unwrap(), plaintext);
+    }
+
+    #[test]
+    fn test_subtle_decrypt_bad_tag() {
+        let key = b"supersecretkey12345678901234567890";
+        let nonce = b"unique_nonce12";
+        let (ciphertext, mut tag) = WebCryptoEngine::subtle_encrypt(key, nonce, b"test");
+        tag[0] ^= 0xff; // corrupt tag
+        assert!(WebCryptoEngine::subtle_decrypt(key, nonce, &ciphertext, &tag).is_none());
+    }
+
+    #[test]
+    fn test_sign_verify() {
+        let key = b"hmac_key_for_signing_test!";
+        let data = b"message to sign";
+        let sig = WebCryptoEngine::subtle_sign(key, data);
+        assert!(WebCryptoEngine::subtle_verify(key, data, &sig));
+        let mut bad_sig = sig;
+        bad_sig[0] ^= 1;
+        assert!(!WebCryptoEngine::subtle_verify(key, data, &bad_sig));
+    }
+
+    #[test]
+    fn test_get_random_values_length() {
+        let r = WebCryptoEngine::get_random_values(64);
+        assert_eq!(r.len(), 64);
+        // Extremely unlikely all zeros
+        assert!(r.iter().any(|&b| b != 0));
+    }
+
+    #[test]
+    fn test_ecdh_key_pair() {
+        let (priv1, pub1) = WebCryptoEngine::generate_key_pair();
+        let (priv2, pub2) = WebCryptoEngine::generate_key_pair();
+        assert_ne!(priv1, priv2);
+        assert_ne!(pub1, pub2);
+        // Shared secret should match both ways
+        let shared1 = WebCryptoEngine::ecdh_derive_shared(priv1, pub2);
+        let shared2 = WebCryptoEngine::ecdh_derive_shared(priv2, pub1);
+        assert_eq!(shared1, shared2);
+    }
+}
+

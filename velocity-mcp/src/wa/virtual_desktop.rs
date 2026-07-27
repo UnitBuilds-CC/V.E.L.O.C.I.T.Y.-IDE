@@ -294,20 +294,19 @@ pub fn build_create_desktop_script(name: Option<&str>) -> String {
         Some(n) => format!("; $desktop.Name = '{}'", n.replace('\'', "''")),
         None => String::new(),
     };
-    format!(
-        r#"
+    r#"
 # Create a new virtual desktop via COM
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 [ComImport(Guid("FF72BABB-21EC-411D-9249-53D1A7B4008F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IVirtualDesktopManager {{
+interface IVirtualDesktopManager {
     int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
     int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
     int CreateDesktopW(out Guid desktopId);
-}}
+}
 [ComImport(Guid("A501FDEC-4A09-464C-AE4E-1B6C8C377733"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IVirtualDesktopManagerInternal {{
+interface IVirtualDesktopManagerInternal {
     int GetCount();
     int MoveViewToDesktop(IntPtr pView, IntPtr desktop);
     int CanViewMoveDesktops(IntPtr pView, out bool canMove);
@@ -316,14 +315,14 @@ interface IVirtualDesktopManagerInternal {{
     int GetAdjacentDesktop(IntPtr from, int direction, out IntPtr desktop);
     int SwitchDesktop(IntPtr desktop);
     int CreateDesktopW(out IntPtr desktop);
-}}
+}
 '@
 # Fallback: use keyboard shortcut Ctrl+Win+D
 Add-Type @'
 using System.Runtime.InteropServices;
-public class VDCreate {{
+public class VDCreate {
     [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
-}}
+}
 '@
 [VDCreate]::keybd_event(0x11, 0, 0, 0)
 [VDCreate]::keybd_event(0x5B, 0, 0, 0)
@@ -332,9 +331,8 @@ Start-Sleep -Milliseconds 50
 [VDCreate]::keybd_event(0x44, 0, 2, 0)
 [VDCreate]::keybd_event(0x5B, 0, 2, 0)
 [VDCreate]::keybd_event(0x11, 0, 2, 0)
-Write-Output (ConvertTo-Json @{{ success = $true; action = "create" }} -Compress)
-"#
-    )
+Write-Output (ConvertTo-Json @{ success = $true; action = "create" } -Compress)
+"#.to_string()
 }
 
 /// Build a PowerShell script to remove a virtual desktop by index.
@@ -452,7 +450,7 @@ fn run_ps_script(script: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;

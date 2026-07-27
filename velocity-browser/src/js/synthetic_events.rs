@@ -74,7 +74,7 @@ impl SyntheticEventDispatcher {
 
     /// Register an event listener on a node.
     pub fn add_event_listener(&mut self, node_id: usize, event_type: &str, callback_id: usize, capture: bool, once: bool, passive: bool) {
-        let listeners = self.listeners.entry(node_id).or_insert_with(Vec::new);
+        let listeners = self.listeners.entry(node_id).or_default();
         listeners.push(EventListener {
             event_type: event_type.to_string(),
             callback_id,
@@ -106,7 +106,7 @@ impl SyntheticEventDispatcher {
         }
 
         // 1. Capturing Phase (Root -> Parent)
-        for &node_id in path.iter().rev().skip(1) {
+        for &_node_id in path.iter().rev().skip(1) {
             if event.propagation_stopped { break; }
             // Capture phase listeners (no-op in static mode)
         }
@@ -118,7 +118,7 @@ impl SyntheticEventDispatcher {
 
         // 3. Bubbling Phase (Parent -> Root)
         if event.bubbles {
-            for &node_id in path.iter().skip(1) {
+            for &_node_id in path.iter().skip(1) {
                 if event.propagation_stopped { break; }
                 // Bubble phase listeners (no-op in static mode)
             }
@@ -198,7 +198,7 @@ impl SyntheticEventDispatcher {
     }
 
     /// Invoke listeners for a node and event type.
-    fn invoke_listeners(&mut self, node_id: usize, event_type: &str, phase: EventPhase, default_prevented: &mut bool) {
+    fn invoke_listeners(&mut self, node_id: usize, event_type: &str, phase: EventPhase, _default_prevented: &mut bool) {
         let listeners = match self.listeners.get(&node_id) {
             Some(l) => l,
             None => return,
@@ -402,5 +402,65 @@ mod tests {
 
         let removed2 = dispatcher.remove_event_listener(1, "click", 999);
         assert!(!removed2);
+    }
+
+    #[test]
+    fn non_bubbling_event_only_fires_target() {
+        let mut tree = make_tree();
+        let mut dispatcher = SyntheticEventDispatcher::new();
+
+        dispatcher.add_event_listener(0, "click", 100, false, false, false); // bubble on html
+        dispatcher.add_event_listener(2, "click", 200, false, false, false); // bubble on div
+        dispatcher.add_event_listener(3, "click", 300, false, false, false); // bubble on button
+
+        let event = PointerEvent {
+            event_type: "click".to_string(),
+            client_x: 0.0,
+            client_y: 0.0,
+            button: 0,
+            bubbles: false, // non-bubbling
+            default_prevented: false,
+            propagation_stopped: false,
+        };
+
+        dispatcher.dispatch_pointer_event(&mut tree, 3, event);
+        let log = dispatcher.dispatch_log();
+        assert_eq!(log.len(), 1); // only target fires
+        assert_eq!(log[0].callback_id, 300);
+        assert_eq!(log[0].phase, EventPhase::Target);
+    }
+
+    #[test]
+    fn capture_listeners_dont_fire_in_bubble_phase() {
+        let mut tree = make_tree();
+        let mut dispatcher = SyntheticEventDispatcher::new();
+
+        // capture-only listener on div
+        dispatcher.add_event_listener(2, "click", 200, true, false, false);
+        // bubble-only listener on button
+        dispatcher.add_event_listener(3, "click", 300, false, false, false);
+
+        let event = PointerEvent {
+            event_type: "click".to_string(),
+            client_x: 0.0,
+            client_y: 0.0,
+            button: 0,
+            bubbles: true,
+            default_prevented: false,
+            propagation_stopped: false,
+        };
+
+        dispatcher.dispatch_pointer_event(&mut tree, 3, event);
+        let log = dispatcher.dispatch_log();
+        // div capture fires, button target fires. div does NOT fire again in bubble.
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].phase, EventPhase::Capture);
+        assert_eq!(log[1].phase, EventPhase::Target);
+    }
+
+    #[test]
+    fn listener_count_zero_for_unknown_node() {
+        let dispatcher = SyntheticEventDispatcher::new();
+        assert_eq!(dispatcher.listener_count(999), 0);
     }
 }

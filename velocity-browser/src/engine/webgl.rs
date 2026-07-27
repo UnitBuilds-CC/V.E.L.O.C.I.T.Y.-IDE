@@ -427,3 +427,105 @@ impl WebGLContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_matrix_identity_multiply() {
+        let id = Matrix4x4::identity();
+        let result = id.multiply(&id);
+        for i in 0..4 {
+            for j in 0..4 {
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!((result.m[i][j] - expected).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn test_matrix_translate() {
+        let t = Matrix4x4::translate(10.0, 20.0, 30.0);
+        let id = Matrix4x4::identity();
+        let result = id.multiply(&t);
+        assert!((result.m[0][3] - 10.0).abs() < 1e-6);
+        assert!((result.m[1][3] - 20.0).abs() < 1e-6);
+        assert!((result.m[2][3] - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_matrix_scale() {
+        let s = Matrix4x4::scale(2.0, 3.0, 4.0);
+        assert!((s.m[0][0] - 2.0).abs() < 1e-6);
+        assert!((s.m[1][1] - 3.0).abs() < 1e-6);
+        assert!((s.m[2][2] - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_perspective_matrix() {
+        let p = Matrix4x4::perspective(std::f32::consts::FRAC_PI_4, 16.0 / 9.0, 0.1, 100.0);
+        // m[3][2] should be -1 for perspective
+        assert!((p.m[3][2] - (-1.0)).abs() < 1e-5);
+        // m[3][3] should be 0
+        assert!((p.m[3][3]).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_orthographic_matrix() {
+        let o = Matrix4x4::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0);
+        assert!((o.m[0][0] - 1.0).abs() < 1e-5);
+        assert!((o.m[1][1] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_texture_format_bpp() {
+        assert_eq!(TextureFormat::RGBA8.bytes_per_pixel(), 4);
+        assert_eq!(TextureFormat::RGB8.bytes_per_pixel(), 3);
+        assert_eq!(TextureFormat::Alpha8.bytes_per_pixel(), 1);
+        assert_eq!(TextureFormat::Depth16.bytes_per_pixel(), 2);
+    }
+
+    #[test]
+    fn test_webgl_clear_and_draw() {
+        let mut ctx = WebGLContext::new(4, 4);
+        ctx.clear(0.0, 0.0, 0.0, 1.0);
+        // draw_arrays_triangles needs idx+5 < len, so provide at least 6 floats
+        // Vertex format: x, y pairs (3 vertices = 1 triangle)
+        ctx.vertex_buffer = vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0];
+        ctx.draw_arrays_triangles(255, 0, 0, 255);
+        let [r, g, b, a] = ctx.pixel_buffer.get_pixel(1, 1);
+        assert_eq!([r, g, b, a], [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_create_and_sample_texture() {
+        let mut ctx = WebGLContext::new(8, 8);
+        // 2x2 RGBA texture: red, green, blue, white
+        let data = vec![
+            255, 0, 0, 255,     0, 255, 0, 255,
+            0, 0, 255, 255,     255, 255, 255, 255,
+        ];
+        let tex_id = ctx.create_texture(2, 2, TextureFormat::RGBA8, &data);
+        // Sample top-left (u=0, v=0) -> red
+        let [r, g, b, a] = ctx.sample_texture(tex_id, 0.0, 0.0);
+        assert_eq!([r, g, b, a], [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_framebuffer_create_and_status() {
+        let mut ctx = WebGLContext::new(16, 16);
+        let fb_id = ctx.create_framebuffer(8, 8, true);
+        assert!(ctx.check_framebuffer_status(fb_id));
+    }
+
+    #[test]
+    fn test_index_buffer_type_selection() {
+        let mut ctx = WebGLContext::new(4, 4);
+        let small = ctx.create_index_buffer(&[0, 1, 2]);
+        assert_eq!(ctx.index_buffers[0].element_type, IndexType::UnsignedShort);
+        let large = ctx.create_index_buffer(&[0, 1, 70000]);
+        assert_eq!(ctx.index_buffers[1].element_type, IndexType::UnsignedInt);
+        let _ = (small, large);
+    }
+}

@@ -290,3 +290,76 @@ impl ModelWeights {
         ]).map(|m| m.byte_size()).sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_fp32_bin(path: &Path, dims: &[u32], data: &[f32]) {
+        let mut f = std::fs::File::create(path).unwrap();
+        f.write_all(&(dims.len() as u32).to_le_bytes()).unwrap();
+        for &d in dims {
+            f.write_all(&d.to_le_bytes()).unwrap();
+        }
+        for &v in data {
+            f.write_all(&v.to_le_bytes()).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_load_fp32_bin_1d() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.bin");
+        let data = vec![1.0_f32, 2.0, 3.0, 4.0];
+        write_fp32_bin(&path, &[4], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert_eq!(loaded.len(), 4);
+        assert_eq!(loaded[0], 1.0);
+        assert_eq!(loaded[3], 4.0);
+    }
+
+    #[test]
+    fn test_load_fp32_bin_2d() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test2d.bin");
+        let data = vec![1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        write_fp32_bin(&path, &[2, 3], &data);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert_eq!(loaded.len(), 6);
+    }
+
+    #[test]
+    fn test_load_fp32_bin_too_small() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("tiny.bin");
+        std::fs::write(&path, &[0, 0]).unwrap();
+        assert!(load_fp32_bin(&path).is_err());
+    }
+
+    #[test]
+    fn test_load_fp32_bin_truncated_header() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("trunc.bin");
+        // ndim = 3 but only 1 dim provided
+        let mut data = Vec::new();
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&4u32.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+        assert!(load_fp32_bin(&path).is_err());
+    }
+
+    #[test]
+    fn test_load_fp32_bin_nonexistent() {
+        assert!(load_fp32_bin(Path::new("/nonexistent/path.bin")).is_err());
+    }
+
+    #[test]
+    fn test_load_fp32_bin_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("empty_data.bin");
+        write_fp32_bin(&path, &[0], &[]);
+        let loaded = load_fp32_bin(&path).unwrap();
+        assert_eq!(loaded.len(), 0);
+    }
+}

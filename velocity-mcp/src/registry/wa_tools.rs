@@ -515,8 +515,6 @@ pub fn handle_wa_tool(
                 initial_delay: std::time::Duration::from_millis(base_delay),
                 ..Default::default()
             };
-            let mut breaker = crate::wa::recovery::CircuitBreaker::default();
-            breaker.failure_threshold = cb_threshold;
             format!("{{\"success\":true,\"max_attempts\":{},\"base_delay_ms\":{},\"circuit_breaker_threshold\":{}}}",
                 policy.max_attempts, base_delay, cb_threshold)
         }
