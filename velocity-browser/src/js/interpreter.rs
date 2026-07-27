@@ -1526,9 +1526,11 @@ fn assign_to_target(target: &Expr, value: JsValue, scope: &ScopeRef) {
                 _ => None,
             };
             if let Some(name) = obj_name {
-                if let Some(JsValue::Object(mut map)) = Scope::resolve(scope, name) {
-                    map.insert(prop.clone(), value);
-                    Scope::assign(scope, name, JsValue::Object(map));
+                if let Some(mut obj_val) = Scope::resolve(scope, name) {
+                    // Route through set_property so accessor setters and Proxy set
+                    // traps are honored (not just a raw insert).
+                    set_property(&mut obj_val, prop, value);
+                    Scope::assign(scope, name, obj_val);
                 }
             }
         }
@@ -1563,9 +1565,36 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         if let Expr::Ident(obj_name) = obj_expr.as_ref() {
             let native_name = format!("{}.{}", obj_name, method);
             match native_name.as_str() {
+                // Reflect.set / Reflect.deleteProperty mutate the target; when it is a
+                // simple identifier we resolve, mutate, and write it back so the change
+                // is visible to subsequent statements (true in-place semantics).
+                "Reflect.set" => {
+                    let prop = evaluated_args.get(1).map(to_string).unwrap_or_default();
+                    let value = evaluated_args.get(2).cloned().unwrap_or(JsValue::Undefined);
+                    let mut ok = false;
+                    if let Some(Expr::Ident(var_name)) = args.first() {
+                        if let Some(mut target) = Scope::resolve(scope, var_name) {
+                            ok = set_property(&mut target, &prop, value);
+                            Scope::assign(scope, var_name, target);
+                        }
+                    }
+                    return Ok(JsValue::Boolean(ok));
+                }
+                "Reflect.deleteProperty" => {
+                    let prop = evaluated_args.get(1).map(to_string).unwrap_or_default();
+                    let mut existed = false;
+                    if let Some(Expr::Ident(var_name)) = args.first() {
+                        if let Some(JsValue::Object(mut map)) = Scope::resolve(scope, var_name) {
+                            existed = map.remove(&prop).is_some();
+                            Scope::assign(scope, var_name, JsValue::Object(map));
+                        }
+                    }
+                    return Ok(JsValue::Boolean(existed));
+                }
                 "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
                 "Object.keys" | "Object.values" | "Object.entries" | "Object.assign" | "Object.freeze" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
+                "Object.defineProperties" | "Object.getOwnPropertyDescriptor" |
                 "Array.isArray" | "Array.from" |
                 "JSON.parse" | "JSON.stringify" |
                 "Math.floor" | "Math.ceil" | "Math.round" | "Math.abs" | "Math.sqrt" |
@@ -1573,9 +1602,17 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
                 "String.fromCharCode" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
                 "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" |
-                "Reflect.get" | "Reflect.set" | "Reflect.has" | "Reflect.deleteProperty" |
+                "Reflect.get" | "Reflect.has" |
                 "Reflect.ownKeys" | "Reflect.getOwnPropertyDescriptor" | "Reflect.apply" | "Reflect.construct" => {
-                    return call_native(&native_name, &evaluated_args);
+                    let result = call_native(&native_name, &evaluated_args)?;
+                    // Object-mutating statics return the modified target; write it back to
+                    // the source identifier so in-place mutation semantics hold.
+                    if matches!(native_name.as_str(), "Object.defineProperty" | "Object.defineProperties" | "Object.assign") {
+                        if let Some(Expr::Ident(var_name)) = args.first() {
+                            Scope::assign(scope, var_name, result.clone());
+                        }
+                    }
+                    return Ok(result);
                 }
                 _ => {}
             }
@@ -2127,8 +2164,56 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             } else { JsValue::Null }
         }
         "Object.defineProperty" => {
-            // Simplified: just set the value on the object
-            args.first().cloned().unwrap_or(JsValue::Undefined)
+            // Apply a property descriptor (data or accessor) to the target and
+            // return the modified target, matching JS semantics.
+            let mut target = match args.first() {
+                Some(JsValue::Object(m)) => m.clone(),
+                _ => HashMap::new(),
+            };
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            if let Some(JsValue::Object(desc)) = args.get(2) {
+                apply_descriptor(&mut target, &prop, desc);
+            }
+            JsValue::Object(target)
+        }
+        "Object.defineProperties" => {
+            let mut target = match args.first() {
+                Some(JsValue::Object(m)) => m.clone(),
+                _ => HashMap::new(),
+            };
+            if let Some(JsValue::Object(props)) = args.get(1) {
+                for (prop, desc_val) in props {
+                    if let JsValue::Object(desc) = desc_val {
+                        apply_descriptor(&mut target, prop, desc);
+                    }
+                }
+            }
+            JsValue::Object(target)
+        }
+        "Object.getOwnPropertyDescriptor" => {
+            let prop = args.get(1).map(to_string).unwrap_or_default();
+            match args.first() {
+                Some(JsValue::Object(map)) => match map.get(&prop) {
+                    Some(JsValue::Object(desc)) if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) => {
+                        let mut out = HashMap::new();
+                        out.insert("enumerable".to_string(), desc.get("enumerable").cloned().unwrap_or(JsValue::Boolean(false)));
+                        out.insert("configurable".to_string(), desc.get("configurable").cloned().unwrap_or(JsValue::Boolean(false)));
+                        if let Some(g) = desc.get("get") { out.insert("get".to_string(), g.clone()); }
+                        if let Some(s) = desc.get("set") { out.insert("set".to_string(), s.clone()); }
+                        JsValue::Object(out)
+                    }
+                    Some(val) => {
+                        let mut out = HashMap::new();
+                        out.insert("value".to_string(), val.clone());
+                        out.insert("writable".to_string(), JsValue::Boolean(true));
+                        out.insert("enumerable".to_string(), JsValue::Boolean(true));
+                        out.insert("configurable".to_string(), JsValue::Boolean(true));
+                        JsValue::Object(out)
+                    }
+                    None => JsValue::Undefined,
+                },
+                _ => JsValue::Undefined,
+            }
         }
         "Array.isArray" => JsValue::Boolean(matches!(args.first(), Some(JsValue::Array(_)))),
         "Array.from" => {
@@ -2631,12 +2716,12 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                     return get_property(t, prop);
                 }
             }
-            if let Some(val) = map.get(prop) { return val.clone(); }
+            if let Some(val) = map.get(prop) { return resolve_accessor(val, obj); }
             // Walk __proto__ chain
             let mut proto = map.get("__proto__");
             while let Some(p) = proto {
                 if let JsValue::Object(proto_map) = p {
-                    if let Some(val) = proto_map.get(prop) { return val.clone(); }
+                    if let Some(val) = proto_map.get(prop) { return resolve_accessor(val, obj); }
                     proto = proto_map.get("__proto__");
                 } else { break; }
             }
@@ -2711,11 +2796,58 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
                 return set_property(target, prop, value);
             }
         }
+        // Accessor property: invoke the setter rather than overwriting the descriptor.
+        if let Some(JsValue::Object(desc)) = map.get(prop) {
+            if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) {
+                let setter = desc.get("set").cloned();
+                let this_obj = JsValue::Object(map.clone());
+                if let Some(setter) = setter {
+                    if !matches!(setter, JsValue::NativeFunction(_)) {
+                        let _ = call_function_with_this(&setter, &[value], &Scope::new_global(), Some(this_obj));
+                    }
+                }
+                return true;
+            }
+        }
         map.insert(prop.to_string(), value);
         true
     } else {
         false
     }
+}
+
+/// Apply a single property descriptor (data or accessor) to `target` under `prop`.
+fn apply_descriptor(target: &mut HashMap<String, JsValue>, prop: &str, desc: &HashMap<String, JsValue>) {
+    if desc.contains_key("get") || desc.contains_key("set") {
+        let mut accessor = HashMap::new();
+        accessor.insert("__accessor__".to_string(), JsValue::Boolean(true));
+        if let Some(g) = desc.get("get") { accessor.insert("get".to_string(), g.clone()); }
+        if let Some(s) = desc.get("set") { accessor.insert("set".to_string(), s.clone()); }
+        accessor.insert("enumerable".to_string(), desc.get("enumerable").cloned().unwrap_or(JsValue::Boolean(false)));
+        accessor.insert("configurable".to_string(), desc.get("configurable").cloned().unwrap_or(JsValue::Boolean(false)));
+        target.insert(prop.to_string(), JsValue::Object(accessor));
+    } else {
+        target.insert(prop.to_string(), desc.get("value").cloned().unwrap_or(JsValue::Undefined));
+    }
+}
+
+/// If `val` is an accessor property descriptor (installed via Object.defineProperty
+/// with a `get` function), invoke the getter with `this` bound to `this_obj` and
+/// return its result. Data values are returned unchanged.
+fn resolve_accessor(val: &JsValue, this_obj: &JsValue) -> JsValue {
+    if let JsValue::Object(desc) = val {
+        if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) {
+            if let Some(getter) = desc.get("get") {
+                if !matches!(getter, JsValue::NativeFunction(_)) {
+                    if let Ok(result) = call_function_with_this(getter, &[], &Scope::new_global(), Some(this_obj.clone())) {
+                        return result;
+                    }
+                }
+            }
+            return JsValue::Undefined;
+        }
+    }
+    val.clone()
 }
 
 fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
@@ -3516,6 +3648,85 @@ mod tests {
             }
             msg
         "), JsValue::String("fail".to_string()));
+    }
+
+    #[test]
+    fn object_define_property_data_descriptor() {
+        // Data descriptor installs the value and preserves existing keys (write-back).
+        assert_eq!(eval_full("
+            var obj = { a: 1 };
+            Object.defineProperty(obj, 'b', { value: 2 });
+            obj.a + obj.b
+        "), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn object_define_property_getter() {
+        // An accessor getter is invoked on property read.
+        assert_eq!(eval_full("
+            var obj = {};
+            Object.defineProperty(obj, 'x', { get: function() { return 42; } });
+            obj.x
+        "), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn object_define_property_setter() {
+        // An accessor setter is invoked on property write.
+        assert_eq!(eval_full("
+            var captured = 0;
+            var obj = {};
+            Object.defineProperty(obj, 'x', { set: function(v) { captured = v; } });
+            obj.x = 99;
+            captured
+        "), JsValue::Number(99.0));
+    }
+
+    #[test]
+    fn object_define_properties_multiple() {
+        assert_eq!(eval_full("
+            var obj = {};
+            Object.defineProperties(obj, { x: { value: 10 }, y: { value: 20 } });
+            obj.x + obj.y
+        "), JsValue::Number(30.0));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_value() {
+        assert_eq!(eval_full("
+            var obj = { name: 'velocity' };
+            var d = Object.getOwnPropertyDescriptor(obj, 'name');
+            d.value
+        "), JsValue::String("velocity".to_string()));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_accessor() {
+        // Accessor descriptors report get/set, not value.
+        assert_eq!(eval_full("
+            var obj = {};
+            Object.defineProperty(obj, 'x', { get: function() { return 1; } });
+            var d = Object.getOwnPropertyDescriptor(obj, 'x');
+            typeof d.get
+        "), JsValue::String("function".to_string()));
+    }
+
+    #[test]
+    fn reflect_set_mutates_in_place() {
+        assert_eq!(eval_full("
+            var obj = {};
+            var ok = Reflect.set(obj, 'x', 5);
+            obj.x
+        "), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn reflect_delete_property_removes_key() {
+        assert_eq!(eval_full("
+            var obj = { a: 1 };
+            Reflect.deleteProperty(obj, 'a');
+            obj.a
+        "), JsValue::Undefined);
     }
 
     #[test]
