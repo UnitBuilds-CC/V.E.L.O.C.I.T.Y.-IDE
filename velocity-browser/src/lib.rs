@@ -27,6 +27,7 @@ pub mod js;
 pub mod layout;
 pub mod net;
 pub mod nda;
+pub mod nda_portable;
 pub mod parser;
 pub mod predicates;
 pub mod session;
