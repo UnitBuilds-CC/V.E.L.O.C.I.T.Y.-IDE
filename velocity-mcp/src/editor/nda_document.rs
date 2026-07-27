@@ -990,9 +990,27 @@ impl NdaDocumentView {
     }
 }
 
-/// Convert an existing file into a renderable portable NDA document: text-like
-/// files become wrapped DrawText lines plus content triples; images become a
-/// single DrawImage command carrying a data-url.
+/// Maximum rendered dimension for an embedded image (keeps the canvas sane and
+/// the `u16` command fields in range).
+const MAX_IMAGE_DIM: u32 = 1024;
+/// Maximum data rows rendered in a converted CSV table.
+const MAX_CSV_ROWS: usize = 50;
+/// Default wrap width (px) applied to converted text/code lines.
+const TEXT_WRAP_WIDTH: u16 = 600;
+/// Per-column width (px) for the converted CSV table grid.
+const CSV_COL_WIDTH: u16 = 140;
+
+/// Convert an existing file into a renderable portable NDA document.
+///
+/// * **CSV/TSV** → semantic triples (`row:N` / `col:<header>` / value) plus a
+///   DrawText table grid (header row + bounded data rows).
+/// * **Images** → decoded and re-encoded to PNG (normalizing any supported
+///   input), embedded as a `data:image/png;base64,…` DrawImage with the real
+///   dimensions (capped to [`MAX_IMAGE_DIM`]).
+/// * **Text/code** → wrapped DrawText lines plus content triples.
+///
+/// PDF/DOCX/XLSX have no in-house parser and are intentionally out of scope;
+/// they fall through to the text extractor and error with a clear message.
 pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
     let mut doc = NdaPortableDoc::new();
     let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".to_string());
@@ -1000,35 +1018,125 @@ pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
     doc.push_triple("nda:doc", "nda:source_file", &file_name);
 
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+
+    // Images: normalize to PNG and embed with real (capped) dimensions.
     if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
         let raw = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
-        let mime = match ext.as_str() {
-            "png" => "image/png",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "bmp" => "image/bmp",
-            _ => "image/jpeg",
-        };
-        let data_url = format!("data:{mime};base64,{}", crate::editor::nda_viewer::base64_encode(&raw));
-        doc.push_command(DisplayCommand::image(data_url, 10, 10, 480, 320));
+        let img = image::load_from_memory(&raw).map_err(|e| format!("cannot decode image: {e}"))?;
+        let rgba = img.to_rgba8();
+        let (w, h) = (rgba.width(), rgba.height());
+        let mut png = Vec::new();
+        rgba.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|e| format!("cannot encode PNG: {e}"))?;
+        let data_url = format!("data:image/png;base64,{}", crate::editor::nda_viewer::base64_encode(&png));
+        let cw = w.min(MAX_IMAGE_DIM) as u16;
+        let ch = h.min(MAX_IMAGE_DIM) as u16;
+        doc.push_command(DisplayCommand::image(data_url, 10, 10, cw, ch));
         doc.push_triple("nda:doc", "nda:kind", "image");
+        doc.push_triple("nda:doc", "nda:width", w.to_string());
+        doc.push_triple("nda:doc", "nda:height", h.to_string());
         return Ok(doc);
     }
 
+    // CSV/TSV: triples per cell + a DrawText table grid.
+    if matches!(ext.as_str(), "csv" | "tsv") {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("read failed: {e}"))?;
+        let delim = if ext == "tsv" { '\t' } else { ',' };
+        let rows: Vec<Vec<String>> = text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| split_csv_line(l, delim))
+            .collect();
+        if rows.is_empty() {
+            return Err(format!("no rows found in {file_name}"));
+        }
+        let headers = &rows[0];
+        doc.push_triple("nda:doc", "nda:kind", "table");
+        doc.push_triple("nda:doc", "nda:columns", headers.len().to_string());
+        doc.push_triple("nda:doc", "nda:row_count", (rows.len() - 1).to_string());
+
+        // Semantic triples: (row:N, col:<header>, value).
+        for (r, row) in rows.iter().skip(1).enumerate() {
+            let subj = format!("row:{}", r + 1);
+            for (c, val) in row.iter().enumerate() {
+                let header = headers.get(c).map(|s| s.as_str()).unwrap_or("col");
+                if !val.is_empty() {
+                    doc.push_triple(&subj, format!("col:{header}"), val);
+                }
+            }
+        }
+
+        // DrawText table grid: header row + bounded data rows.
+        let mut y: u16 = 20;
+        for (c, header) in headers.iter().enumerate() {
+            let x = 12u32.saturating_add((c as u32).saturating_mul(CSV_COL_WIDTH as u32)).min(u16::MAX as u32) as u16;
+            let mut cmd = DisplayCommand::text(header.clone(), x, y, 0x58A6_FFFF);
+            cmd.w = CSV_COL_WIDTH;
+            doc.push_command(cmd);
+        }
+        y = y.saturating_add(18);
+        for row in rows.iter().skip(1).take(MAX_CSV_ROWS) {
+            for (c, val) in row.iter().enumerate() {
+                let x = 12u32.saturating_add((c as u32).saturating_mul(CSV_COL_WIDTH as u32)).min(u16::MAX as u32) as u16;
+                let cell: String = val.chars().take(32).collect();
+                let mut cmd = DisplayCommand::text(cell, x, y, 0xC9D1_D9FF);
+                cmd.w = CSV_COL_WIDTH;
+                doc.push_command(cmd);
+            }
+            y = y.saturating_add(18);
+        }
+        return Ok(doc);
+    }
+
+    // Text/code: wrapped DrawText lines + content triples.
     let text = crate::editor::knowledge_base::extract_text(path)
         .or_else(|| std::fs::read_to_string(path).ok())
-        .ok_or_else(|| format!("cannot extract text from {}", file_name))?;
+        .ok_or_else(|| format!("cannot extract text from {file_name} (PDF/DOCX/XLSX are out of scope)"))?;
 
     doc.push_triple("nda:doc", "nda:kind", "text");
     let mut y: u16 = 20;
     for line in text.lines().take(200) {
         let trimmed: String = line.chars().take(120).collect();
-        doc.push_command(DisplayCommand::text(trimmed, 12, y, 0xC9D1_D9FF));
+        let mut cmd = DisplayCommand::text(trimmed, 12, y, 0xC9D1_D9FF);
+        cmd.w = TEXT_WRAP_WIDTH;
+        doc.push_command(cmd);
         y = y.saturating_add(18);
     }
     let line_count = text.lines().count();
     doc.push_triple("nda:doc", "nda:line_count", line_count.to_string());
     Ok(doc)
+}
+
+/// Split a single CSV/TSV line into fields, honoring double-quoted segments
+/// (`""` escapes an embedded quote). Single-line only — good enough for
+/// conversion, not a full multi-line RFC-4180 state machine.
+fn split_csv_line(line: &str, delim: char) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cur.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == delim {
+            fields.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    fields.push(cur);
+    fields
 }
 
 /// Best-effort: open a path (e.g. an exported `.html`) in the default browser.
@@ -1180,6 +1288,54 @@ mod tests {
         assert!(doc.title().unwrap().ends_with(".txt"));
         assert_eq!(doc.commands.len(), 3);
         assert!(doc.commands.iter().all(|c| c.kind == CommandKind::DrawText as u8));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn convert_text_sets_wrap_width() {
+        let tmp = std::env::temp_dir().join(format!("nda_wrap_{}.txt", std::process::id()));
+        std::fs::write(&tmp, "hello world").unwrap();
+        let doc = convert_file_to_doc(&tmp).unwrap();
+        assert_eq!(doc.commands.len(), 1);
+        assert!(doc.commands[0].w > 0, "wrap width should be set");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn convert_csv_produces_triples_and_grid() {
+        let tmp = std::env::temp_dir().join(format!("nda_convert_{}.csv", std::process::id()));
+        std::fs::write(&tmp, "name,age\nAlice,30\nBob,25").unwrap();
+        let doc = convert_file_to_doc(&tmp).unwrap();
+        // Cell triples: (row:1, col:name, Alice), (row:1, col:age, 30), etc.
+        assert!(doc.triples.iter().any(|(s, p, o)| s == "row:1" && p == "col:name" && o == "Alice"));
+        assert!(doc.triples.iter().any(|(s, p, o)| s == "row:2" && p == "col:age" && o == "25"));
+        // Grid: 2 header cells + 2 rows x 2 cols = 6 DrawText commands.
+        assert_eq!(doc.commands.len(), 6);
+        assert!(doc.commands.iter().all(|c| c.kind == CommandKind::DrawText as u8));
+        assert!(doc.commands.iter().all(|c| c.w > 0), "table cells wrap to column width");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn split_csv_line_honors_quotes() {
+        assert_eq!(split_csv_line("a,b,c", ','), vec!["a", "b", "c"]);
+        assert_eq!(split_csv_line("a,\"b,c\",d", ','), vec!["a", "b,c", "d"]);
+        assert_eq!(split_csv_line("\"say \"\"hi\"\"\",x", ','), vec!["say \"hi\"", "x"]);
+        assert_eq!(split_csv_line("a\tb", '\t'), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn convert_image_normalizes_png_with_dims() {
+        let tmp = std::env::temp_dir().join(format!("nda_convert_{}.png", std::process::id()));
+        let img = image::RgbaImage::from_pixel(5, 4, image::Rgba([10, 20, 30, 255]));
+        img.save(&tmp).unwrap();
+        let doc = convert_file_to_doc(&tmp).unwrap();
+        assert_eq!(doc.commands.len(), 1);
+        let cmd = &doc.commands[0];
+        assert_eq!(cmd.kind, CommandKind::DrawImage as u8);
+        assert!(cmd.content.starts_with("data:image/png;base64,"), "normalized to PNG");
+        assert_eq!((cmd.w, cmd.h), (5, 4), "real dimensions recorded");
+        assert!(doc.triples.iter().any(|(_, p, o)| p == "nda:width" && o == "5"));
         let _ = std::fs::remove_file(&tmp);
     }
 
