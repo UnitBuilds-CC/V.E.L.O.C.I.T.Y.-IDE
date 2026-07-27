@@ -699,10 +699,31 @@ pub fn handle_wa_tool(
         }
         // ─── System Settings ──────────────────────────────────────────────────────
         "wa_system_dark_mode" => {
-            let set = arguments["enabled"].as_bool();
-            let _script = crate::wa::registry::build_dark_mode_script(set);
-            format!("{{\"action\":\"dark_mode\",\"set\":{},\"script_ready\":true}}",
-                set.map(|b| b.to_string()).unwrap_or_else(|| "null".to_string()))
+            match arguments["enabled"].as_bool() {
+                // Set mode: toggle dark mode via the real SystemSettingsManager.
+                Some(enabled) => {
+                    let result = crate::wa::registry::SystemSettingsManager::set(
+                        &crate::wa::registry::SystemSetting::DarkMode(enabled),
+                    );
+                    serde_json::to_string(&serde_json::json!({
+                        "success": result.success,
+                        "operation": "set",
+                        "enabled": enabled,
+                        "detail": result.detail,
+                    }))
+                    .map_err(|err| Box::<dyn Error>::from(format!("serialise dark mode set: {err}")))?
+                }
+                // Query mode: read the current dark mode state (read-only).
+                None => {
+                    let dark_mode = crate::wa::registry::SystemSettingsManager::is_dark_mode();
+                    serde_json::to_string(&serde_json::json!({
+                        "success": true,
+                        "operation": "query",
+                        "dark_mode": dark_mode,
+                    }))
+                    .map_err(|err| Box::<dyn Error>::from(format!("serialise dark mode query: {err}")))?
+                }
+            }
         }
         // ─── Triggers ─────────────────────────────────────────────────────────────
         "wa_trigger_register" => {
@@ -989,5 +1010,23 @@ mod tests {
         assert_eq!(parsed["success"], serde_json::json!(true));
         assert!(parsed["count"].is_number());
         assert!(parsed["notifications"].is_array());
+    }
+
+    // `wa_system_dark_mode` without an `enabled` argument must perform a real read of the
+    // current dark mode state (returning a structured result) rather than the old
+    // `script_ready` stub. Read-only, so safe on any machine.
+    #[test]
+    fn system_dark_mode_query_executes_for_real() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({});
+        let out = handle_wa_tool(temp.path(), "wa_system_dark_mode", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(!out.contains("script_ready"), "stub still present: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["success"], serde_json::json!(true));
+        assert_eq!(parsed["operation"], "query");
+        // dark_mode is either a boolean (Windows read succeeded) or null (unavailable).
+        assert!(parsed["dark_mode"].is_boolean() || parsed["dark_mode"].is_null());
     }
 }
