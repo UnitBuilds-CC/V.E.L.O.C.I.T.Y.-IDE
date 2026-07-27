@@ -187,7 +187,7 @@ pub enum Stmt {
     Throw(Expr),
     TryCatch { try_block: Box<Stmt>, catch_var: Option<String>, catch_block: Option<Box<Stmt>>, finally_block: Option<Box<Stmt>> },
     FunctionDecl { name: String, params: Vec<String>, body: Box<Stmt> },
-    ClassDecl { name: String, parent: Option<String>, methods: Vec<ClassMethod> },
+    ClassDecl { name: String, parent: Option<String>, methods: Vec<ClassMethod>, fields: Vec<ClassField> },
     /// import { a, b } from 'module' / import x from 'module' / import * as x from 'module'
     Import { specifiers: Vec<ImportSpecifier>, source: String },
     /// export const x = ...; / export default expr; / export { a, b };
@@ -226,6 +226,15 @@ pub struct ClassMethod {
     pub body: Stmt,
     pub is_static: bool,
     pub kind: ClassMemberKind,
+}
+
+/// A class field (property initializer): `class C { x = 5; static y = 2; z; }`.
+/// `init` is `None` for a bare field (`z;`), which initializes to `undefined`.
+#[derive(Debug, Clone)]
+pub struct ClassField {
+    pub name: String,
+    pub is_static: bool,
+    pub init: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -499,8 +508,9 @@ impl Parser {
         } else { None };
         self.expect(&Token::LBrace)?;
         let mut methods = Vec::new();
+        let mut fields = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
-            // Skip semicolons between methods
+            // Skip semicolons between members
             if self.eat(&Token::Semi) { continue; }
             let is_static = self.eat(&Token::Static);
             // Handle get/set/async as method name prefixes or actual method names
@@ -523,12 +533,20 @@ impl Parser {
             } else {
                 method_name
             };
-            let params = if self.at(&Token::LParen) { self.parse_params()? } else { vec![] };
-            let body = if self.at(&Token::LBrace) { self.parse_block()? } else { Stmt::Block(vec![]) };
-            methods.push(ClassMethod { name: final_name, params, body, is_static, kind });
+            if self.at(&Token::LParen) {
+                // Method / getter / setter member.
+                let params = self.parse_params()?;
+                let body = self.parse_block()?;
+                methods.push(ClassMethod { name: final_name, params, body, is_static, kind });
+            } else {
+                // Class field: `name = expr;` or bare `name;`.
+                let init = if self.eat(&Token::Eq) { Some(self.parse_assign()?) } else { None };
+                self.eat(&Token::Semi);
+                fields.push(ClassField { name: final_name, is_static, init });
+            }
         }
         self.expect(&Token::RBrace)?;
-        Ok(Stmt::ClassDecl { name, parent, methods })
+        Ok(Stmt::ClassDecl { name, parent, methods, fields })
     }
 
     fn parse_import(&mut self) -> Result<Stmt, String> {
@@ -763,7 +781,7 @@ impl Parser {
             Token::Void => { self.advance(); let rhs = self.parse_unary()?; Ok(Expr::Void(Box::new(rhs))) }
             Token::Delete => { self.advance(); let rhs = self.parse_unary()?; Ok(Expr::Unary(Token::Delete, Box::new(rhs))) }
             Token::PlusPlus | Token::MinusMinus => { let op = self.advance(); let rhs = self.parse_unary()?; Ok(Expr::Unary(op, Box::new(rhs))) }
-            Token::New => { self.advance(); let callee = self.parse_new_target()?; let args = if self.at(&Token::LParen) { self.parse_args()? } else { Vec::new() }; Ok(Expr::New(Box::new(callee), args)) }
+            Token::New => { self.advance(); let callee = self.parse_new_target()?; let args = if self.at(&Token::LParen) { self.parse_args()? } else { Vec::new() }; self.parse_member_chain(Expr::New(Box::new(callee), args)) }
             Token::DotDotDot => { self.advance(); let e = self.parse_assign()?; Ok(Expr::Spread(Box::new(e))) }
             Token::Await => { self.advance(); let e = self.parse_unary()?; Ok(Expr::Await(Box::new(e))) }
             Token::Yield => { self.advance(); let e = if self.at(&Token::Semi) || self.at(&Token::RBrace) || self.at(&Token::RParen) || self.at(&Token::Comma) { Expr::Undefined } else { self.parse_assign()? }; Ok(Expr::Yield(Box::new(e))) }
@@ -782,7 +800,14 @@ impl Parser {
     }
 
     fn parse_call_expr(&mut self) -> Result<Expr, String> {
-        let mut expr = self.parse_primary()?;
+        let expr = self.parse_primary()?;
+        self.parse_member_chain(expr)
+    }
+
+    /// Apply postfix member/index/call chaining (`.prop`, `[idx]`, `(args)`, `?.`) to an
+    /// already-parsed expression. Shared by normal call expressions and `new` expressions
+    /// so that `new Foo().bar` and `new Foo().bar()` parse correctly.
+    fn parse_member_chain(&mut self, mut expr: Expr) -> Result<Expr, String> {
         loop {
             match self.peek().clone() {
                 Token::LParen => { let args = self.parse_args()?; expr = Expr::Call(Box::new(expr), args); }
@@ -1286,8 +1311,8 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             Scope::declare(scope, name, async_fn);
             Ok(JsValue::Undefined)
         }
-        Stmt::ClassDecl { name, parent, methods } => {
-            eval_class_decl(name, parent, methods, scope);
+        Stmt::ClassDecl { name, parent, methods, fields } => {
+            eval_class_decl(name, parent, methods, fields, scope);
             Ok(JsValue::Undefined)
         }
         Stmt::Import { specifiers, source } => {
@@ -2139,7 +2164,7 @@ fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
 }
 
 /// Evaluate a class declaration: creates a class object with constructor + methods.
-fn eval_class_decl(name: &str, parent: &Option<String>, methods: &[ClassMethod], scope: &ScopeRef) {
+fn eval_class_decl(name: &str, parent: &Option<String>, methods: &[ClassMethod], fields: &[ClassField], scope: &ScopeRef) {
     let mut class_obj = HashMap::new();
     class_obj.insert("__type__".to_string(), JsValue::String("class".to_string()));
     class_obj.insert("__name__".to_string(), JsValue::String(name.to_string()));
@@ -2179,6 +2204,30 @@ fn eval_class_decl(name: &str, parent: &Option<String>, methods: &[ClassMethod],
     class_obj.insert("__proto_methods__".to_string(), JsValue::Object(proto));
     class_obj.insert("__static_methods__".to_string(), JsValue::Object(statics));
 
+    // Class fields. Static fields evaluate once now and live on the class object;
+    // instance fields are stored (in declaration order) as `[name, init_closure]` pairs,
+    // where the closure is a zero-arg function (`return <init>`) run with `this` bound at
+    // construction time.
+    let mut instance_fields: Vec<JsValue> = Vec::new();
+    for f in fields {
+        if f.is_static {
+            let val = match &f.init {
+                Some(expr) => eval_expr_node(expr, scope).unwrap_or(JsValue::Undefined),
+                None => JsValue::Undefined,
+            };
+            class_obj.insert(f.name.clone(), val);
+        } else {
+            let init_func = JsValue::Function {
+                name: None,
+                params: Vec::new(),
+                body: Stmt::Return(f.init.clone()),
+                closure: scope.clone(),
+            };
+            instance_fields.push(JsValue::Array(vec![JsValue::String(f.name.clone()), init_func]));
+        }
+    }
+    class_obj.insert("__instance_fields__".to_string(), JsValue::Array(instance_fields));
+
     Scope::declare(scope, name, JsValue::Object(class_obj));
 }
 
@@ -2206,6 +2255,33 @@ fn call_class_constructor(class_map: &HashMap<String, JsValue>, args: &[JsValue]
         instance.insert("__class_name__".to_string(), JsValue::String(class_name.clone()));
     }
     instance.insert("__instanceof__".to_string(), JsValue::Array(class_ancestry_names(class_map)));
+
+    // Apply instance field initializers in JS order: root ancestor first, down to this
+    // class. Runs before the constructor body so the constructor can observe/override
+    // field values. Each initializer runs with `this` bound to the in-progress instance.
+    let mut chain: Vec<&HashMap<String, JsValue>> = Vec::new();
+    let mut cur = Some(class_map);
+    let mut depth = 0;
+    while let Some(cm) = cur {
+        if depth > 64 { break; }
+        chain.push(cm);
+        cur = match cm.get("__parent__") { Some(JsValue::Object(p)) => Some(p), _ => None };
+        depth += 1;
+    }
+    for cm in chain.iter().rev() {
+        if let Some(JsValue::Array(fields_arr)) = cm.get("__instance_fields__") {
+            for entry in fields_arr {
+                if let JsValue::Array(pair) = entry {
+                    if let (Some(JsValue::String(fname)), Some(func)) = (pair.first(), pair.get(1)) {
+                        let this_val = JsValue::Object(instance.clone());
+                        let val = call_function_with_this(func, &[], &Scope::new_global(), Some(this_val))
+                            .unwrap_or(JsValue::Undefined);
+                        instance.insert(fname.clone(), val);
+                    }
+                }
+            }
+        }
+    }
 
     // Call constructor if present
     if let Some(ctor) = class_map.get("__constructor__") {
@@ -4485,6 +4561,70 @@ mod tests {
             var o = { __foo: 7 };
             Object.keys(o).indexOf('__foo') >= 0
         "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn class_field_basic() {
+        assert_eq!(eval_full("
+            class C { x = 5; }
+            new C().x
+        "), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn class_field_declaration_order() {
+        // Later fields may reference earlier ones via `this`; order must be preserved.
+        assert_eq!(eval_full("
+            class C { a = 2; b = this.a + 3; }
+            new C().b
+        "), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn class_field_bare_is_undefined() {
+        assert_eq!(eval_full("
+            class C { x; }
+            new C().x
+        "), JsValue::Undefined);
+    }
+
+    #[test]
+    fn class_static_field() {
+        assert_eq!(eval_full("
+            class C { static n = 10; }
+            C.n
+        "), JsValue::Number(10.0));
+    }
+
+    #[test]
+    fn class_field_overridden_by_constructor() {
+        assert_eq!(eval_full("
+            class C { x = 1; constructor() { this.x = 9; } }
+            new C().x
+        "), JsValue::Number(9.0));
+    }
+
+    #[test]
+    fn class_field_inherited() {
+        assert_eq!(eval_full("
+            class A { a = 1; }
+            class B extends A { b = 2; }
+            var o = new B();
+            o.a + o.b
+        "), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn new_expression_member_chain() {
+        // `new Foo().member` and `new Foo().method()` must parse and evaluate.
+        assert_eq!(eval_full("
+            class P { constructor(x) { this.x = x; } double() { return this.x * 2; } }
+            new P(21).double()
+        "), JsValue::Number(42.0));
+        assert_eq!(eval_full("
+            class P { constructor(x) { this.x = x; } }
+            new P(7).x
+        "), JsValue::Number(7.0));
     }
 
     #[test]
