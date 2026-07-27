@@ -230,6 +230,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Voice => {
                 self.app.render_voice_panel(ui);
             }
+            TabKind::Knowledge => {
+                self.app.render_knowledge_panel(ui);
+            }
             // Mode-specific panel tabs - real content from orchestrator/timeline data
             _ => {
                 let palette = self.app.palette();

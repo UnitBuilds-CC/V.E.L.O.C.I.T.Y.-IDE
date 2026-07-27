@@ -51,6 +51,7 @@ impl Tab {
             TabKind::Coverage => "Coverage".into(),
             TabKind::Pipeline => "Pipeline".into(),
             TabKind::Voice => "Voice".into(),
+            TabKind::Knowledge => "Knowledge".into(),
         }
     }
 
@@ -98,6 +99,8 @@ pub enum TabKind {
     Coverage,
     Pipeline,
     Voice,
+    // Knowledge / RAG panel
+    Knowledge,
 }
 
 pub struct Command {

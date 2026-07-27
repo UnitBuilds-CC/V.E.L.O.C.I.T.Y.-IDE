@@ -55,6 +55,7 @@ pub mod find_replace;
 pub mod git_ui;
 pub mod inline_suggestions;
 pub mod keybindings;
+pub mod knowledge_base;
 pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;

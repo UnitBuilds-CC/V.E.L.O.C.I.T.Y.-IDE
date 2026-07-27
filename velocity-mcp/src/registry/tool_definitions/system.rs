@@ -192,5 +192,31 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["source", "language"]
             }),
         },
+        // ── Knowledge / RAG ─────────────────────────────────────────────────
+        Tool {
+            name: "knowledge_ingest".to_string(),
+            description: "Add content to the workspace knowledge base (a persistent, chunked RAG store). Provide either inline 'text' (with an optional 'source' name) or a workspace-relative 'path' to a file or directory.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "Raw text to ingest. Use with 'source'." },
+                    "source": { "type": "string", "description": "Name/label for the source when ingesting 'text' (default: inline)." },
+                    "path": { "type": "string", "description": "Workspace-relative path to a file or directory to ingest." }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            name: "knowledge_search".to_string(),
+            description: "Search the workspace knowledge base and return the most relevant passages, ranked by TF-IDF cosine similarity.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Natural-language or keyword query." },
+                    "k": { "type": "integer", "description": "Maximum number of results to return (default 5)." }
+                },
+                "required": ["query"]
+            }),
+        },
     ]
 }

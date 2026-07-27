@@ -539,4 +539,199 @@ impl VelocityApp {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Knowledge — unified RAG store (ingest + search)
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_knowledge_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let sources = self.knowledge_base.sources();
+        Self::tier3_header(
+            ui,
+            "Knowledge",
+            &format!(
+                "{} source(s) · {} chunk(s)",
+                sources.len(),
+                self.knowledge_base.chunk_count()
+            ),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Ingestion: a path field (file or folder) plus whole-workspace index.
+        let mut ingest_path = false;
+        let mut ingest_workspace = false;
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.knowledge_ingest_input)
+                    .hint_text("path to a file or folder…")
+                    .desired_width(ui.available_width() - 190.0),
+            );
+            if ui.button(RichText::new("Ingest").size(10.0)).clicked() {
+                ingest_path = true;
+            }
+            if ui.button(RichText::new("Index workspace").size(10.0)).clicked() {
+                ingest_workspace = true;
+            }
+        });
+        ui.add_space(6.0);
+
+        // Search box.
+        let mut do_search = false;
+        ui.horizontal(|ui| {
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.knowledge_query)
+                    .hint_text("search knowledge…")
+                    .desired_width(ui.available_width() - 70.0),
+            );
+            if ui.button(RichText::new("Search").size(10.0)).clicked()
+                || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+            {
+                do_search = true;
+            }
+        });
+        ui.add_space(6.0);
+
+        // Ranked results.
+        egui::ScrollArea::vertical()
+            .id_salt("knowledge_results_scroll")
+            .max_height(220.0)
+            .show(ui, |ui| {
+                if self.knowledge_results.is_empty() {
+                    ui.label(
+                        RichText::new("No results. Ingest content and run a search.")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                }
+                for hit in &self.knowledge_results {
+                    egui::Frame::new()
+                        .fill(palette.bg_secondary)
+                        .corner_radius(5.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!("{}#{}", hit.source, hit.ordinal))
+                                        .size(9.0)
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(format!("{:.3}", hit.score))
+                                                .size(8.0)
+                                                .color(palette.text_muted),
+                                        );
+                                    },
+                                );
+                            });
+                            ui.label(RichText::new(&hit.snippet).size(9.0).color(palette.text));
+                        });
+                    ui.add_space(4.0);
+                }
+            });
+
+        ui.add_space(8.0);
+        let mut clear_all = false;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("SOURCES").small().strong().color(palette.accent));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !self.knowledge_base.is_empty()
+                    && ui.small_button(RichText::new("Clear all").size(8.0)).clicked()
+                {
+                    clear_all = true;
+                }
+            });
+        });
+        let mut remove: Option<String> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("knowledge_sources_scroll")
+            .max_height(160.0)
+            .show(ui, |ui| {
+                if sources.is_empty() {
+                    ui.label(
+                        RichText::new("No sources ingested yet.")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                }
+                for (source, count) in &sources {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(source).size(9.0).color(palette.text));
+                        ui.label(
+                            RichText::new(format!("({count})"))
+                                .size(8.0)
+                                .color(palette.text_muted),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                remove = Some(source.clone());
+                            }
+                        });
+                    });
+                }
+            });
+
+        // Deferred mutations (avoid borrowing self during rendering).
+        if ingest_path {
+            let raw = self.knowledge_ingest_input.trim().to_string();
+            if !raw.is_empty() {
+                let ws = self.workspace_root.clone();
+                let candidate = std::path::PathBuf::from(&raw);
+                let path = if candidate.is_absolute() {
+                    candidate
+                } else {
+                    ws.join(&candidate)
+                };
+                if path.is_dir() {
+                    let (files, chunks) = self.knowledge_base.ingest_dir(&ws, &path);
+                    let _ = self.knowledge_base.save(&ws);
+                    self.toasts.push(crate::editor::toast::Toast::info(format!(
+                        "Ingested {files} file(s), {chunks} chunk(s)"
+                    )));
+                } else {
+                    match self.knowledge_base.ingest_path(&ws, &path) {
+                        Ok(added) => {
+                            let _ = self.knowledge_base.save(&ws);
+                            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                                "Ingested {added} chunk(s)"
+                            )));
+                        }
+                        Err(e) => self.toasts.push(crate::editor::toast::Toast::error(e)),
+                    }
+                }
+            }
+        }
+        if ingest_workspace {
+            let ws = self.workspace_root.clone();
+            let (files, chunks) = self.knowledge_base.ingest_dir(&ws, &ws);
+            let _ = self.knowledge_base.save(&ws);
+            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                "Indexed workspace: {files} file(s), {chunks} chunk(s)"
+            )));
+        }
+        if do_search {
+            let q = self.knowledge_query.clone();
+            self.knowledge_results = self.knowledge_base.search(&q, 20);
+        }
+        if clear_all {
+            self.knowledge_base.clear();
+            self.knowledge_results.clear();
+            let ws = self.workspace_root.clone();
+            let _ = self.knowledge_base.save(&ws);
+            self.toasts
+                .push(crate::editor::toast::Toast::info("Knowledge base cleared"));
+        }
+        if let Some(src) = remove {
+            if self.knowledge_base.remove_source(&src) {
+                let ws = self.workspace_root.clone();
+                let _ = self.knowledge_base.save(&ws);
+                self.toasts
+                    .push(crate::editor::toast::Toast::info(format!("Removed {src}")));
+            }
+        }
+    }
 }

@@ -621,6 +621,55 @@ pub fn handle_system_tool(
                 "tests": tests
             }))?
         }
+        // ── Knowledge / RAG ─────────────────────────────────────────────────
+        "knowledge_ingest" => {
+            let mut kb = crate::editor::knowledge_base::KnowledgeBase::load(root);
+            let (label, added) = if let Some(text) = arguments["text"].as_str() {
+                let source = arguments["source"].as_str().unwrap_or("inline");
+                let n = kb.ingest_text(source, text);
+                (source.to_string(), n)
+            } else if let Some(rel) = arguments["path"].as_str() {
+                let target = resolve_workspace_path(root, rel, false)?;
+                if target.is_dir() {
+                    let (files, chunks) = kb.ingest_dir(root, &target);
+                    (format!("{rel} ({files} files)"), chunks)
+                } else {
+                    let n = kb.ingest_path(root, &target).map_err(|e| -> Box<dyn Error> { e.into() })?;
+                    (rel.to_string(), n)
+                }
+            } else {
+                return Err("knowledge_ingest requires 'text' (with optional 'source') or 'path'".into());
+            };
+            kb.save(root).map_err(|e| -> Box<dyn Error> { e.into() })?;
+            serde_json::to_string(&json!({
+                "success": true,
+                "source": label,
+                "chunksAdded": added,
+                "totalChunks": kb.chunk_count()
+            }))?
+        }
+        "knowledge_search" => {
+            let query = arguments["query"].as_str().ok_or("query is required")?;
+            let k = arguments["k"].as_u64().unwrap_or(5) as usize;
+            let kb = crate::editor::knowledge_base::KnowledgeBase::load(root);
+            let hits: Vec<Value> = kb
+                .search(query, k)
+                .into_iter()
+                .map(|h| {
+                    json!({
+                        "source": h.source,
+                        "ordinal": h.ordinal,
+                        "score": h.score,
+                        "snippet": h.snippet
+                    })
+                })
+                .collect();
+            serde_json::to_string(&json!({
+                "query": query,
+                "resultCount": hits.len(),
+                "results": hits
+            }))?
+        }
         _ => return Ok(None),
     };
 

@@ -399,6 +399,10 @@ semantic_search_active: false,
         test_generator: crate::editor::test_generator::TestGenerator::default(),
         deploy_pipeline: None,
         voice_input: crate::editor::voice_commands::VoiceInputState::new(),
+        knowledge_base: crate::editor::knowledge_base::KnowledgeBase::new(),
+        knowledge_query: String::new(),
+        knowledge_ingest_input: String::new(),
+        knowledge_results: Vec::new(),
     };
 
     app.mirror_worker_events_into_timeline(&first_snapshot);
@@ -578,6 +582,10 @@ semantic_search_active: false,
         test_generator: crate::editor::test_generator::TestGenerator::default(),
         deploy_pipeline: None,
         voice_input: crate::editor::voice_commands::VoiceInputState::new(),
+        knowledge_base: crate::editor::knowledge_base::KnowledgeBase::new(),
+        knowledge_query: String::new(),
+        knowledge_ingest_input: String::new(),
+        knowledge_results: Vec::new(),
     };
 
     app.mirror_worker_events_into_timeline(&snapshot);

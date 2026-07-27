@@ -302,6 +302,14 @@ pub struct VelocityApp {
     pub deploy_pipeline: Option<crate::editor::deploy_pipeline::PipelineManager>,
     /// Voice-to-task input state.
     pub voice_input: crate::editor::voice_commands::VoiceInputState,
+    /// Unified knowledge / RAG store queried by agents and the Knowledge panel.
+    pub knowledge_base: crate::editor::knowledge_base::KnowledgeBase,
+    /// Draft query text in the Knowledge panel search box.
+    pub knowledge_query: String,
+    /// Draft path text in the Knowledge panel ingest box.
+    pub knowledge_ingest_input: String,
+    /// Last ranked results rendered in the Knowledge panel.
+    pub knowledge_results: Vec<crate::editor::knowledge_base::KnowledgeHit>,
 }
 
 impl VelocityApp {
@@ -823,6 +831,10 @@ impl VelocityApp {
             test_generator: crate::editor::test_generator::TestGenerator::default(),
             deploy_pipeline: None,
             voice_input: crate::editor::voice_commands::VoiceInputState::new(),
+            knowledge_base: crate::editor::knowledge_base::KnowledgeBase::load(&workspace_root),
+            knowledge_query: String::new(),
+            knowledge_ingest_input: String::new(),
+            knowledge_results: Vec::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);
