@@ -159,18 +159,35 @@ pub fn load_from_disk(workspace_root: &Path, path: &Path) -> Result<(NdaPortable
     Ok((NdaPortableDoc::new(), LoadedKind::Opaque(format!("unknown NDA flags {flags:#x}"))))
 }
 
-/// Write a document to disk honoring the per-document seal toggle. Returns the
-/// bytes written.
-pub fn save_to_disk(workspace_root: &Path, path: &Path, doc: &NdaPortableDoc, sealed: bool) -> Result<Vec<u8>, String> {
-    let portable = doc.to_portable_bytes();
-    let out = if sealed {
-        crate::agent::crypto::seal(workspace_root, &seal_label(Some(path)), &portable)
-            .ok_or_else(|| "no key material available to seal (falling back impossible)".to_string())?
-    } else {
-        portable
-    };
-    std::fs::write(path, &out).map_err(|e| format!("write failed: {e}"))?;
-    Ok(out)
+/// Outcome of a save, distinguishing a true sealed write from a graceful
+/// fallback to portable bytes when sealing is unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// Written as requested (`sealed` reflects whether the envelope was used).
+    Saved { sealed: bool },
+    /// Sealing was requested but key material was unavailable; the document was
+    /// saved portable instead so the edit is never lost.
+    FellBackToPortable,
+}
+
+/// Write a document to disk honoring the per-document seal toggle. If sealing
+/// is requested but no key material is available, this **falls back to writing
+/// portable bytes** (returning [`SaveOutcome::FellBackToPortable`]) rather than
+/// failing — a save is never lost. Uses the bounds-validating encoder so an
+/// oversized document surfaces a clear error instead of a corrupt file.
+pub fn save_to_disk(workspace_root: &Path, path: &Path, doc: &NdaPortableDoc, sealed: bool) -> Result<SaveOutcome, String> {
+    let portable = doc.try_to_portable_bytes().map_err(|e| e.to_string())?;
+    if sealed {
+        if let Some(envelope) = crate::agent::crypto::seal(workspace_root, &seal_label(Some(path)), &portable) {
+            std::fs::write(path, &envelope).map_err(|e| format!("write failed: {e}"))?;
+            return Ok(SaveOutcome::Saved { sealed: true });
+        }
+        // Seal unavailable — fall back to portable so the save is never lost.
+        std::fs::write(path, &portable).map_err(|e| format!("write failed: {e}"))?;
+        return Ok(SaveOutcome::FellBackToPortable);
+    }
+    std::fs::write(path, &portable).map_err(|e| format!("write failed: {e}"))?;
+    Ok(SaveOutcome::Saved { sealed: false })
 }
 
 /// The per-tab editor state for an NDA document.
@@ -944,9 +961,17 @@ impl NdaDocumentView {
             }
         };
         match save_to_disk(workspace_root, &path, &self.doc, self.sealed) {
-            Ok(_) => {
+            Ok(SaveOutcome::FellBackToPortable) => {
                 self.dirty = false;
-                self.kind = if self.sealed { LoadedKind::Sealed } else { LoadedKind::Portable };
+                self.sealed = false;
+                self.kind = LoadedKind::Portable;
+                self.image_textures.clear();
+                toasts.push(Toast::success(format!("Saved {}", path.display())));
+                toasts.push(Toast::info("Seal unavailable (no key material) — saved portable instead."));
+            }
+            Ok(SaveOutcome::Saved { sealed }) => {
+                self.dirty = false;
+                self.kind = if sealed { LoadedKind::Sealed } else { LoadedKind::Portable };
                 toasts.push(Toast::success(format!("Saved {}", path.display())));
             }
             Err(e) => {
@@ -1336,6 +1361,23 @@ mod tests {
         assert!(cmd.content.starts_with("data:image/png;base64,"), "normalized to PNG");
         assert_eq!((cmd.w, cmd.h), (5, 4), "real dimensions recorded");
         assert!(doc.triples.iter().any(|(_, p, o)| p == "nda:width" && o == "5"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn save_portable_writes_round_trippable_bytes() {
+        let tmp = std::env::temp_dir().join(format!("nda_save_{}.nda", std::process::id()));
+        let mut doc = NdaPortableDoc::new();
+        doc.set_title("Save Test");
+        doc.push_triple("s", "p", "o");
+        doc.push_command(DisplayCommand::rect(0, 0, 10, 10, 0xFF00_00FF));
+        // A non-sealed save always succeeds and reports Saved { sealed: false }.
+        let outcome = save_to_disk(&tmp, &tmp, &doc, false).unwrap();
+        assert_eq!(outcome, SaveOutcome::Saved { sealed: false });
+        // The bytes on disk decode back to the identical document.
+        let (loaded, kind) = load_from_disk(&tmp, &tmp).unwrap();
+        assert_eq!(kind, LoadedKind::Portable);
+        assert_eq!(loaded, doc);
         let _ = std::fs::remove_file(&tmp);
     }
 

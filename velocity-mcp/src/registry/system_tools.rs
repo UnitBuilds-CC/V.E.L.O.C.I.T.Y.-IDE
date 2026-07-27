@@ -760,15 +760,22 @@ fn native_convert_to_nda(root: &Path, arguments: &Value) -> Result<String, Box<d
         "converted via convert_to_nda",
         &origin,
     );
-    crate::editor::nda_document::save_to_disk(root, &out, &doc, seal)?;
+    let outcome = crate::editor::nda_document::save_to_disk(root, &out, &doc, seal)?;
+    let effective_sealed = matches!(outcome, crate::editor::nda_document::SaveOutcome::Saved { sealed: true });
+    let note = if outcome == crate::editor::nda_document::SaveOutcome::FellBackToPortable {
+        " NOTE: seal unavailable (no key material); saved portable instead."
+    } else {
+        ""
+    };
 
     Ok(format!(
-        "Success: converted {} to {} ({} triples, {} commands, sealed={}).",
+        "Success: converted {} to {} ({} triples, {} commands, sealed={}).{}",
         file_path,
         final_output,
         doc.triples.len(),
         doc.commands.len(),
-        seal
+        effective_sealed,
+        note
     ))
 }
 
