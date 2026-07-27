@@ -774,4 +774,82 @@ mod tests {
         // Malformed tokens are skipped, valid ones kept.
         assert_eq!(parse_vector_points("1,2;garbage;3,4;5"), vec![(1, 2), (3, 4)]);
     }
+
+    /// Build a buffer *by hand* following the documented 48-byte layout (not via
+    /// the encoder), then assert the decoder reads it and the encoder reproduces
+    /// it byte-for-byte. This locks the wire contract the reference `app.js`
+    /// implements: field offsets, sizes, endianness, and pool structure.
+    #[test]
+    fn golden_byte_contract() {
+        // Document: one triple ("a","b","c") + one DrawText command "T" @(1,2).
+        let mut doc = NdaPortableDoc::new();
+        doc.push_triple("a", "b", "c");
+        doc.push_command(DisplayCommand::text("T", 1, 2, 0x1122_3344));
+        let root = doc.merkle_root();
+
+        // Independent construction, field by field.
+        let mut g = Vec::new();
+        g.extend_from_slice(&NDA_MAGIC.to_le_bytes()); // 0..4 magic
+        g.extend_from_slice(&0u32.to_le_bytes()); // 4..8 flags = portable
+        g.extend_from_slice(&root); // 8..40 merkle root
+        g.extend_from_slice(&1u32.to_le_bytes()); // 40..44 tripleCount
+        g.extend_from_slice(&1u16.to_le_bytes()); // 44..46 commandCount
+        let pool_off: u16 = (PORTABLE_HEADER_LEN + 12 + 18) as u16; // 78
+        g.extend_from_slice(&pool_off.to_le_bytes()); // 46..48 stringPoolOffset
+        // Triple 0: s=2, p=5, o=8 (pool-relative byte offsets; each 1-char
+        // entry is 3 bytes: 2-byte length prefix + 1 char).
+        g.extend_from_slice(&2u32.to_le_bytes());
+        g.extend_from_slice(&5u32.to_le_bytes());
+        g.extend_from_slice(&8u32.to_le_bytes());
+        // Command 0: DrawText, color, x=1, y=2, w=0, h=0, content=11 ("T"), pad=0.
+        g.push(CommandKind::DrawText as u8);
+        g.extend_from_slice(&0x1122_3344u32.to_le_bytes());
+        g.extend_from_slice(&1u16.to_le_bytes());
+        g.extend_from_slice(&2u16.to_le_bytes());
+        g.extend_from_slice(&0u16.to_le_bytes());
+        g.extend_from_slice(&0u16.to_le_bytes());
+        g.extend_from_slice(&11u32.to_le_bytes());
+        g.push(0);
+        // String pool: "" @0, "a" @2, "b" @5, "c" @8, "T" @11.
+        g.extend_from_slice(&0u16.to_le_bytes());
+        g.extend_from_slice(&1u16.to_le_bytes());
+        g.push(b'a');
+        g.extend_from_slice(&1u16.to_le_bytes());
+        g.push(b'b');
+        g.extend_from_slice(&1u16.to_le_bytes());
+        g.push(b'c');
+        g.extend_from_slice(&1u16.to_le_bytes());
+        g.push(b'T');
+
+        // Decoder reads the hand-built buffer.
+        let parsed = NdaPortableDoc::from_portable_bytes(&g).expect("golden buffer parses");
+        assert_eq!(parsed, doc);
+        // Encoder reproduces it byte-for-byte.
+        assert_eq!(doc.to_portable_bytes(), g);
+    }
+
+    /// Deterministic round-trip property: a varied document (all command kinds,
+    /// unicode, dedup'd strings) encodes → decodes → re-encodes byte-identically.
+    #[test]
+    fn round_trip_property() {
+        let mut doc = NdaPortableDoc::new();
+        doc.set_title("Prop ✓");
+        for i in 0..37u16 {
+            doc.push_triple(format!("s{i}"), "pred", format!("o{}", i % 5));
+        }
+        doc.push_command(DisplayCommand::text("héllo wörld", 4, 8, 0xAABB_CCDD));
+        doc.push_command(DisplayCommand::rect(1, 2, 30, 40, 0x0011_2233));
+        doc.push_command(DisplayCommand::image("data:image/png;base64,AAAA", 0, 0, 64, 48));
+        doc.push_command(DisplayCommand::vector(&[(0, 0), (5, 5), (10, 0)], 2, 3, 2, 0xFF00_FF00));
+        doc.commit_revision("A", "a@x", "git", "2026-01-01T00:00:00Z", "m0", "ws");
+        doc.push_triple("extra", "p", "q");
+        doc.commit_revision("B", "b@x", "os", "2026-01-02T00:00:00Z", "m1", "ws");
+
+        let b1 = doc.try_to_portable_bytes().expect("within bounds");
+        let decoded = NdaPortableDoc::from_portable_bytes(&b1).expect("decodes");
+        assert_eq!(decoded, doc);
+        let b2 = decoded.try_to_portable_bytes().expect("re-encodes");
+        assert_eq!(b1, b2);
+        assert!(decoded.verify_history().is_ok());
+    }
 }
