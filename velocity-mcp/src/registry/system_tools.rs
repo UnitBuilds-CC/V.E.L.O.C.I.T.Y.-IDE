@@ -622,6 +622,47 @@ pub fn handle_system_tool(
                 "tests": tests
             }))?
         }
+        "code_coverage_analyze" => {
+            // T3c: auto test-coverage analysis. Discovers testable functions
+            // (optionally scoped to a file/dir via `path`), reports coverage,
+            // and scaffolds test skeletons for the untested ones.
+            let mut gen = crate::editor::test_generator::TestGenerator::default();
+            if let Some(rel) = arguments["path"].as_str() {
+                let target = resolve_workspace_path(root, rel, false)?;
+                if target.is_dir() {
+                    gen.analyze_coverage(&target);
+                } else {
+                    gen.analyze_file(root, &target);
+                }
+            } else {
+                gen.analyze_coverage(root);
+            }
+            let skeletons = gen.generate_tests();
+            let untested: Vec<Value> = gen
+                .analysis
+                .untested_functions
+                .iter()
+                .take(200)
+                .map(|f| {
+                    json!({
+                        "name": f.name,
+                        "file": f.file.display().to_string(),
+                        "line": f.line,
+                        "signature": f.signature
+                    })
+                })
+                .collect();
+            serde_json::to_string(&json!({
+                "summary": gen.coverage_summary(),
+                "coveragePercent": gen.analysis.coverage_percent,
+                "totalFunctions": gen.analysis.total_functions,
+                "testedFunctions": gen.analysis.tested_functions,
+                "untestedCount": gen.analysis.untested_functions.len(),
+                "untested": untested,
+                "skeletonCount": skeletons.len(),
+                "skeletons": skeletons.iter().map(|s| s.test_body.clone()).collect::<Vec<_>>()
+            }))?
+        }
         // ── Knowledge / RAG ─────────────────────────────────────────────────
         "knowledge_ingest" => {
             let mut kb = crate::editor::knowledge_base::KnowledgeBase::load(root);

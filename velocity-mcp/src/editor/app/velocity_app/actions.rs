@@ -1034,7 +1034,7 @@ impl VelocityApp {
     }
 
     /// Snapshot the active buffer's (path, extension, content) for an LSP request.
-    fn active_lsp_target(&self) -> Option<(PathBuf, String, String)> {
+    pub(crate) fn active_lsp_target(&self) -> Option<(PathBuf, String, String)> {
         let id = self.active_tab.clone()?;
         let buf = self.buffers.get(&id)?;
         let path = buf.path.clone()?;

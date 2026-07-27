@@ -121,6 +121,36 @@ pub struct HoverResult {
     pub range_start: Option<(usize, usize)>,
 }
 
+/// A document symbol from `textDocument/documentSymbol` (outline entry).
+///
+/// Normalizes both LSP response shapes — hierarchical `DocumentSymbol`
+/// (`range` + `children`) and flat `SymbolInformation` (`location`) — into a
+/// single recursive structure. `line` is 0-based.
+#[derive(Debug, Clone)]
+pub struct LspSymbol {
+    pub name: String,
+    /// LSP SymbolKind number (e.g. 12 = Function, 6 = Method, 9 = Constructor).
+    pub kind: u64,
+    /// Signature/detail string reported by the server, if any.
+    pub detail: String,
+    /// 0-based line of the symbol's declaration.
+    pub line: usize,
+    pub children: Vec<LspSymbol>,
+}
+
+impl LspSymbol {
+    /// Flatten the symbol tree depth-first into a list of functions/methods
+    /// (SymbolKind Function = 12, Method = 6, Constructor = 9).
+    pub fn flatten_functions(&self, out: &mut Vec<LspSymbol>) {
+        if matches!(self.kind, 6 | 9 | 12) {
+            out.push(self.clone());
+        }
+        for child in &self.children {
+            child.flatten_functions(out);
+        }
+    }
+}
+
 impl LspServer {
     pub fn new(config: LspServerConfig) -> Self {
         Self {
@@ -538,6 +568,27 @@ impl LspManager {
             None => Vec::new(),
         }
     }
+
+    /// Document symbol outline for a file (functions, structs, etc.). Degrades
+    /// to an empty vec when no server is available or the request times out.
+    /// Used by the test-coverage generator to discover testable functions.
+    pub fn document_symbols(
+        &mut self,
+        ext: &str,
+        path: &Path,
+        content: &str,
+    ) -> Vec<LspSymbol> {
+        self.sync_document(ext, path, content);
+        let id = match self.server_for_extension(ext) {
+            Some(s) => s.document_symbol(path),
+            None => return Vec::new(),
+        };
+        let Ok(id) = id else { return Vec::new() };
+        match self.await_response(ext, id) {
+            Some(resp) => parse_document_symbols(&resp),
+            None => Vec::new(),
+        }
+    }
 }
 
 /// Convert a filesystem path to a file:// URI.
@@ -810,6 +861,45 @@ pub fn parse_completion(v: &Value) -> Vec<CompletionItem> {
         .collect()
 }
 
+/// Parse a `textDocument/documentSymbol` response into a hierarchical symbol
+/// list. Accepts the JSON-RPC envelope (`{ "result": ... }`) or a bare result
+/// value, and both LSP shapes: hierarchical `DocumentSymbol[]` (with `range`
+/// and `children`) and flat `SymbolInformation[]` (with `location`).
+pub fn parse_document_symbols(v: &Value) -> Vec<LspSymbol> {
+    let result = match v.get("result") {
+        Some(r) if !r.is_null() => r,
+        Some(_) => return Vec::new(),
+        None => v, // caller passed the bare result value
+    };
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter().map(symbol_from_value).collect()
+}
+
+/// Build a single [`LspSymbol`] from a `DocumentSymbol` or `SymbolInformation`
+/// JSON value, recursing into `children` when present.
+fn symbol_from_value(sym: &Value) -> LspSymbol {
+    let name = sym.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+    let kind = sym.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
+    let detail = sym.get("detail").and_then(|d| d.as_str()).unwrap_or("").to_string();
+    // Hierarchical DocumentSymbol uses `range`; flat SymbolInformation uses `location.range`.
+    let line = sym
+        .get("range")
+        .or_else(|| sym.get("location").and_then(|l| l.get("range")))
+        .and_then(|r| r.get("start"))
+        .and_then(|s| s.get("line"))
+        .and_then(|l| l.as_u64())
+        .unwrap_or(0) as usize;
+    let children = sym
+        .get("children")
+        .and_then(|c| c.as_array())
+        .map(|arr| arr.iter().map(symbol_from_value).collect())
+        .unwrap_or_default();
+    LspSymbol { name, kind, detail, line, children }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1042,5 +1132,62 @@ mod tests {
         assert!(mgr.references("rs", path, 0, 0, "fn main() {}").is_empty());
         assert!(mgr.hover("rs", path, 0, 0, "fn main() {}").is_none());
         assert!(mgr.completion("rs", path, 0, 0, "fn main() {}").is_empty());
+    }
+
+    #[test]
+    fn parse_document_symbols_hierarchical() {
+        // Hierarchical DocumentSymbol[]: a struct (kind 23) nesting a method
+        // (kind 6) plus a top-level function (kind 12).
+        let resp = serde_json::json!({ "id": 7, "result": [
+            {
+                "name": "Widget", "kind": 23, "detail": "struct Widget",
+                "range": { "start": { "line": 3, "character": 0 }, "end": { "line": 9, "character": 1 } },
+                "children": [
+                    { "name": "render", "kind": 6, "detail": "fn render(&self)",
+                      "range": { "start": { "line": 5, "character": 4 }, "end": { "line": 7, "character": 5 } } }
+                ]
+            },
+            { "name": "main", "kind": 12, "detail": "fn main()",
+              "range": { "start": { "line": 11, "character": 0 }, "end": { "line": 13, "character": 1 } } }
+        ]});
+        let symbols = parse_document_symbols(&resp);
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, "Widget");
+        assert_eq!(symbols[0].children.len(), 1);
+        // Flattening picks out only functions/methods (method + function).
+        let mut fns = Vec::new();
+        for s in &symbols {
+            s.flatten_functions(&mut fns);
+        }
+        let names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["render", "main"]);
+        assert_eq!(fns[0].line, 5);
+        assert_eq!(fns[1].line, 11);
+    }
+
+    #[test]
+    fn parse_document_symbols_flat_symbol_information() {
+        // Flat SymbolInformation[] uses `location.range` instead of `range`.
+        let resp = serde_json::json!([
+            { "name": "helper", "kind": 12,
+              "location": { "uri": "file:///x.rs", "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 4, "character": 1 } } } }
+        ]);
+        let symbols = parse_document_symbols(&resp);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "helper");
+        assert_eq!(symbols[0].kind, 12);
+        assert_eq!(symbols[0].line, 2);
+    }
+
+    #[test]
+    fn parse_document_symbols_null_is_empty() {
+        assert!(parse_document_symbols(&serde_json::json!({ "id": 8, "result": null })).is_empty());
+    }
+
+    #[test]
+    fn manager_document_symbols_degrade_without_server() {
+        let mut mgr = LspManager::new();
+        let path = Path::new("/tmp/does_not_matter.rs");
+        assert!(mgr.document_symbols("rs", path, "fn main() {}").is_empty());
     }
 }

@@ -193,6 +193,17 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["source", "language"]
             }),
         },
+        Tool {
+            name: "code_coverage_analyze".to_string(),
+            description: "Analyze test coverage for the workspace (or a specific file/directory via 'path'). Discovers testable functions, reports the coverage percentage and untested functions, and scaffolds test skeletons for the gaps.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Optional workspace-relative path to a file or directory to scope the analysis. Omit to analyze the whole workspace." }
+                },
+                "required": []
+            }),
+        },
         // ── Knowledge / RAG ─────────────────────────────────────────────────
         Tool {
             name: "knowledge_ingest".to_string(),

@@ -287,10 +287,18 @@ impl VelocityApp {
         );
 
         let mut analyze = false;
+        let mut analyze_lsp = false;
         let mut generate = false;
         ui.horizontal(|ui| {
             if ui.button(RichText::new("Analyze workspace").size(10.0)).clicked() {
                 analyze = true;
+            }
+            if ui
+                .button(RichText::new("Analyze file (LSP)").size(10.0))
+                .on_hover_text("Discover testable functions in the active file via the language server's documentSymbol outline")
+                .clicked()
+            {
+                analyze_lsp = true;
             }
             let has_gaps = !self.test_generator.analysis.untested_functions.is_empty();
             if ui
@@ -350,6 +358,9 @@ impl VelocityApp {
         if analyze {
             self.run_coverage_analysis();
         }
+        if analyze_lsp {
+            self.run_lsp_coverage_analysis();
+        }
         if generate {
             let n = self.test_generator.generate_tests().len();
             self.toasts.push(crate::editor::toast::Toast::success(format!("Generated {n} test skeleton(s)")));
@@ -362,6 +373,32 @@ impl VelocityApp {
         self.test_generator.analyze_coverage(&ws);
         let summary = self.test_generator.coverage_summary();
         self.toasts.push(crate::editor::toast::Toast::info(summary));
+    }
+
+    /// Analyze the active file for test-coverage gaps using the language
+    /// server's `documentSymbol` outline (T3c). Degrades gracefully when no
+    /// file is open or no language server is available.
+    pub fn run_lsp_coverage_analysis(&mut self) {
+        let Some((path, ext, content)) = self.active_lsp_target() else {
+            self.toasts
+                .push(crate::editor::toast::Toast::info("No file open for LSP coverage analysis"));
+            return;
+        };
+        let symbols = match self.lsp_manager.as_mut() {
+            Some(lsp) => lsp.document_symbols(&ext, &path, &content),
+            None => Vec::new(),
+        };
+        if symbols.is_empty() {
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "No symbols from language server (server absent or timed out)",
+            ));
+            return;
+        }
+        self.test_generator.ingest_lsp_symbol_list(&path, &symbols);
+        let summary = self.test_generator.coverage_summary();
+        self.toasts.push(crate::editor::toast::Toast::success(format!(
+            "LSP coverage: {summary}"
+        )));
     }
 
     // ═══════════════════════════════════════════════════════════════════════

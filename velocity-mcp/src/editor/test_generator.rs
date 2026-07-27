@@ -174,23 +174,69 @@ impl TestGenerator {
     pub fn ingest_lsp_symbols(&mut self, file: &Path, symbols_json: &serde_json::Value) {
         let mut functions = Vec::new();
         parse_lsp_symbols_recursive(file, symbols_json, &mut functions);
+        self.apply_discovered_functions(file, functions);
+    }
 
-        // Merge with existing analysis (LSP data takes priority)
-        let test_index: HashMap<String, bool> = self.analysis.untested_functions.iter()
-            .map(|f| (f.name.clone(), f.has_existing_test))
-            .collect();
+    /// T3c: Ingest a typed LSP symbol outline (from
+    /// [`crate::editor::lsp_client::LspManager::document_symbols`]) and rebuild
+    /// the coverage analysis from the functions it declares. This is the
+    /// preferred end-to-end path: the language server discovers the testable
+    /// functions, and the generator scaffolds tests for the untested ones.
+    pub fn ingest_lsp_symbol_list(
+        &mut self,
+        file: &Path,
+        symbols: &[crate::editor::lsp_client::LspSymbol],
+    ) {
+        let mut functions = Vec::new();
+        for sym in symbols {
+            let mut flat = Vec::new();
+            sym.flatten_functions(&mut flat);
+            for f in flat {
+                let visibility = if f.detail.contains("pub") {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                };
+                functions.push(TestableFunction {
+                    name: f.name,
+                    file: file.to_path_buf(),
+                    // LSP lines are 0-based; TestableFunction uses 1-based lines.
+                    line: f.line + 1,
+                    signature: f.detail,
+                    visibility,
+                    has_existing_test: false,
+                });
+            }
+        }
+        self.apply_discovered_functions(file, functions);
+    }
 
+    /// Analyze a single source file (regex-based discovery) against the test
+    /// index of its containing workspace. Useful when no language server is
+    /// available for the file's language.
+    pub fn analyze_file(&mut self, workspace_root: &Path, file: &Path) {
+        let mut functions = Vec::new();
+        if is_source_file(&file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()) {
+            extract_functions(file, &mut functions);
+        }
+        self.apply_discovered_functions(workspace_root, functions);
+    }
+
+    /// Rebuild the coverage analysis from a set of discovered functions,
+    /// marking each as tested when a matching test exists in the workspace that
+    /// contains `root`.
+    fn apply_discovered_functions(&mut self, root: &Path, mut functions: Vec<TestableFunction>) {
+        let test_index = build_test_index_for(root);
         for func in &mut functions {
             func.has_existing_test = test_index.contains_key(&func.name);
         }
-
         let total = functions.len();
         let tested = functions.iter().filter(|f| f.has_existing_test).count();
-        let untested: Vec<_> = functions.into_iter()
+        let untested: Vec<_> = functions
+            .into_iter()
             .filter(|f| !f.has_existing_test)
             .filter(|f| !self.config.public_only || f.visibility == Visibility::Public)
             .collect();
-
         self.analysis = CoverageAnalysis {
             total_functions: total,
             tested_functions: tested,
@@ -533,6 +579,17 @@ fn build_test_index(workspace_root: &Path) -> HashMap<String, PathBuf> {
     index
 }
 
+/// Build a test-name index over the workspace containing `root`. When `root`
+/// is a file, its parent directory is used as the scan root.
+fn build_test_index_for(root: &Path) -> HashMap<String, PathBuf> {
+    let scan_root = if root.is_file() {
+        root.parent().map(Path::to_path_buf).unwrap_or_else(|| root.to_path_buf())
+    } else {
+        root.to_path_buf()
+    };
+    build_test_index(&scan_root)
+}
+
 fn walk_for_tests(root: &Path, dir: &Path, index: &mut HashMap<String, PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -593,7 +650,7 @@ fn collect_functions(root: &Path, dir: &Path, functions: &mut Vec<TestableFuncti
         if path.is_dir() {
             collect_functions(root, &path, functions);
         } else if path.is_file() && is_source_file(&name) {
-            extract_functions(root, &path, functions);
+            extract_functions(&path, functions);
         }
     }
 }
@@ -606,11 +663,11 @@ fn is_source_file(name: &str) -> bool {
         || name.ends_with(".tsx")
 }
 
-fn extract_functions(root: &Path, path: &Path, functions: &mut Vec<TestableFunction>) {
+fn extract_functions(path: &Path, functions: &mut Vec<TestableFunction>) {
     let Ok(content) = fs::read_to_string(path) else {
         return;
     };
-    let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+    let rel = path.to_path_buf();
 
     for (idx, line) in content.lines().enumerate() {
         let trimmed = line.trim_start();
@@ -714,5 +771,65 @@ mod tests {
         assert_eq!(TestFramework::RustBuiltin.test_annotation(), "#[test]");
         assert_eq!(TestFramework::Pytest.test_annotation(), "def test_");
         assert_eq!(TestFramework::Jest.test_annotation(), "test('");
+    }
+
+    #[test]
+    fn ingest_typed_lsp_symbols_builds_analysis() {
+        use crate::editor::lsp_client::LspSymbol;
+        let symbols = vec![
+            LspSymbol {
+                name: "add".into(),
+                kind: 12,
+                detail: "pub fn add(a: i32, b: i32) -> i32".into(),
+                line: 4, // 0-based
+                children: vec![],
+            },
+            LspSymbol {
+                name: "Widget".into(),
+                kind: 23, // struct: not a function
+                detail: "struct Widget".into(),
+                line: 0,
+                children: vec![LspSymbol {
+                    name: "render".into(),
+                    kind: 6, // method
+                    detail: "fn render(&self)".into(),
+                    line: 9,
+                    children: vec![],
+                }],
+            },
+        ];
+        let mut gen = TestGenerator::default();
+        gen.ingest_lsp_symbol_list(Path::new("src/lib.rs"), &symbols);
+        // struct itself is excluded; its method + the free function are discovered.
+        assert_eq!(gen.analysis.total_functions, 2);
+        let names: Vec<&str> = gen
+            .analysis
+            .untested_functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert!(names.contains(&"add"));
+        assert!(names.contains(&"render"));
+        let add = gen.analysis.untested_functions.iter().find(|f| f.name == "add").unwrap();
+        assert_eq!(add.visibility, Visibility::Public); // detail contains "pub"
+        assert_eq!(add.line, 5); // converted to 1-based
+    }
+
+    #[test]
+    fn analyze_file_discovers_functions_and_generates() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("math.rs");
+        std::fs::write(
+            &src,
+            "pub fn add(a: i32, b: i32) -> i32 { a + b }\nfn helper() {}\n",
+        )
+        .unwrap();
+        let mut gen = TestGenerator::default();
+        gen.analyze_file(dir.path(), &src);
+        assert_eq!(gen.analysis.total_functions, 2);
+        assert_eq!(gen.analysis.tested_functions, 0);
+        let tests = gen.generate_tests();
+        assert!(!tests.is_empty());
+        assert!(tests.iter().any(|t| t.function_name == "add"));
     }
 }
