@@ -384,6 +384,152 @@ pub fn handle_wa_tool(
                 "has_window": p.has_window,
             })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string())
         }
+        "wa_process_kill" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            let success = crate::wa::process_mgmt::ProcessManager::kill(pid);
+            format!("{{\"success\":{},\"pid\":{}}}", success, pid)
+        }
+        "wa_process_kill_tree" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            let killed = crate::wa::process_mgmt::ProcessManager::kill_tree(pid);
+            format!("{{\"success\":true,\"pid\":{},\"killed\":{}}}", pid, killed)
+        }
+        "wa_process_running" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            let running = crate::wa::process_mgmt::ProcessManager::is_running(pid);
+            format!("{{\"pid\":{},\"running\":{}}}", pid, running)
+        }
+        "wa_process_info" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            match crate::wa::process_mgmt::ProcessManager::get_process(pid) {
+                Some(p) => serde_json::to_string(&serde_json::json!({
+                    "pid": p.pid,
+                    "name": p.name,
+                    "exe_path": p.exe_path,
+                    "parent_pid": p.parent_pid,
+                    "main_window_title": p.main_window_title,
+                    "has_window": p.has_window,
+                    "cpu_percent": p.cpu_percent,
+                    "memory_bytes": p.memory_bytes,
+                })).unwrap_or_else(|_| "{}".to_string()),
+                None => format!("{{\"pid\":{},\"found\":false}}", pid),
+            }
+        }
+        "wa_process_wait" => {
+            let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
+            let timeout_ms = arguments["timeoutMs"].as_u64().unwrap_or(5000);
+            let condition = if let Some(title) = arguments["windowTitleContains"].as_str() {
+                crate::wa::process_mgmt::ProcessWaitCondition::WindowAppears {
+                    title_contains: title.to_string(),
+                }
+            } else {
+                crate::wa::process_mgmt::ProcessWaitCondition::Exit
+            };
+            let result = crate::wa::process_mgmt::ProcessManager::wait_for(
+                pid,
+                &condition,
+                std::time::Duration::from_millis(timeout_ms),
+            );
+            format!(
+                "{{\"condition_met\":{},\"elapsed_ms\":{},\"exit_code\":{},\"detail\":\"{}\"}}",
+                result.condition_met,
+                result.elapsed.as_millis(),
+                result.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "null".to_string()),
+                result.detail.replace('"', "\\\"")
+            )
+        }
+        // ─── UIA Direct (cached-tree lookup / invoke) ─────────────────────────
+        "wa_uia_tree" => {
+            let pid = arguments["processId"].as_u64().ok_or("processId is required")? as u32;
+            let max_depth = arguments["maxDepth"].as_u64().unwrap_or(4) as u32;
+            let max_children = arguments["maxChildren"].as_u64().unwrap_or(64) as u32;
+            let mut client = crate::wa::uia_ffi::UiaDirectClient::initialize_for_process(pid)
+                .map_err(|e| Box::<dyn Error>::from(format!("UIA init failed: {e}")))?;
+            let tree = client
+                .build_tree(pid, max_depth, max_children)
+                .map_err(|e| Box::<dyn Error>::from(format!("UIA tree build failed: {e}")))?;
+            serde_json::to_string(&serde_json::json!({
+                "process_id": tree.process_id,
+                "element_count": tree.element_count,
+                "fresh": tree.is_fresh(),
+            })).unwrap_or_else(|_| "{}".to_string())
+        }
+        "wa_uia_lookup" => {
+            let pid = arguments["processId"].as_u64().ok_or("processId is required")? as u32;
+            let max_depth = arguments["maxDepth"].as_u64().unwrap_or(4) as u32;
+            let max_children = arguments["maxChildren"].as_u64().unwrap_or(64) as u32;
+            let mut client = crate::wa::uia_ffi::UiaDirectClient::initialize_for_process(pid)
+                .map_err(|e| Box::<dyn Error>::from(format!("UIA init failed: {e}")))?;
+            let tree = client
+                .build_tree(pid, max_depth, max_children)
+                .map_err(|e| Box::<dyn Error>::from(format!("UIA tree build failed: {e}")))?;
+            if let Some(aid) = arguments["automationId"].as_str() {
+                match tree.find_by_id(aid) {
+                    Some(el) => serde_json::to_string(&uia_element_json(el))
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    None => format!("{{\"found\":false,\"automation_id\":\"{}\"}}", aid),
+                }
+            } else if let Some(name) = arguments["name"].as_str() {
+                let matches = tree.find_by_name(name);
+                serde_json::to_string(
+                    &matches.iter().map(|el| uia_element_json(el)).collect::<Vec<_>>(),
+                ).unwrap_or_else(|_| "[]".to_string())
+            } else if arguments["x"].is_number() && arguments["y"].is_number() {
+                let x = arguments["x"].as_f64().unwrap_or(0.0);
+                let y = arguments["y"].as_f64().unwrap_or(0.0);
+                match tree.element_at_point(x, y) {
+                    Some(el) => serde_json::to_string(&uia_element_json(el))
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    None => format!("{{\"found\":false,\"x\":{},\"y\":{}}}", x, y),
+                }
+            } else {
+                return Err(Box::<dyn Error>::from(
+                    "provide automationId, name, or x+y for wa_uia_lookup",
+                ));
+            }
+        }
+        "wa_uia_invoke" => {
+            let pid = arguments["processId"].as_u64().ok_or("processId is required")? as u32;
+            let pattern_str = arguments["pattern"].as_str().ok_or("pattern is required")?;
+            let pattern = crate::wa::uia_ffi::UiaPattern::from_str(pattern_str)
+                .ok_or_else(|| format!("unknown UIA pattern '{pattern_str}'"))?;
+            let value = arguments["value"].as_str();
+            let max_depth = arguments["maxDepth"].as_u64().unwrap_or(4) as u32;
+            let max_children = arguments["maxChildren"].as_u64().unwrap_or(64) as u32;
+            let mut client = crate::wa::uia_ffi::UiaDirectClient::initialize_for_process(pid)
+                .map_err(|e| Box::<dyn Error>::from(format!("UIA init failed: {e}")))?;
+            let tree = client
+                .build_tree(pid, max_depth, max_children)
+                .map_err(|e| Box::<dyn Error>::from(format!("UIA tree build failed: {e}")))?;
+            let element = if let Some(aid) = arguments["automationId"].as_str() {
+                tree.find_by_id(aid).cloned()
+            } else if let Some(name) = arguments["name"].as_str() {
+                tree.find_by_name(name).first().cloned().cloned()
+            } else if arguments["x"].is_number() && arguments["y"].is_number() {
+                let x = arguments["x"].as_f64().unwrap_or(0.0);
+                let y = arguments["y"].as_f64().unwrap_or(0.0);
+                tree.element_at_point(x, y).cloned()
+            } else {
+                return Err(Box::<dyn Error>::from(
+                    "provide automationId, name, or x+y to target the element",
+                ));
+            };
+            let Some(element) = element else {
+                return Err(Box::<dyn Error>::from("target element not found in UIA tree"));
+            };
+            match client.invoke_pattern(&element, pattern, value) {
+                Ok(()) => format!(
+                    "{{\"success\":true,\"pattern\":\"{}\",\"element\":\"{}\"}}",
+                    pattern_str,
+                    element.name.replace('"', "\\\"")
+                ),
+                Err(e) => format!(
+                    "{{\"success\":false,\"pattern\":\"{}\",\"error\":\"{}\"}}",
+                    pattern_str,
+                    e.replace('"', "\\\"")
+                ),
+            }
+        }
         // ─── Window Management ────────────────────────────────────────────────────
         "wa_window_list" => {
             let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
@@ -633,4 +779,24 @@ pub fn handle_wa_tool(
     };
 
     Ok(Some(result))
+}
+
+/// Serialise a cached UIA element into a compact JSON description for tool output.
+pub fn uia_element_json(el: &crate::wa::uia_ffi::CachedUiaElement) -> serde_json::Value {
+    serde_json::json!({
+        "automation_id": el.automation_id,
+        "name": el.name,
+        "control_type": el.control_type,
+        "class_name": el.class_name,
+        "enabled": el.is_enabled,
+        "offscreen": el.is_offscreen,
+        "depth": el.depth,
+        "rect": {
+            "x": el.bounding_rect.x,
+            "y": el.bounding_rect.y,
+            "width": el.bounding_rect.width,
+            "height": el.bounding_rect.height,
+        },
+        "patterns": el.supported_patterns.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+    })
 }

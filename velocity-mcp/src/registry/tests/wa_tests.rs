@@ -187,3 +187,91 @@ fn wa_virtual_desktop_script_generation() {
     assert_eq!(state.by_name("personal").unwrap().index, 1);
     assert_eq!(state.by_index(0).unwrap().name.as_deref(), Some("Work"));
 }
+
+#[test]
+fn wa_process_tools_are_dispatched_and_return_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(&root).unwrap();
+
+    // A bogus PID should report not-running rather than erroring.
+    let running = call_tool_in_workspace(&root, "wa_process_running", &json!({"pid": 0xFFFF_FFFEu32}))
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&running).unwrap();
+    assert_eq!(v["running"], json!(false));
+
+    // info for a bogus PID reports found:false (graceful, no panic).
+    let info = call_tool_in_workspace(&root, "wa_process_info", &json!({"pid": 0xFFFF_FFFEu32}))
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(v["found"], json!(false));
+
+    // Missing required argument is a clean error, not a panic.
+    assert!(call_tool_in_workspace(&root, "wa_process_kill", &json!({})).is_err());
+}
+
+#[test]
+fn wa_uia_tools_validate_arguments() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(&root).unwrap();
+
+    // Missing processId is a clean error.
+    assert!(call_tool_in_workspace(&root, "wa_uia_tree", &json!({})).is_err());
+
+    // Unknown pattern is rejected before any COM work.
+    let err = call_tool_in_workspace(
+        &root,
+        "wa_uia_invoke",
+        &json!({"processId": 1, "pattern": "NotAPattern"}),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("unknown UIA pattern"));
+}
+
+#[test]
+fn wa_uia_element_json_serialises_fields() {
+    use crate::wa::uia_ffi::{CachedUiaElement, UiaPattern, UiaRect};
+    use crate::registry::wa_tools::uia_element_json;
+
+    let el = CachedUiaElement {
+        runtime_id: vec![1, 2, 3],
+        automation_id: "btnOk".to_string(),
+        name: "OK".to_string(),
+        control_type: "Button".to_string(),
+        class_name: "Button".to_string(),
+        bounding_rect: UiaRect { x: 10.0, y: 20.0, width: 80.0, height: 24.0 },
+        is_enabled: true,
+        is_offscreen: false,
+        process_id: 4242,
+        supported_patterns: vec![UiaPattern::Invoke, UiaPattern::Value],
+        child_index: 0,
+        depth: 1,
+        children: Vec::new(),
+    };
+    let v = uia_element_json(&el);
+    assert_eq!(v["automation_id"], json!("btnOk"));
+    assert_eq!(v["control_type"], json!("Button"));
+    assert_eq!(v["rect"]["width"], json!(80.0));
+    assert_eq!(v["patterns"], json!(["Invoke", "Value"]));
+}
+
+#[test]
+fn wa_new_tools_are_advertised_in_definitions() {
+    let tools = crate::registry::get_tools();
+    for name in [
+        "wa_process_kill",
+        "wa_process_kill_tree",
+        "wa_process_running",
+        "wa_process_info",
+        "wa_process_wait",
+        "wa_uia_tree",
+        "wa_uia_lookup",
+        "wa_uia_invoke",
+    ] {
+        assert!(
+            tools.iter().any(|t| t.name == name),
+            "missing tool definition for {name}"
+        );
+    }
+}

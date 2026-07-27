@@ -666,5 +666,113 @@ pub fn get_wa_tools() -> Vec<Tool> {
                 }
             }),
         },
+        // ─── Process Management (extended) ───────────────────────────────────
+        Tool {
+            name: "wa_process_kill".to_string(),
+            description: "Force-kill a process immediately by PID (no graceful shutdown).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 1, "description": "Process id to kill." }
+                },
+                "required": ["pid"]
+            }),
+        },
+        Tool {
+            name: "wa_process_kill_tree".to_string(),
+            description: "Kill a process and all of its descendant processes.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 1, "description": "Root process id of the tree to kill." }
+                },
+                "required": ["pid"]
+            }),
+        },
+        Tool {
+            name: "wa_process_running".to_string(),
+            description: "Check whether a process with the given PID is currently running.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 1, "description": "Process id to check." }
+                },
+                "required": ["pid"]
+            }),
+        },
+        Tool {
+            name: "wa_process_info".to_string(),
+            description: "Get detailed information about a single process by PID.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 1, "description": "Process id to inspect." }
+                },
+                "required": ["pid"]
+            }),
+        },
+        Tool {
+            name: "wa_process_wait".to_string(),
+            description: "Wait for a process condition (exit by default, or a window title to appear) up to a timeout.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "minimum": 1, "description": "Process id to wait on." },
+                    "timeoutMs": { "type": "integer", "minimum": 0, "description": "Maximum wait time in milliseconds. Default 5000." },
+                    "windowTitleContains": { "type": "string", "description": "Optional: wait for a window whose title contains this substring instead of process exit." }
+                },
+                "required": ["pid"]
+            }),
+        },
+        // ─── UIA Direct (cached-tree lookup / invoke) ─────────────────────────
+        Tool {
+            name: "wa_uia_tree".to_string(),
+            description: "Build the cached UIAutomation tree for a process via direct COM (fast path) and report its size.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "processId": { "type": "integer", "minimum": 1, "description": "Target process id." },
+                    "maxDepth": { "type": "integer", "minimum": 0, "description": "Maximum traversal depth. Default 4." },
+                    "maxChildren": { "type": "integer", "minimum": 1, "description": "Maximum children inspected per node. Default 64." }
+                },
+                "required": ["processId"]
+            }),
+        },
+        Tool {
+            name: "wa_uia_lookup".to_string(),
+            description: "Look up a UIAutomation element in a process's cached tree by automationId, name, or screen point (x+y).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "processId": { "type": "integer", "minimum": 1, "description": "Target process id." },
+                    "automationId": { "type": "string", "description": "AutomationId to look up (exact match)." },
+                    "name": { "type": "string", "description": "Name to look up (may return multiple)." },
+                    "x": { "type": "number", "description": "Screen x coordinate for point lookup." },
+                    "y": { "type": "number", "description": "Screen y coordinate for point lookup." },
+                    "maxDepth": { "type": "integer", "minimum": 0, "description": "Maximum traversal depth. Default 4." },
+                    "maxChildren": { "type": "integer", "minimum": 1, "description": "Maximum children inspected per node. Default 64." }
+                },
+                "required": ["processId"]
+            }),
+        },
+        Tool {
+            name: "wa_uia_invoke".to_string(),
+            description: "Invoke a UIAutomation pattern (e.g. Invoke, Value, Toggle) on an element targeted by automationId, name, or x+y.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "processId": { "type": "integer", "minimum": 1, "description": "Target process id." },
+                    "pattern": { "type": "string", "description": "Pattern name: Invoke, Value, RangeValue, Selection, SelectionItem, Toggle, ExpandCollapse, Scroll, Transform, Window, etc." },
+                    "value": { "type": "string", "description": "Optional value for value-bearing patterns (e.g. Value)." },
+                    "automationId": { "type": "string", "description": "Target element AutomationId." },
+                    "name": { "type": "string", "description": "Target element name (first match)." },
+                    "x": { "type": "number", "description": "Screen x coordinate for point targeting." },
+                    "y": { "type": "number", "description": "Screen y coordinate for point targeting." },
+                    "maxDepth": { "type": "integer", "minimum": 0, "description": "Maximum traversal depth. Default 4." },
+                    "maxChildren": { "type": "integer", "minimum": 1, "description": "Maximum children inspected per node. Default 64." }
+                },
+                "required": ["processId", "pattern"]
+            }),
+        },
     ]
 }
