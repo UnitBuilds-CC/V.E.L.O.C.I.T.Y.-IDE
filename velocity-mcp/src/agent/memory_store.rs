@@ -330,4 +330,59 @@ mod tests {
         let sim = cosine_similarity(&a, &b);
         assert!(sim < 0.001);
     }
+
+    #[test]
+    fn recall_ranks_by_relevance_and_filters_noise() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("k_auth", "oauth login authentication flow tokens", &["auth"], 0.9);
+        mem.remember("k_db", "database connection pooling migrations", &["db"], 0.9);
+        mem.remember("k_unrelated", "cooking pasta recipes basil", &["food"], 0.9);
+
+        let hits = mem.recall("authentication login tokens", 5);
+        // The auth memory must rank first.
+        assert_eq!(hits[0].entry.key, "k_auth");
+        // The unrelated cooking memory shares no terms and is filtered out.
+        assert!(!hits.iter().any(|h| h.entry.key == "k_unrelated"));
+    }
+
+    #[test]
+    fn recall_respects_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        for i in 0..10 {
+            mem.remember(
+                &format!("k{i}"),
+                &format!("shared term number {i}"),
+                &["tag"],
+                0.5,
+            );
+        }
+        let hits = mem.recall("shared term", 3);
+        assert_eq!(hits.len(), 3);
+    }
+
+    #[test]
+    fn retention_prunes_lowest_score_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.max_entries = 5;
+        // Insert 6 entries with strictly increasing scores.
+        for i in 0..6 {
+            let score = 0.1 + (i as f64) * 0.1; // 0.1 .. 0.6
+            mem.remember(&format!("k{i}"), &format!("content {i}"), &["t"], score);
+        }
+        assert_eq!(mem.len(), 5);
+        // The lowest-score entry (k0) was pruned; the highest (k5) survives.
+        assert!(!mem.entries.contains_key("k0"));
+        assert!(mem.entries.contains_key("k5"));
+    }
+
+    #[test]
+    fn recall_empty_query_returns_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mem = PersistentMemory::open(dir.path());
+        mem.remember("k", "some content here", &["t"], 0.5);
+        assert!(mem.recall("   ", 5).is_empty());
+    }
 }

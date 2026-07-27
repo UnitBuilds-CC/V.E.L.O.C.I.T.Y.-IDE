@@ -157,7 +157,15 @@ impl AgentMemoryManager {
                             let content = String::from_utf8_lossy(&plain);
                             let store = parse_member_memory(stem, &content);
                             if !store.memories.is_empty() {
-                                self.stores.push(store);
+                                // Replace any existing store for this member so
+                                // repeated loads never accumulate duplicates.
+                                if let Some(pos) =
+                                    self.stores.iter().position(|s| s.member_id == store.member_id)
+                                {
+                                    self.stores[pos] = store;
+                                } else {
+                                    self.stores.push(store);
+                                }
                             }
                         }
                     }
@@ -379,5 +387,41 @@ mod tests {
         let ctx = store.inject_context("rust naming");
         assert!(ctx.contains("<member_memory>"));
         assert!(ctx.contains("snake_case"));
+    }
+
+    #[test]
+    fn manager_round_trip_is_durable_across_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut mgr = AgentMemoryManager::new(dir.path());
+            mgr.remember(
+                "member_a",
+                AgentMemory::new("Deploy lesson", "Always run migrations before deploy", "lesson", vec!["deploy", "migration"]),
+            );
+            mgr.save_all();
+        }
+        // A fresh manager (new session) must reload the persisted memory.
+        let mut mgr2 = AgentMemoryManager::new(dir.path());
+        mgr2.load_all();
+        let ctx = mgr2.context_for("member_a", "deploy migration");
+        assert!(ctx.contains("migrations before deploy"));
+    }
+
+    #[test]
+    fn manager_load_all_does_not_duplicate_stores() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut mgr = AgentMemoryManager::new(dir.path());
+            mgr.remember(
+                "member_b",
+                AgentMemory::new("Pattern", "Use connection pooling", "pattern", vec!["db"]),
+            );
+            mgr.save_all();
+        }
+        let mut mgr2 = AgentMemoryManager::new(dir.path());
+        mgr2.load_all();
+        mgr2.load_all(); // repeated load must not accumulate duplicates
+        let count = mgr2.stores.iter().filter(|s| s.member_id == "member_b").count();
+        assert_eq!(count, 1);
     }
 }
