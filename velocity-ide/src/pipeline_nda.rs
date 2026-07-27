@@ -179,6 +179,7 @@ pub enum PipelineMode {
 }
 
 impl PipelineMode {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "nda" | "native" => Self::Nda,
@@ -317,6 +318,7 @@ impl NdaPipeline {
         self._generate_inner(condition, max_opcodes, on_opcode, t_start)
     }
 
+    #[allow(clippy::explicit_counter_loop)]
     fn _generate_inner(
         &mut self,
         condition:   Option<&[f32]>,

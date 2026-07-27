@@ -333,7 +333,7 @@ mod tests {
     fn test_load_fp32_bin_too_small() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("tiny.bin");
-        std::fs::write(&path, &[0, 0]).unwrap();
+        std::fs::write(&path, [0, 0]).unwrap();
         assert!(load_fp32_bin(&path).is_err());
     }
 

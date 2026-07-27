@@ -71,6 +71,7 @@ pub struct VulkanBitNetLayer {
 }
 
 impl VulkanBitNetLayer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver: &VulkanDriver,
         weight_q: &[u8],

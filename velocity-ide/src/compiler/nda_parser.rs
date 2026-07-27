@@ -19,8 +19,8 @@ pub fn hash_name(name: &str) -> u64 {
 
 /// Helper: build synthetic matrix node of shape rows x cols.
 pub fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
-    let rows = rows.min(65535).max(1) as u16;
-    let cols = cols.min(65535).max(1) as u16;
+    let rows = rows.clamp(1, 65535) as u16;
+    let cols = cols.clamp(1, 65535) as u16;
     let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
     let sign: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
     let extra: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0x55 } else { 0xAA }).collect();
@@ -29,7 +29,7 @@ pub fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
 
 /// Helper: build synthetic norm node of shape size.
 pub fn build_norm_node(size: usize) -> NdaNode {
-    let size = size.min(65535).max(1) as u16;
+    let size = size.clamp(1, 65535) as u16;
     let bitmap_bytes = (size as usize).div_ceil(8);
     let weight = vec![0xFF; bitmap_bytes];
     let bias = vec![0x00; bitmap_bytes];
@@ -764,7 +764,7 @@ mod tests {
                 NdaNode::Scope { children } => children.iter().any(has_while),
                 NdaNode::Loop { body, .. } => body.iter().any(has_while),
                 NdaNode::If { then_body, else_body, .. } => {
-                    then_body.iter().any(has_while) || else_body.as_ref().map_or(false, |eb| eb.iter().any(has_while))
+                    then_body.iter().any(has_while) || else_body.as_ref().is_some_and(|eb| eb.iter().any(has_while))
                 }
                 _ => false,
             }

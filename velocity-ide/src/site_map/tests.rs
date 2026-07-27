@@ -14,7 +14,7 @@ use super::verifier::NdaNode;
 
 #[cfg(test)]
 fn make_ndavec(len: usize, val: u8) -> NdaVec {
-    let bytes = (len + 7) / 8;
+    let bytes = len.div_ceil(8);
     NdaVec {
         len,
         log2_scale: 0,
@@ -197,7 +197,7 @@ fn test_graph_query_engine() {
 
     sm.put_file_snapshot(
         "src/main.rs",
-        &vec![
+        &[
             VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 2 },
             VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
         ],
@@ -222,13 +222,13 @@ fn file_snapshots_replace_live_semantic_state() {
 
     sm.put_file_snapshot(
         "src/main.rs",
-        &vec![VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 20 }],
+        &[VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 20 }],
     ).unwrap();
     assert_eq!(sm.find_live_triples(Some(10), Some(2), None).len(), 1);
 
     sm.put_file_snapshot(
         "src/main.rs",
-        &vec![VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 30 }],
+        &[VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 30 }],
     ).unwrap();
     let live = sm.find_live_triples(Some(10), Some(2), None);
     assert_eq!(live.len(), 1);

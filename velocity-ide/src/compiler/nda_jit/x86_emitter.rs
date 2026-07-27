@@ -196,6 +196,7 @@ struct JumpPatch {
 
 pub use super::symbolic_loop::detect_and_compile_symbolic_loop;
 
+#[allow(clippy::too_many_arguments)]
 fn compile_scalar_node(
     node: &NdaNode,
     emitter: &mut X86Emitter,
@@ -936,7 +937,8 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
 
         let total_slots = registry.total_slots();
         let num_nodes = nodes.len();
-        Some(Arc::new(move |state: &mut JitState<'_>| {
+        Some(Arc::new(#[allow(clippy::needless_range_loop)]
+        move |state: &mut JitState<'_>| {
             state.executed_nodes += num_nodes;
 
             let num_slots = state.variables.len().max(total_slots);

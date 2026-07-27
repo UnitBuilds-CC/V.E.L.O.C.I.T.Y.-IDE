@@ -100,9 +100,10 @@ fn render_index(model: &WikiModel) -> String {
             out.push_str(&format!("### Module: {}\n\n", module));
             for page in pages {
                 out.push_str(&format!(
-                    "- [{}]({}) — {}\n",
+                    "- [{}](files/{}/{}.md) — {}\n",
                     page.title,
-                    format!("files/{}/{}.md", slugify_module(module), page.slug),
+                    slugify_module(module),
+                    page.slug,
                     page.summary
                 ));
             }
@@ -115,9 +116,9 @@ fn render_index(model: &WikiModel) -> String {
         out.push_str("## Symbols\n\n");
         for page in &model.symbol_pages {
             out.push_str(&format!(
-                "- [{}]({}) — {}\n",
+                "- [{}](symbols/{}.md) — {}\n",
                 page.title,
-                format!("symbols/{}.md", page.slug),
+                page.slug,
                 page.summary
             ));
         }
@@ -199,7 +200,7 @@ fn render_symbol_index(model: &WikiModel) -> String {
     let letters: Vec<char> = by_letter.keys().cloned().collect();
     for (i, letter) in letters.iter().enumerate() {
         if i > 0 { out.push_str(" · "); }
-        out.push_str(&format!("[{}]({})", letter, format!("#{}", letter.to_ascii_lowercase())));
+        out.push_str(&format!("[{}](#{})", letter, letter.to_ascii_lowercase()));
     }
     out.push_str("\n\n");
 
@@ -207,9 +208,9 @@ fn render_symbol_index(model: &WikiModel) -> String {
         out.push_str(&format!("## {}\n\n", letter));
         for page in pages {
             out.push_str(&format!(
-                "- [{}]({}) — {}\n",
+                "- [{}](symbols/{}.md) — {}\n",
                 page.title,
-                format!("symbols/{}.md", page.slug),
+                page.slug,
                 page.summary
             ));
         }

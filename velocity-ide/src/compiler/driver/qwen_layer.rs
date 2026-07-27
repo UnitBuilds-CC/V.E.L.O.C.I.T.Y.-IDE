@@ -67,6 +67,7 @@ pub struct VulkanQwenLayer {
 }
 
 impl VulkanQwenLayer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver: &VulkanDriver,
         weight_q: &[u8],

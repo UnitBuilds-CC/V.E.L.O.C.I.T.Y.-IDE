@@ -580,6 +580,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)]
     fn test_nda_vs_native_rust_performance() {
         use std::time::Instant;
         
@@ -596,7 +597,7 @@ mod tests {
         shapes.push((896, 128));
         
         for &(r, c) in &shapes {
-            let bitmap_bytes = r * ((c + 7) / 8);
+            let bitmap_bytes = r * c.div_ceil(8);
             nodes.push(NdaNode::Matrix {
                 rows: r as u16,
                 cols: c as u16,
@@ -619,7 +620,7 @@ mod tests {
         
         let mut native_mats = Vec::new();
         for &(r, c) in &shapes {
-            let bitmap_bytes = r * ((c + 7) / 8);
+            let bitmap_bytes = r * c.div_ceil(8);
             native_mats.push(NdaMatrix::new_quad(
                 r,
                 c,

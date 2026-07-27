@@ -92,6 +92,7 @@ fn nda_gemv_gpu_or_cpu(
     out.copy_from_slice(&temp);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn nda_gemv_gpu_or_cpu_batch_3(
     w0_gpu: &Option<VulkanNdaGemv>, w0_cpu: &NdaMatrix,
     w1_gpu: &Option<VulkanNdaGemv>, w1_cpu: &NdaMatrix,
@@ -291,6 +292,7 @@ fn silu(x: f32) -> f32 {
 ///
 /// Returns the attention output vector of length `head_dim`.
 #[allow(dead_code)]
+#[allow(clippy::needless_range_loop)]
 fn attention_head(
     q_sign:  &[u8],
     q_extra: &[u8],

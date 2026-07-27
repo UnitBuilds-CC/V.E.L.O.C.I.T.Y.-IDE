@@ -3,6 +3,7 @@ use super::model_pipeline::VulkanModelPipeline;
 use super::vulkan_init::*;
 use ash::vk;
 
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub fn record_and_execute_token(
     pipeline: &VulkanModelPipeline,
     driver: &VulkanDriver,

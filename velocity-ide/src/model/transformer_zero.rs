@@ -71,6 +71,7 @@ impl ZeroKvLayer {
 ///   weight_t ∝ 2^(score_t - max_score)   =  1 >> (max_score - score_t)
 /// This is the "bit-shift softmax" — replaces exp() with right-shifts.
 /// Exact for the argmax token; approximation elsewhere.
+#[allow(clippy::needless_range_loop)]
 fn attention_head_zero(
     q:         &NdaVec,
     kv_layer:  &ZeroKvLayer,

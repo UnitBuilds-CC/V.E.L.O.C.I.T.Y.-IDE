@@ -315,6 +315,7 @@ pub fn apply_vec_op(op: VecOpKind, val: &JitVal) -> JitVal {
             JitVal::Vector(v) => {
                 let mut new_sign = vec![0xFFu8; v.sign.len()];
                 let mut new_extra = vec![0u8; v.extra.len()];
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..v.sign.len() {
                     new_extra[i] = !(v.sign[i] ^ v.extra[i]);
                 }

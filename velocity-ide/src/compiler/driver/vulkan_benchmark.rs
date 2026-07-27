@@ -5,6 +5,7 @@ use ash::vk;
 
 use super::vulkan_init::*;
 
+#[allow(clippy::needless_range_loop)]
 pub fn benchmark_attention_nda_vs_contig(
     driver: &VulkanDriver,
 ) -> Result<(f64, f64), Box<dyn std::error::Error>> {

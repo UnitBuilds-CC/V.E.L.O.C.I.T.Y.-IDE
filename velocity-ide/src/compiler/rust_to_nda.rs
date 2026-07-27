@@ -488,8 +488,8 @@ fn matrix_dims_from_type(ty: &Type) -> Option<(usize, usize)> {
 /// the model learns the *structure and connectivity*, not specific weights.
 fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
     // Clamp dimensions to u16 range (65535 max) and require non-zero.
-    let rows = rows.min(65535).max(1) as u16;
-    let cols = cols.min(65535).max(1) as u16;
+    let rows = rows.clamp(1, 65535) as u16;
+    let cols = cols.clamp(1, 65535) as u16;
     let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
     // Alternating 0xAA / 0x55 gives a balanced {+2,+1,-1,-2} distribution.
     let sign:  Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();

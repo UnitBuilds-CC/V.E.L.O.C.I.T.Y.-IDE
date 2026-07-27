@@ -73,6 +73,7 @@ pub struct VulkanModelPipeline {
 }
 
 impl VulkanModelPipeline {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver: &VulkanDriver,
         n_layers: usize,
@@ -681,6 +682,7 @@ impl VulkanModelPipeline {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_and_execute_token(
         &self,
         driver: &VulkanDriver,

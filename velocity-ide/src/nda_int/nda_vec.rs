@@ -29,6 +29,7 @@ impl NdaVec {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     pub fn to_f32_vec(&self) -> Vec<f32> {
         let scale = 2.0f32.powi(self.log2_scale as i32);
         let mut out = vec![0.0f32; self.len];
