@@ -610,4 +610,47 @@ mod tests {
         ];
         assert_eq!(conditions.len(), 4);
     }
+
+    // Real lifecycle over a portable console child. Gated to Windows because
+    // the native spawn/terminate/wait path is Windows-only.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn process_lifecycle_launch_is_running_then_kill() {
+        // Hidden shell that stays alive briefly (~2s of pings).
+        let config = LaunchConfig::new("cmd.exe")
+            .arg("/c")
+            .arg("ping -n 4 127.0.0.1 >nul")
+            .hidden()
+            .no_wait_window();
+        let result = ProcessManager::launch(&config);
+        assert!(result.success, "launch failed: {}", result.detail);
+        let pid = result.pid.expect("launched pid");
+
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(ProcessManager::is_running(pid), "child should be running");
+
+        assert!(ProcessManager::kill(pid), "kill should succeed");
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!ProcessManager::is_running(pid), "child should have exited");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn process_wait_for_exit_detects_termination() {
+        let config = LaunchConfig::new("cmd.exe")
+            .arg("/c")
+            .arg("exit 0")
+            .hidden()
+            .no_wait_window();
+        let result = ProcessManager::launch(&config);
+        assert!(result.success, "launch failed: {}", result.detail);
+        let pid = result.pid.expect("launched pid");
+
+        let wait = ProcessManager::wait_for(
+            pid,
+            &ProcessWaitCondition::Exit,
+            Duration::from_secs(5),
+        );
+        assert!(wait.condition_met, "exit should be detected: {}", wait.detail);
+    }
 }

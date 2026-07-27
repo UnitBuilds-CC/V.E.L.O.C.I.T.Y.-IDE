@@ -419,4 +419,24 @@ mod tests {
         ];
         assert_eq!(ops.len(), 11);
     }
+
+    // apply_operation executes the real native path and reports success/failure
+    // rather than a hardcoded stub. An invalid HWND (0) must fail cleanly while
+    // still echoing the operation for audit.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn apply_operation_on_invalid_hwnd_reports_failure() {
+        let result = WindowManager::apply_operation(0, &WindowOperation::Move { x: 10, y: 10 });
+        assert_eq!(result.hwnd, 0);
+        assert!(result.operation.contains("Move"));
+        assert!(!result.success, "operation on a null hwnd should not succeed");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn apply_operation_reports_unsupported_off_windows() {
+        let result = WindowManager::apply_operation(1, &WindowOperation::Minimize);
+        assert!(!result.success);
+        assert!(result.operation.contains("Minimize"));
+    }
 }

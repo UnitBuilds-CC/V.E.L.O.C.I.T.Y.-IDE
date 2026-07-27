@@ -229,7 +229,7 @@ pub fn execute_ollama_request(
         .first()
         .map(|account| account.host.as_str())
         .unwrap_or("http://localhost:11434");
-    let api_url = format!("{}/v1/chat/completions", host.trim_end_matches('/'));
+    let api_url = ollama_chat_url(host);
     match ureq::post(&api_url)
         .timeout(Duration::from_secs(60))
         .set("Content-Type", "application/json")
@@ -240,5 +240,37 @@ pub fn execute_ollama_request(
             ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Local Ollama connection error at {host}: {:?}", e))).ok();
             None
         }
+    }
+}
+
+/// Build the Ollama OpenAI-compatible chat endpoint URL from a host, tolerating
+/// a trailing slash. Kept as a pure helper so the request shape is testable
+/// without a running server.
+pub fn ollama_chat_url(host: &str) -> String {
+    format!("{}/v1/chat/completions", host.trim_end_matches('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ollama_url_appends_openai_chat_path() {
+        assert_eq!(
+            ollama_chat_url("http://localhost:11434"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn ollama_url_trims_trailing_slash() {
+        assert_eq!(
+            ollama_chat_url("http://localhost:11434/"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            ollama_chat_url("http://remote:9999///"),
+            "http://remote:9999/v1/chat/completions"
+        );
     }
 }
