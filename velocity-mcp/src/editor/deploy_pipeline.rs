@@ -5,7 +5,11 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Maximum time a single pipeline command may run before it is killed.
+/// Prevents a hung build/test/deploy from blocking the pipeline indefinitely.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Pipeline execution stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -371,18 +375,19 @@ impl PipelineManager {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Git push: stage all changes, commit with message, and push to remote.
-    /// Returns the push output on success.
+    /// Returns the push output on success. Arguments are passed as discrete
+    /// argv entries, so commit messages containing spaces or quotes are safe.
     pub fn git_push(&self, commit_message: &str, remote: &str, branch: &str) -> Result<String, String> {
         // Stage all changes
-        run_command("git add -A", &self.workspace_root)?;
+        run_command_args(&["git", "add", "-A"], &self.workspace_root)?;
 
-        // Commit
-        let commit_cmd = format!("git commit -m \"{}\"", commit_message.replace('"', "\\\""));
-        let commit_out = run_command(&commit_cmd, &self.workspace_root)?;
+        // Commit (message passed as a single argv entry — no shell quoting needed)
+        let commit_out =
+            run_command_args(&["git", "commit", "-m", commit_message], &self.workspace_root)?;
 
         // Push to remote
-        let push_cmd = format!("git push {} {}", remote, branch);
-        let push_out = run_command(&push_cmd, &self.workspace_root)?;
+        let push_out =
+            run_command_args(&["git", "push", remote, branch], &self.workspace_root)?;
 
         Ok(format!("{}\n{}", commit_out, push_out))
     }
@@ -390,19 +395,25 @@ impl PipelineManager {
     /// Trigger a CI pipeline via GitHub Actions workflow_dispatch.
     /// Requires `gh` CLI to be available.
     pub fn trigger_ci_github(&self, workflow: &str, ref_branch: &str) -> Result<String, String> {
-        let cmd = format!("gh workflow run {} --ref {}", workflow, ref_branch);
-        run_command(&cmd, &self.workspace_root)
+        run_command_args(
+            &["gh", "workflow", "run", workflow, "--ref", ref_branch],
+            &self.workspace_root,
+        )
     }
 
     /// Trigger a CI pipeline via a generic webhook URL (e.g., GitLab, Jenkins).
-    /// Uses `curl` to POST to the webhook.
+    /// Uses `curl` to POST to the webhook. The JSON payload is passed as a
+    /// single argv entry so embedded quotes/spaces are preserved verbatim.
     pub fn trigger_ci_webhook(&self, webhook_url: &str, payload: &str) -> Result<String, String> {
-        let cmd = format!(
-            "curl -s -X POST -H \"Content-Type: application/json\" -d \"{}\" {}",
-            payload.replace('"', "\\\""),
-            webhook_url
-        );
-        run_command(&cmd, &self.workspace_root)
+        run_command_args(
+            &[
+                "curl", "-s", "-X", "POST",
+                "-H", "Content-Type: application/json",
+                "-d", payload,
+                webhook_url,
+            ],
+            &self.workspace_root,
+        )
     }
 
     /// Full deploy flow: build → test → git push → trigger CI.
@@ -435,26 +446,141 @@ impl PipelineManager {
     }
 }
 
-/// Run a shell command and capture output.
+/// Run a shell command (parsed with [`parse_shell_words`]) and capture output.
 fn run_command(command: &str, cwd: &Path) -> Result<String, String> {
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() {
-        return Err("Empty command".into());
+    let args = parse_shell_words(command);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_command_args(&arg_refs, cwd)
+}
+
+/// Split a command line into arguments, honoring single and double quotes so
+/// that arguments containing spaces survive (e.g. `commit -m "fix: a b"`).
+fn parse_shell_words(command: &str) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut has_token = false;
+    for c in command.chars() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                has_token = true;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                has_token = true;
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if has_token {
+                    args.push(std::mem::take(&mut current));
+                    has_token = false;
+                }
+            }
+            c => {
+                current.push(c);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        args.push(current);
+    }
+    args
+}
+
+/// Run a command expressed as discrete argv entries (no shell re-splitting),
+/// guarded by [`COMMAND_TIMEOUT`]. Captures combined stdout/stderr.
+fn run_command_args(args: &[&str], cwd: &Path) -> Result<String, String> {
+    run_command_args_with_timeout(args, cwd, COMMAND_TIMEOUT)
+}
+
+/// Run a command with an explicit timeout. The child process is polled via
+/// `try_wait` so a hung command is killed once `timeout` elapses rather than
+/// blocking the pipeline indefinitely.
+fn run_command_args_with_timeout(
+    args: &[&str],
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<String, String> {
+    let (program, rest) = args
+        .split_first()
+        .ok_or_else(|| "Empty command".to_string())?;
+
+    let mut child = Command::new(program)
+        .args(rest)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to execute {}: {}", program, e))?;
+
+    let deadline = Instant::now() + timeout;
+    let mut exit_status: Option<std::process::ExitStatus> = None;
+    let exited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break true;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(format!("Failed to poll {}: {}", program, e)),
+        }
+    };
+
+    if !exited {
+        return Err(format!(
+            "Command {} timed out after {}s and was killed",
+            program,
+            timeout.as_secs()
+        ));
     }
 
-    let output = Command::new(parts[0])
-        .args(&parts[1..])
-        .current_dir(cwd)
-        .output()
-        .map_err(|e| format!("Failed to execute: {}", e))?;
+    let stdout = child
+        .stdout
+        .take()
+        .map(|mut r| {
+            let mut s = String::new();
+            let _ = std::io::Read::read_to_string(&mut r, &mut s);
+            s
+        })
+        .unwrap_or_default();
+    let stderr = child
+        .stderr
+        .take()
+        .map(|mut r| {
+            let mut s = String::new();
+            let _ = std::io::Read::read_to_string(&mut r, &mut s);
+            s
+        })
+        .unwrap_or_default();
+    let status = exit_status.ok_or_else(|| format!("Command {} exited without a status", program))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    finish_output(stdout, stderr, status)
+}
 
-    if output.status.success() {
+/// Interpret a completed command's output as success or a descriptive error.
+fn finish_output(
+    stdout: String,
+    stderr: String,
+    status: std::process::ExitStatus,
+) -> Result<String, String> {
+    if status.success() {
         Ok(format!("{}{}", stdout, stderr))
     } else {
-        Err(format!("Exit code {}: {}{}", output.status.code().unwrap_or(-1), stdout, stderr))
+        Err(format!(
+            "Exit code {}: {}{}",
+            status.code().unwrap_or(-1),
+            stdout,
+            stderr
+        ))
     }
 }
 
@@ -483,6 +609,7 @@ fn detect_artifacts(stage: PipelineStage, workspace_root: &Path) -> Vec<String> 
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     #[test]
     fn pipeline_config_defaults() {
@@ -530,5 +657,84 @@ mod tests {
     fn status_label_pending() {
         let pm = PipelineManager::new(PathBuf::from("/tmp"), PipelineConfig::default());
         assert_eq!(pm.status_label(), "Pending");
+    }
+
+    #[test]
+    fn parse_shell_words_splits_on_whitespace() {
+        assert_eq!(parse_shell_words("cargo build --release"), ["cargo", "build", "--release"]);
+    }
+
+    #[test]
+    fn parse_shell_words_preserves_double_quoted_spaces() {
+        assert_eq!(
+            parse_shell_words(r#"git commit -m "fix: a b""#),
+            ["git", "commit", "-m", "fix: a b"]
+        );
+    }
+
+    #[test]
+    fn parse_shell_words_preserves_single_quoted_spaces() {
+        assert_eq!(
+            parse_shell_words("echo 'hello world'"),
+            ["echo", "hello world"]
+        );
+    }
+
+    #[test]
+    fn parse_shell_words_empty_and_blank() {
+        assert!(parse_shell_words("").is_empty());
+        assert!(parse_shell_words("   ").is_empty());
+    }
+
+    #[test]
+    fn run_command_args_empty_is_error() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(run_command_args(&[], temp.path()).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_command_args_captures_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let out = run_command_args(&["cmd", "/C", "echo hello"], temp.path()).unwrap();
+        assert!(out.contains("hello"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_command_args_reports_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let err = run_command_args(&["cmd", "/C", "exit 3"], temp.path()).unwrap_err();
+        assert!(err.contains("Exit code 3"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_command_args_missing_program_is_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let err = run_command_args(&["definitely_not_a_real_cmd_xyz"], temp.path()).unwrap_err();
+        assert!(err.contains("Failed to execute"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_command_parses_quoted_arguments() {
+        let temp = tempfile::tempdir().unwrap();
+        let out = run_command(r#"cmd /C "echo hello world""#, temp.path()).unwrap();
+        assert!(out.contains("hello world"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn run_command_args_times_out_hung_process() {
+        let temp = tempfile::tempdir().unwrap();
+        // `ping -n 30` runs ~30s; a 100ms budget must trip the timeout guard.
+        let err = run_command_args_with_timeout(
+            &["ping", "-n", "30", "127.0.0.1"],
+            temp.path(),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(err.contains("timed out"));
     }
 }
