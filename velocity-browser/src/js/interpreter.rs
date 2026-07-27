@@ -270,6 +270,8 @@ pub enum ObjectProp {
     Getter(String, Expr),
     /// Object-literal setter: `{ set x(v) { ... } }`
     Setter(String, Expr),
+    /// Computed property key: `{ [expr]: value }` (key evaluated at runtime).
+    Computed(Expr, Expr),
     Spread(Expr),
 }
 
@@ -1006,6 +1008,7 @@ impl Parser {
         let mut props = Vec::new();
         let mut has_spread = false;
         let mut has_accessor = false;
+        let mut has_computed = false;
         let mut spread_props = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             // Spread property: { ...expr }
@@ -1017,11 +1020,23 @@ impl Parser {
                 if !self.at(&Token::RBrace) { self.expect(&Token::Comma)?; }
                 continue;
             }
+            // Computed property key: { [expr]: value } — the key expression is evaluated
+            // at runtime, so it must be deferred (not stringified during parsing).
+            if self.at(&Token::LBracket) {
+                self.advance();
+                let key_expr = self.parse_expr()?;
+                self.expect(&Token::RBracket)?;
+                self.expect(&Token::Colon)?;
+                let val = self.parse_assign()?;
+                spread_props.push(ObjectProp::Computed(key_expr, val));
+                has_computed = true;
+                if !self.at(&Token::RBrace) { self.expect(&Token::Comma)?; }
+                continue;
+            }
             let key = match self.peek().clone() {
                 Token::Ident(k) => { self.advance(); k }
                 Token::Str(k) => { self.advance(); k }
                 Token::Number(n) => { self.advance(); format!("{}", n) }
-                Token::LBracket => { self.advance(); let e = self.parse_expr()?; self.expect(&Token::RBracket)?; format!("{:?}", e) }
                 _ => return Err(format!("expected property key, got {:?}", self.peek())),
             };
             // Getter/setter: { get x() { ... }, set x(v) { ... } }
@@ -1054,7 +1069,7 @@ impl Parser {
             if !self.at(&Token::RBrace) { self.expect(&Token::Comma)?; }
         }
         self.expect(&Token::RBrace)?;
-        if has_spread || has_accessor {
+        if has_spread || has_accessor || has_computed {
             Ok(Expr::ObjectWithSpread(spread_props))
         } else {
             Ok(Expr::Object(props))
@@ -1355,6 +1370,10 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
                     ObjectProp::Setter(k, func_expr) => {
                         let func = eval_expr_node(func_expr, scope)?;
                         install_literal_accessor(&mut map, k, "set", func);
+                    }
+                    ObjectProp::Computed(key_expr, val_expr) => {
+                        let key = to_string(&eval_expr_node(key_expr, scope)?);
+                        map.insert(key, eval_expr_node(val_expr, scope)?);
                     }
                     ObjectProp::Spread(expr) => {
                         if let JsValue::Object(src) = eval_expr_node(expr, scope)? {
@@ -4281,6 +4300,32 @@ mod tests {
             delete arr[1];
             arr[0] + arr[2]
         "), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn computed_property_key_from_var() {
+        assert_eq!(eval_full("
+            var k = 'name';
+            var obj = { [k]: 'vel' };
+            obj.name
+        "), JsValue::String("vel".to_string()));
+    }
+
+    #[test]
+    fn computed_property_key_expression() {
+        assert_eq!(eval_full("
+            var obj = { ['a' + 'b']: 1 };
+            obj.ab
+        "), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn computed_property_key_number() {
+        assert_eq!(eval_full("
+            var i = 2;
+            var obj = { [i]: 'x' };
+            obj['2']
+        "), JsValue::String("x".to_string()));
     }
 
     #[test]
