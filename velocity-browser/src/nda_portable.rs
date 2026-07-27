@@ -30,6 +30,43 @@ pub const NDA_MAGIC: u32 = 0x3141_444E; // "NDA1" little-endian
 /// Fixed portable-document header size in bytes.
 pub const PORTABLE_HEADER_LEN: usize = 48;
 
+/// Maximum number of display commands encodable (the schema stores the count
+/// as a `u16`).
+pub const MAX_COMMANDS: usize = u16::MAX as usize;
+/// Maximum byte offset at which the string pool may start (stored as `u16`).
+pub const MAX_POOL_OFFSET: usize = u16::MAX as usize;
+/// Maximum byte length of a single interned string (length prefix is `u16`).
+pub const MAX_STRING_LEN: usize = u16::MAX as usize;
+
+/// Why a document could not be encoded into the portable `u16`-bounded layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NdaEncodeError {
+    /// More than [`MAX_COMMANDS`] display commands.
+    TooManyCommands(usize),
+    /// The computed string-pool start offset exceeds [`MAX_POOL_OFFSET`].
+    PoolOffsetTooLarge(usize),
+    /// An interned string is longer than [`MAX_STRING_LEN`] bytes.
+    StringTooLong(usize),
+}
+
+impl core::fmt::Display for NdaEncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            NdaEncodeError::TooManyCommands(n) => write!(
+                f,
+                "too many display commands for the portable format ({n} > {MAX_COMMANDS})"
+            ),
+            NdaEncodeError::PoolOffsetTooLarge(n) => write!(
+                f,
+                "document too large: string pool starts at byte {n} (> {MAX_POOL_OFFSET})"
+            ),
+            NdaEncodeError::StringTooLong(n) => {
+                write!(f, "a string is {n} bytes (> {MAX_STRING_LEN})")
+            }
+        }
+    }
+}
+
 // --- Display command kinds -------------------------------------------------
 
 /// Immediate-mode canvas draw op kind, matching the reference schema.
@@ -88,6 +125,40 @@ impl DisplayCommand {
             content: data_url.into(),
         }
     }
+
+    /// A vector polyline. `points` are `(dx, dy)` offsets relative to the
+    /// command's `x`/`y` origin, serialized as `"x1,y1;x2,y2;…"` into `content`.
+    /// `stroke_width` is carried in `h` (0/1 ⇒ 1px).
+    pub fn vector(points: &[(i32, i32)], x: u16, y: u16, stroke_width: u16, color: u32) -> Self {
+        let content = points
+            .iter()
+            .map(|(px, py)| format!("{px},{py}"))
+            .collect::<Vec<_>>()
+            .join(";");
+        Self {
+            kind: CommandKind::DrawVector as u8,
+            color,
+            x,
+            y,
+            w: 0,
+            h: stroke_width,
+            content,
+        }
+    }
+}
+
+/// Parse a DrawVector `content` (`"x1,y1;x2,y2;…"`) into `(dx, dy)` offsets.
+/// Malformed tokens are skipped so a partially-corrupt list still renders.
+pub fn parse_vector_points(content: &str) -> Vec<(i32, i32)> {
+    content
+        .split(';')
+        .filter_map(|pair| {
+            let mut it = pair.split(',');
+            let x = it.next()?.trim().parse::<i32>().ok()?;
+            let y = it.next()?.trim().parse::<i32>().ok()?;
+            Some((x, y))
+        })
+        .collect()
 }
 
 // --- Provenance predicate vocabulary --------------------------------------
@@ -340,35 +411,61 @@ impl NdaPortableDoc {
     }
 
     /// Serialize to the portable 48-byte-header NDA1 layout (Flags = 0).
+    ///
+    /// This is the infallible hot path: out-of-`u16`-range values are truncated
+    /// (wrapped). Use [`Self::try_to_portable_bytes`] to validate bounds first
+    /// and get a precise [`NdaEncodeError`] instead of a corrupt document.
     pub fn to_portable_bytes(&self) -> Vec<u8> {
+        self.encode_portable(false).expect("infallible when not validating")
+    }
+
+    /// Serialize like [`Self::to_portable_bytes`], but validate the `u16`
+    /// bounds of the portable schema first (command count, string-pool offset,
+    /// per-string length) and return a precise [`NdaEncodeError`] rather than
+    /// silently truncating.
+    pub fn try_to_portable_bytes(&self) -> Result<Vec<u8>, NdaEncodeError> {
+        self.encode_portable(true)
+    }
+
+    fn encode_portable(&self, validate: bool) -> Result<Vec<u8>, NdaEncodeError> {
+        if validate && self.commands.len() > MAX_COMMANDS {
+            return Err(NdaEncodeError::TooManyCommands(self.commands.len()));
+        }
         // Build the string pool with an offset-deduplicating interner. The
         // empty string is interned first so its offset is 0.
         let mut pool: Vec<u8> = Vec::new();
         let mut offsets: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-        let mut add_string = |s: &str| -> u32 {
+        let mut add_string = |s: &str| -> Result<u32, NdaEncodeError> {
             if let Some(&off) = offsets.get(s) {
-                return off;
+                return Ok(off);
+            }
+            let bytes = s.as_bytes();
+            if validate && bytes.len() > MAX_STRING_LEN {
+                return Err(NdaEncodeError::StringTooLong(bytes.len()));
             }
             let off = pool.len() as u32;
-            let bytes = s.as_bytes();
             pool.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
             pool.extend_from_slice(bytes);
             offsets.insert(s.to_string(), off);
-            off
+            Ok(off)
         };
-        add_string(""); // ensure offset 0 == empty string
+        add_string("").expect("empty string is always within bounds");
 
-        let triple_offsets: Vec<(u32, u32, u32)> = self
-            .triples
-            .iter()
-            .map(|(s, p, o)| (add_string(s), add_string(p), add_string(o)))
-            .collect();
-        let command_offsets: Vec<u32> =
-            self.commands.iter().map(|c| add_string(&c.content)).collect();
+        let mut triple_offsets: Vec<(u32, u32, u32)> = Vec::with_capacity(self.triples.len());
+        for (s, p, o) in &self.triples {
+            triple_offsets.push((add_string(s)?, add_string(p)?, add_string(o)?));
+        }
+        let mut command_offsets: Vec<u32> = Vec::with_capacity(self.commands.len());
+        for c in &self.commands {
+            command_offsets.push(add_string(&c.content)?);
+        }
 
         let triples_block = triple_offsets.len() * 12;
         let commands_block = self.commands.len() * 18;
         let string_pool_offset = PORTABLE_HEADER_LEN + triples_block + commands_block;
+        if validate && string_pool_offset > MAX_POOL_OFFSET {
+            return Err(NdaEncodeError::PoolOffsetTooLarge(string_pool_offset));
+        }
 
         let mut buf = vec![0u8; string_pool_offset];
         // Header.
@@ -401,7 +498,7 @@ impl NdaPortableDoc {
         }
         // String pool.
         buf.extend_from_slice(&pool);
-        buf
+        Ok(buf)
     }
 
     /// Parse a portable NDA1 buffer, validating the magic, the portable flag,
@@ -618,5 +715,63 @@ mod tests {
             }
         }
         assert!(doc.verify_history().is_err());
+    }
+
+    #[test]
+    fn encode_rejects_too_many_commands() {
+        let mut doc = NdaPortableDoc::new();
+        doc.commands = vec![DisplayCommand::rect(0, 0, 1, 1, 0xFF00_00FF); MAX_COMMANDS + 1];
+        assert_eq!(
+            doc.try_to_portable_bytes(),
+            Err(NdaEncodeError::TooManyCommands(MAX_COMMANDS + 1))
+        );
+    }
+
+    #[test]
+    fn encode_rejects_long_string() {
+        let mut doc = NdaPortableDoc::new();
+        doc.push_triple("s", "p", "x".repeat(MAX_STRING_LEN + 1));
+        assert_eq!(
+            doc.try_to_portable_bytes(),
+            Err(NdaEncodeError::StringTooLong(MAX_STRING_LEN + 1))
+        );
+    }
+
+    #[test]
+    fn encode_rejects_oversized_pool_offset() {
+        let mut doc = NdaPortableDoc::new();
+        // 48 + n*18 > 65535 once n >= 3640.
+        doc.commands = vec![DisplayCommand::rect(0, 0, 1, 1, 0xFF00_00FF); 3640];
+        assert!(matches!(
+            doc.try_to_portable_bytes(),
+            Err(NdaEncodeError::PoolOffsetTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn encode_accepts_boundary_pool_offset() {
+        let mut doc = NdaPortableDoc::new();
+        // Pool offset = 48 + n*18; n = 3638 ⇒ 65532 ≤ 65535 (fits), while
+        // n = 3640 ⇒ 65568 (rejected above).
+        doc.commands = vec![DisplayCommand::rect(0, 0, 1, 1, 0xFF00_00FF); 3638];
+        let bytes = doc.try_to_portable_bytes().expect("3638 commands fit");
+        let parsed = NdaPortableDoc::from_portable_bytes(&bytes).unwrap();
+        assert_eq!(parsed.commands.len(), 3638);
+    }
+
+    #[test]
+    fn encode_accepts_boundary_string() {
+        let mut doc = NdaPortableDoc::new();
+        doc.push_triple("s", "p", "x".repeat(MAX_STRING_LEN));
+        assert!(doc.try_to_portable_bytes().is_ok());
+    }
+
+    #[test]
+    fn vector_points_round_trip() {
+        let cmd = DisplayCommand::vector(&[(0, 0), (10, 0), (10, 10)], 5, 6, 2, 0x1234_56FF);
+        assert_eq!(parse_vector_points(&cmd.content), vec![(0, 0), (10, 0), (10, 10)]);
+        assert_eq!(cmd.h, 2);
+        // Malformed tokens are skipped, valid ones kept.
+        assert_eq!(parse_vector_points("1,2;garbage;3,4;5"), vec![(1, 2), (3, 4)]);
     }
 }
