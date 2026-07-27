@@ -30,6 +30,10 @@ pub struct ChatPanelState {
     pub models_loading: bool,
     pub show_thoughts: bool,
     pub provider: crate::agent::AiProvider,
+    /// Files attached to the next chat turn (multimodal input).
+    pub attachments: Vec<crate::editor::multimodal::Attachment>,
+    /// Path entry for attaching a file to the next turn.
+    pub attach_input: String,
 }
 
 impl Default for ChatPanelState {
@@ -48,6 +52,8 @@ impl Default for ChatPanelState {
             models_loading: false,
             show_thoughts: false,
             provider: crate::agent::AiProvider::CloudflareWorkersAi,
+            attachments: Vec::new(),
+            attach_input: String::new(),
         }
     }
 }
@@ -96,6 +102,22 @@ impl ChatPanelState {
             role: ChatRole::Thought,
             content: token.to_string(),
         });
+    }
+
+    /// Compose the outgoing prompt for the next turn, folding in any attached
+    /// files via the multimodal content assembler, then clear the attachments.
+    pub fn compose_and_take_prompt(&mut self, text: &str) -> String {
+        if self.attachments.is_empty() {
+            return text.to_string();
+        }
+        let parts = crate::editor::multimodal::assemble_content_parts(
+            &self.selected_model,
+            text,
+            &self.attachments,
+        );
+        self.attachments.clear();
+        self.attach_input.clear();
+        flatten_content_parts(&parts)
     }
 
     pub fn restore_history(&mut self, entries: Vec<(String, String)>) {
@@ -669,6 +691,50 @@ fn render_input(
                 }
 
                 ui.add_space(6.0);
+
+                // Attachment row (multimodal input).
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.attach_input)
+                            .hint_text("attach file path…")
+                            .desired_width(ui.available_width() - 64.0),
+                    );
+                    if ui.small_button("📎 Attach").clicked() {
+                        let path = state.attach_input.trim().to_string();
+                        if !path.is_empty() {
+                            match crate::editor::multimodal::Attachment::load(&path) {
+                                Ok(att) => {
+                                    state.attachments.push(att);
+                                    state.attach_input.clear();
+                                }
+                                Err(_) => state.attach_input = format!("⚠ cannot read: {path}"),
+                            }
+                        }
+                    }
+                });
+                if !state.attachments.is_empty() {
+                    let mut remove: Option<usize> = None;
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, att) in state.attachments.iter().enumerate() {
+                            let name = att
+                                .path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("file");
+                            if ui
+                                .small_button(format!("{} {} ✖", att.kind.label(), name))
+                                .clicked()
+                            {
+                                remove = Some(i);
+                            }
+                        }
+                    });
+                    if let Some(i) = remove {
+                        state.attachments.remove(i);
+                    }
+                }
+
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut state.auto_approve, "Auto");
                     ui.add_space(4.0);
@@ -723,9 +789,10 @@ fn render_input(
                         if ui.add(send_btn).clicked() || submit {
                             let text = state.input.trim().to_string();
                             state.input.clear();
-                            if !text.is_empty() {
-                                state.push_user(text.clone());
-                                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(text));
+                            if !text.is_empty() || !state.attachments.is_empty() {
+                                let prompt = state.compose_and_take_prompt(&text);
+                                state.push_user(text);
+                                let _ = agent_tx.send(UiToAgentMessage::UserPrompt(prompt));
                             }
                         }
                     });
@@ -740,4 +807,32 @@ fn truncate_model_label(model: &str, max: usize) -> String {
     } else {
         format!("…{}", &model[model.len().saturating_sub(max - 1)..])
     }
+}
+
+/// Flatten OpenAI-style content parts (from the multimodal assembler) into a
+/// single prompt string: text parts verbatim, image parts as a labeled data
+/// URL line so the transport (which carries a plain string) still delivers the
+/// image payload.
+fn flatten_content_parts(parts: &serde_json::Value) -> String {
+    let Some(arr) = parts.as_array() else {
+        return parts.as_str().unwrap_or_default().to_string();
+    };
+    let mut out = String::new();
+    for part in arr {
+        match part["type"].as_str() {
+            Some("text") => {
+                if let Some(t) = part["text"].as_str() {
+                    out.push_str(t);
+                }
+            }
+            Some("image_url") => {
+                if let Some(url) = part["image_url"]["url"].as_str() {
+                    out.push_str("\n\n[image] ");
+                    out.push_str(url);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }

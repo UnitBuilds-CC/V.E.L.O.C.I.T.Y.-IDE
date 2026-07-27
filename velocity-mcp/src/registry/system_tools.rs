@@ -704,6 +704,23 @@ pub fn handle_system_tool(
                 Err(e) => return Err(e.into()),
             }
         }
+        "generate_image" => {
+            let prompt = arguments["prompt"].as_str().ok_or("prompt is required")?;
+            let model = arguments["model"].as_str();
+            let out = arguments["output"].as_str();
+            match crate::editor::multimodal::generate_image(root, prompt, model, out) {
+                Ok(path) => format!("Saved generated image to {}", path.display()),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        "describe_image" => {
+            let path_arg = arguments["path"].as_str().ok_or("path is required")?;
+            let path = root.join(path_arg);
+            match crate::editor::multimodal::describe_image(&path) {
+                Ok(v) => serde_json::to_string(&v)?,
+                Err(e) => return Err(e.into()),
+            }
+        }
         _ => return Ok(None),
     };
 

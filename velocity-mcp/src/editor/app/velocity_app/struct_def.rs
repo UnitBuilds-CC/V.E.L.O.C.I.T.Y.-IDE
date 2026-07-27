@@ -840,6 +840,8 @@ impl VelocityApp {
                 models_loading: false,
                 show_thoughts: false,
                 provider: crate::agent::AiProvider::CloudflareWorkersAi,
+                attachments: Vec::new(),
+                attach_input: String::new(),
             },
             mediator,
             graph_view: crate::editor::graph_view::MerkleGraphView::new(),

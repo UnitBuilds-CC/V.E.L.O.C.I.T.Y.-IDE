@@ -60,6 +60,7 @@ pub mod knowledge_base;
 pub mod live_orchestration;
 pub mod lsp_client;
 pub mod minimap;
+pub mod multimodal;
 pub mod regex_engine;
 pub mod semantic_search;
 pub mod snippets;

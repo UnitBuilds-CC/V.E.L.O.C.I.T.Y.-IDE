@@ -27,6 +27,7 @@ pub enum Decision {
 }
 
 impl Decision {
+    #[allow(dead_code)] // label() consumed by tests + future UI badges
     pub fn label(&self) -> &'static str {
         match self {
             Decision::Allow => "allow",
@@ -134,6 +135,9 @@ pub struct ActionContext {
     pub used_cost_cents: u64,
 }
 
+// Builder helpers exercised by tests; the dispatch gate builds the context via
+// a struct literal.
+#[allow(dead_code)]
 impl ActionContext {
     pub fn tool(name: impl Into<String>) -> Self {
         Self {
@@ -282,6 +286,7 @@ pub enum ApprovalStatus {
 }
 
 impl ApprovalStatus {
+    #[allow(dead_code)] // label() consumed by tests + future UI badges
     pub fn label(&self) -> &'static str {
         match self {
             ApprovalStatus::Pending => "pending",
