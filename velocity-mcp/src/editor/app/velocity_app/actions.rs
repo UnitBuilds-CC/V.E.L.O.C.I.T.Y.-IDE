@@ -1385,6 +1385,87 @@ impl VelocityApp {
         );
     }
 
+    /// Accept the active inline suggestion: insert its text at the current
+    /// cursor position in the active buffer and record acceptance telemetry.
+    pub fn accept_inline_suggestion(&mut self, ctx: &egui::Context) {
+        let Some(text) = self.inline_suggestions.accept() else {
+            return;
+        };
+        let Some(id) = self.active_tab.clone() else { return };
+
+        // Resolve the current cursor byte offset from the editor's text state.
+        let cursor_char = self.buffers.get(&id).and_then(|buf| {
+            let editor_id = egui::Id::new("code_editor");
+            let state = egui::widgets::text_edit::TextEditState::load(ctx, editor_id)?;
+            let char_idx: usize = state.cursor.char_range()?.primary.index.into();
+            Some(char_idx.min(buf.content().chars().count()))
+        });
+
+        if let Some(buf) = self.buffers.get_mut(&id) {
+            let content = buf.content().to_string();
+            let byte_pos = cursor_char
+                .map(|ci| {
+                    content
+                        .char_indices()
+                        .nth(ci)
+                        .map(|(b, _)| b)
+                        .unwrap_or(content.len())
+                })
+                .unwrap_or(content.len());
+            let inserted = text.chars().count();
+            let mut new_content = content;
+            new_content.insert_str(byte_pos, &text);
+            buf.update_content(new_content);
+            self.status_message = format!("Inserted inline suggestion ({inserted} chars)");
+        }
+    }
+
+    /// Floating panel that surfaces the pending inline suggestion with its
+    /// source/confidence and Accept (Tab) / Dismiss (Esc) affordances.
+    pub fn suggestion_panel_ui(&mut self, ctx: &egui::Context) {
+        use crate::editor::inline_suggestions::SuggestionState;
+        if self.inline_suggestions.state != SuggestionState::Showing {
+            return;
+        }
+        let Some(suggestion) = self.inline_suggestions.ghost_text().cloned() else {
+            return;
+        };
+        let palette = self.palette();
+        egui::Area::new(egui::Id::new("inline_suggestion_panel"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::new(-16.0, -16.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(420.0);
+                    ui.horizontal(|ui| {
+                        ui.colored_label(palette.accent, "\u{2728} Suggestion");
+                        ui.colored_label(
+                            palette.text_muted,
+                            format!(
+                                "{} \u{00b7} {:.0}%",
+                                suggestion.source,
+                                suggestion.confidence * 100.0
+                            ),
+                        );
+                    });
+                    ui.separator();
+                    let preview: String = suggestion.text.chars().take(240).collect();
+                    ui.colored_label(palette.text_muted, preview);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Accept (Tab)").clicked() {
+                            self.accept_inline_suggestion(ctx);
+                        }
+                        if ui.button("Dismiss (Esc)").clicked() {
+                            self.inline_suggestions.dismiss();
+                        }
+                        let rate = self.inline_suggestions.acceptance_rate();
+                        ui.colored_label(palette.text_muted, format!("accept rate {rate:.0}%"));
+                    });
+                });
+            });
+    }
+
     // ─── Deploy Pipeline UI Integration ──────────────────────────────────────
 
     /// Initialize the deploy pipeline from workspace configuration.

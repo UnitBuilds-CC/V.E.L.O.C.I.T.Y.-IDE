@@ -374,10 +374,20 @@ impl VelocityApp {
         {
             return;
         }
+        // Whether the user pressed Tab while an inline suggestion is showing.
+        // Detected inside the input closure (which borrows `ctx`) and acted on
+        // afterwards so we can pass `ctx` to the accept routine.
+        let mut accept_inline = false;
         ctx.input(|i| {
             let cmd = i.modifiers.command;
             let shift = i.modifiers.shift;
-            if i.key_pressed(egui::Key::F1) {
+            let inline_active = self.inline_suggestions.state
+                == crate::editor::inline_suggestions::SuggestionState::Showing;
+            if inline_active && i.key_pressed(egui::Key::Tab) {
+                accept_inline = true;
+            } else if inline_active && i.key_pressed(egui::Key::Escape) {
+                self.inline_suggestions.dismiss();
+            } else if i.key_pressed(egui::Key::F1) {
                 self.show_shortcuts = !self.show_shortcuts;
             } else if cmd && shift && i.key_pressed(egui::Key::P) {
                 self.open_command_palette();
@@ -524,6 +534,9 @@ impl VelocityApp {
                 self.word_wrap = !self.word_wrap;
             }
         });
+        if accept_inline {
+            self.accept_inline_suggestion(ctx);
+        }
     }
 
     pub fn command_palette_ui(&mut self, ctx: &egui::Context) {
@@ -1596,6 +1609,8 @@ impl eframe::App for VelocityApp {
         self.handle_agent_messages();
         self.handle_global_shortcuts(&ctx);
         self.mru_overlay_ui(&ctx);
+        // Pick up any inline suggestion produced by the background model call.
+        self.inline_suggestions.poll();
         self.update_diagnostics();
         // Sync diagnostics counts to bottom panel
         self.bottom_panel_state.error_count = self.diagnostics.error_count();
@@ -2506,6 +2521,7 @@ impl eframe::App for VelocityApp {
         self.goto_line_ui(&ctx);
         self.goto_symbol_ui(&ctx);
         self.references_ui(&ctx);
+        self.suggestion_panel_ui(&ctx);
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
         self.confirm_close_dialog_ui(&ctx);

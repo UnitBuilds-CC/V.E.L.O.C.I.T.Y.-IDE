@@ -135,6 +135,14 @@ pub struct InlineSuggestionEngine {
     pub recent_suggestions: Vec<String>,
     /// Max cache size.
     pub cache_size: usize,
+    /// Reuse cache: request key → previously produced completion. Avoids
+    /// re-querying the model for identical contexts (latency + cost saving).
+    pub suggestion_cache: Vec<(String, String)>,
+    /// Interaction history for acceptance telemetry.
+    pub history: SuggestionHistory,
+    /// Cache key for the in-flight request, so a successful result can be
+    /// stored in the reuse cache when it arrives via [`poll`](Self::poll).
+    pub pending_cache_key: Option<String>,
 }
 
 /// History of suggestion interactions for analytics.
@@ -176,6 +184,9 @@ impl InlineSuggestionEngine {
             total_dismissed: 0,
             recent_suggestions: Vec::new(),
             cache_size: 50,
+            suggestion_cache: Vec::new(),
+            history: SuggestionHistory::new(200),
+            pending_cache_key: None,
         }
     }
 
@@ -200,6 +211,16 @@ impl InlineSuggestionEngine {
             if suggestion.confidence >= self.config.min_confidence
                 && !self.is_duplicate(&suggestion.text)
             {
+                // Store the successful result in the reuse cache so identical
+                // future contexts are served without a model call.
+                if let Some(key) = self.pending_cache_key.take() {
+                    if !suggestion.source.contains("(cache)") {
+                        self.suggestion_cache.push((key, suggestion.text.clone()));
+                        if self.suggestion_cache.len() > self.cache_size {
+                            self.suggestion_cache.remove(0);
+                        }
+                    }
+                }
                 self.cache_suggestion(&suggestion.text);
                 self.current_suggestion = Some(suggestion);
                 self.state = SuggestionState::Showing;
@@ -236,9 +257,12 @@ impl InlineSuggestionEngine {
         if self.state == SuggestionState::Showing {
             self.state = SuggestionState::Accepted;
             self.total_accepted += 1;
-            let text = self.current_suggestion.take().map(|s| s.text);
+            let suggestion = self.current_suggestion.take();
+            if let Some(ref s) = suggestion {
+                self.record_interaction(s, true);
+            }
             self.state = SuggestionState::Idle;
-            text
+            suggestion.map(|s| s.text)
         } else {
             None
         }
@@ -248,9 +272,50 @@ impl InlineSuggestionEngine {
     pub fn dismiss(&mut self) {
         if self.state == SuggestionState::Showing {
             self.total_dismissed += 1;
+            let suggestion = self.current_suggestion.take();
+            if let Some(ref s) = suggestion {
+                self.record_interaction(s, false);
+            }
         }
         self.current_suggestion = None;
         self.state = SuggestionState::Idle;
+    }
+
+    /// Record an accept/dismiss event into the telemetry history.
+    fn record_interaction(&mut self, suggestion: &InlineSuggestion, accepted: bool) {
+        self.history.record(HistoryEntry {
+            timestamp: Instant::now(),
+            file_path: String::new(),
+            language: String::new(),
+            suggestion_text: suggestion.text.clone(),
+            was_accepted: accepted,
+            latency_ms: suggestion.generated_at.elapsed().as_millis() as u64,
+        });
+    }
+
+    /// Look up a cached completion for an identical request context.
+    pub fn cached_completion(&self, request: &SuggestionRequest) -> Option<String> {
+        let key = cache_key(request);
+        self.suggestion_cache
+            .iter()
+            .find(|(k, _)| k == &key)
+            .map(|(_, v)| v.clone())
+    }
+
+    /// Store a completion in the reuse cache (bounded, FIFO eviction).
+    pub fn cache_completion(&mut self, request: &SuggestionRequest, completion: &str) {
+        if completion.is_empty() {
+            return;
+        }
+        let key = cache_key(request);
+        if let Some(slot) = self.suggestion_cache.iter_mut().find(|(k, _)| *k == key) {
+            slot.1 = completion.to_string();
+            return;
+        }
+        self.suggestion_cache.push((key, completion.to_string()));
+        if self.suggestion_cache.len() > self.cache_size {
+            self.suggestion_cache.remove(0);
+        }
     }
 
     /// Get the ghost text to render (if any).
@@ -287,6 +352,23 @@ impl InlineSuggestionEngine {
         }
         self.state = SuggestionState::Loading;
 
+        // Fast path: serve an identical prior context from the reuse cache
+        // without spawning a model call.
+        if let Some(cached) = self.cached_completion(&request) {
+            let line = self.last_trigger_line;
+            let col = self.last_trigger_col;
+            let source_label = format!("{}/{} (cache)", provider.label(), model);
+            self.shared.set(InlineSuggestion {
+                text: cached,
+                line,
+                column: col,
+                confidence: 0.8,
+                generated_at: Instant::now(),
+                source: source_label,
+            });
+            return;
+        }
+
         // Build the completion context prompt for the model.
         let prompt = format!(
             "Complete the following {} code. Return ONLY the raw completion text that \
@@ -299,6 +381,8 @@ impl InlineSuggestionEngine {
         let shared = self.shared.clone();
         let line = self.last_trigger_line;
         let col = self.last_trigger_col;
+        // Remember the cache key so poll() can store the result on success.
+        self.pending_cache_key = Some(cache_key(&request));
         let source_label = format!("{}/{}", provider.label(), model);
         let model = model.to_string();
         let max_chars = self.config.max_suggestion_chars;
@@ -331,6 +415,15 @@ impl InlineSuggestionEngine {
             }
         });
     }
+}
+
+/// Deterministic key for the reuse cache: identical language + prefix + suffix
+/// contexts map to the same key so a prior completion can be replayed.
+fn cache_key(request: &SuggestionRequest) -> String {
+    format!(
+        "{}\u{1}{}\u{1}{}",
+        request.language, request.prefix, request.suffix
+    )
 }
 
 /// Turn a raw model transcript into insertable ghost text: strip markdown code
@@ -546,5 +639,103 @@ mod tests {
     fn sanitize_truncates_and_handles_empty() {
         assert_eq!(sanitize_completion("   ", 200, true), "");
         assert_eq!(sanitize_completion("abcdef", 3, true), "abc");
+    }
+
+    fn req(prefix: &str) -> SuggestionRequest {
+        SuggestionRequest {
+            file_path: PathBuf::from("src/main.rs"),
+            prefix: prefix.to_string(),
+            suffix: String::new(),
+            language: "rust".to_string(),
+        }
+    }
+
+    #[test]
+    fn cache_round_trip_and_miss() {
+        let mut engine = InlineSuggestionEngine::default();
+        let r = req("fn main() {");
+        assert!(engine.cached_completion(&r).is_none());
+        engine.cache_completion(&r, "    println!(\"hi\");\n}");
+        assert_eq!(
+            engine.cached_completion(&r).as_deref(),
+            Some("    println!(\"hi\");\n}")
+        );
+        // A different context is a miss.
+        assert!(engine.cached_completion(&req("fn other() {")).is_none());
+    }
+
+    #[test]
+    fn submit_request_serves_cache_hit_without_model() {
+        let mut engine = InlineSuggestionEngine::default();
+        let r = req("let x = ");
+        engine.cache_completion(&r, "42;");
+        engine.submit_request(
+            r,
+            crate::agent::AiProvider::OpenRouter,
+            "test-model",
+            PathBuf::from("."),
+        );
+        // The cached suggestion is published synchronously to the shared slot.
+        let pending = engine.shared.peek().expect("cached suggestion published");
+        assert_eq!(pending.text, "42;");
+        assert!(pending.source.contains("(cache)"));
+    }
+
+    #[test]
+    fn poll_stores_successful_result_in_cache() {
+        let mut engine = InlineSuggestionEngine::default();
+        let r = req("struct Point {");
+        engine.submit_request(
+            r.clone(),
+            crate::agent::AiProvider::OpenRouter,
+            "test-model",
+            PathBuf::from("."),
+        );
+        // Simulate the worker delivering a result.
+        engine.shared.set(InlineSuggestion {
+            text: "    x: f64,\n}".into(),
+            line: 1,
+            column: 0,
+            confidence: 0.75,
+            generated_at: Instant::now(),
+            source: "test-model".into(),
+        });
+        engine.poll();
+        assert_eq!(engine.state, SuggestionState::Showing);
+        assert_eq!(
+            engine.cached_completion(&r).as_deref(),
+            Some("    x: f64,\n}")
+        );
+    }
+
+    #[test]
+    fn accept_and_dismiss_record_telemetry() {
+        let mut engine = InlineSuggestionEngine::default();
+        engine.shared.set(InlineSuggestion {
+            text: "alpha".into(),
+            line: 1,
+            column: 0,
+            confidence: 0.9,
+            generated_at: Instant::now(),
+            source: "test".into(),
+        });
+        engine.poll();
+        assert_eq!(engine.accept().as_deref(), Some("alpha"));
+
+        engine.shared.set(InlineSuggestion {
+            text: "beta".into(),
+            line: 1,
+            column: 0,
+            confidence: 0.9,
+            generated_at: Instant::now(),
+            source: "test".into(),
+        });
+        engine.poll();
+        engine.dismiss();
+
+        assert_eq!(engine.history.entries.len(), 2);
+        assert!(engine.history.entries[0].was_accepted);
+        assert!(!engine.history.entries[1].was_accepted);
+        assert!((engine.history.acceptance_rate() - 50.0).abs() < 0.01);
     }
 }

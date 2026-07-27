@@ -342,13 +342,22 @@ mod native {
         processes
     }
 
-    /// Check if a process is running by opening its handle.
+    /// Check if a process is running by inspecting its exit code.
+    ///
+    /// Merely opening a handle (`OpenProcess`) is not sufficient: on Windows a
+    /// terminated process keeps its kernel object alive until every handle is
+    /// closed, so `OpenProcess` succeeds for zombies too. The reliable signal is
+    /// the exit code — it stays `STILL_ACTIVE` (259) only while the process is
+    /// actually running.
     pub fn is_process_running_native(pid: u32) -> bool {
+        const STILL_ACTIVE: u32 = 259;
         unsafe {
             match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
                 Ok(handle) => {
+                    let mut exit_code: u32 = 0;
+                    let ok = GetExitCodeProcess(handle, &mut exit_code).is_ok();
                     let _ = CloseHandle(handle);
-                    true
+                    ok && exit_code == STILL_ACTIVE
                 }
                 Err(_) => false,
             }
