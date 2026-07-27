@@ -641,9 +641,30 @@ pub fn handle_wa_tool(
             let name = arguments["name"].as_str().ok_or("name is required")?;
             let hive = crate::wa::registry::RegistryHive::from_str(hive_str)
                 .ok_or("invalid hive")?;
-            let _script = crate::wa::registry::build_read_registry_script(hive, path, name);
-            format!("{{\"action\":\"read\",\"hive\":\"{}\",\"path\":\"{}\",\"name\":\"{}\",\"script_ready\":true}}",
-                hive_str, path.replace('\\', "\\\\").replace('"', "\\\""), name)
+            let result = crate::wa::registry::RegistryManager::read(hive, path, name);
+            let value_json = match &result.value {
+                Some(crate::wa::registry::RegistryValue::String(s))
+                | Some(crate::wa::registry::RegistryValue::ExpandString(s)) => {
+                    serde_json::Value::String(s.clone())
+                }
+                Some(crate::wa::registry::RegistryValue::DWord(d)) => serde_json::json!(*d),
+                Some(crate::wa::registry::RegistryValue::QWord(q)) => serde_json::json!(*q),
+                Some(crate::wa::registry::RegistryValue::Binary(b)) => serde_json::json!(b),
+                Some(crate::wa::registry::RegistryValue::MultiString(m)) => serde_json::json!(m),
+                None => serde_json::Value::Null,
+            };
+            let vtype = result.value.as_ref().map(|v| v.as_ps_type()).unwrap_or("none");
+            serde_json::to_string(&serde_json::json!({
+                "success": result.success,
+                "operation": result.operation,
+                "hive": hive_str,
+                "path": path,
+                "name": name,
+                "type": vtype,
+                "value": value_json,
+                "detail": result.detail,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise registry read result: {err}")))?
         }
         "wa_registry_write" => {
             let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
@@ -903,5 +924,32 @@ mod tests {
         assert!(out.contains("\"success\":true"), "got: {out}");
         assert!(out.contains("windows_tiled"), "got: {out}");
         assert!(out.contains("monitor_width"), "got: {out}");
+    }
+
+    // `wa_registry_read` must perform a real read (returning a structured result with a
+    // `success` flag) rather than the old `script_ready` stub. A bogus key is absent on
+    // any machine, so this is deterministic and side-effect free.
+    #[test]
+    fn registry_read_executes_for_real() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({
+            "hive": "HKCU",
+            "path": "SOFTWARE\\NonexistentVelocityTestKey",
+            "name": "nope"
+        });
+        let out = handle_wa_tool(temp.path(), "wa_registry_read", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(!out.contains("script_ready"), "stub still present: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["operation"], "read");
+        assert!(parsed["success"].is_boolean());
+    }
+
+    #[test]
+    fn registry_read_invalid_hive_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "hive": "BOGUS", "path": "x", "name": "y" });
+        assert!(handle_wa_tool(temp.path(), "wa_registry_read", &args).is_err());
     }
 }
