@@ -159,7 +159,13 @@ function renderHistory(doc){
   let html = "<div class='origin'>Origin: <b>" + esc(origin || "unknown") + "</b>" + (created ? " · created " + esc(created) : "") + "</div>";
   if (revs.length === 0) { html += "<p>No revisions recorded.</p>"; }
   revs.forEach((r, i) => {
-    html += "<div class='rev'><div class='revhead'>#" + i + " <span class='badge'>" + esc(r.source || "?") + "</span> <b>" + esc(r.name || "anonymous") + "</b> <span class='email'>" + esc(r.email) + "</span></div>";
+    let delta = "";
+    if (i > 0) {
+      delta = r.hash === revs[i - 1].hash
+        ? " <span class='delta same'>same content as #" + (i - 1) + "</span>"
+        : " <span class='delta changed'>content changed</span>";
+    }
+    html += "<div class='rev'><div class='revhead'>#" + i + " <span class='badge'>" + esc(r.source || "?") + "</span> <b>" + esc(r.name || "anonymous") + "</b> <span class='email'>" + esc(r.email) + "</span>" + delta + "</div>";
     html += "<div class='revmeta'>" + esc(r.ts) + (r.msg ? " — " + esc(r.msg) : "") + "</div>";
     html += "<div class='revhash'>content " + esc(r.hash.slice(0, 16)) + "… ← parent " + esc(r.parent === "genesis" ? "genesis" : r.parent.slice(0, 16) + "…") + "</div></div>";
   });
@@ -219,6 +225,9 @@ pre { font-size: 11px; line-height: 1.4; overflow: auto; }
 .revhead { font-size: 13px; } .revmeta { font-size: 11px; color: #8b949e; margin-top: 2px; }
 .revhash { font-size: 10px; color: #6e7681; margin-top: 2px; font-family: monospace; }
 .badge { background: #1f6feb33; color: #58a6ff; border-radius: 4px; padding: 1px 6px; font-size: 10px; }
+.delta { border-radius: 4px; padding: 1px 6px; font-size: 10px; }
+.delta.same { background: #2ea04333; color: #7ee787; }
+.delta.changed { background: #bb800933; color: #e3b341; }
 .email { color: #6e7681; font-size: 11px; }
 canvas { border: 1px solid #21262d; border-radius: 6px; max-width: 100%; }
 #drop { border: 2px dashed #30363d; border-radius: 8px; padding: 40px; text-align: center; color: #8b949e; margin: 16px; }
@@ -301,5 +310,13 @@ mod tests {
         assert!(html.contains("drawImage"), "image rendering");
         assert!(html.contains("function wrapText"), "text wrapping");
         assert!(html.contains("lineTo"), "vector polylines");
+    }
+
+    #[test]
+    fn viewer_shows_revision_content_delta_badge() {
+        let html = pwa_viewer_html();
+        assert!(html.contains("delta same"), "same-content badge class");
+        assert!(html.contains("content changed"), "changed-content badge text");
+        assert!(html.contains(".delta.changed"), "delta CSS present");
     }
 }

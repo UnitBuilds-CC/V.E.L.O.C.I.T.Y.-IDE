@@ -199,6 +199,9 @@ pub struct NdaDocumentView {
     cmd_image_path: String,
     cmd_points: String,
     commit_msg: String,
+    // Revision-diff picker (indices into doc.revisions()).
+    diff_a: usize,
+    diff_b: usize,
     identity_name: String,
     identity_email: String,
     identity_loaded: bool,
@@ -239,6 +242,8 @@ impl NdaDocumentView {
             cmd_image_path: String::new(),
             cmd_points: "0,0;40,0;40,40".to_string(),
             commit_msg: String::new(),
+            diff_a: 0,
+            diff_b: 0,
             identity_name: String::new(),
             identity_email: String::new(),
             identity_loaded: false,
@@ -787,6 +792,81 @@ impl NdaDocumentView {
                 .color(if chain_ok { palette.success } else { palette.error }),
         );
         ui.add_space(4.0);
+
+        // Uncommitted-changes delta (current content vs last commit).
+        let delta = self.doc.uncommitted_delta();
+        ui.horizontal(|ui| {
+            let (txt, col) = if !delta.has_commit {
+                ("no commits yet", palette.text_muted)
+            } else if delta.changed {
+                ("● uncommitted changes", palette.warning)
+            } else {
+                ("✓ clean (matches last commit)", palette.success)
+            };
+            ui.label(egui::RichText::new(txt).size(11.0).color(col));
+            ui.label(
+                egui::RichText::new(format!("· {} content triples · {} commands", delta.content_triples, delta.commands))
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        });
+        ui.add_space(6.0);
+
+        // Compare two revisions (metadata diff + content-hash badge).
+        if revs.len() >= 2 {
+            let max = revs.len() - 1;
+            if self.diff_a > max {
+                self.diff_a = max;
+            }
+            if self.diff_b > max {
+                self.diff_b = max;
+            }
+            if self.diff_b == 0 && max > 0 {
+                self.diff_b = 1;
+            }
+            ui.label(egui::RichText::new("Compare revisions").size(11.0).strong().color(palette.text));
+            ui.horizontal(|ui| {
+                ui.label("A");
+                egui::ComboBox::from_id_salt("nda-diff-a")
+                    .selected_text(format!("#{}", self.diff_a))
+                    .show_ui(ui, |ui| {
+                        for i in 0..=max {
+                            ui.selectable_value(&mut self.diff_a, i, format!("#{i} {}", revs[i].message));
+                        }
+                    });
+                ui.label("B");
+                egui::ComboBox::from_id_salt("nda-diff-b")
+                    .selected_text(format!("#{}", self.diff_b))
+                    .show_ui(ui, |ui| {
+                        for i in 0..=max {
+                            ui.selectable_value(&mut self.diff_b, i, format!("#{i} {}", revs[i].message));
+                        }
+                    });
+            });
+            if let Some(diff) = self.doc.diff_revisions(self.diff_a, self.diff_b) {
+                egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {
+                    let (badge, bcol) = if diff.same_content {
+                        ("same content", palette.success)
+                    } else {
+                        ("different content", palette.warning)
+                    };
+                    ui.label(egui::RichText::new(format!("{} ↔ {}: {badge}", diff.a_id, diff.b_id)).size(11.0).color(bcol));
+                    if diff.changed_fields.is_empty() {
+                        ui.label(egui::RichText::new("metadata identical").size(10.0).color(palette.text_muted));
+                    } else {
+                        for (field, va, vb) in &diff.changed_fields {
+                            ui.label(
+                                egui::RichText::new(format!("{field}: “{va}” → “{vb}”"))
+                                    .monospace()
+                                    .size(10.0)
+                                    .color(palette.text),
+                            );
+                        }
+                    }
+                });
+            }
+            ui.add_space(6.0);
+        }
 
         for (i, r) in revs.iter().enumerate() {
             egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {

@@ -219,6 +219,33 @@ pub struct Revision {
     pub message: String,
 }
 
+/// A field-level comparison between two recorded revisions. Content itself is
+/// not snapshotted in-file, so the diff covers revision *metadata* plus a
+/// content-hash equality badge (see [`NdaPortableDoc::diff_revisions`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RevisionDiff {
+    pub a_id: String,
+    pub b_id: String,
+    /// `(field, value_in_a, value_in_b)` for each metadata field that differs.
+    pub changed_fields: Vec<(String, String, String)>,
+    /// True when both revisions recorded the same content hash.
+    pub same_content: bool,
+}
+
+/// Live comparison of the current in-memory content against the last commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UncommittedDelta {
+    /// True when at least one revision has been committed.
+    pub has_commit: bool,
+    /// True when the current content hash differs from the latest commit (or
+    /// there is no commit yet but the document has content).
+    pub changed: bool,
+    /// Non-provenance (content) triple count right now.
+    pub content_triples: usize,
+    /// Display-command count right now.
+    pub commands: usize,
+}
+
 // --- The document ----------------------------------------------------------
 
 /// A portable NDA document: semantic triples plus immediate-mode display
@@ -378,6 +405,58 @@ impl NdaPortableDoc {
             prev = Some(r.content_hash.clone());
         }
         Ok(())
+    }
+
+    /// Compare two revisions (indices into [`Self::revisions`]) — metadata
+    /// field deltas plus a content-hash equality badge. Returns `None` if
+    /// either index is out of range. Content is not snapshotted historically,
+    /// so two revisions can only be compared by their recorded metadata and by
+    /// whether their content hashes match.
+    pub fn diff_revisions(&self, a: usize, b: usize) -> Option<RevisionDiff> {
+        let revs = self.revisions();
+        let ra = revs.get(a)?;
+        let rb = revs.get(b)?;
+        let mut changed_fields = Vec::new();
+        let mut cmp = |name: &str, va: &str, vb: &str| {
+            if va != vb {
+                changed_fields.push((name.to_string(), va.to_string(), vb.to_string()));
+            }
+        };
+        cmp("parent", &ra.parent, &rb.parent);
+        cmp("author", &ra.author_name, &rb.author_name);
+        cmp("email", &ra.author_email, &rb.author_email);
+        cmp("source", &ra.author_source, &rb.author_source);
+        cmp("timestamp", &ra.timestamp, &rb.timestamp);
+        cmp("message", &ra.message, &rb.message);
+        Some(RevisionDiff {
+            a_id: ra.id.clone(),
+            b_id: rb.id.clone(),
+            changed_fields,
+            same_content: ra.content_hash == rb.content_hash,
+        })
+    }
+
+    /// Compare the current in-memory content against the latest committed
+    /// revision. Content is not snapshotted historically, so this reports a
+    /// content-hash equality plus live content counts (an “uncommitted delta”).
+    pub fn uncommitted_delta(&self) -> UncommittedDelta {
+        let content_triples = self.triples.iter().filter(|(_, p, _)| !is_provenance_predicate(p)).count();
+        let commands = self.commands.len();
+        let current = hex(&self.content_hash());
+        match self.revisions().last() {
+            Some(last) => UncommittedDelta {
+                has_commit: true,
+                changed: last.content_hash != current,
+                content_triples,
+                commands,
+            },
+            None => UncommittedDelta {
+                has_commit: false,
+                changed: content_triples > 0 || commands > 0,
+                content_triples,
+                commands,
+            },
+        }
     }
 
     /// SHA-256 pairwise Merkle root over *all* triples (`"{s}|{p}|{o}"` leaves),
@@ -851,5 +930,55 @@ mod tests {
         let b2 = decoded.try_to_portable_bytes().expect("re-encodes");
         assert_eq!(b1, b2);
         assert!(decoded.verify_history().is_ok());
+    }
+
+    #[test]
+    fn diff_revisions_reports_metadata_and_content_badge() {
+        let mut doc = NdaPortableDoc::new();
+        doc.set_title("T");
+        doc.push_triple("s", "p", "o");
+        doc.commit_revision("Alice", "a@x", "git", "2026-01-01T00:00:00Z", "first", "ws");
+        // Change content, then commit again with a different author/message.
+        doc.push_triple("s2", "p", "o2");
+        doc.commit_revision("Bob", "b@x", "os", "2026-01-02T00:00:00Z", "second", "ws");
+
+        let diff = doc.diff_revisions(0, 1).expect("two revisions");
+        assert!(!diff.same_content, "content changed between revs");
+        let fields: Vec<&str> = diff.changed_fields.iter().map(|(n, _, _)| n.as_str()).collect();
+        for expected in ["parent", "author", "email", "source", "timestamp", "message"] {
+            assert!(fields.contains(&expected), "missing changed field {expected}");
+        }
+        // Out-of-range index → None.
+        assert!(doc.diff_revisions(0, 5).is_none());
+        // A revision diffed against itself: no changed fields, same content.
+        let self_diff = doc.diff_revisions(1, 1).expect("present");
+        assert!(self_diff.same_content);
+        assert!(self_diff.changed_fields.is_empty());
+    }
+
+    #[test]
+    fn uncommitted_delta_tracks_live_changes() {
+        let mut doc = NdaPortableDoc::new();
+        // Empty, no commit → not changed.
+        let d = doc.uncommitted_delta();
+        assert!(!d.has_commit && !d.changed);
+
+        doc.set_title("T");
+        doc.push_triple("s", "p", "o");
+        // Content but no commit → changed.
+        let d = doc.uncommitted_delta();
+        assert!(!d.has_commit && d.changed);
+        assert_eq!(d.content_triples, 2); // title + one triple
+
+        doc.commit_revision("A", "a@x", "git", "2026-01-01T00:00:00Z", "m", "ws");
+        // Just committed → clean.
+        let d = doc.uncommitted_delta();
+        assert!(d.has_commit && !d.changed);
+
+        doc.push_command(DisplayCommand::rect(0, 0, 5, 5, 0xFF));
+        // New command after commit → changed again.
+        let d = doc.uncommitted_delta();
+        assert!(d.has_commit && d.changed);
+        assert_eq!(d.commands, 1);
     }
 }
