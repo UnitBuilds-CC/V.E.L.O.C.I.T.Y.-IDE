@@ -682,6 +682,28 @@ pub fn handle_system_tool(
                 None => return Err(format!("Unknown workflow: {id}").into()),
             }
         }
+        "connector_call" => {
+            let id = arguments["id"].as_str().ok_or("id is required")?;
+            let req = crate::connectors::ConnectorRequest {
+                method: arguments["method"].as_str().unwrap_or("GET").to_string(),
+                path: arguments["path"].as_str().unwrap_or("").to_string(),
+                headers: arguments["headers"]
+                    .as_object()
+                    .map(|m| {
+                        m.iter()
+                            .map(|(k, v)| {
+                                (k.clone(), v.as_str().unwrap_or_default().to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                body: arguments["body"].as_str().map(str::to_string),
+            };
+            match crate::connectors::call_connector(root, id, &req) {
+                Ok(resp) => serde_json::to_string(&resp)?,
+                Err(e) => return Err(e.into()),
+            }
+        }
         _ => return Ok(None),
     };
 

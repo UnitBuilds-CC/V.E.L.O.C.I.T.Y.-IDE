@@ -20,6 +20,7 @@ mod agent;
 mod automation;
 mod benchmark;
 mod compiler;
+mod connectors;
 mod editor;
 mod ipc;
 mod orchestrator;

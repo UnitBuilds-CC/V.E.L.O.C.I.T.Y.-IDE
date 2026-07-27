@@ -230,5 +230,21 @@ pub fn get_system_tools() -> Vec<Tool> {
                 "required": ["id"]
             }),
         },
+        // ── Connectors ──────────────────────────────────────────────────────
+        Tool {
+            name: "connector_call".to_string(),
+            description: "Invoke a configured external HTTP connector by id. Resolves the connector's credential from the encrypted secret store, assembles the request (base URL + path, headers, auth), and returns the response status and body.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Id of the connector to call (see .velocity/connectors.json)." },
+                    "method": { "type": "string", "description": "HTTP method (GET, POST, ...). Defaults to GET." },
+                    "path": { "type": "string", "description": "Path appended to the connector base URL (leading slash optional)." },
+                    "headers": { "type": "object", "description": "Optional extra headers as a string map." },
+                    "body": { "type": "string", "description": "Optional request body sent verbatim." }
+                },
+                "required": ["id"]
+            }),
+        },
     ]
 }
