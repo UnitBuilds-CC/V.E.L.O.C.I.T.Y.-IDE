@@ -90,16 +90,50 @@ function renderCanvas(doc){
   const cv = document.createElement("canvas");
   cv.width = 800; cv.height = 480;
   const ctx = cv.getContext("2d");
-  ctx.fillStyle = "#0d1117"; ctx.fillRect(0, 0, cv.width, cv.height);
-  for (const c of doc.commands) {
-    ctx.fillStyle = rgba(c.color);
-    ctx.strokeStyle = rgba(c.color);
-    if (c.type === 3) { ctx.fillRect(c.x, c.y, c.w, c.h); }
-    else if (c.type === 1) { ctx.font = "14px monospace"; ctx.fillText(c.content, c.x, c.y); }
-    else if (c.type === 4) { ctx.strokeRect(c.x, c.y, c.w || 120, c.h || 80); ctx.font = "11px monospace"; ctx.fillText("[image]", c.x + 4, c.y + 14); }
-    else if (c.type === 2) { ctx.strokeRect(c.x, c.y, c.w, c.h); }
-  }
+  const paint = () => {
+    ctx.fillStyle = "#0d1117"; ctx.fillRect(0, 0, cv.width, cv.height);
+    for (const c of doc.commands) {
+      ctx.fillStyle = rgba(c.color);
+      ctx.strokeStyle = rgba(c.color);
+      if (c.type === 3) { ctx.fillRect(c.x, c.y, c.w, c.h); }
+      else if (c.type === 1) {
+        ctx.font = "14px monospace";
+        if (c.w > 0) { wrapText(ctx, c.content, c.x, c.y, c.w, 18); }
+        else { ctx.fillText(c.content, c.x, c.y); }
+      }
+      else if (c.type === 4) {
+        const w = c.w || 120, h = c.h || 80;
+        const img = imageCache[c.content];
+        if (img && img.complete && img.naturalWidth) { ctx.drawImage(img, c.x, c.y, w, h); }
+        else {
+          if (!img) { const ni = new Image(); ni.onload = () => renderCanvas(doc); ni.src = c.content; imageCache[c.content] = ni; }
+          ctx.strokeRect(c.x, c.y, w, h); ctx.font = "11px monospace"; ctx.fillText("[image]", c.x + 4, c.y + 14);
+        }
+      }
+      else if (c.type === 2) {
+        const pts = c.content.split(";").map(p => p.split(",").map(Number)).filter(p => p.length === 2 && p.every(n => !isNaN(n)));
+        if (pts.length >= 2) {
+          ctx.lineWidth = c.h || 1; ctx.beginPath();
+          ctx.moveTo(c.x + pts[0][0], c.y + pts[0][1]);
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(c.x + pts[i][0], c.y + pts[i][1]);
+          ctx.stroke();
+        } else if (pts.length === 1) { ctx.fillRect(c.x + pts[0][0] - 1, c.y + pts[0][1] - 1, 2, 2); }
+      }
+    }
+  };
+  paint();
   el.appendChild(cv);
+}
+const imageCache = {};
+function wrapText(ctx, text, x, y, maxWidth, lineHeight){
+  const words = String(text).split(/\s+/);
+  let line = "", cy = y;
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width > maxWidth && line) { ctx.fillText(line, x, cy); line = w; cy += lineHeight; }
+    else { line = test; }
+  }
+  if (line) ctx.fillText(line, x, cy);
 }
 function renderGraph(doc){
   const el = document.getElementById("graph");
@@ -259,5 +293,13 @@ mod tests {
         let html = pwa_viewer_html();
         assert!(html.contains("type=\"file\""));
         assert!(html.contains("function parseNda"));
+    }
+
+    #[test]
+    fn viewer_renders_images_vectors_and_wrap() {
+        let html = pwa_viewer_html();
+        assert!(html.contains("drawImage"), "image rendering");
+        assert!(html.contains("function wrapText"), "text wrapping");
+        assert!(html.contains("lineTo"), "vector polylines");
     }
 }
