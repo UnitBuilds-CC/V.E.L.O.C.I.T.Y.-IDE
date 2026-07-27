@@ -1458,6 +1458,11 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
 }
 
 fn eval_unary(op: &Token, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
+    // `delete obj.prop` / `delete obj[idx]` must operate on the target expression
+    // (not its evaluated value) so the property is actually removed.
+    if matches!(op, Token::Delete) {
+        return eval_delete(rhs, scope);
+    }
     let val = eval_expr_node(rhs, scope)?;
     Ok(match op {
         Token::Minus => JsValue::Number(-to_number(&val)),
@@ -1476,6 +1481,54 @@ fn eval_unary(op: &Token, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
         }
         _ => JsValue::Undefined,
     })
+}
+
+/// Evaluate the `delete` operator. Removes the targeted property from its owning
+/// object/array and writes the container back to scope. Mirrors JS semantics where
+/// deleting a (configurable or non-existent) own property yields `true`.
+fn eval_delete(rhs: &Expr, scope: &ScopeRef) -> EvalResult {
+    match rhs {
+        Expr::Member(obj, prop) => {
+            let obj_name = match obj.as_ref() {
+                Expr::Ident(name) => Some(name.as_str()),
+                Expr::This => Some("this"),
+                _ => None,
+            };
+            if let Some(name) = obj_name {
+                if let Some(JsValue::Object(mut map)) = Scope::resolve(scope, name) {
+                    map.remove(prop);
+                    Scope::assign(scope, name, JsValue::Object(map));
+                }
+            }
+            Ok(JsValue::Boolean(true))
+        }
+        Expr::Index(obj, idx_expr) => {
+            let obj_name = match obj.as_ref() {
+                Expr::Ident(name) => Some(name.as_str()),
+                Expr::This => Some("this"),
+                _ => None,
+            };
+            if let Some(name) = obj_name {
+                if let Some(mut target) = Scope::resolve(scope, name) {
+                    let key = eval_expr_node(idx_expr, scope).map(|k| to_string(&k)).unwrap_or_default();
+                    match &mut target {
+                        JsValue::Object(map) => { map.remove(&key); }
+                        // Deleting an array element leaves a hole (undefined), per JS.
+                        JsValue::Array(arr) => {
+                            if let Ok(i) = key.parse::<usize>() {
+                                if i < arr.len() { arr[i] = JsValue::Undefined; }
+                            }
+                        }
+                        _ => {}
+                    }
+                    Scope::assign(scope, name, target);
+                }
+            }
+            Ok(JsValue::Boolean(true))
+        }
+        // delete of a bare identifier / non-member is a no-op returning true (non-strict).
+        _ => Ok(JsValue::Boolean(true)),
+    }
 }
 
 fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
@@ -4184,6 +4237,50 @@ mod tests {
             var s = new Sub();
             s.kind
         "), JsValue::String("base".to_string()));
+    }
+
+    #[test]
+    fn delete_property_removes_key() {
+        assert_eq!(eval_full("
+            var obj = { a: 1, b: 2 };
+            delete obj.a;
+            'a' in obj
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn delete_property_value_gone() {
+        assert_eq!(eval_full("
+            var obj = { a: 1, b: 2 };
+            delete obj.a;
+            obj.b
+        "), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn delete_returns_true() {
+        assert_eq!(eval_full("
+            var obj = { a: 1 };
+            delete obj.a
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn delete_computed_key() {
+        assert_eq!(eval_full("
+            var obj = { x: 9 };
+            delete obj['x'];
+            obj.x
+        "), JsValue::Undefined);
+    }
+
+    #[test]
+    fn delete_array_element_leaves_hole() {
+        assert_eq!(eval_full("
+            var arr = [1, 2, 3];
+            delete arr[1];
+            arr[0] + arr[2]
+        "), JsValue::Number(4.0));
     }
 
     #[test]
