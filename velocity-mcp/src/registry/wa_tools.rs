@@ -625,8 +625,30 @@ pub fn handle_wa_tool(
         }
         // ─── Notifications ────────────────────────────────────────────────────────
         "wa_notifications_list" => {
-            let _script = crate::wa::notifications::build_detect_notifications_script();
-            "{\"action\":\"list_notifications\",\"script_ready\":true}".to_string()
+            let notifications =
+                crate::wa::notifications::NotificationManager::get_visible_notifications();
+            let items: Vec<serde_json::Value> = notifications
+                .iter()
+                .map(|n| {
+                    serde_json::json!({
+                        "id": n.id,
+                        "app_name": n.app_name,
+                        "title": n.title,
+                        "body": n.body,
+                        "timestamp_ms": n.timestamp_ms,
+                        "actions": n.actions,
+                        "is_visible": n.is_visible,
+                        "is_system": n.is_system,
+                    })
+                })
+                .collect();
+            let count = items.len();
+            serde_json::to_string(&serde_json::json!({
+                "success": true,
+                "count": count,
+                "notifications": items,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise notifications list: {err}")))?
         }
         "wa_notifications_dismiss" => {
             let pattern = arguments["pattern"].as_str();
@@ -951,5 +973,21 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let args = serde_json::json!({ "hive": "BOGUS", "path": "x", "name": "y" });
         assert!(handle_wa_tool(temp.path(), "wa_registry_read", &args).is_err());
+    }
+
+    // `wa_notifications_list` must perform a real detection pass (returning a structured
+    // list) rather than the old `script_ready` stub. Read-only, so safe on any machine.
+    #[test]
+    fn notifications_list_executes_for_real() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({});
+        let out = handle_wa_tool(temp.path(), "wa_notifications_list", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(!out.contains("script_ready"), "stub still present: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["success"], serde_json::json!(true));
+        assert!(parsed["count"].is_number());
+        assert!(parsed["notifications"].is_array());
     }
 }
