@@ -3,6 +3,7 @@
 //! keywords, and local identifiers.
 
 use std::path::Path;
+use std::collections::HashSet;
 use eframe::egui;
 use crate::editor::theme::IdePalette;
 
@@ -218,6 +219,30 @@ pub fn from_sitemap_symbols(symbols: &[crate::editor::search::SymbolEntry], pref
         .collect()
 }
 
+/// Merge LSP completion items with locally-computed items (sitemap/keywords/
+/// local identifiers). LSP items win on label clashes because they carry richer
+/// kind/detail from the language server. The result is sorted by `sort_key`
+/// then label for stable, predictable ordering.
+pub fn merge_completion_items(
+    lsp: Vec<CompletionItem>,
+    local: Vec<CompletionItem>,
+) -> Vec<CompletionItem> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<CompletionItem> = Vec::with_capacity(lsp.len() + local.len());
+    for item in lsp {
+        if seen.insert(item.label.clone()) {
+            out.push(item);
+        }
+    }
+    for item in local {
+        if seen.insert(item.label.clone()) {
+            out.push(item);
+        }
+    }
+    out.sort_by(|a, b| a.sort_key.cmp(&b.sort_key).then_with(|| a.label.cmp(&b.label)));
+    out
+}
+
 /// Get keywords for a file extension.
 pub fn keywords_for_extension(ext: &str) -> Vec<CompletionItem> {
     match ext {
@@ -311,5 +336,24 @@ mod tests {
     #[test]
     fn rust_keywords_nonempty() {
         assert!(rust_keywords().len() > 30);
+    }
+
+    #[test]
+    fn merge_dedupes_by_label_lsp_wins_and_sorts() {
+        let lsp = vec![
+            CompletionItem { label: "shared".into(), kind: CompletionKind::Function, detail: Some("from lsp".into()), insert_text: "shared".into(), sort_key: 20 },
+            CompletionItem { label: "aaa_lsp".into(), kind: CompletionKind::Variable, detail: None, insert_text: "aaa_lsp".into(), sort_key: 20 },
+        ];
+        let local = vec![
+            CompletionItem { label: "shared".into(), kind: CompletionKind::Type, detail: Some("from sitemap".into()), insert_text: "shared".into(), sort_key: 30 },
+            CompletionItem { label: "zzz_local".into(), kind: CompletionKind::Keyword, detail: None, insert_text: "zzz_local".into(), sort_key: 100 },
+        ];
+        let merged = merge_completion_items(lsp, local);
+        assert_eq!(merged.len(), 3);
+        let shared = merged.iter().find(|i| i.label == "shared").unwrap();
+        assert_eq!(shared.detail.as_deref(), Some("from lsp"));
+        assert_eq!(merged[0].label, "aaa_lsp");
+        assert_eq!(merged[1].label, "shared");
+        assert_eq!(merged[2].label, "zzz_local");
     }
 }

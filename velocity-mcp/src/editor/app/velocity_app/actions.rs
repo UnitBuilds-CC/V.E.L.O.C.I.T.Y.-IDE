@@ -58,6 +58,9 @@ impl VelocityApp {
             Command { label: "Go to Symbol…", category: "File", shortcut: Some("Ctrl+Shift+O"), action: |a| a.open_goto_symbol(), modes: &[] },
             Command { label: "Go Back", category: "File", shortcut: Some("Alt+Left"), action: |a| a.nav_back(), modes: &[] },
             Command { label: "Go Forward", category: "File", shortcut: Some("Alt+Right"), action: |a| a.nav_forward(), modes: &[] },
+            Command { label: "Go to Definition", category: "File", shortcut: Some("F12"), action: |a| a.goto_definition_at_cursor(), modes: &[] },
+            Command { label: "Find All References", category: "File", shortcut: Some("Shift+F12"), action: |a| a.find_references_at_cursor(), modes: &[] },
+            Command { label: "Show Hover Info", category: "File", shortcut: None, action: |a| a.show_hover_at_cursor(), modes: &[] },
             Command { label: "Save", category: "File", shortcut: Some("Ctrl+S"), action: |a| a.save_active(), modes: &[] },
             Command { label: "Save As…", category: "File", shortcut: None, action: |a| a.save_active_as(), modes: &[] },
             Command { label: "Save All", category: "File", shortcut: Some("Ctrl+Shift+S"), action: |a| a.save_all(), modes: &[] },
@@ -985,25 +988,138 @@ impl VelocityApp {
         }
     }
 
-    /// Trigger code completion at cursor position.
+    /// Trigger code completion at cursor position. Merges language-server (LSP)
+    /// completions with local sitemap/keyword/identifier suggestions; LSP items
+    /// win on label clashes. Degrades gracefully when no language server exists.
     pub fn trigger_completion(&mut self) {
         let active_id = self.active_tab.clone();
-        if let Some(id) = active_id {
-            if let Some(buf) = self.buffers.get(&id) {
-                // Get the word prefix before cursor (simple heuristic: last word chars)
-                let content = &buf.content;
-                let prefix = content
-                    .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
-                    .next()
-                    .unwrap_or("");
+        let Some(id) = active_id else { return };
+        // Snapshot buffer content/path so the immutable borrow ends before we
+        // mutably borrow the LSP manager below.
+        let snapshot = self
+            .buffers
+            .get(&id)
+            .map(|buf| (buf.content.clone(), buf.path.clone()));
+        let Some((content, path)) = snapshot else { return };
 
-                // Build completion items from sitemap symbols
-                let items = crate::editor::completion::CompletionState::compute_items(
-                    prefix,
-                    &self.workspace_symbols,
-                );
-                self.completion_state.show(items);
+        let prefix = content
+            .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+            .next()
+            .unwrap_or("")
+            .to_string();
+
+        // Local (sitemap) suggestions, filtered by prefix.
+        let local = crate::editor::completion::CompletionState::compute_items(
+            &prefix,
+            &self.workspace_symbols,
+        );
+
+        // Language-server suggestions at the cursor (empty when unavailable).
+        let mut lsp_items = Vec::new();
+        if let Some(path) = path.as_ref() {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("txt")
+                .to_string();
+            let line = self.current_cursor_line;
+            let col = self.current_cursor_col;
+            if let Some(lsp) = self.lsp_manager.as_mut() {
+                lsp_items = lsp.completion(&ext, path, line, col, &content);
             }
+        }
+
+        let merged = crate::editor::completion::merge_completion_items(lsp_items, local);
+        self.completion_state.show(merged);
+    }
+
+    /// Snapshot the active buffer's (path, extension, content) for an LSP request.
+    fn active_lsp_target(&self) -> Option<(PathBuf, String, String)> {
+        let id = self.active_tab.clone()?;
+        let buf = self.buffers.get(&id)?;
+        let path = buf.path.clone()?;
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("txt")
+            .to_string();
+        Some((path, ext, buf.content.clone()))
+    }
+
+    /// F12: jump to the definition of the symbol under the cursor via LSP.
+    pub fn goto_definition_at_cursor(&mut self) {
+        let Some((path, ext, content)) = self.active_lsp_target() else {
+            self.status_message = "No file open for go-to-definition".into();
+            return;
+        };
+        let line = self.current_cursor_line;
+        let col = self.current_cursor_col;
+        let locations = match self.lsp_manager.as_mut() {
+            Some(lsp) => lsp.definition(&ext, &path, line, col, &content),
+            None => Vec::new(),
+        };
+        let Some(target) = locations.into_iter().next() else {
+            self.status_message = "No definition found (no language server result)".into();
+            return;
+        };
+        let target_path = target.file.clone();
+        let target_line = target.line + 1; // LSP 0-based -> editor 1-based
+        self.push_nav_location();
+        self.open_editor(Some(target.file));
+        self.pending_cursor_line = Some(target_line);
+        self.status_message =
+            format!("Definition \u{2192} {}:{}", target_path.display(), target_line);
+    }
+
+    /// Shift+F12: find all references to the symbol under the cursor via LSP and
+    /// present them in a navigable popup.
+    pub fn find_references_at_cursor(&mut self) {
+        let Some((path, ext, content)) = self.active_lsp_target() else {
+            self.status_message = "No file open for find-references".into();
+            return;
+        };
+        let line = self.current_cursor_line;
+        let col = self.current_cursor_col;
+        let locations = match self.lsp_manager.as_mut() {
+            Some(lsp) => lsp.references(&ext, &path, line, col, &content),
+            None => Vec::new(),
+        };
+        if locations.is_empty() {
+            self.references_open = false;
+            self.status_message = "No references found (no language server result)".into();
+            return;
+        }
+        self.references_results = locations
+            .into_iter()
+            .map(|l| (l.file, l.line + 1)) // store 1-based line for the editor
+            .collect();
+        self.references_selected = 0;
+        self.references_open = true;
+        self.status_message = format!("{} reference(s) found", self.references_results.len());
+    }
+
+    /// Show LSP hover information for the symbol under the cursor as a toast.
+    pub fn show_hover_at_cursor(&mut self) {
+        let Some((path, ext, content)) = self.active_lsp_target() else {
+            self.status_message = "No file open for hover".into();
+            return;
+        };
+        let line = self.current_cursor_line;
+        let col = self.current_cursor_col;
+        let hover = match self.lsp_manager.as_mut() {
+            Some(lsp) => lsp.hover(&ext, &path, line, col, &content),
+            None => None,
+        };
+        match hover {
+            Some(h) => {
+                let snippet = if h.contents.len() > 240 {
+                    format!("{}\u{2026}", &h.contents[..240])
+                } else {
+                    h.contents.clone()
+                };
+                self.toasts.push(crate::editor::toast::Toast::info(snippet));
+            }
+            None => self.status_message = "No hover info (no language server result)".into(),
         }
     }
 

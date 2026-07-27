@@ -507,6 +507,12 @@ impl VelocityApp {
                 if let Some(dap) = &mut self.dap_client {
                     let _ = dap.step_into();
                 }
+            } else if shift && i.key_pressed(egui::Key::F12) {
+                // Find all references (LSP)
+                self.find_references_at_cursor();
+            } else if i.key_pressed(egui::Key::F12) {
+                // Go to definition (LSP)
+                self.goto_definition_at_cursor();
             } else if cmd && i.key_pressed(egui::Key::Space) {
                 // Trigger completion
                 self.trigger_completion();
@@ -961,6 +967,83 @@ impl VelocityApp {
             }
         }
         self.goto_line_open = open;
+    }
+
+    /// Shift+F12 find-references results popup: list LSP references and jump to
+    /// the selected one. Arrow keys navigate, Enter jumps, Escape closes.
+    pub fn references_ui(&mut self, ctx: &egui::Context) {
+        if !self.references_open {
+            return;
+        }
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("references_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 80.0));
+
+        let mut open = self.references_open;
+        let mut chosen: Option<usize> = None;
+        let count = self.references_results.len();
+        self.references_selected = self.references_selected.min(count.saturating_sub(1));
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if count > 0 { self.references_selected = (self.references_selected + 1) % count; }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if count > 0 { self.references_selected = (self.references_selected + count - 1) % count; }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            chosen = Some(self.references_selected);
+            open = false;
+        }
+
+        let results = self.references_results.clone();
+        let selected = self.references_selected;
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(520.0);
+                    ui.label(
+                        egui::RichText::new(format!("References ({count})"))
+                            .size(13.0)
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for (idx, (path, line)) in results.iter().enumerate() {
+                            let label = format!("{}:{}", path.display(), line);
+                            let is_sel = idx == selected;
+                            let mut clicked = false;
+                            ui.horizontal(|ui| {
+                                ui.colored_label(
+                                    if is_sel { palette.accent } else { palette.text_muted },
+                                    "\u{1F50D}",
+                                );
+                                if ui.selectable_label(is_sel, &label).clicked() {
+                                    clicked = true;
+                                }
+                            });
+                            if clicked {
+                                chosen = Some(idx);
+                                open = false;
+                            }
+                        }
+                    });
+                });
+        });
+
+        self.references_open = open;
+        if let Some(idx) = chosen {
+            if let Some((path, line)) = self.references_results.get(idx).cloned() {
+                self.push_nav_location();
+                self.open_editor(Some(path));
+                self.pending_cursor_line = Some(line);
+            }
+        }
     }
 
     /// Ctrl+Shift+O go-to-symbol switcher: fuzzy-search sitemap symbols and jump
@@ -1554,8 +1637,9 @@ impl eframe::App for VelocityApp {
                     if let Some(cursor_range) = state.cursor.char_range() {
                         let char_idx = cursor_range.primary.index.into();
                         let pos = get_cursor_pos(buf.content(), char_idx);
-                        // Update current cursor line
+                        // Update current cursor line and column (0-based, for LSP).
                         self.current_cursor_line = pos.0;
+                        self.current_cursor_col = pos.1;
                         cursor_pos = Some(pos);
                     }
                 }
@@ -2421,6 +2505,7 @@ impl eframe::App for VelocityApp {
         self.quick_open_ui(&ctx);
         self.goto_line_ui(&ctx);
         self.goto_symbol_ui(&ctx);
+        self.references_ui(&ctx);
         self.file_dialog_ui(&ctx);
         self.save_as_dialog_ui(&ctx);
         self.confirm_close_dialog_ui(&ctx);

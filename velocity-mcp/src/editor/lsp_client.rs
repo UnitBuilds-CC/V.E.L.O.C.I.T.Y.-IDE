@@ -4,15 +4,18 @@
 //! Manages language server processes and provides go-to-definition, hover,
 //! references, rename, and diagnostics via JSON-RPC over stdin/stdout.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read as IoRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::editor::completion::{CompletionItem, CompletionKind};
 
 /// Configuration for a language server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,6 +339,10 @@ impl Drop for LspServer {
 pub struct LspManager {
     servers: HashMap<String, LspServer>,
     pub diagnostics: Vec<LspDiagnostic>,
+    /// Documents we have announced to a server via `textDocument/didOpen`.
+    open_docs: HashSet<PathBuf>,
+    /// Per-document version counter for `textDocument/didChange`.
+    doc_versions: HashMap<PathBuf, i32>,
 }
 
 impl LspManager {
@@ -403,6 +410,132 @@ impl LspManager {
     pub fn shutdown_all(&mut self) {
         for server in self.servers.values_mut() {
             let _ = server.shutdown();
+        }
+    }
+
+    // ─── Interactive intelligence (I1) ─────────────────────────────────────
+
+    /// Announce/refresh a document with the matching language server so that
+    /// subsequent requests see the current buffer content. Sends `didOpen` the
+    /// first time a path is seen and `didChange` afterwards. Never panics when
+    /// no server matches the extension.
+    fn sync_document(&mut self, ext: &str, path: &Path, content: &str) {
+        let already = self.open_docs.contains(path);
+        let next_version = self.doc_versions.get(path).copied().unwrap_or(1) + 1;
+        // Resolve the language id with a short-lived immutable borrow.
+        let lang = self
+            .server_for_extension(ext)
+            .map(|s| s.config.language_id.clone());
+        let Some(lang) = lang else { return };
+        if let Some(server) = self.server_for_extension(ext) {
+            if already {
+                let _ = server.did_change(path, content, next_version);
+            } else {
+                let _ = server.did_open(path, content, &lang);
+            }
+        }
+        if !already {
+            self.open_docs.insert(path.to_path_buf());
+        }
+        self.doc_versions.insert(path.to_path_buf(), next_version);
+    }
+
+    /// Block (bounded) until the response for `id` arrives, or time out.
+    /// Drains nothing else; responses are keyed by request id in the inbox.
+    fn await_response(&mut self, ext: &str, id: i64) -> Option<Value> {
+        let deadline = Instant::now() + Duration::from_millis(2000);
+        loop {
+            if let Some(server) = self.server_for_extension(ext) {
+                if let Some(resp) = server.take_response(id) {
+                    return Some(resp);
+                }
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Go-to-definition at a position. Returns an empty vec when no server is
+    /// available, the request fails, or the server times out.
+    pub fn definition(
+        &mut self,
+        ext: &str,
+        path: &Path,
+        line: usize,
+        col: usize,
+        content: &str,
+    ) -> Vec<LspLocation> {
+        self.sync_document(ext, path, content);
+        let id = match self.server_for_extension(ext) {
+            Some(s) => s.goto_definition(path, line, col),
+            None => return Vec::new(),
+        };
+        let Ok(id) = id else { return Vec::new() };
+        match self.await_response(ext, id) {
+            Some(resp) => parse_definition(&resp),
+            None => Vec::new(),
+        }
+    }
+
+    /// Find references at a position. Degrades to an empty vec like [`Self::definition`].
+    pub fn references(
+        &mut self,
+        ext: &str,
+        path: &Path,
+        line: usize,
+        col: usize,
+        content: &str,
+    ) -> Vec<LspLocation> {
+        self.sync_document(ext, path, content);
+        let id = match self.server_for_extension(ext) {
+            Some(s) => s.references(path, line, col),
+            None => return Vec::new(),
+        };
+        let Ok(id) = id else { return Vec::new() };
+        match self.await_response(ext, id) {
+            Some(resp) => parse_definition(&resp),
+            None => Vec::new(),
+        }
+    }
+
+    /// Hover information at a position. Returns `None` when unavailable.
+    pub fn hover(
+        &mut self,
+        ext: &str,
+        path: &Path,
+        line: usize,
+        col: usize,
+        content: &str,
+    ) -> Option<HoverResult> {
+        self.sync_document(ext, path, content);
+        let id = match self.server_for_extension(ext) {
+            Some(s) => s.hover(path, line, col),
+            None => return None,
+        };
+        let Ok(id) = id else { return None };
+        self.await_response(ext, id).and_then(|resp| parse_hover(&resp))
+    }
+
+    /// Completion items at a position. Degrades to an empty vec when unavailable.
+    pub fn completion(
+        &mut self,
+        ext: &str,
+        path: &Path,
+        line: usize,
+        col: usize,
+        content: &str,
+    ) -> Vec<CompletionItem> {
+        self.sync_document(ext, path, content);
+        let id = match self.server_for_extension(ext) {
+            Some(s) => s.completion(path, line, col),
+            None => return Vec::new(),
+        };
+        let Ok(id) = id else { return Vec::new() };
+        match self.await_response(ext, id) {
+            Some(resp) => parse_completion(&resp),
+            None => Vec::new(),
         }
     }
 }
@@ -547,6 +680,136 @@ fn parse_publish_diagnostics(params: &Value) -> Option<Vec<LspDiagnostic>> {
     if results.is_empty() { None } else { Some(results) }
 }
 
+/// Parse a single LSP `Location` (`{uri, range}`) or `LocationLink`
+/// (`{targetUri, targetRange}`) object into an [`LspLocation`].
+fn parse_location_obj(obj: &Value) -> Option<LspLocation> {
+    // Standard Location: { uri, range: { start: { line, character } } }
+    if let (Some(uri), Some(range)) =
+        (obj.get("uri").and_then(|v| v.as_str()), obj.get("range"))
+    {
+        let start = range.get("start")?;
+        let line = start.get("line")?.as_u64()? as usize;
+        let col = start.get("character")?.as_u64()? as usize;
+        return Some(LspLocation { file: uri_to_path(uri), line, col });
+    }
+    // LocationLink: { targetUri, targetRange: { start: { line, character } } }
+    if let (Some(uri), Some(range)) =
+        (obj.get("targetUri").and_then(|v| v.as_str()), obj.get("targetRange"))
+    {
+        let start = range.get("start")?;
+        let line = start.get("line")?.as_u64()? as usize;
+        let col = start.get("character")?.as_u64()? as usize;
+        return Some(LspLocation { file: uri_to_path(uri), line, col });
+    }
+    None
+}
+
+/// Parse a `textDocument/definition` (or `references`) response. The `result`
+/// may be a single `Location`, an array of `Location`, or an array of
+/// `LocationLink`. Returns an empty vec for null/absent results.
+pub fn parse_definition(v: &Value) -> Vec<LspLocation> {
+    let result = match v.get("result") {
+        Some(r) if !r.is_null() => r,
+        _ => return Vec::new(),
+    };
+    if let Some(arr) = result.as_array() {
+        arr.iter().filter_map(parse_location_obj).collect()
+    } else {
+        parse_location_obj(result).into_iter().collect()
+    }
+}
+
+/// Recursively extract plain text from an LSP hover `contents` value, which may
+/// be a string, a `MarkupContent`/`MarkedString` object (`{value}`), or an array
+/// of those.
+fn extract_markup(v: &Value) -> Option<String> {
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(value) = v.get("value").and_then(|x| x.as_str()) {
+        return Some(value.to_string());
+    }
+    if let Some(arr) = v.as_array() {
+        let parts: Vec<String> = arr.iter().filter_map(extract_markup).collect();
+        if parts.is_empty() {
+            return None;
+        }
+        return Some(parts.join("\n"));
+    }
+    None
+}
+
+/// Parse a `textDocument/hover` response into a [`HoverResult`]. Returns `None`
+/// when the result is null or has no textual content.
+pub fn parse_hover(v: &Value) -> Option<HoverResult> {
+    let result = v.get("result")?;
+    if result.is_null() {
+        return None;
+    }
+    let contents = extract_markup(result.get("contents")?)?;
+    if contents.trim().is_empty() {
+        return None;
+    }
+    let range_start = result.get("range").and_then(|r| r.get("start")).and_then(|s| {
+        let l = s.get("line")?.as_u64()? as usize;
+        let c = s.get("character")?.as_u64()? as usize;
+        Some((l, c))
+    });
+    Some(HoverResult { contents, range_start })
+}
+
+/// Map an LSP `CompletionItemKind` number to our [`CompletionKind`].
+fn map_completion_kind(kind: u64) -> CompletionKind {
+    match kind {
+        2 | 3 => CompletionKind::Function,          // Method, Function
+        7 | 8 | 13 | 22 => CompletionKind::Type,    // Class, Interface, Enum, Struct
+        9 => CompletionKind::Module,                // Module
+        5 | 10 => CompletionKind::Field,            // Field, Property
+        6 | 12 | 21 => CompletionKind::Variable,    // Variable, Value, Constant
+        14 => CompletionKind::Keyword,              // Keyword
+        15 => CompletionKind::Snippet,              // Snippet
+        17 => CompletionKind::File,                 // File
+        _ => CompletionKind::Variable,
+    }
+}
+
+/// Parse a `textDocument/completion` response. The `result` may be a bare array
+/// of `CompletionItem` or a `CompletionList { items }`. Returns an empty vec for
+/// null/absent results.
+pub fn parse_completion(v: &Value) -> Vec<CompletionItem> {
+    let result = match v.get("result") {
+        Some(r) if !r.is_null() => r,
+        _ => return Vec::new(),
+    };
+    let items: &[Value] = if let Some(arr) = result.as_array() {
+        arr.as_slice()
+    } else if let Some(arr) = result.get("items").and_then(|i| i.as_array()) {
+        arr.as_slice()
+    } else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let label = it.get("label")?.as_str()?.to_string();
+            let kind_num = it.get("kind").and_then(|k| k.as_u64()).unwrap_or(1);
+            let kind = map_completion_kind(kind_num);
+            let insert_text = it
+                .get("insertText")
+                .and_then(|x| x.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| label.clone());
+            let detail = it.get("detail").and_then(|x| x.as_str()).map(String::from);
+            let sort_key = it
+                .get("sortText")
+                .and_then(|x| x.as_str())
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(20);
+            Some(CompletionItem { label, kind, detail, insert_text, sort_key })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +869,178 @@ mod tests {
         assert!(inbox.responses.is_empty());
         assert!(inbox.notifications.is_empty());
         assert!(!inbox.reader_alive);
+    }
+
+    // ─── I1: interactive intelligence parsers ──────────────────────────────
+
+    #[test]
+    fn parse_definition_single_location() {
+        let resp = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": {
+                "uri": "file:///proj/src/lib.rs",
+                "range": { "start": { "line": 10, "character": 4 }, "end": { "line": 10, "character": 9 } }
+            }
+        });
+        let locs = parse_definition(&resp);
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].line, 10);
+        assert_eq!(locs[0].col, 4);
+        assert!(locs[0].file.ends_with("lib.rs"));
+    }
+
+    #[test]
+    fn parse_definition_array_of_locations() {
+        let resp = serde_json::json!({
+            "id": 2,
+            "result": [
+                { "uri": "file:///a.rs", "range": { "start": { "line": 1, "character": 0 } } },
+                { "uri": "file:///b.rs", "range": { "start": { "line": 2, "character": 3 } } }
+            ]
+        });
+        let locs = parse_definition(&resp);
+        assert_eq!(locs.len(), 2);
+        assert_eq!(locs[1].line, 2);
+        assert_eq!(locs[1].col, 3);
+    }
+
+    #[test]
+    fn parse_definition_location_links() {
+        let resp = serde_json::json!({
+            "id": 3,
+            "result": [
+                {
+                    "targetUri": "file:///target.rs",
+                    "targetRange": { "start": { "line": 7, "character": 2 } },
+                    "targetSelectionRange": { "start": { "line": 7, "character": 2 } }
+                }
+            ]
+        });
+        let locs = parse_definition(&resp);
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].line, 7);
+        assert!(locs[0].file.ends_with("target.rs"));
+    }
+
+    #[test]
+    fn parse_definition_null_result_is_empty() {
+        let resp = serde_json::json!({ "id": 4, "result": null });
+        assert!(parse_definition(&resp).is_empty());
+        let no_result = serde_json::json!({ "id": 5 });
+        assert!(parse_definition(&no_result).is_empty());
+    }
+
+    #[test]
+    fn parse_hover_markup_content() {
+        let resp = serde_json::json!({
+            "id": 1,
+            "result": {
+                "contents": { "kind": "markdown", "value": "fn foo() -> i32" },
+                "range": { "start": { "line": 3, "character": 5 } }
+            }
+        });
+        let hover = parse_hover(&resp).expect("hover parsed");
+        assert_eq!(hover.contents, "fn foo() -> i32");
+        assert_eq!(hover.range_start, Some((3, 5)));
+    }
+
+    #[test]
+    fn parse_hover_plain_string() {
+        let resp = serde_json::json!({ "id": 2, "result": { "contents": "plain docs" } });
+        let hover = parse_hover(&resp).expect("hover parsed");
+        assert_eq!(hover.contents, "plain docs");
+        assert_eq!(hover.range_start, None);
+    }
+
+    #[test]
+    fn parse_hover_array_of_marked_strings() {
+        let resp = serde_json::json!({
+            "id": 3,
+            "result": { "contents": [ { "language": "rust", "value": "sig" }, "extra" ] }
+        });
+        let hover = parse_hover(&resp).expect("hover parsed");
+        assert_eq!(hover.contents, "sig\nextra");
+    }
+
+    #[test]
+    fn parse_hover_null_is_none() {
+        assert!(parse_hover(&serde_json::json!({ "id": 4, "result": null })).is_none());
+        assert!(parse_hover(&serde_json::json!({ "id": 5, "result": { "contents": "" } })).is_none());
+    }
+
+    #[test]
+    fn parse_completion_bare_array() {
+        let resp = serde_json::json!({
+            "id": 1,
+            "result": [
+                { "label": "println!", "kind": 3, "detail": "macro", "insertText": "println!($0)" },
+                { "label": "foo" }
+            ]
+        });
+        let items = parse_completion(&resp);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "println!");
+        assert_eq!(items[0].kind, CompletionKind::Function);
+        assert_eq!(items[0].insert_text, "println!($0)");
+        assert_eq!(items[0].detail.as_deref(), Some("macro"));
+        // No insertText -> falls back to label; no kind -> Variable default.
+        assert_eq!(items[1].insert_text, "foo");
+        assert_eq!(items[1].kind, CompletionKind::Variable);
+    }
+
+    #[test]
+    fn parse_completion_list_and_kind_mapping() {
+        let resp = serde_json::json!({
+            "id": 2,
+            "result": { "isIncomplete": false, "items": [
+                { "label": "m", "kind": 2 },
+                { "label": "f", "kind": 3 },
+                { "label": "C", "kind": 7 },
+                { "label": "I", "kind": 8 },
+                { "label": "E", "kind": 13 },
+                { "label": "S", "kind": 22 },
+                { "label": "mod", "kind": 9 },
+                { "label": "field", "kind": 5 },
+                { "label": "prop", "kind": 10 },
+                { "label": "var", "kind": 6 },
+                { "label": "kw", "kind": 14 },
+                { "label": "snip", "kind": 15 },
+                { "label": "file", "kind": 17 },
+                { "label": "unk", "kind": 99 }
+            ] }
+        });
+        let items = parse_completion(&resp);
+        assert_eq!(items.len(), 14);
+        assert_eq!(items[0].kind, CompletionKind::Function);
+        assert_eq!(items[1].kind, CompletionKind::Function);
+        assert_eq!(items[2].kind, CompletionKind::Type);
+        assert_eq!(items[3].kind, CompletionKind::Type);
+        assert_eq!(items[4].kind, CompletionKind::Type);
+        assert_eq!(items[5].kind, CompletionKind::Type);
+        assert_eq!(items[6].kind, CompletionKind::Module);
+        assert_eq!(items[7].kind, CompletionKind::Field);
+        assert_eq!(items[8].kind, CompletionKind::Field);
+        assert_eq!(items[9].kind, CompletionKind::Variable);
+        assert_eq!(items[10].kind, CompletionKind::Keyword);
+        assert_eq!(items[11].kind, CompletionKind::Snippet);
+        assert_eq!(items[12].kind, CompletionKind::File);
+        assert_eq!(items[13].kind, CompletionKind::Variable);
+    }
+
+    #[test]
+    fn parse_completion_null_is_empty() {
+        assert!(parse_completion(&serde_json::json!({ "id": 3, "result": null })).is_empty());
+    }
+
+    #[test]
+    fn manager_helpers_degrade_without_server() {
+        // No servers registered: every interactive helper must return an empty
+        // result (or None) immediately and never panic.
+        let mut mgr = LspManager::new();
+        let path = Path::new("/tmp/does_not_matter.rs");
+        assert!(mgr.definition("rs", path, 0, 0, "fn main() {}").is_empty());
+        assert!(mgr.references("rs", path, 0, 0, "fn main() {}").is_empty());
+        assert!(mgr.hover("rs", path, 0, 0, "fn main() {}").is_none());
+        assert!(mgr.completion("rs", path, 0, 0, "fn main() {}").is_empty());
     }
 }

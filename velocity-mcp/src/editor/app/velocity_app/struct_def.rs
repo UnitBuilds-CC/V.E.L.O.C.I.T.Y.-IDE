@@ -233,6 +233,14 @@ pub struct VelocityApp {
     pub pending_cursor_line: Option<usize>,
     /// Current cursor line in the active editor (updated during rendering).
     pub current_cursor_line: usize,
+    /// Current cursor column in the active editor (updated during rendering).
+    pub current_cursor_col: usize,
+    /// LSP find-references results popup state (I1).
+    pub references_open: bool,
+    /// References as (file path, 1-based line) for the results popup.
+    pub references_results: Vec<(PathBuf, usize)>,
+    /// Selected index in the references results popup.
+    pub references_selected: usize,
     pub file_tree: Option<FileNode>,
     pub last_tree_update: std::time::Instant,
     /// Last observed mtime of the workspace root (skips tree rebuilds when unchanged).
@@ -821,6 +829,10 @@ impl VelocityApp {
             search_pending_since: None,
             pending_cursor_line: None,
             current_cursor_line: 0,
+            current_cursor_col: 0,
+            references_open: false,
+            references_results: Vec::new(),
+            references_selected: 0,
             file_tree: None,
             last_tree_update: std::time::Instant::now(),
             last_tree_mtime: None,
