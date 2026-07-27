@@ -393,7 +393,7 @@ mod tests {
 
         let loaded = TriggerRegistry::load(tmp.path());
         assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded.get("nightly").unwrap().enabled, false);
+        assert!(!loaded.get("nightly").unwrap().enabled);
         assert!(matches!(
             loaded.get("hook").unwrap().action,
             TriggerAction::RunWorkflow { .. }
