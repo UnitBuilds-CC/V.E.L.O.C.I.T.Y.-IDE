@@ -371,11 +371,12 @@ pub fn get_wa_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "hwnd": { "type": "integer", "description": "Window handle." },
-                    "action": { "type": "string", "enum": ["move", "resize", "minimize", "maximize", "restore", "close", "focus", "topmost"], "description": "Operation to perform." },
-                    "x": { "type": "integer", "description": "X position (for move)." },
-                    "y": { "type": "integer", "description": "Y position (for move)." },
-                    "width": { "type": "integer", "description": "Width (for resize)." },
-                    "height": { "type": "integer", "description": "Height (for resize)." }
+                    "action": { "type": "string", "enum": ["move", "resize", "move_resize", "minimize", "maximize", "restore", "close", "focus", "send_to_back", "topmost", "untopmost", "opacity"], "description": "Operation to perform." },
+                    "x": { "type": "integer", "description": "X position (for move / move_resize)." },
+                    "y": { "type": "integer", "description": "Y position (for move / move_resize)." },
+                    "width": { "type": "integer", "description": "Width (for resize / move_resize)." },
+                    "height": { "type": "integer", "description": "Height (for resize / move_resize)." },
+                    "opacity": { "type": "integer", "description": "Opacity 0-255 (for opacity action; 255 = opaque)." }
                 },
                 "required": ["hwnd", "action"]
             }),

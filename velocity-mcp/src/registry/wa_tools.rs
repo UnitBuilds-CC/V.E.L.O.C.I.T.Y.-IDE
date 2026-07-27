@@ -544,7 +544,43 @@ pub fn handle_wa_tool(
         "wa_window_action" => {
             let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;
             let action = arguments["action"].as_str().ok_or("action is required")?;
-            format!("{{\"hwnd\":{},\"action\":\"{}\",\"ready\":true}}", hwnd, action)
+            let x = arguments["x"].as_i64().unwrap_or(0) as i32;
+            let y = arguments["y"].as_i64().unwrap_or(0) as i32;
+            let width = arguments["width"].as_u64().unwrap_or(0) as u32;
+            let height = arguments["height"].as_u64().unwrap_or(0) as u32;
+            let op = match action {
+                "move" => crate::wa::window_mgmt::WindowOperation::Move { x, y },
+                "resize" => crate::wa::window_mgmt::WindowOperation::Resize { width, height },
+                "move_resize" | "moveresize" => crate::wa::window_mgmt::WindowOperation::MoveResize { x, y, width, height },
+                "minimize" => crate::wa::window_mgmt::WindowOperation::Minimize,
+                "maximize" => crate::wa::window_mgmt::WindowOperation::Maximize,
+                "restore" => crate::wa::window_mgmt::WindowOperation::Restore,
+                "close" => crate::wa::window_mgmt::WindowOperation::Close,
+                "focus" | "activate" | "bring_to_front" => crate::wa::window_mgmt::WindowOperation::BringToFront,
+                "send_to_back" => crate::wa::window_mgmt::WindowOperation::SendToBack,
+                "topmost" => crate::wa::window_mgmt::WindowOperation::SetTopMost(true),
+                "untopmost" => crate::wa::window_mgmt::WindowOperation::SetTopMost(false),
+                "opacity" => crate::wa::window_mgmt::WindowOperation::SetOpacity(
+                    arguments["opacity"].as_u64().unwrap_or(255) as u8,
+                ),
+                other => return Err(Box::<dyn Error>::from(format!("unknown window action '{other}'"))),
+            };
+            let result = crate::wa::window_mgmt::WindowManager::apply_operation(hwnd, &op);
+            let new_rect = match result.new_rect {
+                Some(r) => format!(
+                    ",\"new_rect\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
+                    r.x, r.y, r.width, r.height
+                ),
+                None => ",\"new_rect\":null".to_string(),
+            };
+            format!(
+                "{{\"success\":{},\"hwnd\":{},\"operation\":\"{}\",\"detail\":\"{}\"{}}}",
+                result.success,
+                result.hwnd,
+                result.operation.replace('"', "\\\""),
+                result.detail.replace('"', "\\\""),
+                new_rect
+            )
         }
         // ─── Virtual Desktop ──────────────────────────────────────────────────────
         "wa_virtual_desktop_list" => {
@@ -747,11 +783,32 @@ pub fn handle_wa_tool(
         }
         // ─── Window Tiling ─────────────────────────────────────────────────────
         "wa_window_tile" => {
-            let columns = arguments["columns"].as_u64().unwrap_or(2) as u32;
-            let _monitor = arguments["monitor"].as_u64().unwrap_or(0) as u32;
+            let monitor_index = arguments["monitor"].as_u64().unwrap_or(0) as u32;
             let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
-            let visible: Vec<_> = windows.iter().filter(|w| !w.title.is_empty()).collect();
-            format!("{{\"success\":true,\"columns\":{},\"windows_tiled\":{}}}", columns, visible.len())
+            let hwnds: Vec<u64> = windows
+                .iter()
+                .filter(|w| !w.title.is_empty())
+                .map(|w| w.hwnd)
+                .collect();
+            // Resolve the target monitor's work area (excludes taskbar) for tile bounds;
+            // fall back to a sensible default when enumeration is unavailable.
+            let mut mm = crate::wa::multi_monitor::MultiMonitorManager::empty();
+            let _ = mm.refresh();
+            let (mw, mh) = mm
+                .get(monitor_index)
+                .or_else(|| mm.primary())
+                .map(|m| (m.work_area.width, m.work_area.height))
+                .filter(|(w, h)| *w > 0 && *h > 0)
+                .unwrap_or((1920, 1080));
+            let results = crate::wa::window_mgmt::WindowManager::tile_windows(&hwnds, mw, mh);
+            let succeeded = results.iter().filter(|r| r.success).count();
+            format!(
+                "{{\"success\":true,\"windows_tiled\":{},\"succeeded\":{},\"monitor_width\":{},\"monitor_height\":{}}}",
+                hwnds.len(),
+                succeeded,
+                mw,
+                mh
+            )
         }
         // ─── Browser Bridge ────────────────────────────────────────────────────
         "wa_browser_navigate" => {
@@ -799,4 +856,52 @@ pub fn uia_element_json(el: &crate::wa::uia_ffi::CachedUiaElement) -> serde_json
         },
         "patterns": el.supported_patterns.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `wa_window_action` must drive the real native WindowManager rather than echoing a
+    // stub. A null HWND cannot be moved, so the operation must report failure cleanly
+    // (on and off Windows) while still echoing the hwnd for audit.
+    #[test]
+    fn window_action_null_hwnd_reports_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "hwnd": 0, "action": "move", "x": 10, "y": 10 });
+        let out = handle_wa_tool(temp.path(), "wa_window_action", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(out.contains("\"success\":false"), "got: {out}");
+        assert!(out.contains("\"hwnd\":0"), "got: {out}");
+    }
+
+    #[test]
+    fn window_action_unknown_action_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "hwnd": 1, "action": "explode" });
+        let out = handle_wa_tool(temp.path(), "wa_window_action", &args);
+        assert!(out.is_err(), "unknown action must be rejected");
+    }
+
+    #[test]
+    fn window_action_requires_hwnd() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "action": "minimize" });
+        assert!(handle_wa_tool(temp.path(), "wa_window_action", &args).is_err());
+    }
+
+    // `wa_window_tile` must actually run the tiling path and report a real result shape
+    // (windows_tiled / succeeded / monitor bounds) instead of a hardcoded stub.
+    #[test]
+    fn window_tile_executes_and_reports() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({});
+        let out = handle_wa_tool(temp.path(), "wa_window_tile", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(out.contains("\"success\":true"), "got: {out}");
+        assert!(out.contains("windows_tiled"), "got: {out}");
+        assert!(out.contains("monitor_width"), "got: {out}");
+    }
 }
