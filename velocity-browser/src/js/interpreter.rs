@@ -4115,6 +4115,59 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
             for item in a.iter_mut().take(end).skip(start) { *item = val.clone(); }
             JsValue::Array(a.clone())
         }
+        "toReversed" => {
+            // Non-mutating reverse: returns a new array, leaving the receiver intact.
+            let mut out = a.clone();
+            out.reverse();
+            JsValue::Array(out)
+        }
+        "toSorted" => {
+            // Non-mutating sort producing a new array (same comparator contract as sort).
+            let mut out = a.clone();
+            match args.first() {
+                Some(cb) if !matches!(cb, JsValue::Undefined | JsValue::Null) => {
+                    let mut sort_err: Option<Signal> = None;
+                    out.sort_by(|x, y| {
+                        if sort_err.is_some() { return std::cmp::Ordering::Equal; }
+                        match call_function(cb, &[x.clone(), y.clone()], scope) {
+                            Ok(v) => {
+                                let n = to_number(&v);
+                                if n < 0.0 { std::cmp::Ordering::Less }
+                                else if n > 0.0 { std::cmp::Ordering::Greater }
+                                else { std::cmp::Ordering::Equal }
+                            }
+                            Err(e) => { sort_err = Some(e); std::cmp::Ordering::Equal }
+                        }
+                    });
+                    if let Some(e) = sort_err { return Err(e); }
+                }
+                _ => { out.sort_by_key(to_string); }
+            }
+            JsValue::Array(out)
+        }
+        "with" => {
+            // Returns a copy with the element at index (supporting negatives) replaced.
+            let len = a.len() as i64;
+            let raw = args.first().map(to_number).unwrap_or(0.0) as i64;
+            let idx = if raw < 0 { len + raw } else { raw };
+            let mut out = a.clone();
+            if (0..len).contains(&idx) {
+                out[idx as usize] = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+            }
+            JsValue::Array(out)
+        }
+        "toSpliced" => {
+            // Non-mutating splice: returns a new array with the edit applied.
+            let len = a.len() as i64;
+            let start_raw = args.first().map(to_number).unwrap_or(0.0) as i64;
+            let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
+            let delete_count = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len).max(0) as usize;
+            let end = (start + delete_count).min(a.len());
+            let mut out = a.clone();
+            out.drain(start..end);
+            for (i, item) in args.iter().skip(2).enumerate() { out.insert(start + i, item.clone()); }
+            JsValue::Array(out)
+        }
         "copyWithin" => {
             // Shallow-copies a slice [start, end) to position target, all clamped, without changing length.
             let len = a.len() as i64;
@@ -6186,6 +6239,20 @@ mod tests {
         // Global isNaN/isFinite keep their coercing behaviour.
         assert_eq!(eval_full("isNaN('foo')"), JsValue::Boolean(true));
         assert_eq!(eval_full("isFinite('42')"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn array_non_mutating_change_methods() {
+        // toReversed returns a new array and leaves the source unchanged.
+        assert_eq!(eval_full("var a = [1, 2, 3]; var b = a.toReversed(); b[0] * 10 + a[0]"), JsValue::Number(31.0));
+        // toSorted orders a copy without mutating the receiver.
+        assert_eq!(eval_full("var a = [3, 1, 2]; var b = a.toSorted(function(x, y) { return x - y; }); b[0] * 10 + a[0]"), JsValue::Number(13.0));
+        // with replaces one index in a copy, supporting negative indices.
+        assert_eq!(eval_full("[1, 2, 3].with(1, 9)[1]"), JsValue::Number(9.0));
+        assert_eq!(eval_full("[1, 2, 3].with(-1, 9)[2]"), JsValue::Number(9.0));
+        // toSpliced returns a new array with elements removed and inserted.
+        assert_eq!(eval_full("[1, 2, 3, 4].toSpliced(1, 2, 9).length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("[1, 2, 3, 4].toSpliced(1, 2, 9)[1]"), JsValue::Number(9.0));
     }
 
     #[test]
