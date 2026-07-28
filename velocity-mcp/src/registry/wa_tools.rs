@@ -674,9 +674,15 @@ pub fn handle_wa_tool(
         }
         "wa_notifications_dismiss" => {
             let pattern = arguments["pattern"].as_str();
-            let _script = crate::wa::notifications::build_dismiss_notifications_script(pattern);
-            format!("{{\"action\":\"dismiss\",\"pattern\":\"{}\",\"script_ready\":true}}",
-                pattern.unwrap_or("*"))
+            let result = crate::wa::notifications::NotificationManager::dismiss_matching(pattern);
+            serde_json::to_string(&serde_json::json!({
+                "success": result.success,
+                "action": result.action,
+                "pattern": pattern.unwrap_or("*"),
+                "detail": result.detail,
+                "notifications_remaining": result.notifications_remaining,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise notifications dismiss: {err}")))?
         }
         // ─── Registry ─────────────────────────────────────────────────────────────
         "wa_registry_read" => {
@@ -1068,5 +1074,23 @@ mod tests {
         assert!(parsed["block_count"].is_number());
         assert!(parsed["blocks"].is_array());
         assert!(parsed["full_text"].is_string());
+    }
+
+    // `wa_notifications_dismiss` must perform a real dismissal pass (returning a structured
+    // result) rather than the old `script_ready` stub. With no matching notifications the
+    // dismissed count is zero, but the PowerShell pass still runs for real.
+    #[test]
+    fn notifications_dismiss_executes_for_real() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({});
+        let out = handle_wa_tool(temp.path(), "wa_notifications_dismiss", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(!out.contains("script_ready"), "stub still present: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["action"], "dismiss");
+        assert_eq!(parsed["pattern"], "*");
+        assert!(parsed["success"].is_boolean());
+        assert!(parsed["notifications_remaining"].is_number());
     }
 }

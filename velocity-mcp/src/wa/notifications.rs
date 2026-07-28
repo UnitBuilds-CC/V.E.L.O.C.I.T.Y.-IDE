@@ -208,6 +208,40 @@ if ($null -ne $w) {{
         }
     }
 
+    /// Dismiss visible notifications whose app name matches `pattern`, or every
+    /// notification when `pattern` is `None`, empty, or `"*"`. Unlike the legacy
+    /// `script_ready` stub, this actually runs the PowerShell UIAutomation dismiss
+    /// pass and reports how many notifications were closed.
+    pub fn dismiss_matching(pattern: Option<&str>) -> NotificationResult {
+        if !cfg!(target_os = "windows") {
+            return NotificationResult {
+                success: false, action: "dismiss".into(),
+                detail: "Notification dismissal requires Windows".into(),
+                notifications_remaining: 0,
+            };
+        }
+        let effective = match pattern {
+            None | Some("") | Some("*") => None,
+            Some(p) => Some(p),
+        };
+        let script = build_dismiss_notifications_script(effective);
+        match run_ps_script(&script) {
+            Ok(json) => {
+                let dismissed = parse_dismissed_count(&json);
+                NotificationResult {
+                    success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                    action: "dismiss".into(),
+                    detail: format!("dismissed {dismissed} notification(s) via PowerShell"),
+                    notifications_remaining: Self::get_notification_count(),
+                }
+            }
+            Err(e) => NotificationResult {
+                success: false, action: "dismiss".into(),
+                detail: e, notifications_remaining: Self::get_notification_count(),
+            },
+        }
+    }
+
     /// Watch for notifications and optionally auto-dismiss.
     pub fn watch(config: &NotificationWatchConfig) -> Vec<Notification> {
         if !cfg!(target_os = "windows") { return Vec::new(); }
@@ -437,6 +471,17 @@ fn parse_notifications_result(json: &str) -> Vec<Notification> {
         }).collect(),
         Err(_) => Vec::new(),
     }
+}
+
+fn parse_dismissed_count(json: &str) -> u32 {
+    #[derive(serde::Deserialize)]
+    struct PsDismiss {
+        dismissed: Option<u32>,
+    }
+    serde_json::from_str::<PsDismiss>(json)
+        .ok()
+        .and_then(|d| d.dismissed)
+        .unwrap_or(0)
 }
 
 fn parse_tray_icons_result(json: &str) -> Vec<TrayIcon> {
