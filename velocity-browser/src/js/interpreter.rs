@@ -4334,89 +4334,100 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
         }
         "map" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             let mut result = Vec::new();
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
                 result.push(r);
             }
             JsValue::Array(result)
         }
         "filter" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             let mut result = Vec::new();
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
                 if to_boolean(&r) { result.push(item.clone()); }
             }
             JsValue::Array(result)
         }
         "forEach" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate() {
-                call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
             }
             JsValue::Undefined
         }
         "find" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
                 if to_boolean(&r) { return Ok(item.clone()); }
             }
             JsValue::Undefined
         }
         "findIndex" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
                 if to_boolean(&r) { return Ok(JsValue::Number(i as f64)); }
             }
             JsValue::Number(-1.0)
         }
         "findLast" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate().rev() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
                 if to_boolean(&r) { return Ok(item.clone()); }
             }
             JsValue::Undefined
         }
         "findLastIndex" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate().rev() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
                 if to_boolean(&r) { return Ok(JsValue::Number(i as f64)); }
             }
             JsValue::Number(-1.0)
         }
         "reduce" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             let mut acc = args.get(1).cloned().unwrap_or_else(|| a.first().cloned().unwrap_or(JsValue::Undefined));
             let start = if args.len() > 1 { 0 } else { 1 };
             for (i, item) in a.iter().enumerate().skip(start) {
-                acc = call_function(&callback, &[acc, item.clone(), JsValue::Number(i as f64)], scope)?;
+                acc = call_function(&callback, &[acc, item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
             }
             acc
         }
         "reduceRight" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let arr_val = JsValue::Array(a.clone());
             let has_initial = args.len() > 1;
             let mut acc = if has_initial { args[1].clone() } else { a.last().cloned().unwrap_or(JsValue::Undefined) };
             let upper = if has_initial { a.len() } else { a.len().saturating_sub(1) };
             for i in (0..upper).rev() {
                 let item = a[i].clone();
-                acc = call_function(&callback, &[acc, item, JsValue::Number(i as f64)], scope)?;
+                acc = call_function(&callback, &[acc, item, JsValue::Number(i as f64), arr_val.clone()], scope)?;
             }
             acc
         }
         "some" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for (i, item) in a.iter().enumerate() { if to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?) { return Ok(JsValue::Boolean(true)); } }
+            let arr_val = JsValue::Array(a.clone());
+            for (i, item) in a.iter().enumerate() { if to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?) { return Ok(JsValue::Boolean(true)); } }
             JsValue::Boolean(false)
         }
         "every" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for (i, item) in a.iter().enumerate() { if !to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?) { return Ok(JsValue::Boolean(false)); } }
+            let arr_val = JsValue::Array(a.clone());
+            for (i, item) in a.iter().enumerate() { if !to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?) { return Ok(JsValue::Boolean(false)); } }
             JsValue::Boolean(true)
         }
         "flat" => {
@@ -7287,6 +7298,16 @@ mod tests {
             eval_full("'abc'.replace('z', function(m) { return 'X'; })"),
             JsValue::String("abc".to_string())
         );
+    }
+
+    #[test]
+    fn array_callbacks_receive_array_argument() {
+        // map/filter/forEach/find/some/every callbacks get (element, index, array).
+        assert_eq!(eval_full("[10,20,30].map(function(v, i, arr) { return arr.length; })[0]"), JsValue::Number(3.0));
+        assert_eq!(eval_full("[5,6,7].filter(function(v, i, arr) { return arr[i] === v; }).length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("[1,2].find(function(v, i, arr) { return arr.length === 2 && v === 2; })"), JsValue::Number(2.0));
+        // reduce callback gets (acc, val, index, array).
+        assert_eq!(eval_full("[1,2,3].reduce(function(acc, v, i, arr) { return acc + arr.length; }, 0)"), JsValue::Number(9.0));
     }
 
     #[test]
