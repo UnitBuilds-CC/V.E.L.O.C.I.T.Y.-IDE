@@ -4393,8 +4393,35 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
             let idx = if raw < 0 { len + raw } else { raw };
             if (0..len).contains(&idx) { JsValue::String(chars[idx as usize].to_string()) } else { JsValue::Undefined }
         }
-        "indexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.find(&needle).map(|b| s[..b].chars().count() as f64).unwrap_or(-1.0)) }
-        "lastIndexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.rfind(&needle).map(|b| s[..b].chars().count() as f64).unwrap_or(-1.0)) }
+        "indexOf" => {
+            // Char-based forward search honouring an optional start position.
+            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let chars: Vec<char> = s.chars().collect();
+            let from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0).max(0) as usize;
+            let start = from.min(chars.len());
+            let mut result = -1.0;
+            if needle.len() <= chars.len() {
+                for i in start..=(chars.len() - needle.len()) {
+                    if chars[i..i + needle.len()] == needle[..] { result = i as f64; break; }
+                }
+            }
+            JsValue::Number(result)
+        }
+        "lastIndexOf" => {
+            // Char-based backward search; fromIndex bounds the match start (default: end).
+            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let chars: Vec<char> = s.chars().collect();
+            let mut result = -1.0;
+            if needle.len() <= chars.len() {
+                let max_start = chars.len() - needle.len();
+                let from = args.get(1).map(to_number).unwrap_or(f64::INFINITY);
+                let cap = if from.is_nan() || from >= max_start as f64 { max_start } else if from < 0.0 { 0 } else { from as usize };
+                for i in (0..=cap).rev() {
+                    if chars[i..i + needle.len()] == needle[..] { result = i as f64; break; }
+                }
+            }
+            JsValue::Number(result)
+        }
         "includes" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.contains(&needle)) }
         "startsWith" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.starts_with(&needle)) }
         "endsWith" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.ends_with(&needle)) }
@@ -6517,6 +6544,19 @@ mod tests {
         assert_eq!(eval_full("[1, 2, 1].lastIndexOf(1, 1)"), JsValue::Number(0.0));
         // Absent element yields -1.
         assert_eq!(eval_full("[1, 2, 3].indexOf(9)"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn string_index_of_with_position() {
+        // indexOf honours a start position, counted in chars.
+        assert_eq!(eval_full("'abcabc'.indexOf('bc', 2)"), JsValue::Number(4.0));
+        // lastIndexOf bounds the match start with fromIndex.
+        assert_eq!(eval_full("'abcabc'.lastIndexOf('bc')"), JsValue::Number(4.0));
+        assert_eq!(eval_full("'abcabc'.lastIndexOf('bc', 3)"), JsValue::Number(1.0));
+        // Empty needle clamps to string length.
+        assert_eq!(eval_full("'abc'.indexOf('', 5)"), JsValue::Number(3.0));
+        // Absent needle yields -1.
+        assert_eq!(eval_full("'abc'.indexOf('z')"), JsValue::Number(-1.0));
     }
 
     #[test]
