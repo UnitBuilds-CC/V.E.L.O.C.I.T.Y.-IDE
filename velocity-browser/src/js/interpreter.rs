@@ -4422,9 +4422,36 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
             }
             JsValue::Number(result)
         }
-        "includes" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.contains(&needle)) }
-        "startsWith" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.starts_with(&needle)) }
-        "endsWith" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.ends_with(&needle)) }
+        "includes" => {
+            // Char-based containment honouring an optional start position.
+            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let chars: Vec<char> = s.chars().collect();
+            let pos = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0).max(0) as usize;
+            let start = pos.min(chars.len());
+            let mut found = false;
+            if needle.len() <= chars.len() {
+                for i in start..=(chars.len() - needle.len()) {
+                    if chars[i..i + needle.len()] == needle[..] { found = true; break; }
+                }
+            }
+            JsValue::Boolean(found)
+        }
+        "startsWith" => {
+            // Tests the prefix beginning at an optional char position.
+            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let chars: Vec<char> = s.chars().collect();
+            let pos = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0).max(0) as usize;
+            let ok = pos + needle.len() <= chars.len() && chars[pos..pos + needle.len()] == needle[..];
+            JsValue::Boolean(ok)
+        }
+        "endsWith" => {
+            // Tests the suffix ending at an optional char position (default: end).
+            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let chars: Vec<char> = s.chars().collect();
+            let end = args.get(1).map(|v| (to_number(v) as i64).max(0) as usize).unwrap_or(chars.len()).min(chars.len());
+            let ok = needle.len() <= end && chars[end - needle.len()..end] == needle[..];
+            JsValue::Boolean(ok)
+        }
         "slice" => {
             let chars: Vec<char> = s.chars().collect();
             let len = chars.len() as i64;
@@ -6557,6 +6584,19 @@ mod tests {
         assert_eq!(eval_full("'abc'.indexOf('', 5)"), JsValue::Number(3.0));
         // Absent needle yields -1.
         assert_eq!(eval_full("'abc'.indexOf('z')"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn string_includes_starts_ends_with_position() {
+        // startsWith honours a start position.
+        assert_eq!(eval_full("'abcdef'.startsWith('cd', 2)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("'abcdef'.startsWith('cd', 1)"), JsValue::Boolean(false));
+        // endsWith treats the string as ending at endPosition.
+        assert_eq!(eval_full("'abcdef'.endsWith('cd', 4)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("'abcdef'.endsWith('cd')"), JsValue::Boolean(false));
+        // includes honours a start position.
+        assert_eq!(eval_full("'abcabc'.includes('ab', 1)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("'abcabc'.includes('ab', 4)"), JsValue::Boolean(false));
     }
 
     #[test]
