@@ -4206,6 +4206,14 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
             }).collect();
             JsValue::String(parts.join(&sep))
         }
+        "toString" | "toLocaleString" => {
+            // Array.prototype.toString is join(",") (null/undefined render empty).
+            let parts: Vec<String> = a.iter().map(|x| match x {
+                JsValue::Null | JsValue::Undefined => String::new(),
+                other => to_string(other),
+            }).collect();
+            JsValue::String(parts.join(","))
+        }
         "slice" => {
             let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
             let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(a.len() as i64);
@@ -4792,6 +4800,9 @@ fn call_object_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsV
         }
         "keys" => JsValue::Array(map.keys().map(|k| JsValue::String(k.clone())).collect()),
         "values" => JsValue::Array(map.values().cloned().collect()),
+        // Object.prototype.toString tags plain objects; Map/Set/Promise/Date are
+        // routed to their own dispatchers before reaching here.
+        "toString" | "toLocaleString" => JsValue::String("[object Object]".to_string()),
         _ => JsValue::Undefined,
     })
 }
@@ -6998,6 +7009,17 @@ mod tests {
         // Ordinary integers and negatives are unaffected.
         assert_eq!(eval_full("String(123)"), JsValue::String("123".to_string()));
         assert_eq!(eval_full("String(-1e21)"), JsValue::String("-1e+21".to_string()));
+    }
+
+    #[test]
+    fn array_and_object_to_string() {
+        // Array.prototype.toString is join(","), rendering null/undefined as empty.
+        assert_eq!(eval_full("[1,2,3].toString()"), JsValue::String("1,2,3".to_string()));
+        assert_eq!(eval_full("[].toString()"), JsValue::String(String::new()));
+        assert_eq!(eval_full("[1,null,undefined,2].toString()"), JsValue::String("1,,,2".to_string()));
+        assert_eq!(eval_full("[1,2,3].toLocaleString()"), JsValue::String("1,2,3".to_string()));
+        // Object.prototype.toString tags plain objects.
+        assert_eq!(eval_full("({}).toString()"), JsValue::String("[object Object]".to_string()));
     }
 
     #[test]
