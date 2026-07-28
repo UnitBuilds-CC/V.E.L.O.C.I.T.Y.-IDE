@@ -5100,8 +5100,10 @@ pub fn typeof_str(v: &JsValue) -> &'static str {
 
 fn loose_eq(l: &JsValue, r: &JsValue) -> bool {
     match (l, r) {
-        (JsValue::Null, JsValue::Null) | (JsValue::Undefined, JsValue::Undefined) |
-        (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => true,
+        (JsValue::Null | JsValue::Undefined, JsValue::Null | JsValue::Undefined) => true,
+        // null and undefined are loosely equal only to each other, never to
+        // numbers, strings, or booleans (so `null == 0` is false).
+        (JsValue::Null | JsValue::Undefined, _) | (_, JsValue::Null | JsValue::Undefined) => false,
         (JsValue::String(a), JsValue::String(b)) => a == b,
         (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
         _ => to_number(l) == to_number(r),
@@ -6836,6 +6838,18 @@ mod tests {
         // A top-level JSON string decodes tab and unicode escapes like nested ones.
         assert_eq!(eval_full(r#"JSON.parse('"a\\tb"')"#), JsValue::String("a\tb".to_string()));
         assert_eq!(eval_full(r#"JSON.parse('"\\u0041"')"#), JsValue::String("A".to_string()));
+    }
+
+    #[test]
+    fn loose_equality_null_and_undefined() {
+        // null and undefined are loosely equal to each other only.
+        assert_eq!(eval_full("null == undefined"), JsValue::Boolean(true));
+        assert_eq!(eval_full("null == 0"), JsValue::Boolean(false));
+        assert_eq!(eval_full("undefined == 0"), JsValue::Boolean(false));
+        assert_eq!(eval_full("null == false"), JsValue::Boolean(false));
+        assert_eq!(eval_full("null == ''"), JsValue::Boolean(false));
+        // != is the negation.
+        assert_eq!(eval_full("null != 0"), JsValue::Boolean(true));
     }
 
     #[test]
