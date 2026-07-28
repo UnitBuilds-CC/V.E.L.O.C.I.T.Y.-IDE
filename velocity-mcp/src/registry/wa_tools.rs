@@ -620,8 +620,30 @@ pub fn handle_wa_tool(
             };
             let default_region = crate::wa::ocr::OcrRegion { x: 0, y: 0, width: 1920, height: 1080 };
             let r = region.as_ref().unwrap_or(&default_region);
-            let _script = crate::wa::ocr::build_ocr_script(r, &config);
-            format!("{{\"action\":\"ocr\",\"language\":\"{}\",\"script_ready\":true}}", language)
+            let result = crate::wa::ocr::OcrEngine::recognize_region(r, &config);
+            let blocks: Vec<serde_json::Value> = result.blocks.iter().map(|b| serde_json::json!({
+                "text": b.text,
+                "confidence": b.confidence,
+                "line_index": b.line_index,
+                "word_index": b.word_index,
+                "bounds": {
+                    "x": b.bounds.x,
+                    "y": b.bounds.y,
+                    "width": b.bounds.width,
+                    "height": b.bounds.height,
+                },
+            })).collect();
+            let block_count = blocks.len();
+            serde_json::to_string(&serde_json::json!({
+                "success": true,
+                "language": result.language,
+                "full_text": result.full_text,
+                "block_count": block_count,
+                "blocks": blocks,
+                "source": result.source,
+                "duration_ms": result.duration.as_millis() as u64,
+            }))
+            .map_err(|err| Box::<dyn Error>::from(format!("serialise OCR result: {err}")))?
         }
         // ─── Notifications ────────────────────────────────────────────────────────
         "wa_notifications_list" => {
@@ -1028,5 +1050,23 @@ mod tests {
         assert_eq!(parsed["operation"], "query");
         // dark_mode is either a boolean (Windows read succeeded) or null (unavailable).
         assert!(parsed["dark_mode"].is_boolean() || parsed["dark_mode"].is_null());
+    }
+
+    // `wa_ocr_screen` must perform a real OCR pass (returning a structured result) rather
+    // than the old `script_ready` stub. A tiny region keeps it fast; the recognized text is
+    // environment dependent, so only the structured shape is asserted.
+    #[test]
+    fn ocr_screen_executes_for_real() {
+        let temp = tempfile::tempdir().unwrap();
+        let args = serde_json::json!({ "x": 0, "y": 0, "width": 8, "height": 8 });
+        let out = handle_wa_tool(temp.path(), "wa_ocr_screen", &args)
+            .expect("dispatch should not error")
+            .expect("tool should produce output");
+        assert!(!out.contains("script_ready"), "stub still present: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed["success"], serde_json::json!(true));
+        assert!(parsed["block_count"].is_number());
+        assert!(parsed["blocks"].is_array());
+        assert!(parsed["full_text"].is_string());
     }
 }
