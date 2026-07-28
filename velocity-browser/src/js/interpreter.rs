@@ -3182,7 +3182,12 @@ fn json_parse(s: &str) -> JsValue {
     if s == "false" { return JsValue::Boolean(false); }
     if let Ok(n) = s.parse::<f64>() { return JsValue::Number(n); }
     if s.starts_with('"') && s.ends_with('"') {
-        return JsValue::String(s[1..s.len()-1].replace("\\n", "\n").replace("\\\"", "\""));
+        // Decode via serde so every JSON string escape (\t, \uXXXX, \\, ...) is
+        // honoured, matching how strings nested in arrays/objects are parsed.
+        if let Ok(serde_json::Value::String(decoded)) = serde_json::from_str::<serde_json::Value>(s) {
+            return JsValue::String(decoded);
+        }
+        return JsValue::String(s[1..s.len()-1].to_string());
     }
     if s.starts_with('[') {
         // Simplified array parse using serde_json
@@ -6824,6 +6829,13 @@ mod tests {
         assert_eq!(eval_full("JSON.stringify({ a: 1, b: undefined })"), JsValue::String("{\"a\":1}".to_string()));
         // Control characters in strings are escaped.
         assert_eq!(eval_full("JSON.stringify('a\\nb')"), JsValue::String("\"a\\nb\"".to_string()));
+    }
+
+    #[test]
+    fn json_parse_top_level_string_escapes() {
+        // A top-level JSON string decodes tab and unicode escapes like nested ones.
+        assert_eq!(eval_full(r#"JSON.parse('"a\\tb"')"#), JsValue::String("a\tb".to_string()));
+        assert_eq!(eval_full(r#"JSON.parse('"\\u0041"')"#), JsValue::String("A".to_string()));
     }
 
     #[test]
