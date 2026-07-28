@@ -3919,6 +3919,14 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
         "length" => JsValue::Number(s.len() as f64),
         "charAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::String(c.to_string())).unwrap_or(JsValue::String(String::new())) }
         "charCodeAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::Number(c as u32 as f64)).unwrap_or(JsValue::Number(f64::NAN)) }
+        "codePointAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::Number(c as u32 as f64)).unwrap_or(JsValue::Undefined) }
+        "at" => {
+            let chars: Vec<char> = s.chars().collect();
+            let len = chars.len() as i64;
+            let raw = args.first().map(to_number).unwrap_or(0.0) as i64;
+            let idx = if raw < 0 { len + raw } else { raw };
+            if (0..len).contains(&idx) { JsValue::String(chars[idx as usize].to_string()) } else { JsValue::Undefined }
+        }
         "indexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.find(&needle).map(|i| i as f64).unwrap_or(-1.0)) }
         "lastIndexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.rfind(&needle).map(|i| i as f64).unwrap_or(-1.0)) }
         "includes" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.contains(&needle)) }
@@ -4469,6 +4477,15 @@ mod tests {
         assert_eq!(eval_full("[1, 2, 3].flatMap(function(x) { return [x, x * 2]; })[3]"), JsValue::Number(4.0));
         assert_eq!(eval_full("['a', 'b', 'c'].reduceRight(function(acc, x) { return acc + x; })"), JsValue::String("cba".into()));
         assert_eq!(eval_full("[1, 2, 3].reduceRight(function(acc, x) { return acc + x; }, 10)"), JsValue::Number(16.0));
+    }
+
+    #[test]
+    fn string_at_and_code_point_at() {
+        assert_eq!(eval_full("'abc'.at(0)"), JsValue::String("a".into()));
+        assert_eq!(eval_full("'abc'.at(-1)"), JsValue::String("c".into()));
+        assert_eq!(eval_full("'abc'.at(9)"), JsValue::Undefined);
+        assert_eq!(eval_full("'A'.codePointAt(0)"), JsValue::Number(65.0));
+        assert_eq!(eval_full("'abc'.codePointAt(9)"), JsValue::Undefined);
     }
 
     #[test]
