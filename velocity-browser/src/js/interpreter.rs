@@ -4139,8 +4139,17 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
             if (0..len).contains(&idx) { a[idx as usize].clone() } else { JsValue::Undefined }
         }
         "join" => {
-            let sep = args.first().map(to_string).unwrap_or_else(|| ",".into());
-            JsValue::String(a.iter().map(to_string).collect::<Vec<_>>().join(&sep))
+            // An absent or undefined separator defaults to a comma; null and
+            // undefined elements render as empty strings (per spec).
+            let sep = match args.first() {
+                None | Some(JsValue::Undefined) => ",".to_string(),
+                Some(v) => to_string(v),
+            };
+            let parts: Vec<String> = a.iter().map(|x| match x {
+                JsValue::Null | JsValue::Undefined => String::new(),
+                other => to_string(other),
+            }).collect();
+            JsValue::String(parts.join(&sep))
         }
         "slice" => {
             let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
@@ -6628,6 +6637,16 @@ mod tests {
         assert_eq!(eval_full("(0.5).toString(2)"), JsValue::String("0.1".to_string()));
         // Negative values keep a leading sign.
         assert_eq!(eval_full("(-10).toString(2)"), JsValue::String("-1010".to_string()));
+    }
+
+    #[test]
+    fn array_join_null_undefined_and_separator() {
+        // null and undefined elements render as empty strings.
+        assert_eq!(eval_full("[1, null, 2, undefined, 3].join('-')"), JsValue::String("1--2--3".to_string()));
+        // An explicit undefined separator falls back to a comma.
+        assert_eq!(eval_full("[1, 2, 3].join(undefined)"), JsValue::String("1,2,3".to_string()));
+        // A custom separator is used verbatim.
+        assert_eq!(eval_full("['a', 'b'].join(' | ')"), JsValue::String("a | b".to_string()));
     }
 
     #[test]
