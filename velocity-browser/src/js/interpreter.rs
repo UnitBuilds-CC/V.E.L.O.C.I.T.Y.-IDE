@@ -1902,6 +1902,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         match name.as_str() {
             "eval" | "structuredClone" | "parseInt" | "parseFloat" | "isNaN" | "isFinite" |
             "encodeURIComponent" | "decodeURIComponent" | "Symbol" | "queueMicrotask" |
+            "Number" | "String" | "Boolean" |
             "requestAnimationFrame" | "requestIdleCallback" => {
                 return call_native(name, &evaluated_args);
             }
@@ -2955,6 +2956,11 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             let key = args.first().map(to_string).unwrap_or_default();
             JsValue::String(format!("__symbol_{}__", key))
         }
+        // Wrapper constructors used as plain functions perform type coercion:
+        // Number() -> 0, String() -> "", Boolean() -> false when called with no args.
+        "Number" => JsValue::Number(args.first().map(to_number).unwrap_or(0.0)),
+        "String" => JsValue::String(args.first().map(to_string).unwrap_or_default()),
+        "Boolean" => JsValue::Boolean(args.first().map(to_boolean).unwrap_or(false)),
         "structuredClone" => {
             // Deep clone via identity (our JsValue is already Clone)
             args.first().cloned().unwrap_or(JsValue::Undefined)
@@ -6898,6 +6904,22 @@ mod tests {
         assert_eq!(eval_full("Number.isNaN(+'abc')"), JsValue::Boolean(true));
         assert_eq!(eval_full("Number.isNaN(+'inf')"), JsValue::Boolean(true));
         assert_eq!(eval_full("Number.isNaN(+'nan')"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn wrapper_constructors_coerce_as_functions() {
+        // Number() coerces its argument (and defaults to 0 with no argument).
+        assert_eq!(eval_full("Number('42')"), JsValue::Number(42.0));
+        assert_eq!(eval_full("Number(true)"), JsValue::Number(1.0));
+        assert_eq!(eval_full("Number()"), JsValue::Number(0.0));
+        // String() renders the argument as a string (empty when omitted).
+        assert_eq!(eval_full("String(123)"), JsValue::String("123".to_string()));
+        assert_eq!(eval_full("String(null)"), JsValue::String("null".to_string()));
+        assert_eq!(eval_full("String()"), JsValue::String(String::new()));
+        // Boolean() applies truthiness (false when omitted).
+        assert_eq!(eval_full("Boolean('')"), JsValue::Boolean(false));
+        assert_eq!(eval_full("Boolean('x')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Boolean()"), JsValue::Boolean(false));
     }
 
     #[test]
