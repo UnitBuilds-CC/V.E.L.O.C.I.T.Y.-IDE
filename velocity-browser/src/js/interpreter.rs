@@ -1807,8 +1807,20 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         if let JsValue::Object(map) = &obj {
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
-                Some("Map") => return call_map_method(map, method, &evaluated_args, scope),
-                Some("Set") => return call_set_method(map, method, &evaluated_args),
+                Some("Map") => {
+                    // Map mutators (set/delete/clear) update the backing store; persist it.
+                    let mut m = map.clone();
+                    let result = call_map_method(&mut m, method, &evaluated_args, scope);
+                    assign_to_target(obj_expr, JsValue::Object(m), scope);
+                    return result;
+                }
+                Some("Set") => {
+                    // Set mutators (add/delete/clear) update the backing store; persist it.
+                    let mut m = map.clone();
+                    let result = call_set_method(&mut m, method, &evaluated_args);
+                    assign_to_target(obj_expr, JsValue::Object(m), scope);
+                    return result;
+                }
                 Some("Promise") => return call_promise_method(map, method, &evaluated_args, scope),
                 Some("Date") => return call_date_method(map, method, &evaluated_args),
                 Some("Generator") => return call_generator_method(map, method),
@@ -3745,8 +3757,8 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
             // Check for Map/Set/Promise builtins
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
-                Some("Map") => return call_map_method(map, method, args, scope),
-                Some("Set") => return call_set_method(map, method, args),
+                Some("Map") => { let mut m = map.clone(); return call_map_method(&mut m, method, args, scope); }
+                Some("Set") => { let mut m = map.clone(); return call_set_method(&mut m, method, args); }
                 Some("Promise") => return call_promise_method(map, method, args, scope),
                 Some("Date") => return call_date_method(map, method, args),
                 Some("Generator") => return call_generator_method(map, method),
@@ -4120,8 +4132,8 @@ fn call_object_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsV
 // Map/Set/Promise/Date methods
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn call_map_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue], _scope: &ScopeRef) -> EvalResult {
-    let entries = if let Some(JsValue::Array(e)) = map.get("__entries__") { e.clone() } else { Vec::new() };
+fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], _scope: &ScopeRef) -> EvalResult {
+    let mut entries = if let Some(JsValue::Array(e)) = map.get("__entries__") { e.clone() } else { Vec::new() };
     Ok(match method {
         "get" => {
             let key = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -4141,33 +4153,77 @@ fn call_map_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue
             }))
         }
         "set" => {
-            // Return the map (immutable model, but semantically correct)
+            // Insert or overwrite the entry for `key`, then persist to the backing store.
+            let key = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let key_str = to_string(&key);
+            let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+            let mut replaced = false;
+            for entry in entries.iter_mut() {
+                if let JsValue::Array(kv) = entry {
+                    if kv.first().map(to_string).as_deref() == Some(&key_str) {
+                        if kv.len() >= 2 { kv[1] = value.clone(); } else { kv.push(value.clone()); }
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+            if !replaced { entries.push(JsValue::Array(vec![key, value])); }
+            map.insert("__entries__".to_string(), JsValue::Array(entries));
             JsValue::Object(map.clone())
         }
-        "delete" => JsValue::Boolean(true),
+        "delete" => {
+            let key = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let key_str = to_string(&key);
+            let before = entries.len();
+            entries.retain(|entry| {
+                if let JsValue::Array(kv) = entry { kv.first().map(to_string).as_deref() != Some(&key_str) } else { true }
+            });
+            let removed = entries.len() != before;
+            map.insert("__entries__".to_string(), JsValue::Array(entries));
+            JsValue::Boolean(removed)
+        }
         "size" => JsValue::Number(entries.len() as f64),
         "keys" => JsValue::Array(entries.iter().filter_map(|e| if let JsValue::Array(kv) = e { kv.first().cloned() } else { None }).collect()),
         "values" => JsValue::Array(entries.iter().filter_map(|e| if let JsValue::Array(kv) = e { kv.get(1).cloned() } else { None }).collect()),
         "entries" => JsValue::Array(entries),
         "forEach" => JsValue::Undefined,
-        "clear" => JsValue::Undefined,
+        "clear" => {
+            map.insert("__entries__".to_string(), JsValue::Array(Vec::new()));
+            JsValue::Undefined
+        }
         _ => JsValue::Undefined,
     })
 }
 
-fn call_set_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
-    let items = if let Some(JsValue::Array(i)) = map.get("__items__") { i.clone() } else { Vec::new() };
+fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+    let mut items = if let Some(JsValue::Array(i)) = map.get("__items__") { i.clone() } else { Vec::new() };
     Ok(match method {
         "has" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);
             JsValue::Boolean(items.iter().any(|x| strict_eq(x, &val)))
         }
-        "add" => JsValue::Object(map.clone()),
-        "delete" => JsValue::Boolean(true),
+        "add" => {
+            // Append the value only if not already present, then persist.
+            let val = args.first().cloned().unwrap_or(JsValue::Undefined);
+            if !items.iter().any(|x| strict_eq(x, &val)) { items.push(val); }
+            map.insert("__items__".to_string(), JsValue::Array(items));
+            JsValue::Object(map.clone())
+        }
+        "delete" => {
+            let val = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let before = items.len();
+            items.retain(|x| !strict_eq(x, &val));
+            let removed = items.len() != before;
+            map.insert("__items__".to_string(), JsValue::Array(items));
+            JsValue::Boolean(removed)
+        }
         "size" => JsValue::Number(items.len() as f64),
         "values" | "keys" => JsValue::Array(items),
         "forEach" => JsValue::Undefined,
-        "clear" => JsValue::Undefined,
+        "clear" => {
+            map.insert("__items__".to_string(), JsValue::Array(Vec::new()));
+            JsValue::Undefined
+        }
         _ => JsValue::Undefined,
     })
 }
@@ -5728,6 +5784,19 @@ mod tests {
         assert_eq!(eval_full("Array.from(new Map([['a', 1]]))[0][0]"), JsValue::String("a".to_string()));
         // Array.from over an array-like object walks 0..length.
         assert_eq!(eval_full("Array.from({ length: 2, 0: 'x', 1: 'y' })[1]"), JsValue::String("y".to_string()));
+    }
+
+    #[test]
+    fn map_and_set_mutations_persist() {
+        // Map.set persists and get reads it back across statements.
+        assert_eq!(eval_full("var m = new Map(); m.set('a', 1); m.set('b', 2); m.get('b')"), JsValue::Number(2.0));
+        assert_eq!(eval_full("var m = new Map(); m.set('a', 1); m.set('a', 9); m.get('a')"), JsValue::Number(9.0));
+        assert_eq!(eval_full("var m = new Map([['a', 1]]); m.delete('a'); m.has('a')"), JsValue::Boolean(false));
+        // Set.add persists and stays unique; delete removes.
+        assert_eq!(eval_full("var s = new Set(); s.add(1); s.add(1); s.add(2); s.size()"), JsValue::Number(2.0));
+        assert_eq!(eval_full("var s = new Set([1, 2, 3]); s.delete(2); s.has(2)"), JsValue::Boolean(false));
+        // Mutation through `this` inside a method persists to the receiver.
+        assert_eq!(eval_full("var o = { bag: new Set(), put: function(v) { this.bag.add(v); } }; o.put(5); o.put(5); o.bag.size()"), JsValue::Number(1.0));
     }
 
     #[test]
