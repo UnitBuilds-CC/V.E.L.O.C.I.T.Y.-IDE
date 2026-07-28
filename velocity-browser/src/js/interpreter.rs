@@ -1803,6 +1803,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "Math.sin" | "Math.cos" | "Math.tan" | "Math.asin" | "Math.acos" | "Math.atan" | "Math.atan2" |
                 "Math.sinh" | "Math.cosh" | "Math.tanh" | "Math.exp" | "Math.expm1" | "Math.log1p" |
                 "Math.log2" | "Math.log10" | "Math.cbrt" | "Math.hypot" | "Math.fround" | "Math.clz32" |
+                "Math.asinh" | "Math.acosh" | "Math.atanh" | "Math.imul" |
                 "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
                 "Number.isInteger" | "Number.isSafeInteger" |
                 "String.fromCharCode" | "String.fromCodePoint" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
@@ -2702,6 +2703,17 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         "Math.hypot" => JsValue::Number(args.iter().map(to_number).map(|v| v * v).sum::<f64>().sqrt()),
         "Math.fround" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN) as f32 as f64),
         "Math.clz32" => { let n = args.first().map(to_number).unwrap_or(0.0); let u = if n.is_finite() { n as i64 as u32 } else { 0 }; JsValue::Number(u.leading_zeros() as f64) }
+                "Math.asinh" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).asinh()),
+                "Math.acosh" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).acosh()),
+                "Math.atanh" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).atanh()),
+                "Math.imul" => {
+                    // 32-bit integer multiplication with wraparound, per ToInt32 semantics.
+                    let to_i32 = |v: Option<&JsValue>| -> i32 {
+                        let n = v.map(to_number).unwrap_or(0.0);
+                        if n.is_finite() { n.trunc() as i64 as i32 } else { 0 }
+                    };
+                    JsValue::Number(to_i32(args.first()).wrapping_mul(to_i32(args.get(1))) as f64)
+                }
         "JSON.parse" => {
             let s = args.first().map(to_string).unwrap_or_default();
             json_parse(&s)
@@ -6460,6 +6472,19 @@ mod tests {
         // Negative fromIndex counts from the end.
         assert_eq!(eval_full("[5, 6, 7].includes(5, -1)"), JsValue::Boolean(false));
         assert_eq!(eval_full("[5, 6, 7].includes(7, -1)"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn math_imul_and_hyperbolic_inverses() {
+        // imul performs 32-bit integer multiplication with wraparound.
+        assert_eq!(eval_full("Math.imul(3, 4)"), JsValue::Number(12.0));
+        assert_eq!(eval_full("Math.imul(-5, 3)"), JsValue::Number(-15.0));
+        // Large products wrap within the signed 32-bit range.
+        assert_eq!(eval_full("Math.imul(0xffffffff, 5)"), JsValue::Number(-5.0));
+        // Inverse hyperbolic functions round-trip their forward counterparts.
+        assert_eq!(eval_full("Math.asinh(0)"), JsValue::Number(0.0));
+        assert_eq!(eval_full("Math.acosh(1)"), JsValue::Number(0.0));
+        assert_eq!(eval_full("Math.atanh(0)"), JsValue::Number(0.0));
     }
 
     #[test]
