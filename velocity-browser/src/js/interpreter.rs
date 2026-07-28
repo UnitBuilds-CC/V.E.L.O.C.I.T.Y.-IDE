@@ -1784,6 +1784,9 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "JSON.parse" | "JSON.stringify" |
                 "Math.floor" | "Math.ceil" | "Math.round" | "Math.abs" | "Math.sqrt" |
                 "Math.trunc" | "Math.sign" | "Math.log" | "Math.pow" | "Math.max" | "Math.min" | "Math.random" |
+                "Math.sin" | "Math.cos" | "Math.tan" | "Math.asin" | "Math.acos" | "Math.atan" | "Math.atan2" |
+                "Math.sinh" | "Math.cosh" | "Math.tanh" | "Math.exp" | "Math.expm1" | "Math.log1p" |
+                "Math.log2" | "Math.log10" | "Math.cbrt" | "Math.hypot" | "Math.fround" | "Math.clz32" |
                 "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
                 "String.fromCharCode" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
                 "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" |
@@ -2574,6 +2577,25 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         "Math.max" => JsValue::Number(args.iter().map(to_number).fold(f64::NEG_INFINITY, f64::max)),
         "Math.min" => JsValue::Number(args.iter().map(to_number).fold(f64::INFINITY, f64::min)),
         "Math.random" => JsValue::Number(0.5), // deterministic for agent reproducibility
+        "Math.sin" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).sin()),
+        "Math.cos" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).cos()),
+        "Math.tan" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).tan()),
+        "Math.asin" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).asin()),
+        "Math.acos" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).acos()),
+        "Math.atan" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).atan()),
+        "Math.atan2" => { let y = args.first().map(to_number).unwrap_or(f64::NAN); let x = args.get(1).map(to_number).unwrap_or(f64::NAN); JsValue::Number(y.atan2(x)) }
+        "Math.sinh" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).sinh()),
+        "Math.cosh" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).cosh()),
+        "Math.tanh" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).tanh()),
+        "Math.exp" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).exp()),
+        "Math.expm1" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).exp_m1()),
+        "Math.log1p" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).ln_1p()),
+        "Math.log2" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).log2()),
+        "Math.log10" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).log10()),
+        "Math.cbrt" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).cbrt()),
+        "Math.hypot" => JsValue::Number(args.iter().map(to_number).map(|v| v * v).sum::<f64>().sqrt()),
+        "Math.fround" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN) as f32 as f64),
+        "Math.clz32" => { let n = args.first().map(to_number).unwrap_or(0.0); let u = if n.is_finite() { n as i64 as u32 } else { 0 }; JsValue::Number(u.leading_zeros() as f64) }
         "JSON.parse" => {
             let s = args.first().map(to_string).unwrap_or_default();
             json_parse(&s)
@@ -5934,6 +5956,24 @@ mod tests {
         assert_eq!(eval_full("'hello'.substr(-2)"), JsValue::String("lo".to_string()));
         // concat joins all arguments after the receiver.
         assert_eq!(eval_full("'a'.concat('b', 'c')"), JsValue::String("abc".to_string()));
+    }
+
+    #[test]
+    fn math_trig_and_extended_functions() {
+        // Trigonometric identities at well-known points.
+        assert_eq!(eval_full("Math.cos(0)"), JsValue::Number(1.0));
+        assert_eq!(eval_full("Math.sin(0)"), JsValue::Number(0.0));
+        // Logarithms base 2 and 10.
+        assert_eq!(eval_full("Math.log2(8)"), JsValue::Number(3.0));
+        assert_eq!(eval_full("Math.log10(1000)"), JsValue::Number(3.0));
+        // Cube root and Euclidean distance.
+        assert_eq!(eval_full("Math.cbrt(27)"), JsValue::Number(3.0));
+        assert_eq!(eval_full("Math.hypot(3, 4)"), JsValue::Number(5.0));
+        // Exponential at zero and inverse tangent quadrant handling.
+        assert_eq!(eval_full("Math.exp(0)"), JsValue::Number(1.0));
+        assert_eq!(eval_full("Math.atan2(0, 1)"), JsValue::Number(0.0));
+        // clz32 counts leading zero bits of the 32-bit representation.
+        assert_eq!(eval_full("Math.clz32(1)"), JsValue::Number(31.0));
     }
 
     #[test]
