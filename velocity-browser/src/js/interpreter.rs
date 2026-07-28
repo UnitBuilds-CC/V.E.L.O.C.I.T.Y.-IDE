@@ -2642,7 +2642,17 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         }
         "JSON.stringify" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::String(json_stringify(&val))
+            // Third argument selects indentation: a number of spaces (max 10) or a literal string.
+            let indent = match args.get(2) {
+                Some(JsValue::Number(n)) if *n >= 1.0 => " ".repeat((*n as usize).min(10)),
+                Some(JsValue::String(s)) if !s.is_empty() => s.chars().take(10).collect(),
+                _ => String::new(),
+            };
+            if indent.is_empty() {
+                JsValue::String(json_stringify(&val))
+            } else {
+                JsValue::String(json_stringify_pretty(&val, &indent, 0))
+            }
         }
         "Object.keys" => {
             match args.first() {
@@ -3085,6 +3095,29 @@ fn json_stringify(val: &JsValue) -> String {
             format!("{{{}}}", entries.join(","))
         }
         JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
+    }
+}
+
+/// Pretty-print `val` as JSON using `indent` per nesting level, matching the
+/// whitespace layout of JSON.stringify(value, null, space). Empty arrays and
+/// objects collapse to `[]`/`{}` and scalars defer to the compact serializer.
+fn json_stringify_pretty(val: &JsValue, indent: &str, depth: usize) -> String {
+    match val {
+        JsValue::Array(arr) if !arr.is_empty() => {
+            let pad = indent.repeat(depth + 1);
+            let close = indent.repeat(depth);
+            let items: Vec<String> = arr.iter().map(|v| format!("{}{}", pad, json_stringify_pretty(v, indent, depth + 1))).collect();
+            format!("[\n{}\n{}]", items.join(",\n"), close)
+        }
+        JsValue::Object(map) if !map.is_empty() => {
+            let pad = indent.repeat(depth + 1);
+            let close = indent.repeat(depth);
+            let entries: Vec<String> = map.iter()
+                .map(|(k, v)| format!("{}\"{}\": {}", pad, k, json_stringify_pretty(v, indent, depth + 1)))
+                .collect();
+            format!("{{\n{}\n{}}}", entries.join(",\n"), close)
+        }
+        _ => json_stringify(val),
     }
 }
 
@@ -6253,6 +6286,20 @@ mod tests {
         // toSpliced returns a new array with elements removed and inserted.
         assert_eq!(eval_full("[1, 2, 3, 4].toSpliced(1, 2, 9).length"), JsValue::Number(3.0));
         assert_eq!(eval_full("[1, 2, 3, 4].toSpliced(1, 2, 9)[1]"), JsValue::Number(9.0));
+    }
+
+    #[test]
+    fn json_stringify_indentation() {
+        // Number space indents each nesting level by that many spaces.
+        assert_eq!(eval_full("JSON.stringify([1, 2], null, 2)"), JsValue::String("[\n  1,\n  2\n]".to_string()));
+        // A single-key object is deterministic and reflects the indent.
+        assert_eq!(eval_full("JSON.stringify({ a: 1 }, null, 2)"), JsValue::String("{\n  \"a\": 1\n}".to_string()));
+        // String space is used verbatim as the indent unit.
+        assert_eq!(eval_full("JSON.stringify([1], null, '\\t')"), JsValue::String("[\n\t1\n]".to_string()));
+        // Empty containers stay compact.
+        assert_eq!(eval_full("JSON.stringify([], null, 2)"), JsValue::String("[]".to_string()));
+        // Omitting the space argument keeps compact output.
+        assert_eq!(eval_full("JSON.stringify([1, 2])"), JsValue::String("[1,2]".to_string()));
     }
 
     #[test]
