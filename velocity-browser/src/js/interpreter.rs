@@ -1777,7 +1777,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     return Ok(JsValue::Boolean(delete_property(&mut target, &prop)));
                 }
                 "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
-                "Object.keys" | "Object.values" | "Object.entries" | "Object.assign" | "Object.freeze" |
+                                "Object.keys" | "Object.values" | "Object.entries" | "Object.fromEntries" | "Object.assign" | "Object.freeze" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
                 "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyNames" |
                 "Array.isArray" | "Array.from" |
@@ -2561,6 +2561,27 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
                 Some(obj) => JsValue::Array(own_keys_of(obj).into_iter().map(|k| JsValue::Array(vec![JsValue::String(k.clone()), get_property(obj, &k)])).collect()),
                 None => JsValue::Array(Vec::new()),
             }
+        }
+        "Object.fromEntries" => {
+            // Build an object from an iterable of [key, value] pairs. Accepts an
+            // array of two-element arrays (the common Object.entries round-trip)
+            // as well as Map-style entry arrays.
+            let mut map = HashMap::new();
+            let entries = match args.first() {
+                Some(JsValue::Array(items)) => items.clone(),
+                Some(JsValue::Object(m)) => {
+                    if let Some(JsValue::Array(items)) = m.get("__entries__") { items.clone() } else { Vec::new() }
+                }
+                _ => Vec::new(),
+            };
+            for entry in entries {
+                if let JsValue::Array(pair) = entry {
+                    let key = pair.first().map(to_string).unwrap_or_default();
+                    let value = pair.get(1).cloned().unwrap_or(JsValue::Undefined);
+                    map.insert(key, value);
+                }
+            }
+            JsValue::Object(map)
         }
         "Object.assign" => {
             let mut target = if let Some(JsValue::Object(m)) = args.first() { m.clone() } else { HashMap::new() };
@@ -5652,6 +5673,14 @@ mod tests {
         // Array own keys are the indices plus `length`.
         assert_eq!(eval_full("Reflect.ownKeys([10, 20, 30]).length"), JsValue::Number(4.0));
         assert_eq!(eval_full("Reflect.ownKeys([10, 20, 30])[3]"), JsValue::String("length".to_string()));
+    }
+
+    #[test]
+    fn object_from_entries_builds_object() {
+        // Round-trips with Object.entries and accepts a literal array of pairs.
+        assert_eq!(eval_full("Object.fromEntries([['a', 1], ['b', 2]]).b"), JsValue::Number(2.0));
+        assert_eq!(eval_full("Object.fromEntries(Object.entries({ x: 5 })).x"), JsValue::Number(5.0));
+        assert_eq!(eval_full("Object.keys(Object.fromEntries([['k', 9]])).length"), JsValue::Number(1.0));
     }
 
     #[test]
