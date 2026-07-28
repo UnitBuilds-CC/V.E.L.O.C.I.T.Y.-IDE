@@ -3785,6 +3785,7 @@ fn own_keys_of(obj: &JsValue) -> Vec<String> {
             enumerable_keys(map)
         }
         JsValue::Array(arr) => (0..arr.len()).map(|i| i.to_string()).collect(),
+        JsValue::String(s) => (0..s.chars().count()).map(|i| i.to_string()).collect(),
         _ => Vec::new(),
     }
 }
@@ -7390,6 +7391,17 @@ mod tests {
         // search returns the byte index of the first occurrence or -1.
         assert_eq!(eval_full("'hello world'.search('world')"), JsValue::Number(6.0));
         assert_eq!(eval_full("'hello'.search('xyz')"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn object_keys_on_string_and_array() {
+        // Object.keys on a string returns character indices.
+        assert_eq!(eval_full("Object.keys('abc').length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("Object.keys('abc')[0]"), JsValue::String("0".to_string()));
+        // Object.values on a string returns the characters.
+        assert_eq!(eval_full("Object.values('hi')[1]"), JsValue::String("i".to_string()));
+        // Object.keys on an array returns indices.
+        assert_eq!(eval_full("Object.keys([10,20,30]).length"), JsValue::Number(3.0));
     }
 
     #[test]
