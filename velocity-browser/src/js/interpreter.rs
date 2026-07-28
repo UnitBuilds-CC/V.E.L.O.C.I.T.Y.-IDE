@@ -1540,9 +1540,10 @@ fn eval_delete(rhs: &Expr, scope: &ScopeRef) -> EvalResult {
                 _ => None,
             };
             if let Some(name) = obj_name {
-                if let Some(JsValue::Object(mut map)) = Scope::resolve(scope, name) {
-                    map.remove(prop);
-                    Scope::assign(scope, name, JsValue::Object(map));
+                if let Some(mut val) = Scope::resolve(scope, name) {
+                    let ok = delete_property(&mut val, prop);
+                    Scope::assign(scope, name, val);
+                    return Ok(JsValue::Boolean(ok));
                 }
             }
             Ok(JsValue::Boolean(true))
@@ -1556,17 +1557,9 @@ fn eval_delete(rhs: &Expr, scope: &ScopeRef) -> EvalResult {
             if let Some(name) = obj_name {
                 if let Some(mut target) = Scope::resolve(scope, name) {
                     let key = eval_expr_node(idx_expr, scope).map(|k| to_string(&k)).unwrap_or_default();
-                    match &mut target {
-                        JsValue::Object(map) => { map.remove(&key); }
-                        // Deleting an array element leaves a hole (undefined), per JS.
-                        JsValue::Array(arr) => {
-                            if let Ok(i) = key.parse::<usize>() {
-                                if i < arr.len() { arr[i] = JsValue::Undefined; }
-                            }
-                        }
-                        _ => {}
-                    }
+                    let ok = delete_property(&mut target, &key);
                     Scope::assign(scope, name, target);
+                    return Ok(JsValue::Boolean(ok));
                 }
             }
             Ok(JsValue::Boolean(true))
@@ -2478,22 +2471,22 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             JsValue::String(json_stringify(&val))
         }
         "Object.keys" => {
-            if let Some(JsValue::Object(map)) = args.first() { JsValue::Array(enumerable_keys(map).into_iter().map(JsValue::String).collect()) }
-            else { JsValue::Array(Vec::new()) }
+            match args.first() {
+                Some(obj) => JsValue::Array(own_keys_of(obj).into_iter().map(JsValue::String).collect()),
+                None => JsValue::Array(Vec::new()),
+            }
         }
         "Object.values" => {
-            if let Some(JsValue::Object(map)) = args.first() {
-                let obj = args.first().cloned().unwrap();
-                JsValue::Array(enumerable_keys(map).into_iter().map(|k| resolve_accessor(&map[&k], &obj)).collect())
+            match args.first() {
+                Some(obj) => JsValue::Array(own_keys_of(obj).into_iter().map(|k| get_property(obj, &k)).collect()),
+                None => JsValue::Array(Vec::new()),
             }
-            else { JsValue::Array(Vec::new()) }
         }
         "Object.entries" => {
-            if let Some(JsValue::Object(map)) = args.first() {
-                let obj = args.first().cloned().unwrap();
-                JsValue::Array(enumerable_keys(map).into_iter().map(|k| JsValue::Array(vec![JsValue::String(k.clone()), resolve_accessor(&map[&k], &obj)])).collect())
+            match args.first() {
+                Some(obj) => JsValue::Array(own_keys_of(obj).into_iter().map(|k| JsValue::Array(vec![JsValue::String(k.clone()), get_property(obj, &k)])).collect()),
+                None => JsValue::Array(Vec::new()),
             }
-            else { JsValue::Array(Vec::new()) }
         }
         "Object.assign" => {
             let mut target = if let Some(JsValue::Object(m)) = args.first() { m.clone() } else { HashMap::new() };
@@ -3136,6 +3129,145 @@ fn has_property(obj: &JsValue, prop: &str) -> bool {
                 .unwrap_or(false)
         }
         _ => false,
+    }
+}
+
+/// Delete a property, respecting Proxy `deleteProperty` traps. Returns the
+/// boolean result of the delete (per JS, `delete` yields true in non-strict mode).
+fn delete_property(obj: &mut JsValue, prop: &str) -> bool {
+    match obj {
+        // Native Proxy variant: consult handler.deleteProperty(target, prop).
+        JsValue::Proxy { target, handler } => {
+            if let JsValue::Object(h_map) = handler.as_ref() {
+                if let Some(trap) = h_map.get("deleteProperty") {
+                    if !matches!(trap, JsValue::NativeFunction(_)) {
+                        let depth = PROXY_TRAP_DEPTH.with(|d| {
+                            let cur = d.get();
+                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            d.set(cur + 1);
+                            cur
+                        });
+                        if depth < MAX_PROXY_TRAP_DEPTH {
+                            let prop_val = JsValue::String(prop.to_string());
+                            let result = call_function(
+                                trap,
+                                &[(**target).clone(), prop_val],
+                                &Scope::new_global(),
+                            );
+                            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                            if let Ok(val) = result {
+                                return to_boolean(&val);
+                            }
+                        }
+                    }
+                }
+            }
+            delete_property(target, prop)
+        }
+        JsValue::Object(map) => {
+            // Object-based proxy variant.
+            if map.get("__type__").map(to_string).as_deref() == Some("Proxy") {
+                let target_clone = map.get("__proxy_target__").cloned();
+                let handler_clone = map.get("__proxy_handler__").cloned();
+                if let (Some(t), Some(JsValue::Object(h_map))) = (&target_clone, &handler_clone) {
+                    if let Some(trap) = h_map.get("deleteProperty") {
+                        if !matches!(trap, JsValue::NativeFunction(_)) {
+                            let depth = PROXY_TRAP_DEPTH.with(|d| {
+                                let cur = d.get();
+                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                d.set(cur + 1);
+                                cur
+                            });
+                            if depth < MAX_PROXY_TRAP_DEPTH {
+                                let prop_val = JsValue::String(prop.to_string());
+                                let result = call_function(
+                                    trap,
+                                    &[t.clone(), prop_val],
+                                    &Scope::new_global(),
+                                );
+                                PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                                if let Ok(val) = result {
+                                    return to_boolean(&val);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(inner) = map.get_mut("__proxy_target__") {
+                        return delete_property(inner, prop);
+                    }
+                }
+            }
+            map.remove(prop);
+            true
+        }
+        JsValue::Array(arr) => {
+            // Deleting an array element leaves a hole (undefined), per JS.
+            if let Ok(i) = prop.parse::<usize>() {
+                if i < arr.len() {
+                    arr[i] = JsValue::Undefined;
+                }
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
+/// Enumerable own keys for `Object.keys/values/entries`, respecting a Proxy
+/// `ownKeys` trap and falling back to the target for proxies.
+fn own_keys_of(obj: &JsValue) -> Vec<String> {
+    match obj {
+        JsValue::Proxy { target, handler } => {
+            if let JsValue::Object(h_map) = handler.as_ref() {
+                if let Some(trap) = h_map.get("ownKeys") {
+                    if !matches!(trap, JsValue::NativeFunction(_)) {
+                        let depth = PROXY_TRAP_DEPTH.with(|d| {
+                            let cur = d.get();
+                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            d.set(cur + 1);
+                            cur
+                        });
+                        if depth < MAX_PROXY_TRAP_DEPTH {
+                            let result = call_function(trap, &[(**target).clone()], &Scope::new_global());
+                            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                            if let Ok(JsValue::Array(arr)) = result {
+                                return arr.iter().map(to_string).collect();
+                            }
+                        }
+                    }
+                }
+            }
+            own_keys_of(target)
+        }
+        JsValue::Object(map) => {
+            if map.get("__type__").map(to_string).as_deref() == Some("Proxy") {
+                if let (Some(t), Some(JsValue::Object(h_map))) =
+                    (map.get("__proxy_target__"), map.get("__proxy_handler__"))
+                {
+                    if let Some(trap) = h_map.get("ownKeys") {
+                        if !matches!(trap, JsValue::NativeFunction(_)) {
+                            let depth = PROXY_TRAP_DEPTH.with(|d| {
+                                let cur = d.get();
+                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                d.set(cur + 1);
+                                cur
+                            });
+                            if depth < MAX_PROXY_TRAP_DEPTH {
+                                let result = call_function(trap, &[t.clone()], &Scope::new_global());
+                                PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                                if let Ok(JsValue::Array(arr)) = result {
+                                    return arr.iter().map(to_string).collect();
+                                }
+                            }
+                        }
+                    }
+                    return own_keys_of(t);
+                }
+            }
+            enumerable_keys(map)
+        }
+        JsValue::Array(arr) => (0..arr.len()).map(|i| i.to_string()).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -4956,6 +5088,56 @@ mod tests {
         assert_eq!(eval_full("('5' in [1, 2, 3])"), JsValue::Boolean(false));
         assert_eq!(eval_full("('0' in 'abc')"), JsValue::Boolean(true));
         assert_eq!(eval_full("('3' in 'abc')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn proxy_delete_property_trap_controls_result() {
+        // A deleteProperty trap returning false vetoes the delete.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { deleteProperty: function(t, k) { return false; } };
+            var p = new Proxy(target, handler);
+            (delete p.x)
+        "), JsValue::Boolean(false));
+        // A trap returning true reports success.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { deleteProperty: function(t, k) { return true; } };
+            var p = new Proxy(target, handler);
+            (delete p.x)
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn proxy_delete_forwards_to_target_without_trap() {
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var p = new Proxy(target, {});
+            delete p.x;
+            ('x' in p)
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn proxy_own_keys_trap_drives_object_keys() {
+        assert_eq!(eval_full("
+            var target = { a: 1, b: 2 };
+            var handler = { ownKeys: function(t) { return ['a', 'b', 'c']; } };
+            var p = new Proxy(target, handler);
+            Object.keys(p).length
+        "), JsValue::Number(3.0));
+        assert_eq!(eval_full("
+            var target = { a: 1, b: 2 };
+            var handler = { ownKeys: function(t) { return ['a', 'b', 'c']; } };
+            var p = new Proxy(target, handler);
+            Object.keys(p)[2]
+        "), JsValue::String("c".to_string()));
+    }
+
+    #[test]
+    fn object_keys_values_on_array() {
+        assert_eq!(eval_full("Object.keys([10, 20, 30]).length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("Object.values([10, 20, 30])[1]"), JsValue::Number(20.0));
     }
 
     #[test]
