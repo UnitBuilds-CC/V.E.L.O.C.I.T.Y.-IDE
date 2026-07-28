@@ -1805,7 +1805,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "Math.log2" | "Math.log10" | "Math.cbrt" | "Math.hypot" | "Math.fround" | "Math.clz32" |
                 "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
                 "Number.isInteger" | "Number.isSafeInteger" |
-                "String.fromCharCode" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
+                "String.fromCharCode" | "String.fromCodePoint" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
                 "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" |
                 "Reflect.get" | "Reflect.has" |
                 "Reflect.ownKeys" | "Reflect.getOwnPropertyDescriptor" | "Reflect.apply" | "Reflect.construct" => {
@@ -2846,6 +2846,12 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         }
         "Array.of" => JsValue::Array(args.to_vec()),
         "String.fromCharCode" => {
+            let s: String = args.iter().filter_map(|a| { let n = to_number(a) as u32; char::from_u32(n) }).collect();
+            JsValue::String(s)
+        }
+        "String.fromCodePoint" => {
+            // Like fromCharCode but interprets each argument as a full Unicode
+            // code point rather than a UTF-16 code unit.
             let s: String = args.iter().filter_map(|a| { let n = to_number(a) as u32; char::from_u32(n) }).collect();
             JsValue::String(s)
         }
@@ -6345,6 +6351,16 @@ mod tests {
         assert_eq!(eval_full("Object.getOwnPropertyDescriptors({ a: 1 }).a.enumerable"), JsValue::Boolean(true));
         // A round-trip through Object.keys sees exactly the own keys.
         assert_eq!(eval_full("Object.keys(Object.getOwnPropertyDescriptors({ only: 5 }))[0]"), JsValue::String("only".to_string()));
+    }
+
+    #[test]
+    fn string_from_code_point_builds_scalars() {
+        // ASCII code points map to their characters and concatenate in order.
+        assert_eq!(eval_full("String.fromCodePoint(72, 105)"), JsValue::String("Hi".to_string()));
+        // Code points above the BMP produce a single Unicode scalar.
+        assert_eq!(eval_full("String.fromCodePoint(128512)"), JsValue::String("\u{1F600}".to_string()));
+        // No arguments yields the empty string.
+        assert_eq!(eval_full("String.fromCodePoint()"), JsValue::String(String::new()));
     }
 
     #[test]
