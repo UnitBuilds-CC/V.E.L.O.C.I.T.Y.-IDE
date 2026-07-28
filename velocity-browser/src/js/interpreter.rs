@@ -1640,7 +1640,7 @@ fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResu
         }
         Token::In => {
             let key = to_string(&l);
-            match &r { JsValue::Object(m) => JsValue::Boolean(m.contains_key(&key)), _ => JsValue::Boolean(false) }
+            JsValue::Boolean(has_property(&r, &key))
         }
         _ => JsValue::Undefined,
     })
@@ -3040,6 +3040,103 @@ std::thread_local! {
 // (is_reject, value) — set by __promise_resolve__ / __promise_reject__ natives.
 std::thread_local! {
     static PROMISE_CAPTURE: std::cell::RefCell<Option<(bool, JsValue)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Membership test for the `in` operator, respecting Proxy `has` traps and the
+/// prototype chain (matching JS semantics where `in` sees inherited properties).
+fn has_property(obj: &JsValue, prop: &str) -> bool {
+    match obj {
+        // Native Proxy variant: consult handler.has(target, prop) when present.
+        JsValue::Proxy { target, handler } => {
+            if let JsValue::Object(h_map) = handler.as_ref() {
+                if let Some(has_trap) = h_map.get("has") {
+                    if !matches!(has_trap, JsValue::NativeFunction(_)) {
+                        let depth = PROXY_TRAP_DEPTH.with(|d| {
+                            let cur = d.get();
+                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            d.set(cur + 1);
+                            cur
+                        });
+                        if depth < MAX_PROXY_TRAP_DEPTH {
+                            let prop_val = JsValue::String(prop.to_string());
+                            let result = call_function(
+                                has_trap,
+                                &[(**target).clone(), prop_val],
+                                &Scope::new_global(),
+                            );
+                            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                            if let Ok(val) = result {
+                                return to_boolean(&val);
+                            }
+                        }
+                    }
+                }
+            }
+            has_property(target, prop)
+        }
+        JsValue::Object(map) => {
+            // Object-based proxy variant.
+            if map.get("__type__").map(to_string).as_deref() == Some("Proxy") {
+                if let (Some(t), Some(JsValue::Object(h_map))) =
+                    (map.get("__proxy_target__"), map.get("__proxy_handler__"))
+                {
+                    if let Some(has_trap) = h_map.get("has") {
+                        if !matches!(has_trap, JsValue::NativeFunction(_)) {
+                            let depth = PROXY_TRAP_DEPTH.with(|d| {
+                                let cur = d.get();
+                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                d.set(cur + 1);
+                                cur
+                            });
+                            if depth < MAX_PROXY_TRAP_DEPTH {
+                                let prop_val = JsValue::String(prop.to_string());
+                                let result = call_function(
+                                    has_trap,
+                                    &[t.clone(), prop_val],
+                                    &Scope::new_global(),
+                                );
+                                PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                                if let Ok(val) = result {
+                                    return to_boolean(&val);
+                                }
+                            }
+                        }
+                    }
+                    return has_property(t, prop);
+                }
+            }
+            if map.contains_key(prop) {
+                return true;
+            }
+            // Walk the prototype chain so inherited members are visible to `in`.
+            let mut proto = map.get("__proto__");
+            let mut depth = 0;
+            while let Some(JsValue::Object(proto_map)) = proto {
+                if depth >= 64 { break; }
+                if proto_map.contains_key(prop) {
+                    return true;
+                }
+                proto = proto_map.get("__proto__");
+                depth += 1;
+            }
+            false
+        }
+        JsValue::Array(arr) => {
+            if prop == "length" {
+                return true;
+            }
+            prop.parse::<usize>().map(|i| i < arr.len()).unwrap_or(false)
+        }
+        JsValue::String(s) => {
+            if prop == "length" {
+                return true;
+            }
+            prop.parse::<usize>()
+                .map(|i| i < s.chars().count())
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
@@ -4803,6 +4900,62 @@ mod tests {
             }
             _ => panic!("Expected JsValue::Proxy, got {:?}", result),
         }
+    }
+
+    #[test]
+    fn proxy_has_trap_controls_in_operator() {
+        // The handler.has trap intercepts the `in` operator.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { has: function(t, k) { return k === 'x' || k === 'y'; } };
+            var p = new Proxy(target, handler);
+            ('y' in p)
+        "), JsValue::Boolean(true));
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { has: function(t, k) { return k === 'x' || k === 'y'; } };
+            var p = new Proxy(target, handler);
+            ('z' in p)
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn proxy_in_operator_falls_through_to_target_without_has_trap() {
+        // Without a has trap, `in` reflects the target's own keys.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var p = new Proxy(target, {});
+            ('x' in p)
+        "), JsValue::Boolean(true));
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var p = new Proxy(target, {});
+            ('missing' in p)
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn in_operator_sees_inherited_members() {
+        // `in` reports prototype methods, matching JS semantics.
+        assert_eq!(eval_full("
+            class Base { hello() { return 1; } }
+            var b = new Base();
+            ('hello' in b)
+        "), JsValue::Boolean(true));
+        assert_eq!(eval_full("
+            class Base { hello() { return 1; } }
+            var b = new Base();
+            ('absent' in b)
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn in_operator_array_and_string() {
+        assert_eq!(eval_full("('length' in [1, 2, 3])"), JsValue::Boolean(true));
+        assert_eq!(eval_full("('1' in [1, 2, 3])"), JsValue::Boolean(true));
+        assert_eq!(eval_full("('5' in [1, 2, 3])"), JsValue::Boolean(false));
+        assert_eq!(eval_full("('0' in 'abc')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("('3' in 'abc')"), JsValue::Boolean(false));
     }
 
     #[test]
