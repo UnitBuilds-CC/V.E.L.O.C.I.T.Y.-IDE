@@ -5115,10 +5115,73 @@ pub fn to_string(v: &JsValue) -> String {
     }
 }
 
+/// Render a finite-or-not number exactly as ECMAScript's `Number::toString(x, 10)`
+/// (the algorithm behind `String(n)`, `n.toString()`, and JSON number output).
+/// Rust's default float formatting differs: it never switches to exponential
+/// form (JS does for exponents outside [-6, 21]) and emits `inf`/`nan` instead
+/// of `Infinity`/`NaN`. We reuse Rust's `{}` only to obtain the shortest
+/// round-tripping significand digits, then lay them out per the spec.
 fn format_number(n: f64) -> String {
     if n.is_nan() { return "NaN".to_string(); }
     if n.is_infinite() { return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string(); }
-    if n.fract() == 0.0 && n.abs() < 1e15 { format!("{}", n as i64) } else { format!("{}", n) }
+    if n == 0.0 { return "0".to_string(); }
+    let negative = n < 0.0;
+    let a = n.abs();
+    // Shortest decimal digits that round-trip, with no exponent or point.
+    let raw = format!("{}", a);
+    // Collect the significand digits plus `exp10`, the number of digits that sit
+    // left of the decimal point (negative when the value is < 1). Counting these
+    // BEFORE stripping leading zeros keeps exp10 anchored to the magnitude, so a
+    // value like 0.0000001 (raw "0.0000001") ends up with exp10 == -6 rather than
+    // the meaningless point index of its trimmed significand.
+    let (mut digits, exp10) = if let Some(e_pos) = raw.find('e') {
+        // Scientific input like "1.5e30": split the significand and combine its
+        // fractional length with the exponent to recover the integer-digit count.
+        let sig = &raw[..e_pos];
+        let exp: i64 = raw[e_pos + 1..].parse().unwrap_or(0);
+        let d: String = sig.chars().filter(|c| *c != '.').collect();
+        let frac = sig.find('.').map(|p| (sig.len() - p - 1) as i64).unwrap_or(0);
+        (d, exp - frac)
+    } else if let Some(p) = raw.find('.') {
+        // Plain decimal like "123.45" (int digits == 3) or "0.001" (== 0).
+        let d: String = raw.chars().filter(|c| *c != '.').collect();
+        (d, p as i64)
+    } else {
+        let len = raw.len() as i64;
+        (raw, len)
+    };
+    // Drop leading zeros; each removed zero shifts the decimal point one left.
+    let leading = digits.len() - digits.trim_start_matches('0').len();
+    digits = digits[leading..].to_string();
+    let exp10 = exp10 - leading as i64;
+    // Rust pads the significand to ~17 significant digits; JS prints the fewest
+    // digits that round-trip. Strip redundant trailing zeros while the value
+    // (digits * 10^(exp10 - k)) still parses back to exactly `a`.
+    while digits.len() > 1 && digits.ends_with('0') {
+        let cand = &digits[..digits.len() - 1];
+        let e = exp10 - cand.len() as i64;
+        if format!("{}e{}", cand, e).parse::<f64>() == Ok(a) { digits = cand.to_string(); } else { break; }
+    }
+    let k = digits.len() as i64;
+    let body = if k <= exp10 && exp10 <= 21 {
+        // Integer with trailing zeros: 1e21 -> "1" + 21 zeros.
+        format!("{}{}", digits, "0".repeat((exp10 - k) as usize))
+    } else if exp10 > 0 && exp10 < k {
+        // Decimal point falls inside the digits: 123.45.
+        format!("{}.{}", &digits[..exp10 as usize], &digits[exp10 as usize..])
+    } else if exp10 <= 0 && exp10 > -6 {
+        // Small magnitude stays decimal: 0.001 (exp10 == -2 leading zeros). The
+        // exp10 <= 0 guard is essential: a large positive exponent that missed
+        // branch 1 (e.g. 1e21 has exp10 == 22) must fall through to exponential
+        // form, not reach the (-exp10) repeat below.
+        format!("0.{}{}", "0".repeat((-exp10) as usize), digits)
+    } else {
+        // Exponential form: d[.ddd]e(+|-)ee with the exponent's own sign.
+        let mantissa = if k == 1 { digits.clone() } else { format!("{}.{}", &digits[..1], &digits[1..]) };
+        let e = exp10 - 1;
+        format!("{}e{}{}", mantissa, if e >= 0 { "+" } else { "-" }, e.abs())
+    };
+    if negative { format!("-{}", body) } else { body }
 }
 
 pub fn typeof_str(v: &JsValue) -> &'static str {
@@ -6920,6 +6983,21 @@ mod tests {
         assert_eq!(eval_full("Boolean('')"), JsValue::Boolean(false));
         assert_eq!(eval_full("Boolean('x')"), JsValue::Boolean(true));
         assert_eq!(eval_full("Boolean()"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn number_to_string_exponential_notation() {
+        // Magnitudes with exponents outside [-6, 21] switch to exponential form.
+        assert_eq!(eval_full("String(1e21)"), JsValue::String("1e+21".to_string()));
+        assert_eq!(eval_full("String(1e-7)"), JsValue::String("1e-7".to_string()));
+        assert_eq!(eval_full("String(1.5e30)"), JsValue::String("1.5e+30".to_string()));
+        // Exponents within [-6, 21] stay in plain decimal form.
+        assert_eq!(eval_full("String(1e20)"), JsValue::String("100000000000000000000".to_string()));
+        assert_eq!(eval_full("String(1e-6)"), JsValue::String("0.000001".to_string()));
+        assert_eq!(eval_full("String(0.001)"), JsValue::String("0.001".to_string()));
+        // Ordinary integers and negatives are unaffected.
+        assert_eq!(eval_full("String(123)"), JsValue::String("123".to_string()));
+        assert_eq!(eval_full("String(-1e21)"), JsValue::String("-1e+21".to_string()));
     }
 
     #[test]
