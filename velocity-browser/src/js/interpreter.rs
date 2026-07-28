@@ -4083,7 +4083,15 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
             let mut a = arr.clone();
             call_array_method(&mut a, method, args, scope)
         }
-        JsValue::String(s) => Ok(call_string_method(s, method, args)),
+        JsValue::String(s) => {
+            // replace/replaceAll with a function replacement needs scope for the callback.
+            if (method == "replace" || method == "replaceAll")
+                && matches!(args.get(1), Some(JsValue::Function { .. } | JsValue::NativeFunction(_)))
+            {
+                return string_replace_with_fn(s, method, args, scope);
+            }
+            Ok(call_string_method(s, method, args))
+        }
         JsValue::Object(map) => {
             // Check for Map/Set/Promise builtins
             let type_tag = map.get("__type__").map(to_string);
@@ -4515,6 +4523,40 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
         }
         _ => JsValue::Undefined,
     })
+}
+
+/// Handle `String.prototype.replace` / `replaceAll` when the replacement is a
+/// function. The callback receives (match, offset, originalString) and its return
+/// value (coerced to string) becomes the replacement text.
+fn string_replace_with_fn(s: &str, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+    let pattern = args.first().map(to_string).unwrap_or_default();
+    let func = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+    let replace_all = method == "replaceAll";
+    if pattern.is_empty() {
+        return Ok(JsValue::String(s.to_string()));
+    }
+    let mut out = String::new();
+    let mut search_start = 0;
+    let mut replaced = false;
+    while let Some(rel) = s[search_start..].find(pattern.as_str()) {
+        let idx = search_start + rel;
+        out.push_str(&s[search_start..idx]);
+        let matched = &s[idx..idx + pattern.len()];
+        let result = call_function(&func, &[
+            JsValue::String(matched.to_string()),
+            JsValue::Number(idx as f64),
+            JsValue::String(s.to_string()),
+        ], scope)?;
+        out.push_str(&to_string(&result));
+        search_start = idx + pattern.len();
+        replaced = true;
+        if !replace_all { break; }
+    }
+    if !replaced {
+        return Ok(JsValue::String(s.to_string()));
+    }
+    out.push_str(&s[search_start..]);
+    Ok(JsValue::String(out))
 }
 
 fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
@@ -7226,6 +7268,25 @@ mod tests {
         assert_eq!(eval_full("(9.99).toPrecision(2)"), JsValue::String("10".to_string()));
         // Negative values.
         assert_eq!(eval_full("(-123.456).toPrecision(2)"), JsValue::String("-1.2e+2".to_string()));
+    }
+
+    #[test]
+    fn string_replace_with_function() {
+        // replace with a callback: fn(match, offset, string).
+        assert_eq!(
+            eval_full("'hello world'.replace('world', function(m) { return m.toUpperCase(); })"),
+            JsValue::String("hello WORLD".to_string())
+        );
+        // replaceAll invokes the callback for every match.
+        assert_eq!(
+            eval_full("'aaa'.replaceAll('a', function(m, i) { return String(i); })"),
+            JsValue::String("012".to_string())
+        );
+        // No match leaves the string unchanged.
+        assert_eq!(
+            eval_full("'abc'.replace('z', function(m) { return 'X'; })"),
+            JsValue::String("abc".to_string())
+        );
     }
 
     #[test]
