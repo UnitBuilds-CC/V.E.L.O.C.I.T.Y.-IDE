@@ -4275,12 +4275,12 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
         }
         "some" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for item in a.iter() { if to_boolean(&call_function(&callback, &[item.clone()], scope)?) { return Ok(JsValue::Boolean(true)); } }
+            for (i, item) in a.iter().enumerate() { if to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?) { return Ok(JsValue::Boolean(true)); } }
             JsValue::Boolean(false)
         }
         "every" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for item in a.iter() { if !to_boolean(&call_function(&callback, &[item.clone()], scope)?) { return Ok(JsValue::Boolean(false)); } }
+            for (i, item) in a.iter().enumerate() { if !to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?) { return Ok(JsValue::Boolean(false)); } }
             JsValue::Boolean(true)
         }
         "flat" => {
@@ -6665,6 +6665,14 @@ mod tests {
         assert_eq!(eval_full("'abc'.split('').length"), JsValue::Number(3.0));
         // A normal separator splits on each occurrence.
         assert_eq!(eval_full("'a,b,c'.split(',').length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn array_some_every_pass_index_to_callback() {
+        // some/every callbacks receive the element index as the second argument.
+        assert_eq!(eval_full("[10, 20, 30].some(function(v, i) { return i === 2; })"), JsValue::Boolean(true));
+        assert_eq!(eval_full("[10, 20, 30].every(function(v, i) { return i < 3; })"), JsValue::Boolean(true));
+        assert_eq!(eval_full("[10, 20, 30].every(function(v, i) { return i < 2; })"), JsValue::Boolean(false));
     }
 
     #[test]
