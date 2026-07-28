@@ -1396,7 +1396,15 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
         Expr::Undefined => Ok(JsValue::Undefined),
         Expr::This => Ok(Scope::resolve(scope, "this").unwrap_or(JsValue::Undefined)),
         Expr::Super => Ok(Scope::resolve(scope, "__super__").unwrap_or(JsValue::Undefined)),
-        Expr::Ident(name) => Ok(Scope::resolve(scope, name).unwrap_or(JsValue::Undefined)),
+        Expr::Ident(name) => Ok(match Scope::resolve(scope, name) {
+            Some(v) => v,
+            // Well-known global constants fall back here when not shadowed by a binding.
+            None => match name.as_str() {
+                "Infinity" => JsValue::Number(f64::INFINITY),
+                "NaN" => JsValue::Number(f64::NAN),
+                _ => JsValue::Undefined,
+            },
+        }),
         Expr::Array(elems) => {
             let mut arr = Vec::new();
             for e in elems {
@@ -6025,6 +6033,17 @@ mod tests {
         assert_eq!(eval_full("[1, 2, 3, 4, 5].copyWithin(0, 3).length"), JsValue::Number(5.0));
         assert_eq!(eval_full("[1, 2, 3, 4, 5].copyWithin(0, 3)[0]"), JsValue::Number(4.0));
         assert_eq!(eval_full("[1, 2, 3, 4, 5].copyWithin(0, 3)[1]"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn global_infinity_and_nan_identifiers() {
+        // Bare Infinity resolves to the positive infinity number.
+        assert_eq!(eval_full("Infinity > 1e308"), JsValue::Boolean(true));
+        assert_eq!(eval_full("-Infinity < -1e308"), JsValue::Boolean(true));
+        // NaN resolves to a NaN value (detected via Number.isNaN since NaN !== NaN).
+        assert_eq!(eval_full("Number.isNaN(NaN)"), JsValue::Boolean(true));
+        // Infinity is usable as a flat() depth to flatten fully.
+        assert_eq!(eval_full("[1, [2, [3, [4]]]].flat(Infinity).length"), JsValue::Number(4.0));
     }
 
     #[test]
