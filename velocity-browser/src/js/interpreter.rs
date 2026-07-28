@@ -4758,7 +4758,24 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
             JsValue::Number(cmp)
         }
         "normalize" => JsValue::String(s.to_string()), // NFC/NFD normalization not applied; text returned as-is
-        "match" | "search" | "matchAll" => JsValue::Null, // regex not supported
+        "match" => {
+            // Plain-string match: find the first occurrence and return [match] or null.
+            let pattern = args.first().map(to_string).unwrap_or_default();
+            if pattern.is_empty() {
+                JsValue::Array(vec![JsValue::String(String::new())])
+            } else {
+                match s.find(pattern.as_str()) {
+                    Some(_) => JsValue::Array(vec![JsValue::String(pattern)]),
+                    None => JsValue::Null,
+                }
+            }
+        }
+        "search" => {
+            let pattern = args.first().map(to_string).unwrap_or_default();
+            let idx = if pattern.is_empty() { 0 } else { s.find(pattern.as_str()).map(|i| i as i64).unwrap_or(-1) };
+            JsValue::Number(idx as f64)
+        }
+        "matchAll" => JsValue::Null, // regex not supported
         "toString" | "valueOf" => JsValue::String(s.to_string()),
         _ => JsValue::Undefined,
     }
@@ -7363,6 +7380,16 @@ mod tests {
         // Mixed types still compare numerically.
         assert_eq!(eval_full("10 < 9"), JsValue::Boolean(false));
         assert_eq!(eval_full("'10' < 9"), JsValue::Boolean(false)); // '10' -> 10, numeric
+    }
+
+    #[test]
+    fn string_match_and_search_plain_string() {
+        // match with a plain string returns [match] or null.
+        assert_eq!(eval_full("'hello world'.match('world')[0]"), JsValue::String("world".to_string()));
+        assert_eq!(eval_full("'hello'.match('xyz')"), JsValue::Null);
+        // search returns the byte index of the first occurrence or -1.
+        assert_eq!(eval_full("'hello world'.search('world')"), JsValue::Number(6.0));
+        assert_eq!(eval_full("'hello'.search('xyz')"), JsValue::Number(-1.0));
     }
 
     #[test]
