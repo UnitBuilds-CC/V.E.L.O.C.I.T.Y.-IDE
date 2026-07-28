@@ -4741,7 +4741,7 @@ fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
             match args.first() {
                 Some(v) if !matches!(v, JsValue::Undefined) => {
                     let p = (to_number(v) as usize).clamp(1, 100);
-                    JsValue::String(format_precision(n, p))
+                    JsValue::String(to_precision_js(n, p))
                 }
                 _ => JsValue::String(format_number(n)),
             }
@@ -4849,16 +4849,60 @@ fn to_fixed_js(n: f64, digits: usize) -> String {
     if neg && rounded != 0.0 { format!("-{}", body) } else { body }
 }
 
-/// Format `n` to `p` significant digits, trimming a trailing exponent-free form
-/// where possible so small integers render cleanly.
-fn format_precision(n: f64, p: usize) -> String {
-    if n == 0.0 { return format!("{:.*}", p.saturating_sub(1), 0.0); }
-    let magnitude = n.abs().log10().floor() as i32;
-    if magnitude >= -6 && (magnitude as i64) < p as i64 {
-        let decimals = (p as i32 - 1 - magnitude).max(0) as usize;
-        format!("{:.*}", decimals, n)
+/// Format `n` to `p` significant digits per ECMAScript Number.prototype.toPrecision.
+/// Uses fixed notation when the exponent e satisfies -6 <= e < p, otherwise
+/// exponential notation with an explicit exponent sign (e+2 / e-7).
+fn to_precision_js(n: f64, p: usize) -> String {
+    if n.is_nan() { return "NaN".to_string(); }
+    if n.is_infinite() { return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string(); }
+    let negative = n < 0.0 || (n == 0.0 && n.is_sign_negative());
+    let a = n.abs();
+    let prefix = if negative { "-" } else { "" };
+    if a == 0.0 {
+        return if p <= 1 { format!("{}0", prefix) } else { format!("{}0.{}", prefix, "0".repeat(p - 1)) };
+    }
+    // Obtain shortest round-tripping digits via Rust's scientific formatter.
+    let sci = format!("{:e}", a);
+    let e_pos = sci.find('e').unwrap();
+    let sig = &sci[..e_pos];
+    let rust_exp: i64 = sci[e_pos + 1..].parse().unwrap_or(0);
+    let mut digits: Vec<u8> = sig.chars().filter(|c| *c != '.').map(|c| c as u8 - b'0').collect();
+    let point = sig.find('.').unwrap_or(sig.len());
+    let mut exp10 = rust_exp + point as i64; // integer-digit count (format_number convention)
+    // Round to p significant digits (half-away-from-zero).
+    if digits.len() > p {
+        let mut carry = digits[p] >= 5;
+        digits.truncate(p);
+        let mut i = p as isize - 1;
+        while carry && i >= 0 {
+            digits[i as usize] += 1;
+            if digits[i as usize] >= 10 { digits[i as usize] = 0; } else { carry = false; }
+            i -= 1;
+        }
+        if carry { digits = vec![1]; exp10 += 1; }
+    }
+    while digits.len() < p { digits.push(0); }
+    let k = digits.len() as i64;
+    let e = exp10 - 1; // exponent of the leading digit
+    let chars: Vec<char> = digits.iter().map(|d| (b'0' + d) as char).collect();
+    if e >= -6 && e < p as i64 {
+        // Fixed notation.
+        let body = if exp10 >= k {
+            format!("{}{}", chars.iter().collect::<String>(), "0".repeat((exp10 - k) as usize))
+        } else if exp10 > 0 {
+            format!("{}.{}", chars[..exp10 as usize].iter().collect::<String>(), chars[exp10 as usize..].iter().collect::<String>())
+        } else {
+            format!("0.{}{}", "0".repeat((-exp10) as usize), chars.iter().collect::<String>())
+        };
+        format!("{}{}", prefix, body)
     } else {
-        format!("{:.*e}", p.saturating_sub(1), n)
+        // Exponential notation with explicit sign.
+        let mantissa = if p == 1 {
+            format!("{}", chars[0])
+        } else {
+            format!("{}.{}", chars[0], chars[1..].iter().collect::<String>())
+        };
+        format!("{}{}e{}{}", prefix, mantissa, if e >= 0 { "+" } else { "-" }, e.abs())
     }
 }
 
@@ -7166,6 +7210,22 @@ mod tests {
         assert_eq!(eval_full("(0.0001).toExponential()"), JsValue::String("1e-4".to_string()));
         assert_eq!(eval_full("(1.999).toExponential(2)"), JsValue::String("2.00e+0".to_string()));
         assert_eq!(eval_full("(-12345).toExponential(2)"), JsValue::String("-1.23e+4".to_string()));
+    }
+
+    #[test]
+    fn number_to_precision() {
+        // Fixed notation: exponent in [-6, p).
+        assert_eq!(eval_full("(5).toPrecision(2)"), JsValue::String("5.0".to_string()));
+        assert_eq!(eval_full("(123.456).toPrecision(5)"), JsValue::String("123.46".to_string()));
+        assert_eq!(eval_full("(0).toPrecision(1)"), JsValue::String("0".to_string()));
+        assert_eq!(eval_full("(0).toPrecision(3)"), JsValue::String("0.00".to_string()));
+        // Exponential notation carries an explicit sign.
+        assert_eq!(eval_full("(123.456).toPrecision(2)"), JsValue::String("1.2e+2".to_string()));
+        assert_eq!(eval_full("(0.0000001).toPrecision(2)"), JsValue::String("1.0e-7".to_string()));
+        // Rounding with carry that bumps the exponent.
+        assert_eq!(eval_full("(9.99).toPrecision(2)"), JsValue::String("10".to_string()));
+        // Negative values.
+        assert_eq!(eval_full("(-123.456).toPrecision(2)"), JsValue::String("-1.2e+2".to_string()));
     }
 
     #[test]
