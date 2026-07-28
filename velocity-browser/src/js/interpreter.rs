@@ -4582,8 +4582,9 @@ fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
             }
         }
         "toFixed" => {
-            let digits = args.first().map(to_number).unwrap_or(0.0) as usize;
-            JsValue::String(format!("{:.prec$}", n, prec = digits))
+            let digits = args.first().map(to_number).unwrap_or(0.0);
+            let digits = if digits.is_finite() { (digits as i64).clamp(0, 100) as usize } else { 0 };
+            JsValue::String(to_fixed_js(n, digits))
         }
         "toPrecision" => {
             match args.first() {
@@ -4642,6 +4643,31 @@ fn number_to_radix(n: f64, radix: u32) -> String {
     if negative { result.push('-'); }
     result.push_str(&String::from_utf8(out).unwrap_or_default());
     result
+}
+
+/// Format `n` with exactly `digits` fractional places, matching JS
+/// Number.prototype.toFixed. Unlike Rust's `{:.N}` formatting (round-half-to-even),
+/// the spec rounds half away from zero, which `f64::round` provides after scaling.
+fn to_fixed_js(n: f64, digits: usize) -> String {
+    if n.is_nan() { return "NaN".to_string(); }
+    if n.is_infinite() { return if n < 0.0 { "-Infinity".to_string() } else { "Infinity".to_string() }; }
+    let neg = n.is_sign_negative() && n != 0.0;
+    let scale = 10f64.powi(digits as i32);
+    let rounded = (n.abs() * scale).round();
+    let scaled_str = format!("{:.0}", rounded);
+    let body = if digits == 0 {
+        scaled_str
+    } else {
+        // Left-pad so there is at least one integer digit before the split point.
+        let padded = if scaled_str.len() <= digits {
+            format!("{:0>width$}", scaled_str, width = digits + 1)
+        } else {
+            scaled_str
+        };
+        let split = padded.len() - digits;
+        format!("{}.{}", &padded[..split], &padded[split..])
+    };
+    if neg && rounded != 0.0 { format!("-{}", body) } else { body }
 }
 
 /// Format `n` to `p` significant digits, trimming a trailing exponent-free form
@@ -6673,6 +6699,17 @@ mod tests {
         assert_eq!(eval_full("[10, 20, 30].some(function(v, i) { return i === 2; })"), JsValue::Boolean(true));
         assert_eq!(eval_full("[10, 20, 30].every(function(v, i) { return i < 3; })"), JsValue::Boolean(true));
         assert_eq!(eval_full("[10, 20, 30].every(function(v, i) { return i < 2; })"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn number_to_fixed_rounds_half_away_from_zero() {
+        // JS toFixed rounds halves away from zero, unlike Rust's default formatter.
+        assert_eq!(eval_full("(2.5).toFixed(0)"), JsValue::String("3".to_string()));
+        assert_eq!(eval_full("(0.5).toFixed(0)"), JsValue::String("1".to_string()));
+        assert_eq!(eval_full("(-2.5).toFixed(0)"), JsValue::String("-3".to_string()));
+        // Ordinary rounding and padding still hold.
+        assert_eq!(eval_full("(123.456).toFixed(2)"), JsValue::String("123.46".to_string()));
+        assert_eq!(eval_full("(0).toFixed(2)"), JsValue::String("0.00".to_string()));
     }
 
     #[test]
