@@ -1552,10 +1552,10 @@ fn eval_unary(op: &Token, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
     }
     let val = eval_expr_node(rhs, scope)?;
     Ok(match op {
-        Token::Minus => JsValue::Number(-to_number(&val)),
-        Token::Plus => JsValue::Number(to_number(&val)),
+        Token::Minus => { let p = to_primitive(&val); JsValue::Number(-to_number(&p)) }
+        Token::Plus => { let p = to_primitive(&val); JsValue::Number(to_number(&p)) }
         Token::Bang => JsValue::Boolean(!to_boolean(&val)),
-        Token::Tilde => JsValue::Number(!(to_number(&val) as i32) as f64),
+        Token::Tilde => { let p = to_primitive(&val); JsValue::Number(!(to_number(&p) as i32) as f64) }
         Token::PlusPlus => {
             let n = to_number(&val) + 1.0;
             if let Expr::Ident(name) = rhs { Scope::assign(scope, name, JsValue::Number(n)); }
@@ -1629,9 +1629,12 @@ fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResu
     let r = eval_expr_node(rhs, scope)?;
     Ok(match op {
         Token::Plus => {
-            if matches!(l, JsValue::String(_)) || matches!(r, JsValue::String(_)) {
-                JsValue::String(format!("{}{}", to_string(&l), to_string(&r)))
-            } else { JsValue::Number(to_number(&l) + to_number(&r)) }
+            // Apply ToPrimitive to objects/arrays (hint: number → valueOf then toString).
+            let lp = to_primitive(&l);
+            let rp = to_primitive(&r);
+            if matches!(lp, JsValue::String(_)) || matches!(rp, JsValue::String(_)) {
+                JsValue::String(format!("{}{}", to_string(&lp), to_string(&rp)))
+            } else { JsValue::Number(to_number(&lp) + to_number(&rp)) }
         }
         Token::Minus => JsValue::Number(to_number(&l) - to_number(&r)),
         Token::Star => JsValue::Number(to_number(&l) * to_number(&r)),
@@ -5281,6 +5284,22 @@ fn call_generator_method(map: &HashMap<String, JsValue>, method: &str) -> EvalRe
 // Type coercion helpers (public for vm.rs)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// ToPrimitive with hint "number": objects/arrays are coerced via valueOf then
+/// toString; primitives pass through unchanged.
+fn to_primitive(v: &JsValue) -> JsValue {
+    match v {
+        JsValue::Array(arr) => {
+            let parts: Vec<String> = arr.iter().map(|x| match x {
+                JsValue::Null | JsValue::Undefined => String::new(),
+                other => to_string(other),
+            }).collect();
+            JsValue::String(parts.join(","))
+        }
+        JsValue::Object(_) => JsValue::String("[object Object]".to_string()),
+        other => other.clone(),
+    }
+}
+
 pub fn to_number(v: &JsValue) -> f64 {
     match v {
         JsValue::Number(n) => *n,
@@ -7308,6 +7327,18 @@ mod tests {
         assert_eq!(eval_full("[1,2].find(function(v, i, arr) { return arr.length === 2 && v === 2; })"), JsValue::Number(2.0));
         // reduce callback gets (acc, val, index, array).
         assert_eq!(eval_full("[1,2,3].reduce(function(acc, v, i, arr) { return acc + arr.length; }, 0)"), JsValue::Number(9.0));
+    }
+
+    #[test]
+    fn addition_to_primitive_coercion() {
+        // Arrays coerce via toString (join with comma) before + decides concat vs add.
+        assert_eq!(eval_full("[] + []"), JsValue::String(String::new()));
+        assert_eq!(eval_full("[1,2] + [3,4]"), JsValue::String("1,23,4".to_string()));
+        assert_eq!(eval_full("[1] + 2"), JsValue::String("12".to_string()));
+        // Empty array to number: [] -> '' -> 0.
+        assert_eq!(eval_full("+[]"), JsValue::Number(0.0));
+        // Objects coerce to [object Object].
+        assert_eq!(eval_full("var o = {}; o + ''"), JsValue::String("[object Object]".to_string()));
     }
 
     #[test]
