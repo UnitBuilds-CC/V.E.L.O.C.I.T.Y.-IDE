@@ -1795,7 +1795,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                                 "Object.keys" | "Object.values" | "Object.entries" | "Object.fromEntries" | "Object.assign" | "Object.freeze" |
                                 "Object.is" | "Object.setPrototypeOf" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
-                "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyNames" |
+                "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyDescriptors" | "Object.getOwnPropertyNames" |
                 "Array.isArray" | "Array.from" | "Array.of" |
                 "JSON.parse" | "JSON.stringify" |
                 "Math.floor" | "Math.ceil" | "Math.round" | "Math.abs" | "Math.sqrt" |
@@ -2785,6 +2785,39 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
                     None => JsValue::Undefined,
                 },
                 _ => JsValue::Undefined,
+            }
+        }
+        "Object.getOwnPropertyDescriptors" => {
+            // Collect a descriptor object for every own property, mirroring the
+            // single-property descriptor shape used by getOwnPropertyDescriptor.
+            match args.first() {
+                Some(obj @ JsValue::Object(map)) => {
+                    let mut out = HashMap::new();
+                    for key in own_keys_of(obj) {
+                        let desc = match map.get(&key) {
+                            Some(JsValue::Object(d)) if d.get("__accessor__") == Some(&JsValue::Boolean(true)) => {
+                                let mut acc = HashMap::new();
+                                acc.insert("enumerable".to_string(), d.get("enumerable").cloned().unwrap_or(JsValue::Boolean(false)));
+                                acc.insert("configurable".to_string(), d.get("configurable").cloned().unwrap_or(JsValue::Boolean(false)));
+                                if let Some(g) = d.get("get") { acc.insert("get".to_string(), g.clone()); }
+                                if let Some(s) = d.get("set") { acc.insert("set".to_string(), s.clone()); }
+                                JsValue::Object(acc)
+                            }
+                            Some(val) => {
+                                let mut data = HashMap::new();
+                                data.insert("value".to_string(), val.clone());
+                                data.insert("writable".to_string(), JsValue::Boolean(true));
+                                data.insert("enumerable".to_string(), JsValue::Boolean(true));
+                                data.insert("configurable".to_string(), JsValue::Boolean(true));
+                                JsValue::Object(data)
+                            }
+                            None => continue,
+                        };
+                        out.insert(key, desc);
+                    }
+                    JsValue::Object(out)
+                }
+                _ => JsValue::Object(HashMap::new()),
             }
         }
         "Array.isArray" => JsValue::Boolean(matches!(args.first(), Some(JsValue::Array(_)))),
@@ -6300,6 +6333,18 @@ mod tests {
         assert_eq!(eval_full("JSON.stringify([], null, 2)"), JsValue::String("[]".to_string()));
         // Omitting the space argument keeps compact output.
         assert_eq!(eval_full("JSON.stringify([1, 2])"), JsValue::String("[1,2]".to_string()));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptors_basic() {
+        // Each own data property yields a descriptor carrying its value.
+        assert_eq!(eval_full("Object.getOwnPropertyDescriptors({ a: 1, b: 2 }).a.value"), JsValue::Number(1.0));
+        assert_eq!(eval_full("Object.getOwnPropertyDescriptors({ a: 1, b: 2 }).b.value"), JsValue::Number(2.0));
+        // Data descriptors default to writable/enumerable/configurable true.
+        assert_eq!(eval_full("Object.getOwnPropertyDescriptors({ a: 1 }).a.writable"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Object.getOwnPropertyDescriptors({ a: 1 }).a.enumerable"), JsValue::Boolean(true));
+        // A round-trip through Object.keys sees exactly the own keys.
+        assert_eq!(eval_full("Object.keys(Object.getOwnPropertyDescriptors({ only: 5 }))[0]"), JsValue::String("only".to_string()));
     }
 
     #[test]
