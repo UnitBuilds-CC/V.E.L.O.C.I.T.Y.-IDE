@@ -2525,6 +2525,16 @@ pub fn call_function_with_this(func: &JsValue, args: &[JsValue], _caller_scope: 
             }
             call_function_with_this(target, args, _caller_scope, this_val)
         }
+        // Bound function (Function.prototype.bind): prepend the bound arguments,
+        // bind `this`, and invoke the stored target. A bound function's `this`
+        // cannot be overridden, so any passed-in this_val is ignored.
+        JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("BoundFunction") => {
+            let target = map.get("__target__").cloned().unwrap_or(JsValue::Undefined);
+            let bound_this = map.get("__this__").cloned().unwrap_or(JsValue::Undefined);
+            let mut full_args = match map.get("__args__") { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
+            full_args.extend_from_slice(args);
+            call_function_with_this(&target, &full_args, _caller_scope, Some(bound_this))
+        }
         _ => Ok(JsValue::Undefined),
     }
 }
@@ -4083,6 +4093,36 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
                 Some("Promise") => return call_promise_method(map, method, args, scope),
                 Some("Date") => return call_date_method(map, method, args),
                 Some("Generator") => return call_generator_method(map, method),
+                // A bound function answers call/apply/bind by re-targeting its
+                // stored target; invoking it is handled in call_function_with_this.
+                Some("BoundFunction") => {
+                    let target = map.get("__target__").cloned().unwrap_or(JsValue::Undefined);
+                    let bound_this = map.get("__this__").cloned().unwrap_or(JsValue::Undefined);
+                    let bound_args = match map.get("__args__") { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
+                    return match method {
+                        "call" => {
+                            let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                            call_function_with_this(&target, &args[1..], scope, Some(this_arg))
+                        }
+                        "apply" => {
+                            let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                            let call_args = match args.get(1) { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
+                            call_function_with_this(&target, &call_args, scope, Some(this_arg))
+                        }
+                        "bind" => {
+                            let this_arg = args.first().cloned().unwrap_or(bound_this);
+                            let mut bound = bound_args;
+                            bound.extend(args.iter().skip(1).cloned());
+                            let mut m = HashMap::new();
+                            m.insert("__type__".to_string(), JsValue::String("BoundFunction".to_string()));
+                            m.insert("__target__".to_string(), target);
+                            m.insert("__this__".to_string(), this_arg);
+                            m.insert("__args__".to_string(), JsValue::Array(bound));
+                            Ok(JsValue::Object(m))
+                        }
+                        _ => Ok(JsValue::Undefined),
+                    };
+                }
                 _ => {}
             }
             // Call method with `this` bound to the object
@@ -4092,6 +4132,31 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
             call_object_method(map, method, args)
         }
         JsValue::Number(n) => Ok(call_number_method(*n, method, args)),
+        // Function.prototype.call / apply / bind.
+        JsValue::Function { .. } => {
+            match method {
+                "call" => {
+                    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                    call_function_with_this(obj, &args[1..], scope, Some(this_arg))
+                }
+                "apply" => {
+                    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                    let call_args = match args.get(1) { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
+                    call_function_with_this(obj, &call_args, scope, Some(this_arg))
+                }
+                "bind" => {
+                    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                    let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
+                    let mut m = HashMap::new();
+                    m.insert("__type__".to_string(), JsValue::String("BoundFunction".to_string()));
+                    m.insert("__target__".to_string(), obj.clone());
+                    m.insert("__this__".to_string(), this_arg);
+                    m.insert("__args__".to_string(), JsValue::Array(bound_args));
+                    Ok(JsValue::Object(m))
+                }
+                _ => Ok(JsValue::Undefined),
+            }
+        }
         _ => Ok(JsValue::Undefined),
     }
 }
@@ -7020,6 +7085,16 @@ mod tests {
         assert_eq!(eval_full("[1,2,3].toLocaleString()"), JsValue::String("1,2,3".to_string()));
         // Object.prototype.toString tags plain objects.
         assert_eq!(eval_full("({}).toString()"), JsValue::String("[object Object]".to_string()));
+    }
+
+    #[test]
+    fn function_call_apply_bind() {
+        // call invokes with an explicit this and trailing arguments.
+        assert_eq!(eval_full("function f(a, b) { return this.x + a + b; } f.call({x: 1}, 2, 3)"), JsValue::Number(6.0));
+        // apply takes its arguments from an array.
+        assert_eq!(eval_full("function g(a, b) { return this.x + a + b; } g.apply({x: 10}, [1, 2])"), JsValue::Number(13.0));
+        // bind fixes this and returns a callable that prepends bound arguments.
+        assert_eq!(eval_full("function h(a, b) { return this.x + a + b; } var bh = h.bind({x: 100}, 1); bh(2)"), JsValue::Number(103.0));
     }
 
     #[test]
