@@ -4147,6 +4147,17 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
             let pad = args.get(1).map(to_string).unwrap_or_else(|| " ".into());
             JsValue::String(pad_string(s, target, &pad, false))
         }
+        "localeCompare" => {
+            // Ordinal comparison by Unicode scalar value, returning the JS -1/0/1 contract.
+            let other = args.first().map(to_string).unwrap_or_default();
+            let cmp = match s.cmp(other.as_str()) {
+                std::cmp::Ordering::Less => -1.0,
+                std::cmp::Ordering::Greater => 1.0,
+                std::cmp::Ordering::Equal => 0.0,
+            };
+            JsValue::Number(cmp)
+        }
+        "normalize" => JsValue::String(s.to_string()), // NFC/NFD normalization not applied; text returned as-is
         "match" | "search" | "matchAll" => JsValue::Null, // regex not supported
         "toString" | "valueOf" => JsValue::String(s.to_string()),
         _ => JsValue::Undefined,
@@ -6044,6 +6055,16 @@ mod tests {
         assert_eq!(eval_full("Number.isNaN(NaN)"), JsValue::Boolean(true));
         // Infinity is usable as a flat() depth to flatten fully.
         assert_eq!(eval_full("[1, [2, [3, [4]]]].flat(Infinity).length"), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn string_locale_compare_ordering() {
+        // Returns negative, zero, or positive per the JS contract.
+        assert_eq!(eval_full("'a'.localeCompare('b')"), JsValue::Number(-1.0));
+        assert_eq!(eval_full("'b'.localeCompare('a')"), JsValue::Number(1.0));
+        assert_eq!(eval_full("'a'.localeCompare('a')"), JsValue::Number(0.0));
+        // Usable as a sort comparator yielding lexical order.
+        assert_eq!(eval_full("['c', 'a', 'b'].sort(function(x, y) { return x.localeCompare(y); })[0]"), JsValue::String("a".to_string()));
     }
 
     #[test]
