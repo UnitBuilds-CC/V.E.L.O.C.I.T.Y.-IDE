@@ -3818,6 +3818,17 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
     }
 }
 
+fn flatten_array(a: &[JsValue], depth: usize) -> Vec<JsValue> {
+    let mut out = Vec::new();
+    for item in a {
+        match item {
+            JsValue::Array(inner) if depth > 0 => out.extend(flatten_array(inner, depth - 1)),
+            other => out.push(other.clone()),
+        }
+    }
+    out
+}
+
 fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
     Ok(match method {
         "push" => { a.extend(args.iter().cloned()); JsValue::Number(a.len() as f64) }
@@ -3986,9 +3997,15 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
             JsValue::Boolean(true)
         }
         "flat" => {
-            let mut flat = Vec::new();
-            for item in a.iter() { if let JsValue::Array(inner) = item { flat.extend(inner.iter().cloned()); } else { flat.push(item.clone()); } }
-            JsValue::Array(flat)
+            // depth defaults to 1; a non-finite (Infinity) depth flattens fully.
+            let depth = match args.first() {
+                Some(v) if !matches!(v, JsValue::Undefined) => {
+                    let n = to_number(v);
+                    if n.is_finite() { n.max(0.0) as usize } else { usize::MAX }
+                }
+                _ => 1,
+            };
+            JsValue::Array(flatten_array(a, depth))
         }
         "flatMap" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -4007,6 +4024,25 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
             let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
             let end = if end_raw < 0 { (len + end_raw).max(0) as usize } else { (end_raw as usize).min(a.len()) };
             for item in a.iter_mut().take(end).skip(start) { *item = val.clone(); }
+            JsValue::Array(a.clone())
+        }
+        "copyWithin" => {
+            // Shallow-copies a slice [start, end) to position target, all clamped, without changing length.
+            let len = a.len() as i64;
+            let norm = |raw: i64| -> usize {
+                if raw < 0 { (len + raw).max(0) as usize } else { (raw as usize).min(a.len()) }
+            };
+            let target = norm(args.first().map(to_number).unwrap_or(0.0) as i64);
+            let start = norm(args.get(1).map(to_number).unwrap_or(0.0) as i64);
+            let end = norm(args.get(2).map(to_number).unwrap_or(len as f64) as i64);
+            if start < end {
+                let slice: Vec<JsValue> = a[start..end].to_vec();
+                for (i, v) in slice.into_iter().enumerate() {
+                    let pos = target + i;
+                    if pos >= a.len() { break; }
+                    a[pos] = v;
+                }
+            }
             JsValue::Array(a.clone())
         }
         _ => JsValue::Undefined,
@@ -5974,6 +6010,21 @@ mod tests {
         assert_eq!(eval_full("Math.atan2(0, 1)"), JsValue::Number(0.0));
         // clz32 counts leading zero bits of the 32-bit representation.
         assert_eq!(eval_full("Math.clz32(1)"), JsValue::Number(31.0));
+    }
+
+    #[test]
+    fn array_flat_depth_and_copy_within() {
+        // Default depth of 1 flattens a single level.
+        assert_eq!(eval_full("[1, [2, [3]]].flat().length"), JsValue::Number(3.0));
+        // Explicit depth 2 reaches the inner array.
+        assert_eq!(eval_full("[1, [2, [3]]].flat(2).length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("[1, [2, [3]]].flat(2)[2]"), JsValue::Number(3.0));
+        // A large depth flattens fully regardless of nesting.
+        assert_eq!(eval_full("[1, [2, [3, [4]]]].flat(10).length"), JsValue::Number(4.0));
+        // copyWithin shifts a slice in place without changing length.
+        assert_eq!(eval_full("[1, 2, 3, 4, 5].copyWithin(0, 3).length"), JsValue::Number(5.0));
+        assert_eq!(eval_full("[1, 2, 3, 4, 5].copyWithin(0, 3)[0]"), JsValue::Number(4.0));
+        assert_eq!(eval_full("[1, 2, 3, 4, 5].copyWithin(0, 3)[1]"), JsValue::Number(5.0));
     }
 
     #[test]
