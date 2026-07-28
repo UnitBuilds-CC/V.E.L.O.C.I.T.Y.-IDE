@@ -4485,11 +4485,18 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
         "split" => {
             // Optional second argument caps the number of returned segments.
             let limit = args.get(1).and_then(|v| if matches!(v, JsValue::Undefined) { None } else { Some(to_number(v) as usize) });
-            let sep = args.first().map(to_string).unwrap_or_default();
-            let mut parts: Vec<JsValue> = if sep.is_empty() {
-                s.chars().map(|c| JsValue::String(c.to_string())).collect()
-            } else {
-                s.split(&sep).map(|p| JsValue::String(p.to_string())).collect()
+            // An absent or undefined separator yields a single-element array
+            // holding the whole string; an empty separator splits into chars.
+            let mut parts: Vec<JsValue> = match args.first() {
+                None | Some(JsValue::Undefined) => vec![JsValue::String(s.to_string())],
+                Some(sep_val) => {
+                    let sep = to_string(sep_val);
+                    if sep.is_empty() {
+                        s.chars().map(|c| JsValue::String(c.to_string())).collect()
+                    } else {
+                        s.split(&sep).map(|p| JsValue::String(p.to_string())).collect()
+                    }
+                }
             };
             if let Some(n) = limit { parts.truncate(n); }
             JsValue::Array(parts)
@@ -6647,6 +6654,17 @@ mod tests {
         assert_eq!(eval_full("[1, 2, 3].join(undefined)"), JsValue::String("1,2,3".to_string()));
         // A custom separator is used verbatim.
         assert_eq!(eval_full("['a', 'b'].join(' | ')"), JsValue::String("a | b".to_string()));
+    }
+
+    #[test]
+    fn string_split_separator_variants() {
+        // An absent separator yields a single-element array with the whole string.
+        assert_eq!(eval_full("'abc'.split().length"), JsValue::Number(1.0));
+        assert_eq!(eval_full("'abc'.split()[0]"), JsValue::String("abc".to_string()));
+        // An empty-string separator splits into individual characters.
+        assert_eq!(eval_full("'abc'.split('').length"), JsValue::Number(3.0));
+        // A normal separator splits on each occurrence.
+        assert_eq!(eval_full("'a,b,c'.split(',').length"), JsValue::Number(3.0));
     }
 
     #[test]
