@@ -4003,8 +4003,8 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
             let idx = if raw < 0 { len + raw } else { raw };
             if (0..len).contains(&idx) { JsValue::String(chars[idx as usize].to_string()) } else { JsValue::Undefined }
         }
-        "indexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.find(&needle).map(|i| i as f64).unwrap_or(-1.0)) }
-        "lastIndexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.rfind(&needle).map(|i| i as f64).unwrap_or(-1.0)) }
+        "indexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.find(&needle).map(|b| s[..b].chars().count() as f64).unwrap_or(-1.0)) }
+        "lastIndexOf" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Number(s.rfind(&needle).map(|b| s[..b].chars().count() as f64).unwrap_or(-1.0)) }
         "includes" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.contains(&needle)) }
         "startsWith" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.starts_with(&needle)) }
         "endsWith" => { let needle = args.first().map(to_string).unwrap_or_default(); JsValue::Boolean(s.ends_with(&needle)) }
@@ -5877,6 +5877,17 @@ mod tests {
         assert_eq!(eval_full("'e'.padStart(3, '\u{20ac}')"), JsValue::String("\u{20ac}\u{20ac}e".to_string()));
         // Multi-byte source string keeps its full content when already at length.
         assert_eq!(eval_full("'\u{20ac}\u{20ac}'.padEnd(2, 'x')"), JsValue::String("\u{20ac}\u{20ac}".to_string()));
+    }
+
+    #[test]
+    fn string_index_of_returns_char_position() {
+        // ASCII positions are unchanged.
+        assert_eq!(eval_full("'hello'.indexOf('l')"), JsValue::Number(2.0));
+        assert_eq!(eval_full("'hello'.lastIndexOf('l')"), JsValue::Number(3.0));
+        assert_eq!(eval_full("'abc'.indexOf('z')"), JsValue::Number(-1.0));
+        // After a 3-byte euro sign, 'x' is at char index 1 (not byte index 3).
+        assert_eq!(eval_full("'\u{20ac}x'.indexOf('x')"), JsValue::Number(1.0));
+        assert_eq!(eval_full("'\u{20ac}x\u{20ac}x'.lastIndexOf('x')"), JsValue::Number(3.0));
     }
 
     #[test]
