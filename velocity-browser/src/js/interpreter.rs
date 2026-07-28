@@ -4747,11 +4747,16 @@ fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
             }
         }
         "toExponential" => {
-            let digits = args.first().map(to_number);
-            match digits {
-                Some(d) if d.is_finite() => JsValue::String(format!("{:.*e}", d as usize, n)),
-                _ => JsValue::String(format!("{:e}", n)),
-            }
+            // fractionDigits (0..=100) fixes the digits after the point; when it is
+            // absent the shortest round-tripping significand is used.
+            let frac = match args.first() {
+                Some(v) if !matches!(v, JsValue::Undefined) => {
+                    let d = to_number(v);
+                    if d.is_finite() { Some((d as i64).clamp(0, 100) as usize) } else { None }
+                }
+                _ => None,
+            };
+            JsValue::String(to_exponential_js(n, frac))
         }
         "valueOf" => JsValue::Number(n),
         _ => JsValue::Undefined,
@@ -4854,6 +4859,59 @@ fn format_precision(n: f64, p: usize) -> String {
         format!("{:.*}", decimals, n)
     } else {
         format!("{:.*e}", p.saturating_sub(1), n)
+    }
+}
+
+/// Format `n` per JS Number.prototype.toExponential. With `frac` = Some(f) the
+/// significand carries exactly `f` digits after the point (half-away-from-zero
+/// rounding); with None the shortest round-tripping significand is used. The
+/// exponent always carries an explicit sign (`e+3`/`e-7`), unlike Rust's `{:e}`.
+fn to_exponential_js(n: f64, frac: Option<usize>) -> String {
+    if n.is_nan() { return "NaN".to_string(); }
+    if n.is_infinite() { return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string(); }
+    let negative = n < 0.0;
+    let a = n.abs();
+    if a == 0.0 {
+        let mantissa = match frac { Some(f) if f > 0 => format!("0.{}", "0".repeat(f)), _ => "0".to_string() };
+        return format!("{}e+0", mantissa);
+    }
+    // Rust's scientific form ("d.dddde±ee") carries enough digits to round-trip.
+    let sci = format!("{:e}", a);
+    let e_pos = sci.find('e').unwrap();
+    let sig = &sci[..e_pos];
+    let exp: i64 = sci[e_pos + 1..].parse().unwrap_or(0);
+    let mut digits: String = sig.chars().filter(|c| *c != '.').collect();
+    let point = sig.find('.').unwrap_or(sig.len());
+    let mut exp10 = exp + point as i64 - 1;
+    match frac {
+        Some(f) => {
+            // Round the significand to f + 1 significant digits.
+            let keep = f + 1;
+            while digits.len() < keep { digits.push('0'); }
+            if digits.len() > keep {
+                let mut d: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
+                let mut carry = d[keep] >= 5;
+                d.truncate(keep);
+                let mut i = keep as isize - 1;
+                while carry && i >= 0 {
+                    d[i as usize] += 1;
+                    if d[i as usize] >= 10 { d[i as usize] = 0; carry = true; } else { carry = false; }
+                    i -= 1;
+                }
+                if carry { d.insert(0, 1); exp10 += 1; }
+                digits = d.iter().map(|x| (b'0' + x) as char).collect();
+            }
+            let mantissa = if f == 0 { digits[..1].to_string() } else { format!("{}.{}", &digits[..1], &digits[1..1 + f]) };
+            let prefix = if negative { "-" } else { "" };
+            format!("{}{}e{}{}", prefix, mantissa, if exp10 >= 0 { "+" } else { "-" }, exp10.abs())
+        }
+        None => {
+            // Shortest significand: drop trailing zeros (keep at least one digit).
+            while digits.len() > 1 && digits.ends_with('0') { digits.pop(); }
+            let mantissa = if digits.len() == 1 { digits.clone() } else { format!("{}.{}", &digits[..1], &digits[1..]) };
+            let prefix = if negative { "-" } else { "" };
+            format!("{}{}e{}{}", prefix, mantissa, if exp10 >= 0 { "+" } else { "-" }, exp10.abs())
+        }
     }
 }
 
@@ -7095,6 +7153,19 @@ mod tests {
         assert_eq!(eval_full("function g(a, b) { return this.x + a + b; } g.apply({x: 10}, [1, 2])"), JsValue::Number(13.0));
         // bind fixes this and returns a callable that prepends bound arguments.
         assert_eq!(eval_full("function h(a, b) { return this.x + a + b; } var bh = h.bind({x: 100}, 1); bh(2)"), JsValue::Number(103.0));
+    }
+
+    #[test]
+    fn number_to_exponential() {
+        // The exponent always carries an explicit sign.
+        assert_eq!(eval_full("(5).toExponential()"), JsValue::String("5e+0".to_string()));
+        assert_eq!(eval_full("(12345).toExponential(2)"), JsValue::String("1.23e+4".to_string()));
+        assert_eq!(eval_full("(0).toExponential()"), JsValue::String("0e+0".to_string()));
+        assert_eq!(eval_full("(0).toExponential(2)"), JsValue::String("0.00e+0".to_string()));
+        // Negative exponents and rounding (half away from zero) with carry.
+        assert_eq!(eval_full("(0.0001).toExponential()"), JsValue::String("1e-4".to_string()));
+        assert_eq!(eval_full("(1.999).toExponential(2)"), JsValue::String("2.00e+0".to_string()));
+        assert_eq!(eval_full("(-12345).toExponential(2)"), JsValue::String("-1.23e+4".to_string()));
     }
 
     #[test]
