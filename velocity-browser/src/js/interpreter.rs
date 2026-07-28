@@ -3588,7 +3588,8 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
             get_property(target, prop)
         }
         JsValue::String(s) => {
-            if prop == "length" { return JsValue::Number(s.len() as f64); }
+            // Length counts Unicode scalar values, matching char-based indexing below.
+            if prop == "length" { return JsValue::Number(s.chars().count() as f64); }
             if let Ok(i) = prop.parse::<usize>() { return s.chars().nth(i).map(|c| JsValue::String(c.to_string())).unwrap_or(JsValue::Undefined); }
             JsValue::Undefined
         }
@@ -3992,7 +3993,7 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
 
 fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
     match method {
-        "length" => JsValue::Number(s.len() as f64),
+        "length" => JsValue::Number(s.chars().count() as f64),
         "charAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::String(c.to_string())).unwrap_or(JsValue::String(String::new())) }
         "charCodeAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::Number(c as u32 as f64)).unwrap_or(JsValue::Number(f64::NAN)) }
         "codePointAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::Number(c as u32 as f64)).unwrap_or(JsValue::Undefined) }
@@ -5888,6 +5889,17 @@ mod tests {
         // After a 3-byte euro sign, 'x' is at char index 1 (not byte index 3).
         assert_eq!(eval_full("'\u{20ac}x'.indexOf('x')"), JsValue::Number(1.0));
         assert_eq!(eval_full("'\u{20ac}x\u{20ac}x'.lastIndexOf('x')"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn string_length_counts_chars() {
+        // ASCII length is unchanged.
+        assert_eq!(eval_full("'hello'.length"), JsValue::Number(5.0));
+        // A 3-byte euro sign counts as one character, consistent with slice/charAt.
+        assert_eq!(eval_full("'\u{20ac}'.length"), JsValue::Number(1.0));
+        assert_eq!(eval_full("'a\u{20ac}b'.length"), JsValue::Number(3.0));
+        // Length agrees with char indexing: last valid index is length - 1.
+        assert_eq!(eval_full("var s = 'a\u{20ac}b'; s[s.length - 1]"), JsValue::String("b".to_string()));
     }
 
     #[test]
