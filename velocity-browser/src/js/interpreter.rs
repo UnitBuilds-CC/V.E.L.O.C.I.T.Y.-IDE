@@ -1771,7 +1771,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
                 "Object.keys" | "Object.values" | "Object.entries" | "Object.assign" | "Object.freeze" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
-                "Object.defineProperties" | "Object.getOwnPropertyDescriptor" |
+                "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyNames" |
                 "Array.isArray" | "Array.from" |
                 "JSON.parse" | "JSON.stringify" |
                 "Math.floor" | "Math.ceil" | "Math.round" | "Math.abs" | "Math.sqrt" |
@@ -2759,6 +2759,12 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             map.insert("__resolved__".to_string(), JsValue::Array(results));
             JsValue::Object(map)
         }
+        // Object.getOwnPropertyNames reports all non-internal own keys (enumerable or
+        // not), consulting a Proxy ownKeys trap when present.
+        "Object.getOwnPropertyNames" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            JsValue::Array(own_property_names(&target).into_iter().map(JsValue::String).collect())
+        }
         // Reflect methods
         "Reflect.get" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -2788,32 +2794,7 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         }
         "Reflect.ownKeys" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-            match &target {
-                // Proxy targets (native or object-based) consult the ownKeys trap.
-                JsValue::Proxy { .. } => {
-                    JsValue::Array(own_keys_of(&target).into_iter().map(JsValue::String).collect())
-                }
-                JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Proxy") => {
-                    JsValue::Array(own_keys_of(&target).into_iter().map(JsValue::String).collect())
-                }
-                JsValue::Object(map) => {
-                    // ownKeys reports all non-internal own keys (enumerable or not),
-                    // matching JS semantics where ownKeys ignores enumerability.
-                    let keys: Vec<JsValue> = map.keys()
-                        .filter(|k| !is_internal_key(k))
-                        .map(|k| JsValue::String(k.clone()))
-                        .collect();
-                    JsValue::Array(keys)
-                }
-                JsValue::Array(arr) => {
-                    // Array own keys are the indices plus `length`, per JS semantics.
-                    let mut keys: Vec<JsValue> =
-                        (0..arr.len()).map(|i| JsValue::String(i.to_string())).collect();
-                    keys.push(JsValue::String("length".to_string()));
-                    JsValue::Array(keys)
-                }
-                _ => JsValue::Array(Vec::new()),
-            }
+            JsValue::Array(own_property_names(&target).into_iter().map(JsValue::String).collect())
         }
         "Reflect.getOwnPropertyDescriptor" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -3396,6 +3377,27 @@ fn own_keys_of(obj: &JsValue) -> Vec<String> {
             enumerable_keys(map)
         }
         JsValue::Array(arr) => (0..arr.len()).map(|i| i.to_string()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// All own property names for `Reflect.ownKeys` / `Object.getOwnPropertyNames`.
+/// Reports every non-internal own key regardless of enumerability (matching JS
+/// semantics where these APIs ignore enumerability), consults a Proxy `ownKeys`
+/// trap when present, and yields indices plus `length` for arrays.
+fn own_property_names(obj: &JsValue) -> Vec<String> {
+    match obj {
+        // Proxy targets (native or object-based) consult the ownKeys trap.
+        JsValue::Proxy { .. } => own_keys_of(obj),
+        JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Proxy") => {
+            own_keys_of(obj)
+        }
+        JsValue::Object(map) => map.keys().filter(|k| !is_internal_key(k)).cloned().collect(),
+        JsValue::Array(arr) => {
+            let mut keys: Vec<String> = (0..arr.len()).map(|i| i.to_string()).collect();
+            keys.push("length".to_string());
+            keys
+        }
         _ => Vec::new(),
     }
 }
@@ -5355,6 +5357,30 @@ mod tests {
         // Array own keys are the indices plus `length`.
         assert_eq!(eval_full("Reflect.ownKeys([10, 20, 30]).length"), JsValue::Number(4.0));
         assert_eq!(eval_full("Reflect.ownKeys([10, 20, 30])[3]"), JsValue::String("length".to_string()));
+    }
+
+    #[test]
+    fn object_get_own_property_names_basic() {
+        // Reports all own string keys of a plain object (order-independent for multi-key).
+        assert_eq!(eval_full("Object.getOwnPropertyNames({ a: 1, b: 2 }).length"), JsValue::Number(2.0));
+        // A single-key object yields that key deterministically.
+        assert_eq!(eval_full("Object.getOwnPropertyNames({ only: 1 })[0]"), JsValue::String("only".to_string()));
+    }
+
+    #[test]
+    fn object_get_own_property_names_array_includes_length() {
+        assert_eq!(eval_full("Object.getOwnPropertyNames([10, 20, 30]).length"), JsValue::Number(4.0));
+        assert_eq!(eval_full("Object.getOwnPropertyNames([10, 20, 30])[3]"), JsValue::String("length".to_string()));
+    }
+
+    #[test]
+    fn object_get_own_property_names_consults_proxy_trap() {
+        assert_eq!(eval_full("
+            var target = { a: 1, b: 2 };
+            var handler = { ownKeys: function(t) { return ['a', 'b', 'c']; } };
+            var p = new Proxy(target, handler);
+            Object.getOwnPropertyNames(p).length
+        "), JsValue::Number(3.0));
     }
 
     #[test]
