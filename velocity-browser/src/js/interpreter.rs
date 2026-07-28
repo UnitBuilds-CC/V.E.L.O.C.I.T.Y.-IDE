@@ -1843,6 +1843,17 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
             }
             return call_object_method(map, method, &evaluated_args);
         }
+        // Array methods may mutate the receiver in place (push/pop/sort/...).
+        // Clone into a mutable vec, run the method, then write the mutated array
+        // back to the source identifier so the change persists across statements.
+        if let JsValue::Array(arr) = &obj {
+            let mut updated = arr.clone();
+            let result = call_array_method(&mut updated, method, &evaluated_args, scope);
+            if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                Scope::assign(scope, var_name, JsValue::Array(updated));
+            }
+            return result;
+        }
         return call_method(&obj, method, &evaluated_args, scope);
     }
     // Optional method call: obj?.method(args) - already handled in OptionalCall
@@ -3681,7 +3692,10 @@ fn enumerable_keys(map: &HashMap<String, JsValue>) -> Vec<String> {
 
 fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
     match obj {
-        JsValue::Array(arr) => call_array_method(arr, method, args, scope),
+        JsValue::Array(arr) => {
+            let mut a = arr.clone();
+            call_array_method(&mut a, method, args, scope)
+        }
         JsValue::String(s) => Ok(call_string_method(s, method, args)),
         JsValue::Object(map) => {
             // Check for Map/Set/Promise builtins
@@ -3705,41 +3719,90 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
     }
 }
 
-fn call_array_method(arr: &[JsValue], method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
     Ok(match method {
-        "push" => { let mut new_arr = arr.to_vec(); new_arr.extend(args.iter().cloned()); JsValue::Number(new_arr.len() as f64) }
-        "pop" => arr.last().cloned().unwrap_or(JsValue::Undefined),
-        "shift" => arr.first().cloned().unwrap_or(JsValue::Undefined),
-        "length" => JsValue::Number(arr.len() as f64),
+        "push" => { a.extend(args.iter().cloned()); JsValue::Number(a.len() as f64) }
+        "pop" => a.pop().unwrap_or(JsValue::Undefined),
+        "shift" => { if a.is_empty() { JsValue::Undefined } else { a.remove(0) } }
+        "unshift" => {
+            let tail = std::mem::take(a);
+            let mut new = args.to_vec();
+            new.extend(tail);
+            *a = new;
+            JsValue::Number(a.len() as f64)
+        }
+        "length" => JsValue::Number(a.len() as f64),
         "indexOf" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::Number(arr.iter().position(|x| strict_eq(x, &target)).map(|i| i as f64).unwrap_or(-1.0))
+            JsValue::Number(a.iter().position(|x| strict_eq(x, &target)).map(|i| i as f64).unwrap_or(-1.0))
+        }
+        "lastIndexOf" => {
+            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            JsValue::Number(a.iter().rposition(|x| strict_eq(x, &target)).map(|i| i as f64).unwrap_or(-1.0))
         }
         "includes" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::Boolean(arr.iter().any(|x| strict_eq(x, &target)))
+            JsValue::Boolean(a.iter().any(|x| strict_eq(x, &target)))
+        }
+        "at" => {
+            let i = args.first().map(to_number).unwrap_or(0.0) as i64;
+            let len = a.len() as i64;
+            let idx = if i < 0 { len + i } else { i };
+            if (0..len).contains(&idx) { a[idx as usize].clone() } else { JsValue::Undefined }
         }
         "join" => {
             let sep = args.first().map(to_string).unwrap_or_else(|| ",".into());
-            JsValue::String(arr.iter().map(to_string).collect::<Vec<_>>().join(&sep))
+            JsValue::String(a.iter().map(to_string).collect::<Vec<_>>().join(&sep))
         }
         "slice" => {
             let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
-            let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(arr.len() as i64);
-            let s = if start < 0 { (arr.len() as i64 + start).max(0) as usize } else { start as usize };
-            let e = if end < 0 { (arr.len() as i64 + end).max(0) as usize } else { (end as usize).min(arr.len()) };
-            JsValue::Array(arr.get(s..e).unwrap_or(&[]).to_vec())
+            let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(a.len() as i64);
+            let s = if start < 0 { (a.len() as i64 + start).max(0) as usize } else { start as usize };
+            let e = if end < 0 { (a.len() as i64 + end).max(0) as usize } else { (end as usize).min(a.len()) };
+            JsValue::Array(a.get(s..e).unwrap_or(&[]).to_vec())
         }
         "concat" => {
-            let mut new_arr = arr.to_vec();
-            for a in args { if let JsValue::Array(other) = a { new_arr.extend(other.iter().cloned()); } else { new_arr.push(a.clone()); } }
+            let mut new_arr = a.clone();
+            for x in args { if let JsValue::Array(other) = x { new_arr.extend(other.iter().cloned()); } else { new_arr.push(x.clone()); } }
             JsValue::Array(new_arr)
         }
-        "reverse" => { let mut new_arr = arr.to_vec(); new_arr.reverse(); JsValue::Array(new_arr) }
+        "reverse" => { a.reverse(); JsValue::Array(a.clone()) }
+        "sort" => {
+            match args.first() {
+                Some(cb) if !matches!(cb, JsValue::Undefined | JsValue::Null) => {
+                    let mut sort_err: Option<Signal> = None;
+                    a.sort_by(|x, y| {
+                        if sort_err.is_some() { return std::cmp::Ordering::Equal; }
+                        match call_function(cb, &[x.clone(), y.clone()], scope) {
+                            Ok(v) => {
+                                let n = to_number(&v);
+                                if n < 0.0 { std::cmp::Ordering::Less }
+                                else if n > 0.0 { std::cmp::Ordering::Greater }
+                                else { std::cmp::Ordering::Equal }
+                            }
+                            Err(e) => { sort_err = Some(e); std::cmp::Ordering::Equal }
+                        }
+                    });
+                    if let Some(e) = sort_err { return Err(e); }
+                }
+                _ => { a.sort_by_key(to_string); }
+            }
+            JsValue::Array(a.clone())
+        }
+        "splice" => {
+            let len = a.len() as i64;
+            let start_raw = args.first().map(to_number).unwrap_or(0.0) as i64;
+            let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
+            let delete_count = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len).max(0) as usize;
+            let end = (start + delete_count).min(a.len());
+            let removed: Vec<JsValue> = a.drain(start..end).collect();
+            for (i, item) in args.iter().skip(2).enumerate() { a.insert(start + i, item.clone()); }
+            JsValue::Array(removed)
+        }
         "map" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let mut result = Vec::new();
-            for (i, item) in arr.iter().enumerate() {
+            for (i, item) in a.iter().enumerate() {
                 let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
                 result.push(r);
             }
@@ -3748,7 +3811,7 @@ fn call_array_method(arr: &[JsValue], method: &str, args: &[JsValue], scope: &Sc
         "filter" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let mut result = Vec::new();
-            for (i, item) in arr.iter().enumerate() {
+            for (i, item) in a.iter().enumerate() {
                 let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
                 if to_boolean(&r) { result.push(item.clone()); }
             }
@@ -3756,46 +3819,96 @@ fn call_array_method(arr: &[JsValue], method: &str, args: &[JsValue], scope: &Sc
         }
         "forEach" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for (i, item) in arr.iter().enumerate() {
+            for (i, item) in a.iter().enumerate() {
                 call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
             }
             JsValue::Undefined
         }
         "find" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for (i, item) in arr.iter().enumerate() {
+            for (i, item) in a.iter().enumerate() {
                 let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
                 if to_boolean(&r) { return Ok(item.clone()); }
             }
             JsValue::Undefined
         }
+        "findIndex" => {
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            for (i, item) in a.iter().enumerate() {
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                if to_boolean(&r) { return Ok(JsValue::Number(i as f64)); }
+            }
+            JsValue::Number(-1.0)
+        }
+        "findLast" => {
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            for (i, item) in a.iter().enumerate().rev() {
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                if to_boolean(&r) { return Ok(item.clone()); }
+            }
+            JsValue::Undefined
+        }
+        "findLastIndex" => {
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            for (i, item) in a.iter().enumerate().rev() {
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                if to_boolean(&r) { return Ok(JsValue::Number(i as f64)); }
+            }
+            JsValue::Number(-1.0)
+        }
         "reduce" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            let mut acc = args.get(1).cloned().unwrap_or_else(|| arr.first().cloned().unwrap_or(JsValue::Undefined));
+            let mut acc = args.get(1).cloned().unwrap_or_else(|| a.first().cloned().unwrap_or(JsValue::Undefined));
             let start = if args.len() > 1 { 0 } else { 1 };
-            for (i, item) in arr.iter().enumerate().skip(start) {
+            for (i, item) in a.iter().enumerate().skip(start) {
                 acc = call_function(&callback, &[acc, item.clone(), JsValue::Number(i as f64)], scope)?;
+            }
+            acc
+        }
+        "reduceRight" => {
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let has_initial = args.len() > 1;
+            let mut acc = if has_initial { args[1].clone() } else { a.last().cloned().unwrap_or(JsValue::Undefined) };
+            let upper = if has_initial { a.len() } else { a.len().saturating_sub(1) };
+            for i in (0..upper).rev() {
+                let item = a[i].clone();
+                acc = call_function(&callback, &[acc, item, JsValue::Number(i as f64)], scope)?;
             }
             acc
         }
         "some" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for item in arr { if to_boolean(&call_function(&callback, &[item.clone()], scope)?) { return Ok(JsValue::Boolean(true)); } }
+            for item in a.iter() { if to_boolean(&call_function(&callback, &[item.clone()], scope)?) { return Ok(JsValue::Boolean(true)); } }
             JsValue::Boolean(false)
         }
         "every" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
-            for item in arr { if !to_boolean(&call_function(&callback, &[item.clone()], scope)?) { return Ok(JsValue::Boolean(false)); } }
+            for item in a.iter() { if !to_boolean(&call_function(&callback, &[item.clone()], scope)?) { return Ok(JsValue::Boolean(false)); } }
             JsValue::Boolean(true)
         }
         "flat" => {
             let mut flat = Vec::new();
-            for item in arr { if let JsValue::Array(inner) = item { flat.extend(inner.iter().cloned()); } else { flat.push(item.clone()); } }
+            for item in a.iter() { if let JsValue::Array(inner) = item { flat.extend(inner.iter().cloned()); } else { flat.push(item.clone()); } }
             JsValue::Array(flat)
+        }
+        "flatMap" => {
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let mut result = Vec::new();
+            for (i, item) in a.iter().enumerate() {
+                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                if let JsValue::Array(inner) = r { result.extend(inner); } else { result.push(r); }
+            }
+            JsValue::Array(result)
         }
         "fill" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::Array(vec![val; arr.len()])
+            let len = a.len() as i64;
+            let start_raw = args.get(1).map(to_number).unwrap_or(0.0) as i64;
+            let end_raw = args.get(2).map(to_number).unwrap_or(len as f64) as i64;
+            let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
+            let end = if end_raw < 0 { (len + end_raw).max(0) as usize } else { (end_raw as usize).min(a.len()) };
+            for item in a.iter_mut().take(end).skip(start) { *item = val.clone(); }
+            JsValue::Array(a.clone())
         }
         _ => JsValue::Undefined,
     })
@@ -4296,6 +4409,66 @@ mod tests {
         assert_eq!(eval_full("var arr = [1, 2, 3]; arr.length"), JsValue::Number(3.0));
         assert_eq!(eval_full("[1,2,3].indexOf(2)"), JsValue::Number(1.0));
         assert_eq!(eval_full("[1,2,3].includes(3)"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn array_mutation_persists_on_receiver() {
+        // push/pop/shift/unshift/reverse/sort/splice/fill mutate the source variable in place.
+        assert_eq!(eval_full("var arr = [1, 2]; arr.push(3); arr.length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("var arr = [1, 2]; arr.push(3); arr[2]"), JsValue::Number(3.0));
+        assert_eq!(eval_full("var arr = [1, 2, 3]; arr.pop(); arr.length"), JsValue::Number(2.0));
+        assert_eq!(eval_full("var arr = [1, 2, 3]; arr.shift(); arr[0]"), JsValue::Number(2.0));
+        assert_eq!(eval_full("var arr = [2, 3]; arr.unshift(1); arr[0]"), JsValue::Number(1.0));
+        assert_eq!(eval_full("var arr = [2, 3]; arr.unshift(0, 1); arr.length"), JsValue::Number(4.0));
+        assert_eq!(eval_full("var arr = [1, 2, 3]; arr.reverse(); arr[0]"), JsValue::Number(3.0));
+        assert_eq!(eval_full("var arr = [0, 0, 0]; arr.fill(7); arr[1]"), JsValue::Number(7.0));
+        assert_eq!(eval_full("var arr = [0, 0, 0, 0]; arr.fill(7, 1, 3); arr[3]"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn array_sort_default_and_comparator() {
+        // Default sort is lexicographic on string form.
+        assert_eq!(eval_full("var a = [3, 1, 2]; a.sort(); a[0]"), JsValue::Number(1.0));
+        assert_eq!(eval_full("var a = [10, 2, 1]; a.sort(); a[0]"), JsValue::Number(1.0));
+        // Numeric comparator sorts ascending by value.
+        assert_eq!(eval_full("var a = [10, 2, 1]; a.sort(function(x, y) { return x - y; }); a[0]"), JsValue::Number(1.0));
+        assert_eq!(eval_full("var a = [10, 2, 1]; a.sort(function(x, y) { return x - y; }); a[2]"), JsValue::Number(10.0));
+        // Descending comparator.
+        assert_eq!(eval_full("var a = [1, 2, 3]; a.sort(function(x, y) { return y - x; }); a[0]"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn array_splice_removes_and_inserts() {
+        // splice returns removed elements and mutates the receiver.
+        assert_eq!(eval_full("var a = [1, 2, 3, 4]; a.splice(1, 2); a.length"), JsValue::Number(2.0));
+        assert_eq!(eval_full("var a = [1, 2, 3, 4]; var r = a.splice(1, 2); r[0]"), JsValue::Number(2.0));
+        assert_eq!(eval_full("var a = [1, 4]; a.splice(1, 0, 2, 3); a[2]"), JsValue::Number(3.0));
+        assert_eq!(eval_full("var a = [1, 2, 3]; a.splice(-1, 1); a.length"), JsValue::Number(2.0));
+    }
+
+    #[test]
+    fn array_find_index_variants() {
+        assert_eq!(eval_full("[5, 12, 8, 130].findIndex(function(x) { return x > 10; })"), JsValue::Number(1.0));
+        assert_eq!(eval_full("[1, 2, 3].findIndex(function(x) { return x > 10; })"), JsValue::Number(-1.0));
+        assert_eq!(eval_full("[1, 2, 3, 4].findLast(function(x) { return x < 3; })"), JsValue::Number(2.0));
+        assert_eq!(eval_full("[1, 2, 3, 4].findLastIndex(function(x) { return x < 3; })"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn array_at_and_last_index_of() {
+        assert_eq!(eval_full("[10, 20, 30].at(0)"), JsValue::Number(10.0));
+        assert_eq!(eval_full("[10, 20, 30].at(-1)"), JsValue::Number(30.0));
+        assert_eq!(eval_full("[10, 20, 30].at(5)"), JsValue::Undefined);
+        assert_eq!(eval_full("[1, 2, 3, 2, 1].lastIndexOf(2)"), JsValue::Number(3.0));
+        assert_eq!(eval_full("[1, 2, 3].lastIndexOf(9)"), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn array_flat_map_and_reduce_right() {
+        assert_eq!(eval_full("[1, 2, 3].flatMap(function(x) { return [x, x * 2]; }).length"), JsValue::Number(6.0));
+        assert_eq!(eval_full("[1, 2, 3].flatMap(function(x) { return [x, x * 2]; })[3]"), JsValue::Number(4.0));
+        assert_eq!(eval_full("['a', 'b', 'c'].reduceRight(function(acc, x) { return acc + x; })"), JsValue::String("cba".into()));
+        assert_eq!(eval_full("[1, 2, 3].reduceRight(function(acc, x) { return acc + x; }, 10)"), JsValue::Number(16.0));
     }
 
     #[test]
