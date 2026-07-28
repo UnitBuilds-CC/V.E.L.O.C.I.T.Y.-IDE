@@ -2563,16 +2563,82 @@ fn call_method_with_this_writeback(func: &JsValue, args: &[JsValue], _scope: &Sc
     }
 }
 
+/// Spec-style parseInt: skips leading whitespace, honours an optional sign,
+/// auto-detects a 0x/0X hex prefix when radix is unspecified (0) or 16, and
+/// consumes the longest valid digit run for the radix. Returns NaN when no
+/// digits are present or the radix is out of the 2..=36 range.
+fn parse_int_js(input: &str, radix_arg: f64) -> f64 {
+    let chars: Vec<char> = input.trim_start().chars().collect();
+    let mut i = 0;
+    let mut sign = 1.0;
+    match chars.first() {
+        Some('+') => i += 1,
+        Some('-') => { sign = -1.0; i += 1; }
+        _ => {}
+    }
+    let mut radix = if radix_arg.is_finite() { radix_arg as i64 } else { 0 };
+    if (radix == 0 || radix == 16)
+        && chars.get(i) == Some(&'0')
+        && matches!(chars.get(i + 1), Some('x') | Some('X'))
+    {
+        i += 2;
+        radix = 16;
+    }
+    if radix == 0 { radix = 10; }
+    if !(2..=36).contains(&radix) { return f64::NAN; }
+    let mut value = 0.0;
+    let mut any = false;
+    for &c in &chars[i..] {
+        match c.to_digit(radix as u32) {
+            Some(d) => { value = value * radix as f64 + d as f64; any = true; }
+            None => break,
+        }
+    }
+    if any { sign * value } else { f64::NAN }
+}
+
+/// Spec-style parseFloat: skips leading whitespace and parses the longest
+/// leading substring that forms a valid decimal (with optional sign, fraction,
+/// and exponent) or Infinity. Returns NaN when no numeric prefix is present.
+fn parse_float_js(input: &str) -> f64 {
+    let s = input.trim_start();
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if unsigned.starts_with("Infinity") {
+        return if s.starts_with('-') { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    if matches!(chars.first(), Some('+') | Some('-')) { i += 1; }
+    let mut seen_digit = false;
+    let mut seen_dot = false;
+    while i < chars.len() {
+        match chars[i] {
+            c if c.is_ascii_digit() => { seen_digit = true; i += 1; }
+            '.' if !seen_dot => { seen_dot = true; i += 1; }
+            _ => break,
+        }
+    }
+    if seen_digit && matches!(chars.get(i), Some('e') | Some('E')) {
+        let mut j = i + 1;
+        if matches!(chars.get(j), Some('+') | Some('-')) { j += 1; }
+        let mut exp_digit = false;
+        while matches!(chars.get(j), Some(c) if c.is_ascii_digit()) { exp_digit = true; j += 1; }
+        if exp_digit { i = j; }
+    }
+    if !seen_digit { return f64::NAN; }
+    chars[..i].iter().collect::<String>().parse::<f64>().unwrap_or(f64::NAN)
+}
+
 fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
     Ok(match name {
         "parseInt" | "Number.parseInt" => {
             let s = args.first().map(to_string).unwrap_or_default();
-            let radix = args.get(1).map(|v| to_number(v) as u32).unwrap_or(10);
-            JsValue::Number(i64::from_str_radix(s.trim(), radix).unwrap_or(0) as f64)
+            let radix_arg = args.get(1).map(to_number).unwrap_or(0.0);
+            JsValue::Number(parse_int_js(&s, radix_arg))
         }
         "parseFloat" | "Number.parseFloat" => {
             let s = args.first().map(to_string).unwrap_or_default();
-            JsValue::Number(s.trim().parse::<f64>().unwrap_or(f64::NAN))
+            JsValue::Number(parse_float_js(&s))
         }
         "isNaN" => {
             // Global isNaN coerces its argument before testing.
@@ -6361,6 +6427,34 @@ mod tests {
         assert_eq!(eval_full("String.fromCodePoint(128512)"), JsValue::String("\u{1F600}".to_string()));
         // No arguments yields the empty string.
         assert_eq!(eval_full("String.fromCodePoint()"), JsValue::String(String::new()));
+    }
+
+    #[test]
+    fn parse_int_leading_numeric_and_radix() {
+        // Stops at the first non-digit, keeping the leading integer.
+        assert_eq!(eval_full("parseInt('42px')"), JsValue::Number(42.0));
+        // Auto-detects a hex prefix when no radix is given.
+        assert_eq!(eval_full("parseInt('0xFF')"), JsValue::Number(255.0));
+        // Explicit radix parses in that base.
+        assert_eq!(eval_full("parseInt('101', 2)"), JsValue::Number(5.0));
+        // Truncates a fractional string to its integer part.
+        assert_eq!(eval_full("parseInt('3.99')"), JsValue::Number(3.0));
+        // Honours a leading sign and surrounding whitespace.
+        assert_eq!(eval_full("parseInt('   -7abc')"), JsValue::Number(-7.0));
+        // No digits produces NaN (compared via self-inequality).
+        assert_eq!(eval_full("parseInt('abc') !== parseInt('abc')"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn parse_float_leading_numeric() {
+        // Parses the numeric prefix and ignores trailing text.
+        assert_eq!(eval_full("parseFloat('2.5abc')"), JsValue::Number(2.5));
+        // Supports exponent notation.
+        assert_eq!(eval_full("parseFloat('1.5e2xyz')"), JsValue::Number(150.0));
+        // Recognises Infinity.
+        assert_eq!(eval_full("parseFloat('-Infinity')"), JsValue::Number(f64::NEG_INFINITY));
+        // No numeric prefix produces NaN.
+        assert_eq!(eval_full("parseFloat('nope') !== parseFloat('nope')"), JsValue::Boolean(true));
     }
 
     #[test]
