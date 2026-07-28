@@ -1780,7 +1780,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                                 "Object.keys" | "Object.values" | "Object.entries" | "Object.fromEntries" | "Object.assign" | "Object.freeze" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
                 "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyNames" |
-                "Array.isArray" | "Array.from" |
+                "Array.isArray" | "Array.from" | "Array.of" |
                 "JSON.parse" | "JSON.stringify" |
                 "Math.floor" | "Math.ceil" | "Math.round" | "Math.abs" | "Math.sqrt" |
                 "Math.trunc" | "Math.sign" | "Math.log" | "Math.pow" | "Math.max" | "Math.min" | "Math.random" |
@@ -2025,7 +2025,12 @@ fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
             map.insert("__type__".to_string(), JsValue::String("Set".to_string()));
             let mut items = Vec::new();
             if let Some(JsValue::Array(init)) = evaluated_args.first() {
-                items = init.clone();
+                // A Set holds unique values: skip any element already present (SameValueZero via strict_eq).
+                for v in init {
+                    if !items.iter().any(|x| strict_eq(x, v)) {
+                        items.push(v.clone());
+                    }
+                }
             }
             map.insert("__items__".to_string(), JsValue::Array(items));
             Ok(JsValue::Object(map))
@@ -2660,9 +2665,26 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             match args.first() {
                 Some(JsValue::Array(a)) => JsValue::Array(a.clone()),
                 Some(JsValue::String(s)) => JsValue::Array(s.chars().map(|c| JsValue::String(c.to_string())).collect()),
+                Some(JsValue::Object(m)) => {
+                    match m.get("__type__").map(to_string).as_deref() {
+                        // A Set materialises to its stored values.
+                        Some("Set") => m.get("__items__").cloned().unwrap_or_else(|| JsValue::Array(Vec::new())),
+                        // A Map materialises to its [key, value] entry pairs.
+                        Some("Map") => m.get("__entries__").cloned().unwrap_or_else(|| JsValue::Array(Vec::new())),
+                        // Array-like: an object with a numeric `length` collects indices 0..length.
+                        _ => match m.get("length") {
+                            Some(len_val) => {
+                                let len = to_number(len_val) as usize;
+                                JsValue::Array((0..len).map(|i| m.get(&i.to_string()).cloned().unwrap_or(JsValue::Undefined)).collect())
+                            }
+                            None => JsValue::Array(Vec::new()),
+                        },
+                    }
+                }
                 _ => JsValue::Array(Vec::new()),
             }
         }
+        "Array.of" => JsValue::Array(args.to_vec()),
         "String.fromCharCode" => {
             let s: String = args.iter().filter_map(|a| { let n = to_number(a) as u32; char::from_u32(n) }).collect();
             JsValue::String(s)
@@ -5693,6 +5715,19 @@ mod tests {
         assert_eq!(eval_full("Object.fromEntries([['a', 1], ['b', 2]]).b"), JsValue::Number(2.0));
         assert_eq!(eval_full("Object.fromEntries(Object.entries({ x: 5 })).x"), JsValue::Number(5.0));
         assert_eq!(eval_full("Object.keys(Object.fromEntries([['k', 9]])).length"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn array_of_and_from_collections() {
+        // Array.of wraps its arguments verbatim (unlike Array(n) which sizes).
+        assert_eq!(eval_full("Array.of(7, 8, 9).length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("Array.of(7)[0]"), JsValue::Number(7.0));
+        // Array.from over a Set yields its unique values.
+        assert_eq!(eval_full("Array.from(new Set([1, 1, 2, 3])).length"), JsValue::Number(3.0));
+        // Array.from over a Map yields [key, value] pairs.
+        assert_eq!(eval_full("Array.from(new Map([['a', 1]]))[0][0]"), JsValue::String("a".to_string()));
+        // Array.from over an array-like object walks 0..length.
+        assert_eq!(eval_full("Array.from({ length: 2, 0: 'x', 1: 'y' })[1]"), JsValue::String("y".to_string()));
     }
 
     #[test]
