@@ -1452,6 +1452,13 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
             if to_boolean(&eval_expr_node(cond, scope)?) { eval_expr_node(then_e, scope) } else { eval_expr_node(else_e, scope) }
         }
         Expr::Member(obj, prop) => {
+            // Builtin namespace constants (Math.PI, Number.MAX_SAFE_INTEGER, ...) that are
+            // not backed by a real binding resolve directly here.
+            if let Expr::Ident(ns) = obj.as_ref() {
+                if Scope::resolve(scope, ns).is_none() {
+                    if let Some(v) = builtin_namespace_constant(ns, prop) { return Ok(v); }
+                }
+            }
             let obj_val = eval_expr_node(obj, scope)?;
             Ok(get_property(&obj_val, prop))
         }
@@ -1796,6 +1803,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 "Math.sinh" | "Math.cosh" | "Math.tanh" | "Math.exp" | "Math.expm1" | "Math.log1p" |
                 "Math.log2" | "Math.log10" | "Math.cbrt" | "Math.hypot" | "Math.fround" | "Math.clz32" |
                 "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
+                "Number.isInteger" | "Number.isSafeInteger" |
                 "String.fromCharCode" | "Date.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
                 "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" |
                 "Reflect.get" | "Reflect.has" |
@@ -2572,6 +2580,19 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         "isFinite" | "Number.isFinite" => {
             let n = args.first().map(to_number).unwrap_or(f64::NAN);
             JsValue::Boolean(n.is_finite())
+        }
+        "Number.isInteger" => {
+            // True only for a finite Number with no fractional part.
+            match args.first() {
+                Some(JsValue::Number(n)) => JsValue::Boolean(n.is_finite() && n.fract() == 0.0),
+                _ => JsValue::Boolean(false),
+            }
+        }
+        "Number.isSafeInteger" => {
+            match args.first() {
+                Some(JsValue::Number(n)) => JsValue::Boolean(n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0),
+                _ => JsValue::Boolean(false),
+            }
         }
         "Math.floor" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).floor()),
         "Math.ceil" => JsValue::Number(args.first().map(to_number).unwrap_or(f64::NAN).ceil()),
@@ -3824,6 +3845,32 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
         JsValue::Number(n) => Ok(call_number_method(*n, method, args)),
         _ => Ok(JsValue::Undefined),
     }
+}
+
+/// Resolve a read-only constant exposed on a builtin namespace object
+/// (e.g. `Math.PI`, `Number.MAX_SAFE_INTEGER`) when no user binding shadows it.
+fn builtin_namespace_constant(ns: &str, prop: &str) -> Option<JsValue> {
+    use std::f64::consts;
+    let v = match (ns, prop) {
+        ("Math", "PI") => consts::PI,
+        ("Math", "E") => consts::E,
+        ("Math", "LN2") => consts::LN_2,
+        ("Math", "LN10") => consts::LN_10,
+        ("Math", "LOG2E") => consts::LOG2_E,
+        ("Math", "LOG10E") => consts::LOG10_E,
+        ("Math", "SQRT2") => consts::SQRT_2,
+        ("Math", "SQRT1_2") => consts::FRAC_1_SQRT_2,
+        ("Number", "MAX_SAFE_INTEGER") => 9007199254740991.0,
+        ("Number", "MIN_SAFE_INTEGER") => -9007199254740991.0,
+        ("Number", "MAX_VALUE") => f64::MAX,
+        ("Number", "MIN_VALUE") => f64::MIN_POSITIVE,
+        ("Number", "EPSILON") => f64::EPSILON,
+        ("Number", "POSITIVE_INFINITY") => f64::INFINITY,
+        ("Number", "NEGATIVE_INFINITY") => f64::NEG_INFINITY,
+        ("Number", "NaN") => f64::NAN,
+        _ => return None,
+    };
+    Some(JsValue::Number(v))
 }
 
 fn flatten_array(a: &[JsValue], depth: usize) -> Vec<JsValue> {
@@ -6065,6 +6112,22 @@ mod tests {
         assert_eq!(eval_full("'a'.localeCompare('a')"), JsValue::Number(0.0));
         // Usable as a sort comparator yielding lexical order.
         assert_eq!(eval_full("['c', 'a', 'b'].sort(function(x, y) { return x.localeCompare(y); })[0]"), JsValue::String("a".to_string()));
+    }
+
+    #[test]
+    fn number_and_math_constants_and_predicates() {
+        // Math constants resolve as member access.
+        assert_eq!(eval_full("Math.PI > 3.14 && Math.PI < 3.15"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Math.E > 2.71 && Math.E < 2.72"), JsValue::Boolean(true));
+        // Number constants resolve as member access.
+        assert_eq!(eval_full("Number.MAX_SAFE_INTEGER"), JsValue::Number(9007199254740991.0));
+        assert_eq!(eval_full("Number.POSITIVE_INFINITY > 1e308"), JsValue::Boolean(true));
+        // Integer predicates discriminate fractional and non-numeric inputs.
+        assert_eq!(eval_full("Number.isInteger(4)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Number.isInteger(4.5)"), JsValue::Boolean(false));
+        assert_eq!(eval_full("Number.isInteger('4')"), JsValue::Boolean(false));
+        assert_eq!(eval_full("Number.isSafeInteger(9007199254740991)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Number.isSafeInteger(9007199254740993)"), JsValue::Boolean(false));
     }
 
     #[test]
