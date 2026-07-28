@@ -2574,13 +2574,23 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             let s = args.first().map(to_string).unwrap_or_default();
             JsValue::Number(s.trim().parse::<f64>().unwrap_or(f64::NAN))
         }
-        "isNaN" | "Number.isNaN" => {
+        "isNaN" => {
+            // Global isNaN coerces its argument before testing.
             let n = args.first().map(to_number).unwrap_or(f64::NAN);
             JsValue::Boolean(n.is_nan())
         }
-        "isFinite" | "Number.isFinite" => {
+        "Number.isNaN" => {
+            // Number.isNaN does NOT coerce: only an actual NaN Number qualifies.
+            JsValue::Boolean(matches!(args.first(), Some(JsValue::Number(n)) if n.is_nan()))
+        }
+        "isFinite" => {
+            // Global isFinite coerces its argument before testing.
             let n = args.first().map(to_number).unwrap_or(f64::NAN);
             JsValue::Boolean(n.is_finite())
+        }
+        "Number.isFinite" => {
+            // Number.isFinite does NOT coerce: only a finite Number qualifies.
+            JsValue::Boolean(matches!(args.first(), Some(JsValue::Number(n)) if n.is_finite()))
         }
         "Number.isInteger" => {
             // True only for a finite Number with no fractional part.
@@ -6163,6 +6173,19 @@ mod tests {
         assert_eq!(eval_full("Object.is('a', 'b')"), JsValue::Boolean(false));
         // setPrototypeOf installs a prototype whose members become reachable.
         assert_eq!(eval_full("var proto = { greet: 42 }; var o = {}; Object.setPrototypeOf(o, proto); o.greet"), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn number_predicates_do_not_coerce() {
+        // Number.isNaN/isFinite reject non-numbers without coercion...
+        assert_eq!(eval_full("Number.isNaN('foo')"), JsValue::Boolean(false));
+        assert_eq!(eval_full("Number.isFinite('42')"), JsValue::Boolean(false));
+        // ...while still recognising genuine numeric cases.
+        assert_eq!(eval_full("Number.isNaN(NaN)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Number.isFinite(42)"), JsValue::Boolean(true));
+        // Global isNaN/isFinite keep their coercing behaviour.
+        assert_eq!(eval_full("isNaN('foo')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("isFinite('42')"), JsValue::Boolean(true));
     }
 
     #[test]
