@@ -4031,9 +4031,31 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
         "trimStart" | "trimLeft" => JsValue::String(s.trim_start().to_string()),
         "trimEnd" | "trimRight" => JsValue::String(s.trim_end().to_string()),
         "split" => {
+            // Optional second argument caps the number of returned segments.
+            let limit = args.get(1).and_then(|v| if matches!(v, JsValue::Undefined) { None } else { Some(to_number(v) as usize) });
             let sep = args.first().map(to_string).unwrap_or_default();
-            if sep.is_empty() { JsValue::Array(s.chars().map(|c| JsValue::String(c.to_string())).collect()) }
-            else { JsValue::Array(s.split(&sep).map(|p| JsValue::String(p.to_string())).collect()) }
+            let mut parts: Vec<JsValue> = if sep.is_empty() {
+                s.chars().map(|c| JsValue::String(c.to_string())).collect()
+            } else {
+                s.split(&sep).map(|p| JsValue::String(p.to_string())).collect()
+            };
+            if let Some(n) = limit { parts.truncate(n); }
+            JsValue::Array(parts)
+        }
+        "substr" => {
+            // Legacy substr(start, length): negative start counts from the end.
+            let chars: Vec<char> = s.chars().collect();
+            let len = chars.len() as i64;
+            let raw = args.first().map(to_number).unwrap_or(0.0) as i64;
+            let start = if raw < 0 { (len + raw).max(0) as usize } else { (raw as usize).min(chars.len()) };
+            let count = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len).max(0) as usize;
+            let end = (start + count).min(chars.len());
+            JsValue::String(chars.get(start..end).unwrap_or(&[]).iter().collect())
+        }
+        "concat" => {
+            let mut out = s.to_string();
+            for a in args { out.push_str(&to_string(a)); }
+            JsValue::String(out)
         }
         "replace" => {
             let pattern = args.first().map(to_string).unwrap_or_default();
@@ -5900,6 +5922,18 @@ mod tests {
         assert_eq!(eval_full("'a\u{20ac}b'.length"), JsValue::Number(3.0));
         // Length agrees with char indexing: last valid index is length - 1.
         assert_eq!(eval_full("var s = 'a\u{20ac}b'; s[s.length - 1]"), JsValue::String("b".to_string()));
+    }
+
+    #[test]
+    fn string_split_limit_substr_concat() {
+        // split honours the limit argument.
+        assert_eq!(eval_full("'a,b,c,d'.split(',', 2).length"), JsValue::Number(2.0));
+        assert_eq!(eval_full("'a,b,c'.split(',')[2]"), JsValue::String("c".to_string()));
+        // substr(start, length) with a positive and a negative start.
+        assert_eq!(eval_full("'hello'.substr(1, 3)"), JsValue::String("ell".to_string()));
+        assert_eq!(eval_full("'hello'.substr(-2)"), JsValue::String("lo".to_string()));
+        // concat joins all arguments after the receiver.
+        assert_eq!(eval_full("'a'.concat('b', 'c')"), JsValue::String("abc".to_string()));
     }
 
     #[test]
