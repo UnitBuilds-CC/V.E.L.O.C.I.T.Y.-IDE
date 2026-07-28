@@ -4093,11 +4093,30 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
         "length" => JsValue::Number(a.len() as f64),
         "indexOf" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::Number(a.iter().position(|x| strict_eq(x, &target)).map(|i| i as f64).unwrap_or(-1.0))
+            // Optional fromIndex (negative counts from the end) starts the forward scan.
+            let len = a.len() as i64;
+            let mut from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0);
+            if from < 0 { from += len; }
+            let start = from.max(0) as usize;
+            let found = a.iter().enumerate().skip(start)
+                .find(|(_, x)| strict_eq(x, &target))
+                .map(|(i, _)| i as f64).unwrap_or(-1.0);
+            JsValue::Number(found)
         }
         "lastIndexOf" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::Number(a.iter().rposition(|x| strict_eq(x, &target)).map(|i| i as f64).unwrap_or(-1.0))
+            // Optional fromIndex bounds the backward scan (default: last element).
+            let len = a.len() as i64;
+            let mut from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len - 1);
+            if from < 0 { from += len; }
+            let end = from.min(len - 1);
+            let mut result = -1.0;
+            if end >= 0 {
+                for i in (0..=end as usize).rev() {
+                    if strict_eq(&a[i], &target) { result = i as f64; break; }
+                }
+            }
+            JsValue::Number(result)
         }
         "includes" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -6485,6 +6504,19 @@ mod tests {
         assert_eq!(eval_full("Math.asinh(0)"), JsValue::Number(0.0));
         assert_eq!(eval_full("Math.acosh(1)"), JsValue::Number(0.0));
         assert_eq!(eval_full("Math.atanh(0)"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn array_index_of_from_index() {
+        // indexOf honours a positive fromIndex.
+        assert_eq!(eval_full("[1, 2, 1].indexOf(1, 1)"), JsValue::Number(2.0));
+        // Negative fromIndex counts from the end.
+        assert_eq!(eval_full("[1, 2, 1].indexOf(1, -1)"), JsValue::Number(2.0));
+        // lastIndexOf scans backward and honours fromIndex.
+        assert_eq!(eval_full("[1, 2, 1].lastIndexOf(1)"), JsValue::Number(2.0));
+        assert_eq!(eval_full("[1, 2, 1].lastIndexOf(1, 1)"), JsValue::Number(0.0));
+        // Absent element yields -1.
+        assert_eq!(eval_full("[1, 2, 3].indexOf(9)"), JsValue::Number(-1.0));
     }
 
     #[test]
