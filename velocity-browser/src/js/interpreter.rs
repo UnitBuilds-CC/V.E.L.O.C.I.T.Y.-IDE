@@ -2734,6 +2734,11 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         }
         "JSON.stringify" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);
+            // Second argument: a replacer array (property whitelist) or function (not yet supported).
+            let replacer: Option<Vec<String>> = match args.get(1) {
+                Some(JsValue::Array(arr)) => Some(arr.iter().map(to_string).collect()),
+                _ => None,
+            };
             // Third argument selects indentation: a number of spaces (max 10) or a literal string.
             let indent = match args.get(2) {
                 Some(JsValue::Number(n)) if *n >= 1.0 => " ".repeat((*n as usize).min(10)),
@@ -2741,9 +2746,9 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
                 _ => String::new(),
             };
             if indent.is_empty() {
-                JsValue::String(json_stringify(&val))
+                JsValue::String(json_stringify(&val, replacer.as_deref()))
             } else {
-                JsValue::String(json_stringify_pretty(&val, &indent, 0))
+                JsValue::String(json_stringify_pretty(&val, &indent, 0, replacer.as_deref()))
             }
         }
         "Object.keys" => {
@@ -3233,7 +3238,7 @@ fn serde_to_js(val: &serde_json::Value) -> JsValue {
     }
 }
 
-fn json_stringify(val: &JsValue) -> String {
+fn json_stringify(val: &JsValue, replacer: Option<&[String]>) -> String {
     match val {
         JsValue::Undefined => "undefined".to_string(),
         JsValue::Null => "null".to_string(),
@@ -3245,15 +3250,19 @@ fn json_stringify(val: &JsValue) -> String {
             // undefined and callables serialize as null inside arrays.
             let items: Vec<String> = arr.iter().map(|v| match v {
                 JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
-                other => json_stringify(other),
+                other => json_stringify(other, replacer),
             }).collect();
             format!("[{}]", items.join(","))
         }
         JsValue::Object(map) => {
             // undefined and callable properties are omitted entirely.
-            let entries: Vec<String> = map.iter().filter_map(|(k, v)| match v {
-                JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => None,
-                other => Some(format!("{}:{}", json_escape_string(k), json_stringify(other))),
+            // When a replacer array is present, only whitelisted keys are included.
+            let entries: Vec<String> = map.iter().filter_map(|(k, v)| {
+                if let Some(whitelist) = replacer { if !whitelist.iter().any(|w| w == k) { return None; } }
+                match v {
+                    JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => None,
+                    other => Some(format!("{}:{}", json_escape_string(k), json_stringify(other, replacer))),
+                }
             }).collect();
             format!("{{{}}}", entries.join(","))
         }
@@ -3286,7 +3295,7 @@ fn json_escape_string(s: &str) -> String {
 /// Pretty-print `val` as JSON using `indent` per nesting level, matching the
 /// whitespace layout of JSON.stringify(value, null, space). Empty arrays and
 /// objects collapse to `[]`/`{}` and scalars defer to the compact serializer.
-fn json_stringify_pretty(val: &JsValue, indent: &str, depth: usize) -> String {
+fn json_stringify_pretty(val: &JsValue, indent: &str, depth: usize, replacer: Option<&[String]>) -> String {
     match val {
         JsValue::Array(arr) if !arr.is_empty() => {
             let pad = indent.repeat(depth + 1);
@@ -3294,7 +3303,7 @@ fn json_stringify_pretty(val: &JsValue, indent: &str, depth: usize) -> String {
             let items: Vec<String> = arr.iter().map(|v| {
                 let rendered = match v {
                     JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
-                    other => json_stringify_pretty(other, indent, depth + 1),
+                    other => json_stringify_pretty(other, indent, depth + 1, replacer),
                 };
                 format!("{}{}", pad, rendered)
             }).collect();
@@ -3304,15 +3313,18 @@ fn json_stringify_pretty(val: &JsValue, indent: &str, depth: usize) -> String {
             let pad = indent.repeat(depth + 1);
             let close = indent.repeat(depth);
             let entries: Vec<String> = map.iter()
-                .filter_map(|(k, v)| match v {
-                    JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => None,
-                    other => Some(format!("{}{}: {}", pad, json_escape_string(k), json_stringify_pretty(other, indent, depth + 1))),
+                .filter_map(|(k, v)| {
+                    if let Some(whitelist) = replacer { if !whitelist.iter().any(|w| w == k) { return None; } }
+                    match v {
+                        JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => None,
+                        other => Some(format!("{}{}: {}", pad, json_escape_string(k), json_stringify_pretty(other, indent, depth + 1, replacer))),
+                    }
                 })
                 .collect();
             if entries.is_empty() { return "{}".to_string(); }
             format!("{{\n{}\n{}}}", entries.join(",\n"), close)
         }
-        _ => json_stringify(val),
+        _ => json_stringify(val, replacer),
     }
 }
 
@@ -7046,6 +7058,16 @@ mod tests {
         assert_eq!(eval_full("JSON.stringify([], null, 2)"), JsValue::String("[]".to_string()));
         // Omitting the space argument keeps compact output.
         assert_eq!(eval_full("JSON.stringify([1, 2])"), JsValue::String("[1,2]".to_string()));
+    }
+
+    #[test]
+    fn json_stringify_replacer_array() {
+        // Replacer array whitelists object properties.
+        assert_eq!(eval_full("JSON.stringify({a: 1, b: 2, c: 3}, ['a', 'c'])"), JsValue::String("{\"a\":1,\"c\":3}".to_string()));
+        // Nested objects are also filtered.
+        assert_eq!(eval_full("JSON.stringify({x: {a: 1, b: 2}}, ['x', 'a'])"), JsValue::String("{\"x\":{\"a\":1}}".to_string()));
+        // Arrays are unaffected by the replacer.
+        assert_eq!(eval_full("JSON.stringify([1, 2, 3], ['a'])"), JsValue::String("[1,2,3]".to_string()));
     }
 
     #[test]
