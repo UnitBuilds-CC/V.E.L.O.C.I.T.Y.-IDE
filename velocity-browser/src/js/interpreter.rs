@@ -1793,7 +1793,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 }
                 "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
                                 "Object.keys" | "Object.values" | "Object.entries" | "Object.fromEntries" | "Object.assign" | "Object.freeze" |
-                                "Object.is" | "Object.setPrototypeOf" |
+                                "Object.is" | "Object.setPrototypeOf" | "Object.hasOwn" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
                 "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyDescriptors" | "Object.getOwnPropertyNames" |
                 "Array.isArray" | "Array.from" | "Array.of" |
@@ -2765,6 +2765,16 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             JsValue::Object(target)
         }
         "Object.freeze" => args.first().cloned().unwrap_or(JsValue::Undefined),
+        "Object.hasOwn" => {
+            // Static own-property test: true when the target directly owns `key`.
+            let key = args.get(1).map(to_string).unwrap_or_default();
+            let has = match args.first() {
+                Some(JsValue::Object(map)) => map.contains_key(&key),
+                Some(JsValue::Array(arr)) => key == "length" || key.parse::<usize>().map(|i| i < arr.len()).unwrap_or(false),
+                _ => false,
+            };
+            JsValue::Boolean(has)
+        }
         "Object.is" => {
             // SameValue: like === but NaN equals NaN and +0 differs from -0.
             let a = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -6417,6 +6427,17 @@ mod tests {
         assert_eq!(eval_full("Object.getOwnPropertyDescriptors({ a: 1 }).a.enumerable"), JsValue::Boolean(true));
         // A round-trip through Object.keys sees exactly the own keys.
         assert_eq!(eval_full("Object.keys(Object.getOwnPropertyDescriptors({ only: 5 }))[0]"), JsValue::String("only".to_string()));
+    }
+
+    #[test]
+    fn object_has_own_static() {
+        // True for a directly-owned key, false for an absent one.
+        assert_eq!(eval_full("Object.hasOwn({ a: 1 }, 'a')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Object.hasOwn({ a: 1 }, 'b')"), JsValue::Boolean(false));
+        // Array indices in range are owned; out-of-range are not; length is owned.
+        assert_eq!(eval_full("Object.hasOwn([10, 20], '1')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Object.hasOwn([10, 20], '5')"), JsValue::Boolean(false));
+        assert_eq!(eval_full("Object.hasOwn([10, 20], 'length')"), JsValue::Boolean(true));
     }
 
     #[test]
