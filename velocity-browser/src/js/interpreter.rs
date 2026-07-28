@@ -2391,6 +2391,34 @@ pub fn call_function_with_this(func: &JsValue, args: &[JsValue], _caller_scope: 
                 Ok(JsValue::Undefined)
             }
         }
+        // Proxy wrapping a callable target: consult handler.apply(target, thisArg, args)
+        // when present, otherwise forward the call to the target function.
+        JsValue::Proxy { target, handler } => {
+            if let JsValue::Object(h_map) = handler.as_ref() {
+                if let Some(trap) = h_map.get("apply") {
+                    if !matches!(trap, JsValue::NativeFunction(_)) {
+                        let depth = PROXY_TRAP_DEPTH.with(|d| {
+                            let cur = d.get();
+                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            d.set(cur + 1);
+                            cur
+                        });
+                        if depth < MAX_PROXY_TRAP_DEPTH {
+                            let this_arg = this_val.clone().unwrap_or(JsValue::Undefined);
+                            let args_array = JsValue::Array(args.to_vec());
+                            let result = call_function(
+                                trap,
+                                &[(**target).clone(), this_arg, args_array],
+                                &Scope::new_global(),
+                            );
+                            PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                            return result;
+                        }
+                    }
+                }
+            }
+            call_function_with_this(target, args, _caller_scope, this_val)
+        }
         _ => Ok(JsValue::Undefined),
     }
 }
@@ -5138,6 +5166,37 @@ mod tests {
     fn object_keys_values_on_array() {
         assert_eq!(eval_full("Object.keys([10, 20, 30]).length"), JsValue::Number(3.0));
         assert_eq!(eval_full("Object.values([10, 20, 30])[1]"), JsValue::Number(20.0));
+    }
+
+    #[test]
+    fn proxy_apply_trap_intercepts_call() {
+        // handler.apply(target, thisArg, args) intercepts calling the proxy.
+        assert_eq!(eval_full("
+            function greet(n) { return 'hi ' + n; }
+            var handler = { apply: function(t, th, a) { return 'intercepted:' + a[0]; } };
+            var p = new Proxy(greet, handler);
+            p('bob')
+        "), JsValue::String("intercepted:bob".to_string()));
+    }
+
+    #[test]
+    fn proxy_apply_trap_can_delegate_to_target() {
+        // The trap may call the target itself and transform the result.
+        assert_eq!(eval_full("
+            function sum(a, b) { return a + b; }
+            var handler = { apply: function(t, th, a) { return t(a[0], a[1]) * 10; } };
+            var p = new Proxy(sum, handler);
+            p(3, 4)
+        "), JsValue::Number(70.0));
+    }
+
+    #[test]
+    fn proxy_call_forwards_to_target_without_apply_trap() {
+        assert_eq!(eval_full("
+            function add(a, b) { return a + b; }
+            var p = new Proxy(add, {});
+            p(2, 3)
+        "), JsValue::Number(5.0));
     }
 
     #[test]
