@@ -4049,24 +4049,32 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
             JsValue::String(s.repeat(n.min(10000)))
         }
         "padStart" => {
-            let len = args.first().map(to_number).unwrap_or(0.0) as usize;
+            let target = args.first().map(to_number).unwrap_or(0.0) as usize;
             let pad = args.get(1).map(to_string).unwrap_or_else(|| " ".into());
-            let mut result = s.to_string();
-            while result.len() < len { result = format!("{}{}", pad, result); }
-            JsValue::String(result[..len.max(s.len())].to_string())
+            JsValue::String(pad_string(s, target, &pad, true))
         }
         "padEnd" => {
-            let len = args.first().map(to_number).unwrap_or(0.0) as usize;
+            let target = args.first().map(to_number).unwrap_or(0.0) as usize;
             let pad = args.get(1).map(to_string).unwrap_or_else(|| " ".into());
-            let mut result = s.to_string();
-            while result.len() < len { result.push_str(&pad); }
-            result.truncate(len.max(s.len()));
-            JsValue::String(result)
+            JsValue::String(pad_string(s, target, &pad, false))
         }
         "match" | "search" | "matchAll" => JsValue::Null, // regex not supported
         "toString" | "valueOf" => JsValue::String(s.to_string()),
         _ => JsValue::Undefined,
     }
+}
+
+/// Pad `s` with repetitions of `pad` until it reaches `target` char length,
+/// truncating the final pad fragment as needed. Counts by Unicode scalar values
+/// (not bytes) to match JS String.prototype.padStart/padEnd and avoid slicing
+/// through a multi-byte boundary. `at_start` selects padStart vs padEnd.
+fn pad_string(s: &str, target: usize, pad: &str, at_start: bool) -> String {
+    let cur = s.chars().count();
+    if cur >= target || pad.is_empty() { return s.to_string(); }
+    let needed = target - cur;
+    let pad_chars: Vec<char> = pad.chars().collect();
+    let fill: String = (0..needed).map(|i| pad_chars[i % pad_chars.len()]).collect();
+    if at_start { format!("{}{}", fill, s) } else { format!("{}{}", s, fill) }
 }
 
 fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
@@ -5856,6 +5864,19 @@ mod tests {
         // WeakSet.add/has/delete persist like Set.
         assert_eq!(eval_full("var w = new WeakSet(); w.add('x'); w.has('x')"), JsValue::Boolean(true));
         assert_eq!(eval_full("var w = new WeakSet(['x']); w.delete('x'); w.has('x')"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn string_pad_counts_by_char_not_byte() {
+        // ASCII padding pads to the requested length with the given fill.
+        assert_eq!(eval_full("'5'.padStart(3, '0')"), JsValue::String("005".to_string()));
+        assert_eq!(eval_full("'5'.padEnd(3, '.')"), JsValue::String("5..".to_string()));
+        // A target shorter than the string returns the string unchanged.
+        assert_eq!(eval_full("'hello'.padStart(2)"), JsValue::String("hello".to_string()));
+        // Multi-byte content is counted by characters and never sliced mid-codepoint.
+        assert_eq!(eval_full("'e'.padStart(3, '\u{20ac}')"), JsValue::String("\u{20ac}\u{20ac}e".to_string()));
+        // Multi-byte source string keeps its full content when already at length.
+        assert_eq!(eval_full("'\u{20ac}\u{20ac}'.padEnd(2, 'x')"), JsValue::String("\u{20ac}\u{20ac}".to_string()));
     }
 
     #[test]
