@@ -1290,19 +1290,27 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
         Stmt::Throw(e) => Err(Signal::Throw(eval_expr_node(e, scope)?)),
         Stmt::TryCatch { try_block, catch_var, catch_block, finally_block } => {
             let result = eval_stmt(try_block, scope);
-            let value = match result {
+            // Run the catch clause when the try block threw and a catch is present. The
+            // outcome is either a normal value or a signal that must propagate: a throw
+            // with no catch clause, or a throw escaping the catch block itself.
+            let outcome: EvalResult = match result {
                 Err(Signal::Throw(thrown)) => {
                     if let Some(cb) = catch_block {
                         let catch_scope = Scope::new_child(scope);
                         if let Some(var) = catch_var { Scope::declare(&catch_scope, var, thrown); }
-                        eval_stmt(cb, &catch_scope).unwrap_or(JsValue::Undefined)
-                    } else { JsValue::Undefined }
+                        // A throw escaping the catch block must propagate (after finally).
+                        eval_stmt(cb, &catch_scope)
+                    } else {
+                        // No catch clause: re-throw once finally has run.
+                        Err(Signal::Throw(thrown))
+                    }
                 }
-                Err(other) => { if let Some(fb) = finally_block { let _ = eval_stmt(fb, scope); } return Err(other); }
-                Ok(v) => v,
+                other => other,
             };
+            // `finally` always runs — whether try/catch completed normally or is about
+            // to propagate a signal (throw / break / continue / return).
             if let Some(fb) = finally_block { let _ = eval_stmt(fb, scope); }
-            Ok(value)
+            outcome
         }
         Stmt::FunctionDecl { name, params, body } => {
             let func = JsValue::Function {
@@ -4300,6 +4308,36 @@ mod tests {
     #[test]
     fn try_catch() {
         assert_eq!(eval_full("var result = 0; try { throw 42; } catch (e) { result = e; } result"), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn try_finally_runs_on_normal_completion() {
+        // `finally` runs after a try block that completes normally.
+        assert_eq!(eval_full("var x = 0; try { x = 1; } finally { x = x + 10; } x"), JsValue::Number(11.0));
+    }
+
+    #[test]
+    fn try_throw_without_catch_rethrows_after_finally() {
+        // A throw with no catch clause runs `finally` and then propagates outward.
+        assert_eq!(eval_full("
+            var r = '';
+            try {
+                try { throw 'boom'; } finally { r = 'fin'; }
+            } catch (e) { r = r + ':' + e; }
+            r
+        "), JsValue::String("fin:boom".to_string()));
+    }
+
+    #[test]
+    fn try_catch_throw_escapes_to_outer_catch() {
+        // A throw inside a catch block propagates to the enclosing handler.
+        assert_eq!(eval_full("
+            var r = '';
+            try {
+                try { throw 'a'; } catch (e) { throw 'b'; }
+            } catch (e2) { r = e2; }
+            r
+        "), JsValue::String("b".to_string()));
     }
 
     #[test]
