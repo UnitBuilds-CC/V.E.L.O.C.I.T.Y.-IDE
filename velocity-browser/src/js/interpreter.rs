@@ -3214,15 +3214,49 @@ fn json_stringify(val: &JsValue) -> String {
         JsValue::Undefined => "undefined".to_string(),
         JsValue::Null => "null".to_string(),
         JsValue::Boolean(b) => b.to_string(),
-        JsValue::Number(n) => format_number(*n),
-        JsValue::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-        JsValue::Array(arr) => format!("[{}]", arr.iter().map(json_stringify).collect::<Vec<_>>().join(",")),
+        // Non-finite numbers are not valid JSON and serialize as null.
+        JsValue::Number(n) => if n.is_finite() { format_number(*n) } else { "null".to_string() },
+        JsValue::String(s) => json_escape_string(s),
+        JsValue::Array(arr) => {
+            // undefined and callables serialize as null inside arrays.
+            let items: Vec<String> = arr.iter().map(|v| match v {
+                JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
+                other => json_stringify(other),
+            }).collect();
+            format!("[{}]", items.join(","))
+        }
         JsValue::Object(map) => {
-            let entries: Vec<String> = map.iter().map(|(k, v)| format!("\"{}\":{}", k, json_stringify(v))).collect();
+            // undefined and callable properties are omitted entirely.
+            let entries: Vec<String> = map.iter().filter_map(|(k, v)| match v {
+                JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => None,
+                other => Some(format!("{}:{}", json_escape_string(k), json_stringify(other))),
+            }).collect();
             format!("{{{}}}", entries.join(","))
         }
         JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
     }
+}
+
+/// Escape `s` as a JSON string literal (including surrounding quotes), encoding
+/// quotes, backslashes, and the control characters JSON requires be escaped.
+fn json_escape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Pretty-print `val` as JSON using `indent` per nesting level, matching the
@@ -3233,15 +3267,25 @@ fn json_stringify_pretty(val: &JsValue, indent: &str, depth: usize) -> String {
         JsValue::Array(arr) if !arr.is_empty() => {
             let pad = indent.repeat(depth + 1);
             let close = indent.repeat(depth);
-            let items: Vec<String> = arr.iter().map(|v| format!("{}{}", pad, json_stringify_pretty(v, indent, depth + 1))).collect();
+            let items: Vec<String> = arr.iter().map(|v| {
+                let rendered = match v {
+                    JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => "null".to_string(),
+                    other => json_stringify_pretty(other, indent, depth + 1),
+                };
+                format!("{}{}", pad, rendered)
+            }).collect();
             format!("[\n{}\n{}]", items.join(",\n"), close)
         }
         JsValue::Object(map) if !map.is_empty() => {
             let pad = indent.repeat(depth + 1);
             let close = indent.repeat(depth);
             let entries: Vec<String> = map.iter()
-                .map(|(k, v)| format!("{}\"{}\": {}", pad, k, json_stringify_pretty(v, indent, depth + 1)))
+                .filter_map(|(k, v)| match v {
+                    JsValue::Undefined | JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Proxy { .. } => None,
+                    other => Some(format!("{}{}: {}", pad, json_escape_string(k), json_stringify_pretty(other, indent, depth + 1))),
+                })
                 .collect();
+            if entries.is_empty() { return "{}".to_string(); }
             format!("{{\n{}\n{}}}", entries.join(",\n"), close)
         }
         _ => json_stringify(val),
@@ -6767,6 +6811,19 @@ mod tests {
         assert_eq!(eval_full("'abc'.replace('b', '$`|$\\'')"), JsValue::String("aa|cc".to_string()));
         // replaceAll applies $& to every occurrence.
         assert_eq!(eval_full("'a-a'.replaceAll('a', '($&)')"), JsValue::String("(a)-(a)".to_string()));
+    }
+
+    #[test]
+    fn json_stringify_spec_edge_cases() {
+        // Non-finite numbers serialize as null.
+        assert_eq!(eval_full("JSON.stringify(NaN)"), JsValue::String("null".to_string()));
+        assert_eq!(eval_full("JSON.stringify([1, Infinity, 2])"), JsValue::String("[1,null,2]".to_string()));
+        // undefined array elements become null.
+        assert_eq!(eval_full("JSON.stringify([1, undefined, 3])"), JsValue::String("[1,null,3]".to_string()));
+        // undefined object properties are omitted.
+        assert_eq!(eval_full("JSON.stringify({ a: 1, b: undefined })"), JsValue::String("{\"a\":1}".to_string()));
+        // Control characters in strings are escaped.
+        assert_eq!(eval_full("JSON.stringify('a\\nb')"), JsValue::String("\"a\\nb\"".to_string()));
     }
 
     #[test]
