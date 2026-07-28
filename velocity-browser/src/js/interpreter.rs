@@ -181,6 +181,7 @@ pub enum Stmt {
     DoWhile { body: Box<Stmt>, cond: Expr },
     For { init: Option<Box<Stmt>>, cond: Option<Expr>, update: Option<Expr>, body: Box<Stmt> },
     ForIn { var_name: String, object: Expr, body: Box<Stmt> },
+    ForOf { var_name: String, object: Expr, body: Box<Stmt> },
     Return(Option<Expr>),
     Break,
     Continue,
@@ -452,11 +453,16 @@ impl Parser {
             self.advance(); // var/let/const
             if let Token::Ident(var_name) = self.advance() {
                 if self.at(&Token::In) || self.at(&Token::Of) {
+                    let is_of = self.at(&Token::Of);
                     self.advance(); // in/of
                     let obj = self.parse_expr()?;
                     self.expect(&Token::RParen)?;
                     let body = Box::new(self.parse_stmt()?);
-                    return Ok(Stmt::ForIn { var_name, object: obj, body });
+                    return Ok(if is_of {
+                        Stmt::ForOf { var_name, object: obj, body }
+                    } else {
+                        Stmt::ForIn { var_name, object: obj, body }
+                    });
                 }
             }
             self.pos = saved;
@@ -1259,6 +1265,19 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
                     }
                 }
                 _ => {}
+            }
+            Ok(JsValue::Undefined)
+        }
+        Stmt::ForOf { var_name, object, body } => {
+            let iterable = eval_expr_node(object, scope)?;
+            for item in iterate_values(&iterable, scope) {
+                Scope::declare(scope, var_name, item);
+                match eval_stmt(body, scope) {
+                    Ok(_) => {}
+                    Err(Signal::Break) => break,
+                    Err(Signal::Continue) => continue,
+                    Err(e) => return Err(e),
+                }
             }
             Ok(JsValue::Undefined)
         }
@@ -3061,6 +3080,68 @@ std::thread_local! {
 // (is_reject, value) — set by __promise_resolve__ / __promise_reject__ natives.
 std::thread_local! {
     static PROMISE_CAPTURE: std::cell::RefCell<Option<(bool, JsValue)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Materialise the value sequence produced by a `for...of` loop for the given
+/// iterable, honouring the iterator protocol for custom iterables.
+fn iterate_values(val: &JsValue, scope: &ScopeRef) -> Vec<JsValue> {
+    match val {
+        JsValue::Array(arr) => arr.clone(),
+        JsValue::String(s) => s.chars().map(|c| JsValue::String(c.to_string())).collect(),
+        JsValue::Object(map) => match map.get("__type__").map(to_string).as_deref() {
+            Some("Generator") => match map.get("__values__") {
+                Some(JsValue::Array(values)) => values.clone(),
+                _ => Vec::new(),
+            },
+            Some("Map") | Some("WeakMap") | Some("URLSearchParams") => match map.get("__entries__") {
+                Some(JsValue::Array(entries)) => entries.clone(),
+                _ => Vec::new(),
+            },
+            Some("Set") => match map.get("__items__") {
+                Some(JsValue::Array(items)) => items.clone(),
+                _ => Vec::new(),
+            },
+            _ => {
+                // Custom iterable: a `Symbol.iterator`/`__iterator__` method returns an
+                // iterator; otherwise treat the object itself as an iterator (has `next`).
+                let iterator = map
+                    .get("Symbol.iterator")
+                    .or_else(|| map.get("__iterator__"))
+                    .and_then(|mk| call_function(mk, &[val.clone()], scope).ok())
+                    .unwrap_or_else(|| val.clone());
+                drain_iterator(&iterator, scope)
+            }
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Drain an iterator object by repeatedly calling its `next()` method until it
+/// reports `done`, collecting the yielded `value`s.
+fn drain_iterator(iter: &JsValue, scope: &ScopeRef) -> Vec<JsValue> {
+    let mut out = Vec::new();
+    for _ in 0..100_000 {
+        let next_fn = get_property(iter, "next");
+        if matches!(next_fn, JsValue::Undefined | JsValue::Null) {
+            break;
+        }
+        let step = match call_function(&next_fn, &[], scope) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        let (value, done) = match &step {
+            JsValue::Object(m) => (
+                m.get("value").cloned().unwrap_or(JsValue::Undefined),
+                matches!(m.get("done"), Some(JsValue::Boolean(true))),
+            ),
+            _ => (step, false),
+        };
+        if done {
+            break;
+        }
+        out.push(value);
+    }
+    out
 }
 
 /// Membership test for the `in` operator, respecting Proxy `has` traps and the
@@ -5197,6 +5278,79 @@ mod tests {
             var p = new Proxy(add, {});
             p(2, 3)
         "), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn for_of_string_iterates_chars() {
+        assert_eq!(eval_full("
+            var out = '';
+            for (var c of 'abc') { out = out + c; }
+            out
+        "), JsValue::String("abc".to_string()));
+    }
+
+    #[test]
+    fn for_of_map_yields_entries() {
+        assert_eq!(eval_full("
+            var m = new Map([['a', 1], ['b', 2]]);
+            var total = 0;
+            for (var e of m) { total = total + e[1]; }
+            total
+        "), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn for_of_set_yields_items() {
+        assert_eq!(eval_full("
+            var s = new Set([1, 2, 3]);
+            var total = 0;
+            for (var x of s) { total = total + x; }
+            total
+        "), JsValue::Number(6.0));
+    }
+
+    #[test]
+    fn for_of_custom_iterator_protocol() {
+        // An object that is itself an iterator (has a stateful next()) drives for...of.
+        assert_eq!(eval_full("
+            function makeRange(lo, hi) {
+                var cur = lo;
+                return {
+                    next: function() {
+                        if (cur <= hi) {
+                            var v = cur;
+                            cur = cur + 1;
+                            return { value: v, done: false };
+                        }
+                        return { done: true };
+                    }
+                };
+            }
+            var sum = 0;
+            for (var x of makeRange(1, 3)) { sum = sum + x; }
+            sum
+        "), JsValue::Number(6.0));
+    }
+
+    #[test]
+    fn for_of_iterable_with_iterator_method() {
+        // An iterable exposing __iterator__ that returns a fresh iterator.
+        assert_eq!(eval_full("
+            var iterable = {
+                __iterator__: function() {
+                    var i = 0;
+                    return {
+                        next: function() {
+                            if (i < 3) { var v = i; i = i + 1; return { value: v, done: false }; }
+                            return { done: true };
+                        }
+                    };
+                }
+            };
+            var sum = 0;
+            for (var x of iterable) { sum = sum + x; }
+            sum
+        "), JsValue::Number(3.0));
     }
 
     #[test]
