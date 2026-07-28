@@ -4519,12 +4519,35 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
         "replace" => {
             let pattern = args.first().map(to_string).unwrap_or_default();
             let replacement = args.get(1).map(to_string).unwrap_or_default();
-            JsValue::String(s.replacen(&pattern, &replacement, 1))
+            match s.find(&pattern) {
+                Some(idx) => {
+                    let before = &s[..idx];
+                    let after = &s[idx + pattern.len()..];
+                    let expanded = expand_replacement(&replacement, &pattern, before, after);
+                    JsValue::String(format!("{}{}{}", before, expanded, after))
+                }
+                None => JsValue::String(s.to_string()),
+            }
         }
         "replaceAll" => {
             let pattern = args.first().map(to_string).unwrap_or_default();
             let replacement = args.get(1).map(to_string).unwrap_or_default();
-            JsValue::String(s.replace(&pattern, &replacement))
+            if pattern.is_empty() {
+                JsValue::String(s.to_string())
+            } else {
+                let mut out = String::new();
+                let mut search_start = 0;
+                while let Some(rel) = s[search_start..].find(&pattern) {
+                    let idx = search_start + rel;
+                    let before = &s[..idx];
+                    let after = &s[idx + pattern.len()..];
+                    out.push_str(&s[search_start..idx]);
+                    out.push_str(&expand_replacement(&replacement, &pattern, before, after));
+                    search_start = idx + pattern.len();
+                }
+                out.push_str(&s[search_start..]);
+                JsValue::String(out)
+            }
         }
         "repeat" => {
             let n = args.first().map(to_number).unwrap_or(0.0) as usize;
@@ -4643,6 +4666,29 @@ fn number_to_radix(n: f64, radix: u32) -> String {
     if negative { result.push('-'); }
     result.push_str(&String::from_utf8(out).unwrap_or_default());
     result
+}
+
+/// Expand the `$` substitution patterns of String.prototype.replace for a
+/// plain-string match: `$$`->`$`, `$&`->the matched text, `` $` ``->text before
+/// the match, `$'`->text after the match. Other sequences are copied verbatim.
+fn expand_replacement(replacement: &str, matched: &str, before: &str, after: &str) -> String {
+    let chars: Vec<char> = replacement.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '$' => { out.push('$'); i += 2; continue; }
+                '&' => { out.push_str(matched); i += 2; continue; }
+                '`' => { out.push_str(before); i += 2; continue; }
+                '\'' => { out.push_str(after); i += 2; continue; }
+                _ => {}
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 /// Format `n` with exactly `digits` fractional places, matching JS
@@ -6710,6 +6756,17 @@ mod tests {
         // Ordinary rounding and padding still hold.
         assert_eq!(eval_full("(123.456).toFixed(2)"), JsValue::String("123.46".to_string()));
         assert_eq!(eval_full("(0).toFixed(2)"), JsValue::String("0.00".to_string()));
+    }
+
+    #[test]
+    fn string_replace_dollar_patterns() {
+        // $& inserts the matched substring; $$ yields a literal dollar sign.
+        assert_eq!(eval_full("'hello'.replace('l', '[$&]')"), JsValue::String("he[l]lo".to_string()));
+        assert_eq!(eval_full("'a'.replace('a', '$$')"), JsValue::String("$".to_string()));
+        // $` and $' expand to the text before and after the match.
+        assert_eq!(eval_full("'abc'.replace('b', '$`|$\\'')"), JsValue::String("aa|cc".to_string()));
+        // replaceAll applies $& to every occurrence.
+        assert_eq!(eval_full("'a-a'.replaceAll('a', '($&)')"), JsValue::String("(a)-(a)".to_string()));
     }
 
     #[test]
