@@ -4089,7 +4089,17 @@ fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope
         }
         "includes" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-            JsValue::Boolean(a.iter().any(|x| strict_eq(x, &target)))
+            // Array includes uses SameValueZero (NaN matches NaN, unlike indexOf)
+            // and honours an optional fromIndex (negative counts from the end).
+            let len = a.len() as i64;
+            let mut from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0);
+            if from < 0 { from += len; }
+            let start = from.max(0) as usize;
+            let found = a.iter().skip(start).any(|x| match (x, &target) {
+                (JsValue::Number(p), JsValue::Number(q)) if p.is_nan() && q.is_nan() => true,
+                _ => strict_eq(x, &target),
+            });
+            JsValue::Boolean(found)
         }
         "at" => {
             let i = args.first().map(to_number).unwrap_or(0.0) as i64;
@@ -6438,6 +6448,18 @@ mod tests {
         assert_eq!(eval_full("Object.hasOwn([10, 20], '1')"), JsValue::Boolean(true));
         assert_eq!(eval_full("Object.hasOwn([10, 20], '5')"), JsValue::Boolean(false));
         assert_eq!(eval_full("Object.hasOwn([10, 20], 'length')"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn array_includes_same_value_zero_and_from_index() {
+        // SameValueZero finds NaN, which indexOf-style === cannot.
+        assert_eq!(eval_full("[1, NaN, 3].includes(NaN)"), JsValue::Boolean(true));
+        // fromIndex skips earlier matches.
+        assert_eq!(eval_full("[1, 2, 1].includes(1, 1)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("[1, 2, 3].includes(1, 1)"), JsValue::Boolean(false));
+        // Negative fromIndex counts from the end.
+        assert_eq!(eval_full("[5, 6, 7].includes(5, -1)"), JsValue::Boolean(false));
+        assert_eq!(eval_full("[5, 6, 7].includes(7, -1)"), JsValue::Boolean(true));
     }
 
     #[test]
