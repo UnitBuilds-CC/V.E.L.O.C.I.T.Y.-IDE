@@ -1807,14 +1807,14 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         if let JsValue::Object(map) = &obj {
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
-                Some("Map") => {
+                Some("Map") | Some("WeakMap") => {
                     // Map mutators (set/delete/clear) update the backing store; persist it.
                     let mut m = map.clone();
                     let result = call_map_method(&mut m, method, &evaluated_args, scope);
                     assign_to_target(obj_expr, JsValue::Object(m), scope);
                     return result;
                 }
-                Some("Set") => {
+                Some("Set") | Some("WeakSet") => {
                     // Set mutators (add/delete/clear) update the backing store; persist it.
                     let mut m = map.clone();
                     let result = call_set_method(&mut m, method, &evaluated_args, scope);
@@ -2050,7 +2050,27 @@ fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         Some("WeakMap") => {
             let mut map = HashMap::new();
             map.insert("__type__".to_string(), JsValue::String("WeakMap".to_string()));
-            map.insert("__entries__".to_string(), JsValue::Array(Vec::new()));
+            let mut kvs = Vec::new();
+            if let Some(JsValue::Array(entries)) = evaluated_args.first() {
+                for entry in entries {
+                    if let JsValue::Array(kv) = entry {
+                        if kv.len() >= 2 { kvs.push(JsValue::Array(vec![kv[0].clone(), kv[1].clone()])); }
+                    }
+                }
+            }
+            map.insert("__entries__".to_string(), JsValue::Array(kvs));
+            Ok(JsValue::Object(map))
+        }
+        Some("WeakSet") => {
+            let mut map = HashMap::new();
+            map.insert("__type__".to_string(), JsValue::String("WeakSet".to_string()));
+            let mut items = Vec::new();
+            if let Some(JsValue::Array(init)) = evaluated_args.first() {
+                for v in init {
+                    if !items.iter().any(|x| strict_eq(x, v)) { items.push(v.clone()); }
+                }
+            }
+            map.insert("__items__".to_string(), JsValue::Array(items));
             Ok(JsValue::Object(map))
         }
         Some("Date") => {
@@ -3757,8 +3777,8 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
             // Check for Map/Set/Promise builtins
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
-                Some("Map") => { let mut m = map.clone(); return call_map_method(&mut m, method, args, scope); }
-                Some("Set") => { let mut m = map.clone(); return call_set_method(&mut m, method, args, scope); }
+                Some("Map") | Some("WeakMap") => { let mut m = map.clone(); return call_map_method(&mut m, method, args, scope); }
+                Some("Set") | Some("WeakSet") => { let mut m = map.clone(); return call_set_method(&mut m, method, args, scope); }
                 Some("Promise") => return call_promise_method(map, method, args, scope),
                 Some("Date") => return call_date_method(map, method, args),
                 Some("Generator") => return call_generator_method(map, method),
@@ -5825,6 +5845,17 @@ mod tests {
         assert_eq!(eval_full("var m = new Map([['x', 10]]); var k = ''; m.forEach(function(v, key) { k = key; }); k"), JsValue::String("x".to_string()));
         // Set.forEach iterates each unique value.
         assert_eq!(eval_full("var s = new Set([2, 4, 6]); var t = 0; s.forEach(function(v) { t = t + v; }); t"), JsValue::Number(12.0));
+    }
+
+    #[test]
+    fn weakmap_and_weakset_support_core_methods() {
+        // WeakMap.set/get/has/delete persist like Map.
+        assert_eq!(eval_full("var w = new WeakMap(); w.set('k', 42); w.get('k')"), JsValue::Number(42.0));
+        assert_eq!(eval_full("var w = new WeakMap([['a', 1]]); w.has('a')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("var w = new WeakMap([['a', 1]]); w.delete('a'); w.has('a')"), JsValue::Boolean(false));
+        // WeakSet.add/has/delete persist like Set.
+        assert_eq!(eval_full("var w = new WeakSet(); w.add('x'); w.has('x')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("var w = new WeakSet(['x']); w.delete('x'); w.has('x')"), JsValue::Boolean(false));
     }
 
     #[test]
