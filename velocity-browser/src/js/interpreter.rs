@@ -5048,9 +5048,38 @@ pub fn to_number(v: &JsValue) -> f64 {
     match v {
         JsValue::Number(n) => *n,
         JsValue::Boolean(b) => if *b { 1.0 } else { 0.0 },
-        JsValue::String(s) => s.trim().parse().unwrap_or(f64::NAN),
+        JsValue::String(s) => string_to_number(s),
         JsValue::Null => 0.0,
         JsValue::Undefined => f64::NAN,
+        _ => f64::NAN,
+    }
+}
+
+/// Convert a string to a number per the JS ToNumber rules: surrounding
+/// whitespace is ignored, an empty (or blank) string is 0, `0x`/`0b`/`0o`
+/// prefixes select non-decimal integer literals, and the `Infinity` literal is
+/// recognised. Rust-specific spellings such as `inf`/`nan` are rejected as NaN.
+fn string_to_number(s: &str) -> f64 {
+    let t = s.trim();
+    if t.is_empty() { return 0.0; }
+    match t {
+        "Infinity" | "+Infinity" => return f64::INFINITY,
+        "-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
+    }
+    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        return i64::from_str_radix(hex, 16).map(|n| n as f64).unwrap_or(f64::NAN);
+    }
+    if let Some(bin) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+        return i64::from_str_radix(bin, 2).map(|n| n as f64).unwrap_or(f64::NAN);
+    }
+    if let Some(oct) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
+        return i64::from_str_radix(oct, 8).map(|n| n as f64).unwrap_or(f64::NAN);
+    }
+    // A valid JS decimal literal begins with a digit, sign, or decimal point;
+    // anything else (including "inf"/"nan") is NaN even if Rust would parse it.
+    match t.chars().next() {
+        Some(c) if c.is_ascii_digit() || c == '+' || c == '-' || c == '.' => t.parse().unwrap_or(f64::NAN),
         _ => f64::NAN,
     }
 }
@@ -6850,6 +6879,25 @@ mod tests {
         assert_eq!(eval_full("null == ''"), JsValue::Boolean(false));
         // != is the negation.
         assert_eq!(eval_full("null != 0"), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn to_number_string_coercion() {
+        // Empty and whitespace-only strings coerce to 0 (not NaN).
+        assert_eq!(eval_full("+''"), JsValue::Number(0.0));
+        assert_eq!(eval_full("+'   '"), JsValue::Number(0.0));
+        // Surrounding whitespace is ignored around a valid literal.
+        assert_eq!(eval_full("+'  42 '"), JsValue::Number(42.0));
+        // Non-decimal integer prefixes are honoured.
+        assert_eq!(eval_full("+'0x10'"), JsValue::Number(16.0));
+        assert_eq!(eval_full("+'0b101'"), JsValue::Number(5.0));
+        assert_eq!(eval_full("+'0o17'"), JsValue::Number(15.0));
+        // The Infinity literal maps to positive infinity.
+        assert_eq!(eval_full("+'Infinity'"), JsValue::Number(f64::INFINITY));
+        // Non-numeric strings (including Rust-only spellings) are NaN.
+        assert_eq!(eval_full("Number.isNaN(+'abc')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Number.isNaN(+'inf')"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Number.isNaN(+'nan')"), JsValue::Boolean(true));
     }
 
     #[test]
