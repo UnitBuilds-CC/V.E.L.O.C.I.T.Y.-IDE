@@ -1817,7 +1817,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 Some("Set") => {
                     // Set mutators (add/delete/clear) update the backing store; persist it.
                     let mut m = map.clone();
-                    let result = call_set_method(&mut m, method, &evaluated_args);
+                    let result = call_set_method(&mut m, method, &evaluated_args, scope);
                     assign_to_target(obj_expr, JsValue::Object(m), scope);
                     return result;
                 }
@@ -3758,7 +3758,7 @@ fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeRef) 
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
                 Some("Map") => { let mut m = map.clone(); return call_map_method(&mut m, method, args, scope); }
-                Some("Set") => { let mut m = map.clone(); return call_set_method(&mut m, method, args); }
+                Some("Set") => { let mut m = map.clone(); return call_set_method(&mut m, method, args, scope); }
                 Some("Promise") => return call_promise_method(map, method, args, scope),
                 Some("Date") => return call_date_method(map, method, args),
                 Some("Generator") => return call_generator_method(map, method),
@@ -4132,7 +4132,7 @@ fn call_object_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsV
 // Map/Set/Promise/Date methods
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], _scope: &ScopeRef) -> EvalResult {
+fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
     let mut entries = if let Some(JsValue::Array(e)) = map.get("__entries__") { e.clone() } else { Vec::new() };
     Ok(match method {
         "get" => {
@@ -4186,7 +4186,18 @@ fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsV
         "keys" => JsValue::Array(entries.iter().filter_map(|e| if let JsValue::Array(kv) = e { kv.first().cloned() } else { None }).collect()),
         "values" => JsValue::Array(entries.iter().filter_map(|e| if let JsValue::Array(kv) = e { kv.get(1).cloned() } else { None }).collect()),
         "entries" => JsValue::Array(entries),
-        "forEach" => JsValue::Undefined,
+        "forEach" => {
+            // Callback receives (value, key) for each entry, mirroring JS Map.forEach.
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            for entry in &entries {
+                if let JsValue::Array(kv) = entry {
+                    let key = kv.first().cloned().unwrap_or(JsValue::Undefined);
+                    let value = kv.get(1).cloned().unwrap_or(JsValue::Undefined);
+                    call_function(&callback, &[value, key], scope)?;
+                }
+            }
+            JsValue::Undefined
+        }
         "clear" => {
             map.insert("__entries__".to_string(), JsValue::Array(Vec::new()));
             JsValue::Undefined
@@ -4195,7 +4206,7 @@ fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsV
     })
 }
 
-fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
     let mut items = if let Some(JsValue::Array(i)) = map.get("__items__") { i.clone() } else { Vec::new() };
     Ok(match method {
         "has" => {
@@ -4219,7 +4230,14 @@ fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsV
         }
         "size" => JsValue::Number(items.len() as f64),
         "values" | "keys" => JsValue::Array(items),
-        "forEach" => JsValue::Undefined,
+        "forEach" => {
+            // Callback receives (value, value) for each element, mirroring JS Set.forEach.
+            let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+            for item in &items {
+                call_function(&callback, &[item.clone(), item.clone()], scope)?;
+            }
+            JsValue::Undefined
+        }
         "clear" => {
             map.insert("__items__".to_string(), JsValue::Array(Vec::new()));
             JsValue::Undefined
@@ -5797,6 +5815,16 @@ mod tests {
         assert_eq!(eval_full("var s = new Set([1, 2, 3]); s.delete(2); s.has(2)"), JsValue::Boolean(false));
         // Mutation through `this` inside a method persists to the receiver.
         assert_eq!(eval_full("var o = { bag: new Set(), put: function(v) { this.bag.add(v); } }; o.put(5); o.put(5); o.bag.size()"), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn map_and_set_for_each_invoke_callback() {
+        // Map.forEach passes (value, key): summing values yields 1 + 2 + 3 = 6.
+        assert_eq!(eval_full("var m = new Map([['a', 1], ['b', 2], ['c', 3]]); var t = 0; m.forEach(function(v) { t = t + v; }); t"), JsValue::Number(6.0));
+        // The key is provided as the second argument.
+        assert_eq!(eval_full("var m = new Map([['x', 10]]); var k = ''; m.forEach(function(v, key) { k = key; }); k"), JsValue::String("x".to_string()));
+        // Set.forEach iterates each unique value.
+        assert_eq!(eval_full("var s = new Set([2, 4, 6]); var t = 0; s.forEach(function(v) { t = t + v; }); t"), JsValue::Number(12.0));
     }
 
     #[test]
