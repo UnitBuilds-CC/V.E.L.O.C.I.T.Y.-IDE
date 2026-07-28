@@ -1751,14 +1751,22 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 }
                 "Reflect.deleteProperty" => {
                     let prop = evaluated_args.get(1).map(to_string).unwrap_or_default();
-                    let mut existed = false;
+                    // When the target is a simple identifier, mutate it in place and write
+                    // it back so the deletion is visible to subsequent statements. Routing
+                    // through `delete_property` means Proxy `deleteProperty` traps are
+                    // honoured even when the target variable holds a proxy.
                     if let Some(Expr::Ident(var_name)) = args.first() {
-                        if let Some(JsValue::Object(mut map)) = Scope::resolve(scope, var_name) {
-                            existed = map.remove(&prop).is_some();
-                            Scope::assign(scope, var_name, JsValue::Object(map));
+                        if let Some(mut target) = Scope::resolve(scope, var_name) {
+                            let ok = delete_property(&mut target, &prop);
+                            Scope::assign(scope, var_name, target);
+                            return Ok(JsValue::Boolean(ok));
                         }
+                        return Ok(JsValue::Boolean(false));
                     }
-                    return Ok(JsValue::Boolean(existed));
+                    // Non-identifier target: operate on the evaluated value (proxy traps
+                    // still run for their side effects) and report the boolean result.
+                    let mut target = evaluated_args.first().cloned().unwrap_or(JsValue::Undefined);
+                    return Ok(JsValue::Boolean(delete_property(&mut target, &prop)));
                 }
                 "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
                 "Object.keys" | "Object.values" | "Object.entries" | "Object.assign" | "Object.freeze" |
@@ -2765,24 +2773,29 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             JsValue::Boolean(set_property(&mut t, &prop, value))
         }
         "Reflect.has" => {
+            // Route through the proxy-aware membership helper so `Reflect.has`
+            // respects Proxy `has` traps and the prototype chain (like the `in` operator).
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
             let prop = args.get(1).map(to_string).unwrap_or_default();
-            match &target {
-                JsValue::Object(map) => JsValue::Boolean(map.contains_key(&prop)),
-                _ => JsValue::Boolean(false),
-            }
+            JsValue::Boolean(has_property(&target, &prop))
         }
         "Reflect.deleteProperty" => {
-            let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+            // Route through the proxy-aware delete helper so `Reflect.deleteProperty`
+            // respects Proxy `deleteProperty` traps and yields true for absent keys.
+            let mut target = args.first().cloned().unwrap_or(JsValue::Undefined);
             let prop = args.get(1).map(to_string).unwrap_or_default();
-            match &target {
-                JsValue::Object(map) => JsValue::Boolean(map.contains_key(&prop)),
-                _ => JsValue::Boolean(false),
-            }
+            JsValue::Boolean(delete_property(&mut target, &prop))
         }
         "Reflect.ownKeys" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
             match &target {
+                // Proxy targets (native or object-based) consult the ownKeys trap.
+                JsValue::Proxy { .. } => {
+                    JsValue::Array(own_keys_of(&target).into_iter().map(JsValue::String).collect())
+                }
+                JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Proxy") => {
+                    JsValue::Array(own_keys_of(&target).into_iter().map(JsValue::String).collect())
+                }
                 JsValue::Object(map) => {
                     // ownKeys reports all non-internal own keys (enumerable or not),
                     // matching JS semantics where ownKeys ignores enumerability.
@@ -2790,6 +2803,13 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
                         .filter(|k| !is_internal_key(k))
                         .map(|k| JsValue::String(k.clone()))
                         .collect();
+                    JsValue::Array(keys)
+                }
+                JsValue::Array(arr) => {
+                    // Array own keys are the indices plus `length`, per JS semantics.
+                    let mut keys: Vec<JsValue> =
+                        (0..arr.len()).map(|i| JsValue::String(i.to_string())).collect();
+                    keys.push(JsValue::String("length".to_string()));
                     JsValue::Array(keys)
                 }
                 _ => JsValue::Array(Vec::new()),
@@ -5247,6 +5267,94 @@ mod tests {
     fn object_keys_values_on_array() {
         assert_eq!(eval_full("Object.keys([10, 20, 30]).length"), JsValue::Number(3.0));
         assert_eq!(eval_full("Object.values([10, 20, 30])[1]"), JsValue::Number(20.0));
+    }
+
+    #[test]
+    fn reflect_has_consults_proxy_has_trap() {
+        // Reflect.has routes through the proxy `has` trap, like the `in` operator.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { has: function(t, k) { return k === 'x' || k === 'y'; } };
+            var p = new Proxy(target, handler);
+            Reflect.has(p, 'y')
+        "), JsValue::Boolean(true));
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { has: function(t, k) { return k === 'x' || k === 'y'; } };
+            var p = new Proxy(target, handler);
+            Reflect.has(p, 'z')
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn reflect_has_walks_prototype_chain() {
+        // Reflect.has sees inherited members, matching JS semantics.
+        assert_eq!(eval_full("
+            class Base { hello() { return 1; } }
+            var b = new Base();
+            Reflect.has(b, 'hello')
+        "), JsValue::Boolean(true));
+        assert_eq!(eval_full("
+            class Base { hello() { return 1; } }
+            var b = new Base();
+            Reflect.has(b, 'absent')
+        "), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn reflect_delete_property_consults_proxy_trap() {
+        // A proxy `deleteProperty` trap returning false vetoes the delete.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { deleteProperty: function(t, k) { return false; } };
+            var p = new Proxy(target, handler);
+            Reflect.deleteProperty(p, 'x')
+        "), JsValue::Boolean(false));
+        // A trap returning true reports success.
+        assert_eq!(eval_full("
+            var target = { x: 1 };
+            var handler = { deleteProperty: function(t, k) { return true; } };
+            var p = new Proxy(target, handler);
+            Reflect.deleteProperty(p, 'x')
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn reflect_delete_property_identifier_writeback() {
+        // Deleting via an identifier target mutates the binding in place.
+        assert_eq!(eval_full("
+            var obj = { a: 1, b: 2 };
+            Reflect.deleteProperty(obj, 'a');
+            obj.a
+        "), JsValue::Undefined);
+        // Deleting an absent key yields true (JS non-strict semantics).
+        assert_eq!(eval_full("
+            var obj = { a: 1 };
+            Reflect.deleteProperty(obj, 'missing')
+        "), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn reflect_own_keys_consults_proxy_trap() {
+        assert_eq!(eval_full("
+            var target = { a: 1, b: 2 };
+            var handler = { ownKeys: function(t) { return ['a', 'b', 'c']; } };
+            var p = new Proxy(target, handler);
+            Reflect.ownKeys(p).length
+        "), JsValue::Number(3.0));
+        assert_eq!(eval_full("
+            var target = { a: 1, b: 2 };
+            var handler = { ownKeys: function(t) { return ['a', 'b', 'c']; } };
+            var p = new Proxy(target, handler);
+            Reflect.ownKeys(p)[2]
+        "), JsValue::String("c".to_string()));
+    }
+
+    #[test]
+    fn reflect_own_keys_on_array_includes_length() {
+        // Array own keys are the indices plus `length`.
+        assert_eq!(eval_full("Reflect.ownKeys([10, 20, 30]).length"), JsValue::Number(4.0));
+        assert_eq!(eval_full("Reflect.ownKeys([10, 20, 30])[3]"), JsValue::String("length".to_string()));
     }
 
     #[test]
