@@ -1793,6 +1793,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 }
                 "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
                                 "Object.keys" | "Object.values" | "Object.entries" | "Object.fromEntries" | "Object.assign" | "Object.freeze" |
+                                "Object.is" | "Object.setPrototypeOf" |
                 "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
                 "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyNames" |
                 "Array.isArray" | "Array.from" | "Array.of" |
@@ -1811,7 +1812,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let result = call_native(&native_name, &evaluated_args)?;
                     // Object-mutating statics return the modified target; write it back to
                     // the source identifier so in-place mutation semantics hold.
-                    if matches!(native_name.as_str(), "Object.defineProperty" | "Object.defineProperties" | "Object.assign") {
+                    if matches!(native_name.as_str(), "Object.defineProperty" | "Object.defineProperties" | "Object.assign" | "Object.setPrototypeOf") {
                         if let Some(Expr::Ident(var_name)) = args.first() {
                             Scope::assign(scope, var_name, result.clone());
                         }
@@ -2678,6 +2679,29 @@ fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             JsValue::Object(target)
         }
         "Object.freeze" => args.first().cloned().unwrap_or(JsValue::Undefined),
+        "Object.is" => {
+            // SameValue: like === but NaN equals NaN and +0 differs from -0.
+            let a = args.first().cloned().unwrap_or(JsValue::Undefined);
+            let b = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+            let same = match (&a, &b) {
+                (JsValue::Number(x), JsValue::Number(y)) => {
+                    if x.is_nan() && y.is_nan() { true }
+                    else if *x == 0.0 && *y == 0.0 { x.is_sign_negative() == y.is_sign_negative() }
+                    else { x == y }
+                }
+                _ => strict_eq(&a, &b),
+            };
+            JsValue::Boolean(same)
+        }
+        "Object.setPrototypeOf" => {
+            // Sets the target's prototype and returns the (modified) target.
+            let mut target = if let Some(JsValue::Object(m)) = args.first() { m.clone() } else { return Ok(args.first().cloned().unwrap_or(JsValue::Undefined)); };
+            match args.get(1) {
+                Some(JsValue::Null) | None => { target.remove("__proto__"); }
+                Some(proto) => { target.insert("__proto__".to_string(), proto.clone()); }
+            }
+            JsValue::Object(target)
+        }
         "Object.create" => {
             let proto = args.first().cloned().unwrap_or(JsValue::Null);
             let mut obj = HashMap::new();
@@ -6128,6 +6152,17 @@ mod tests {
         assert_eq!(eval_full("Number.isInteger('4')"), JsValue::Boolean(false));
         assert_eq!(eval_full("Number.isSafeInteger(9007199254740991)"), JsValue::Boolean(true));
         assert_eq!(eval_full("Number.isSafeInteger(9007199254740993)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn object_is_and_set_prototype_of() {
+        // Object.is uses SameValue: NaN equals NaN, +0 differs from -0.
+        assert_eq!(eval_full("Object.is(NaN, NaN)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Object.is(0, -0)"), JsValue::Boolean(false));
+        assert_eq!(eval_full("Object.is(1, 1)"), JsValue::Boolean(true));
+        assert_eq!(eval_full("Object.is('a', 'b')"), JsValue::Boolean(false));
+        // setPrototypeOf installs a prototype whose members become reachable.
+        assert_eq!(eval_full("var proto = { greet: 42 }; var o = {}; Object.setPrototypeOf(o, proto); o.greet"), JsValue::Number(42.0));
     }
 
     #[test]
