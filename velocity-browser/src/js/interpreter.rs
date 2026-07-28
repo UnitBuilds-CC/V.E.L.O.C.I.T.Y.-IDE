@@ -4590,22 +4590,42 @@ fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
     }
 }
 
-/// Convert the integer part of `n` to a string in the given radix (2..=36),
-/// preserving a leading minus sign for negative values.
+/// Convert `n` to a string in the given radix (2..=36), including a fractional
+/// part (up to 20 digits) and preserving a leading minus sign for negatives.
 fn number_to_radix(n: f64, radix: u32) -> String {
     if !n.is_finite() { return format_number(n); }
     let negative = n < 0.0;
-    let mut int_part = n.abs().trunc() as u64;
-    if int_part == 0 { return "0".to_string(); }
+    let abs = n.abs();
     let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut int_part = abs.trunc() as u64;
     let mut out = Vec::new();
-    while int_part > 0 {
-        out.push(digits[(int_part % radix as u64) as usize]);
-        int_part /= radix as u64;
+    if int_part == 0 {
+        out.push(b'0');
+    } else {
+        let mut tmp = Vec::new();
+        while int_part > 0 {
+            tmp.push(digits[(int_part % radix as u64) as usize]);
+            int_part /= radix as u64;
+        }
+        tmp.reverse();
+        out.extend(tmp);
     }
-    if negative { out.push(b'-'); }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
+    let mut frac = abs.fract();
+    if frac > 0.0 {
+        out.push(b'.');
+        let mut count = 0;
+        while frac > 0.0 && count < 20 {
+            frac *= radix as f64;
+            let digit = (frac.trunc() as usize).min(radix as usize - 1);
+            out.push(digits[digit]);
+            frac -= frac.trunc();
+            count += 1;
+        }
+    }
+    let mut result = String::new();
+    if negative { result.push('-'); }
+    result.push_str(&String::from_utf8(out).unwrap_or_default());
+    result
 }
 
 /// Format `n` to `p` significant digits, trimming a trailing exponent-free form
@@ -6597,6 +6617,17 @@ mod tests {
         // includes honours a start position.
         assert_eq!(eval_full("'abcabc'.includes('ab', 1)"), JsValue::Boolean(true));
         assert_eq!(eval_full("'abcabc'.includes('ab', 4)"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn number_to_string_radix_with_fraction() {
+        // Integer radix conversion is unchanged.
+        assert_eq!(eval_full("(255).toString(16)"), JsValue::String("ff".to_string()));
+        // Fractional parts are now emitted in the target base.
+        assert_eq!(eval_full("(255.5).toString(16)"), JsValue::String("ff.8".to_string()));
+        assert_eq!(eval_full("(0.5).toString(2)"), JsValue::String("0.1".to_string()));
+        // Negative values keep a leading sign.
+        assert_eq!(eval_full("(-10).toString(2)"), JsValue::String("-1010".to_string()));
     }
 
     #[test]
