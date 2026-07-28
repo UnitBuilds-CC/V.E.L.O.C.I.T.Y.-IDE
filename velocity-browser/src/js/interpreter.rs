@@ -1849,9 +1849,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         if let JsValue::Array(arr) = &obj {
             let mut updated = arr.clone();
             let result = call_array_method(&mut updated, method, &evaluated_args, scope);
-            if let Expr::Ident(var_name) = obj_expr.as_ref() {
-                Scope::assign(scope, var_name, JsValue::Array(updated));
-            }
+            // Persist the mutated array back to its source location. Routing through
+            // assign_to_target covers plain identifiers (arr.push), member targets
+            // (obj.items.push, this.items.push) and indexed targets (rows[0].push).
+            assign_to_target(obj_expr, JsValue::Array(updated), scope);
             return result;
         }
         return call_method(&obj, method, &evaluated_args, scope);
@@ -4508,6 +4509,17 @@ mod tests {
         assert_eq!(eval_full("var arr = [1, 2, 3]; arr.reverse(); arr[0]"), JsValue::Number(3.0));
         assert_eq!(eval_full("var arr = [0, 0, 0]; arr.fill(7); arr[1]"), JsValue::Number(7.0));
         assert_eq!(eval_full("var arr = [0, 0, 0, 0]; arr.fill(7, 1, 3); arr[3]"), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn array_mutation_persists_on_member_and_this() {
+        // Mutations through a member target (obj.items.push) persist on the object.
+        assert_eq!(eval_full("var obj = { items: [1, 2] }; obj.items.push(3); obj.items.length"), JsValue::Number(3.0));
+        assert_eq!(eval_full("var obj = { items: [1, 2, 3] }; obj.items.pop(); obj.items.length"), JsValue::Number(2.0));
+        // Mutations through `this` inside a method persist on the receiver.
+        assert_eq!(eval_full("var o = { xs: [1], add: function(v) { this.xs.push(v); } }; o.add(2); o.xs.length"), JsValue::Number(2.0));
+        // Mutations through an indexed target (rows[0].push) persist.
+        assert_eq!(eval_full("var rows = [[1], [2]]; rows[0].push(9); rows[0].length"), JsValue::Number(2.0));
     }
 
     #[test]
