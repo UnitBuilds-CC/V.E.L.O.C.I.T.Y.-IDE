@@ -1645,10 +1645,10 @@ fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResu
         Token::BangEq => JsValue::Boolean(!loose_eq(&l, &r)),
         Token::EqEqEq => JsValue::Boolean(strict_eq(&l, &r)),
         Token::BangEqEq => JsValue::Boolean(!strict_eq(&l, &r)),
-        Token::Lt => JsValue::Boolean(to_number(&l) < to_number(&r)),
-        Token::Gt => JsValue::Boolean(to_number(&l) > to_number(&r)),
-        Token::LtEq => JsValue::Boolean(to_number(&l) <= to_number(&r)),
-        Token::GtEq => JsValue::Boolean(to_number(&l) >= to_number(&r)),
+        Token::Lt => JsValue::Boolean(relational_cmp(&l, &r) == Some(std::cmp::Ordering::Less)),
+        Token::Gt => JsValue::Boolean(relational_cmp(&l, &r) == Some(std::cmp::Ordering::Greater)),
+        Token::LtEq => JsValue::Boolean(matches!(relational_cmp(&l, &r), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))),
+        Token::GtEq => JsValue::Boolean(matches!(relational_cmp(&l, &r), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))),
         Token::Amp => JsValue::Number(((to_number(&l) as i32) & (to_number(&r) as i32)) as f64),
         Token::Pipe => JsValue::Number(((to_number(&l) as i32) | (to_number(&r) as i32)) as f64),
         Token::Caret => JsValue::Number(((to_number(&l) as i32) ^ (to_number(&r) as i32)) as f64),
@@ -5446,6 +5446,17 @@ pub fn typeof_str(v: &JsValue) -> &'static str {
     }
 }
 
+/// Abstract Relational Comparison: when both primitives are strings, compare
+/// lexicographically; otherwise compare numerically (NaN yields None → false).
+fn relational_cmp(l: &JsValue, r: &JsValue) -> Option<std::cmp::Ordering> {
+    if let (JsValue::String(a), JsValue::String(b)) = (l, r) {
+        return Some(a.cmp(b));
+    }
+    let ln = to_number(l);
+    let rn = to_number(r);
+    ln.partial_cmp(&rn)
+}
+
 fn loose_eq(l: &JsValue, r: &JsValue) -> bool {
     match (l, r) {
         (JsValue::Null | JsValue::Undefined, JsValue::Null | JsValue::Undefined) => true,
@@ -7339,6 +7350,19 @@ mod tests {
         assert_eq!(eval_full("+[]"), JsValue::Number(0.0));
         // Objects coerce to [object Object].
         assert_eq!(eval_full("var o = {}; o + ''"), JsValue::String("[object Object]".to_string()));
+    }
+
+    #[test]
+    fn relational_string_comparison() {
+        // When both operands are strings, compare lexicographically.
+        assert_eq!(eval_full("'a' < 'b'"), JsValue::Boolean(true));
+        assert_eq!(eval_full("'b' < 'a'"), JsValue::Boolean(false));
+        assert_eq!(eval_full("'10' < '9'"), JsValue::Boolean(true)); // lexicographic: '1' < '9'
+        assert_eq!(eval_full("'abc' <= 'abc'"), JsValue::Boolean(true));
+        assert_eq!(eval_full("'z' > 'a'"), JsValue::Boolean(true));
+        // Mixed types still compare numerically.
+        assert_eq!(eval_full("10 < 9"), JsValue::Boolean(false));
+        assert_eq!(eval_full("'10' < 9"), JsValue::Boolean(false)); // '10' -> 10, numeric
     }
 
     #[test]
