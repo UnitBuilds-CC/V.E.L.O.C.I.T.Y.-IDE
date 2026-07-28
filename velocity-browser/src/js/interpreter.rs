@@ -3993,14 +3993,70 @@ fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
     }
 }
 
-fn call_number_method(n: f64, method: &str, _args: &[JsValue]) -> JsValue {
+fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
     match method {
-        "toString" => JsValue::String(format_number(n)),
+        "toString" => {
+            // toString(radix): base 2..=36 for the integer value; base 10 keeps full formatting.
+            let radix = args.first().map(to_number).unwrap_or(10.0) as u32;
+            if radix == 10 || !(2..=36).contains(&radix) {
+                JsValue::String(format_number(n))
+            } else {
+                JsValue::String(number_to_radix(n, radix))
+            }
+        }
         "toFixed" => {
-            let digits = _args.first().map(to_number).unwrap_or(0.0) as usize;
+            let digits = args.first().map(to_number).unwrap_or(0.0) as usize;
             JsValue::String(format!("{:.prec$}", n, prec = digits))
         }
+        "toPrecision" => {
+            match args.first() {
+                Some(v) if !matches!(v, JsValue::Undefined) => {
+                    let p = (to_number(v) as usize).clamp(1, 100);
+                    JsValue::String(format_precision(n, p))
+                }
+                _ => JsValue::String(format_number(n)),
+            }
+        }
+        "toExponential" => {
+            let digits = args.first().map(to_number);
+            match digits {
+                Some(d) if d.is_finite() => JsValue::String(format!("{:.*e}", d as usize, n)),
+                _ => JsValue::String(format!("{:e}", n)),
+            }
+        }
+        "valueOf" => JsValue::Number(n),
         _ => JsValue::Undefined,
+    }
+}
+
+/// Convert the integer part of `n` to a string in the given radix (2..=36),
+/// preserving a leading minus sign for negative values.
+fn number_to_radix(n: f64, radix: u32) -> String {
+    if !n.is_finite() { return format_number(n); }
+    let negative = n < 0.0;
+    let mut int_part = n.abs().trunc() as u64;
+    if int_part == 0 { return "0".to_string(); }
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    while int_part > 0 {
+        out.push(digits[(int_part % radix as u64) as usize]);
+        int_part /= radix as u64;
+    }
+    if negative { out.push(b'-'); }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Format `n` to `p` significant digits, trimming a trailing exponent-free form
+/// where possible so small integers render cleanly.
+fn format_precision(n: f64, p: usize) -> String {
+    if n == 0.0 { return format!("{:.*}", p.saturating_sub(1), 0.0); }
+    let magnitude = n.abs().log10().floor() as i32;
+    if magnitude >= -6 && (magnitude as i64) < p as i64 {
+        let decimals = (p as i32 - 1 - magnitude).max(0) as usize;
+        format!("{:.*}", decimals, n)
+    } else {
+        format!("{:.*e}", p.saturating_sub(1), n)
     }
 }
 
@@ -4477,6 +4533,17 @@ mod tests {
         assert_eq!(eval_full("[1, 2, 3].flatMap(function(x) { return [x, x * 2]; })[3]"), JsValue::Number(4.0));
         assert_eq!(eval_full("['a', 'b', 'c'].reduceRight(function(acc, x) { return acc + x; })"), JsValue::String("cba".into()));
         assert_eq!(eval_full("[1, 2, 3].reduceRight(function(acc, x) { return acc + x; }, 10)"), JsValue::Number(16.0));
+    }
+
+    #[test]
+    fn number_to_string_radix_and_precision() {
+        assert_eq!(eval_full("(255).toString(16)"), JsValue::String("ff".into()));
+        assert_eq!(eval_full("(5).toString(2)"), JsValue::String("101".into()));
+        assert_eq!(eval_full("(255).toString()"), JsValue::String("255".into()));
+        assert_eq!(eval_full("(-10).toString(2)"), JsValue::String("-1010".into()));
+        assert_eq!(eval_full("(3.14159).toFixed(2)"), JsValue::String("3.14".into()));
+        assert_eq!(eval_full("(123.456).toPrecision(4)"), JsValue::String("123.5".into()));
+        assert_eq!(eval_full("(42).valueOf()"), JsValue::Number(42.0));
     }
 
     #[test]
