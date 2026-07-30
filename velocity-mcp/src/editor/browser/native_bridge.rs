@@ -240,8 +240,12 @@ impl NativeBrowserBridge {
         self.active_session.agent_submit(node_id)
     }
 
-    pub fn agent_scroll(&mut self, delta_x: i32, delta_y: i32) -> AgentActionResult {
+        pub fn agent_scroll(&mut self, delta_x: i32, delta_y: i32) -> AgentActionResult {
         self.active_session.agent_scroll(delta_x, delta_y)
+    }
+
+    pub fn agent_scroll_into_view(&mut self, label: &str) -> AgentActionResult {
+        self.active_session.agent_scroll_into_view(label)
     }
 
     pub fn agent_back(&mut self) -> AgentActionResult {

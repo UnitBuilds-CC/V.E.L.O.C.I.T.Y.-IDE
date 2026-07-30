@@ -64,6 +64,8 @@ pub const LAYOUT_BOUNDS: u16 = 70;
 pub const LAYOUT_VISIBILITY: u16 = 71;
 /// Display mode ("block" | "inline" | "flex" | ...).
 pub const LAYOUT_DISPLAY: u16 = 72;
+/// Whether the node's box intersects the scrolled viewport ("true" | "false").
+pub const LAYOUT_IN_VIEWPORT: u16 = 73;
 
 // ---------------------------------------------------------------------------
 // Session / document: 100..=129
@@ -86,6 +88,8 @@ pub const SESSION_INTERACTIVE_COUNT: u16 = 106;
 pub const SESSION_TEXT_LENGTH: u16 = 107;
 /// A heading on the page, formatted "h{depth}:{text}".
 pub const SESSION_HEADING: u16 = 108;
+/// Current scroll offset of the session viewport, formatted "x,y".
+pub const SESSION_SCROLL: u16 = 109;
 
 // ---------------------------------------------------------------------------
 // Network: 200..=249
@@ -126,6 +130,7 @@ pub fn predicate_name(id: u16) -> &'static str {
         LAYOUT_BOUNDS => "bounds",
         LAYOUT_VISIBILITY => "visibility",
         LAYOUT_DISPLAY => "display",
+        LAYOUT_IN_VIEWPORT => "inViewport",
         SESSION_URL => "url",
         SESSION_TITLE => "title",
         SESSION_COOKIE => "cookie",
@@ -135,6 +140,7 @@ pub fn predicate_name(id: u16) -> &'static str {
         SESSION_INTERACTIVE_COUNT => "interactive",
         SESSION_TEXT_LENGTH => "textLength",
         SESSION_HEADING => "heading",
+        SESSION_SCROLL => "scroll",
         NET_METHOD => "net.method",
         NET_STATUS => "net.status",
         OCR_TEXT => "ocr.text",
@@ -167,9 +173,10 @@ mod tests {
             AOM_SELECTOR, AOM_DISABLED,
             CANVAS_CONTEXT, CANVAS_SIZE, CANVAS_DRAW_CALLS, CANVAS_TEXT, CANVAS_SHAPE,
             CANVAS_IMAGE, CANVAS_SUMMARY, LAYOUT_BOUNDS, LAYOUT_VISIBILITY, LAYOUT_DISPLAY,
+            LAYOUT_IN_VIEWPORT,
             SESSION_URL, SESSION_TITLE, SESSION_COOKIE, SESSION_STORAGE,
             SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
-            SESSION_TEXT_LENGTH, SESSION_HEADING,
+            SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
         ];
         let mut seen = std::collections::HashSet::new();
@@ -185,9 +192,10 @@ mod tests {
             AOM_SELECTOR, AOM_DISABLED,
             CANVAS_CONTEXT, CANVAS_SIZE, CANVAS_DRAW_CALLS, CANVAS_TEXT, CANVAS_SHAPE,
             CANVAS_IMAGE, CANVAS_SUMMARY, LAYOUT_BOUNDS, LAYOUT_VISIBILITY, LAYOUT_DISPLAY,
+            LAYOUT_IN_VIEWPORT,
             SESSION_URL, SESSION_TITLE, SESSION_COOKIE, SESSION_STORAGE,
             SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
-            SESSION_TEXT_LENGTH, SESSION_HEADING,
+            SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
         ];
         let mut seen = std::collections::HashSet::new();

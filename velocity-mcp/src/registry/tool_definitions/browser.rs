@@ -957,7 +957,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_scroll".to_string(),
-            description: "Scroll the native browser viewport by a pixel delta and return the resulting NDA delta (layout facts may shift) and refreshed AOM view.".to_string(),
+            description: "Scroll the native browser viewport by a pixel delta and return the resulting NDA delta (the session scroll fact plus any nodes whose in-viewport visibility flipped) and refreshed AOM view.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -967,6 +967,19 @@ pub fn get_browser_tools() -> Vec<Tool> {
                     "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
                 },
                 "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_scroll_into_view".to_string(),
+            description: "Scroll an element into the native browser viewport by its accessible name (button/link text, label, aria-label) and return the NDA delta showing which nodes entered or left the viewport, plus the refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "label": { "type": "string", "description": "Accessible name of the element to bring into view." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "label"]
             }),
         },
         Tool {

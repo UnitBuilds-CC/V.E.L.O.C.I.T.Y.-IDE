@@ -80,10 +80,12 @@ fn predicate_name(p: u16) -> String {
         LAYOUT_BOUNDS => "bounds",
         LAYOUT_VISIBILITY => "visibility",
         LAYOUT_DISPLAY => "display",
+        LAYOUT_IN_VIEWPORT => "inViewport",
         SESSION_URL => "url",
         SESSION_TITLE => "title",
         SESSION_COOKIE => "cookie",
         SESSION_STORAGE => "storage",
+        SESSION_SCROLL => "scroll",
         other => return format!("predicate_{other}"),
     };
     s.to_string()
@@ -253,6 +255,7 @@ pub fn handle_native_tool(
         | "browser_native_select"
         | "browser_native_submit"
         | "browser_native_scroll"
+        | "browser_native_scroll_into_view"
         | "browser_native_back"
         | "browser_native_forward"
         | "browser_native_eval"
@@ -617,6 +620,10 @@ pub fn handle_native_tool(
             let dy = arguments["deltaY"].as_i64().unwrap_or(0) as i32;
             bridge.agent_scroll(dx, dy)
         }
+        "browser_native_scroll_into_view" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            bridge.agent_scroll_into_view(label)
+        }
         "browser_native_back" => bridge.agent_back(),
         "browser_native_forward" => bridge.agent_forward(),
         "browser_native_click_text" => {
@@ -976,5 +983,58 @@ mod native_label_tool_tests {
         assert_eq!(tabs[0]["active"], true);
         assert_eq!(tabs[1]["tabId"], "t19-tablist-bg");
         assert_eq!(tabs[1]["active"], false);
+    }
+
+    #[test]
+    fn scroll_tool_reports_offset_and_scroll_fact_delta() {
+        load("t20-scroll");
+        let out = call(
+            "browser_native_scroll",
+            json!({ "sessionId": "t20-scroll", "deltaY": 120 }),
+        );
+        assert!(out.contains("to offset (0, 120)"), "status carries the new offset: {out}");
+        assert!(
+            out.contains("scroll : 0,0 -> 0,120"),
+            "delta shows the scroll fact moving: {out}"
+        );
+    }
+
+    #[test]
+    fn scroll_into_view_tool_resolves_element_by_label() {
+        load("t20-inview");
+        // The default 1920x1080 viewport already shows the whole form.
+        let out = call(
+            "browser_native_scroll_into_view",
+            json!({ "sessionId": "t20-inview", "label": "Log In" }),
+        );
+        assert!(out.contains("already in view"), "{out}");
+        assert!(out.contains("URL:"), "action output includes the refreshed view: {out}");
+
+        // Shrink the viewport so the submit button starts below the fold.
+        get_or_create_native_bridge("t20-inview")
+            .lock()
+            .unwrap()
+            .active_session
+            .viewport_height = 10.0;
+        let out = call(
+            "browser_native_scroll_into_view",
+            json!({ "sessionId": "t20-inview", "label": "Log In" }),
+        );
+        assert!(out.contains("into view (offset"), "{out}");
+        assert!(
+            out.contains("inViewport"),
+            "delta shows in-viewport facts flipping: {out}"
+        );
+    }
+
+    #[test]
+    fn scroll_into_view_tool_reports_missing_label() {
+        load("t20-miss");
+        let out = call(
+            "browser_native_scroll_into_view",
+            json!({ "sessionId": "t20-miss", "label": "Nonexistent Widget" }),
+        );
+        assert!(out.contains("no element matching"), "{out}");
+        assert!(out.contains("(no state change)"), "miss produces an empty delta: {out}");
     }
 }

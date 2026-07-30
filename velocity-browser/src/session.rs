@@ -14,8 +14,8 @@ use crate::layout::{DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutE
 use crate::net::{HttpClient, InspectorServer, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport};
 use crate::nda::{NdaDocument, NdaTriple};
 use crate::predicates::{
-    AOM_FOCUSED, LAYOUT_BOUNDS, LAYOUT_VISIBILITY, SESSION_COOKIE, SESSION_STORAGE, SESSION_TITLE,
-    SESSION_URL,
+    AOM_FOCUSED, LAYOUT_BOUNDS, LAYOUT_IN_VIEWPORT, LAYOUT_VISIBILITY, SESSION_COOKIE,
+    SESSION_SCROLL, SESSION_STORAGE, SESSION_TITLE, SESSION_URL,
 };
 use crate::parser::{CssMatcher, FastCssParser, HtmlParser, StreamJitTokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -90,6 +90,14 @@ pub struct BrowserSession {
     pub canvases: Vec<CanvasElement>,
     /// Node currently holding keyboard focus — target of `agent_press`.
     pub focused_node: Option<usize>,
+    /// Horizontal scroll offset of the viewport in document coordinates.
+    pub scroll_x: f32,
+    /// Vertical scroll offset of the viewport in document coordinates.
+    pub scroll_y: f32,
+    /// Viewport width used for in-viewport visibility facts.
+    pub viewport_width: f32,
+    /// Viewport height used for in-viewport visibility facts.
+    pub viewport_height: f32,
 }
 
 impl BrowserSession {
@@ -145,6 +153,11 @@ impl BrowserSession {
             frames: Vec::new(),
             canvases: Vec::new(),
             focused_node: None,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            // Matches DeviceProfile::velocity_native()'s 1920x1080 viewport.
+            viewport_width: 1920.0,
+            viewport_height: 1080.0,
         }
     }
 
@@ -433,8 +446,16 @@ impl BrowserSession {
         Err("No DOM tree loaded in session".into())
     }
 
+    /// Scroll the viewport by a pixel delta. Offsets are clamped at the
+    /// document origin; the resulting position feeds the in-viewport facts
+    /// emitted by [`capture_state_document`](Self::capture_state_document).
     pub fn scroll(&mut self, delta_x: i32, delta_y: i32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.trace_collector.record_console("info", &format!("Scrolled window by ({}, {})", delta_x, delta_y));
+        self.scroll_x = (self.scroll_x + delta_x as f32).max(0.0);
+        self.scroll_y = (self.scroll_y + delta_y as f32).max(0.0);
+        self.trace_collector.record_console(
+            "info",
+            &format!("Scrolled window to ({}, {})", self.scroll_x, self.scroll_y),
+        );
         Ok(())
     }
 
@@ -640,13 +661,64 @@ impl BrowserSession {
         AgentActionResult::new(status, diff(&before, &after))
     }
 
-    /// Scroll the viewport and report the NDA delta (layout geometry facts may
-    /// shift as a result).
+    /// Scroll the viewport and report the NDA delta: the session scroll fact
+    /// always moves, and nodes crossing the viewport edge flip their
+    /// in-viewport facts.
     pub fn agent_scroll(&mut self, delta_x: i32, delta_y: i32) -> AgentActionResult {
         let before = self.capture_state_document();
         let _ = self.scroll(delta_x, delta_y);
         let after = self.capture_state_document();
-        AgentActionResult::new(format!("scrolled ({}, {})", delta_x, delta_y), diff(&before, &after))
+        AgentActionResult::new(
+            format!(
+                "scrolled ({}, {}) to offset ({}, {})",
+                delta_x, delta_y, self.scroll_x, self.scroll_y
+            ),
+            diff(&before, &after),
+        )
+    }
+
+    /// Scroll an element into view by accessible name: resolve it via the AOM,
+    /// find its layout box, and move the viewport so the box is visible. The
+    /// delta shows exactly which nodes entered or left the viewport.
+    pub fn agent_scroll_into_view(&mut self, query: &str) -> AgentActionResult {
+        let Some(node_id) = self.resolve_node_by_name(query, |_| true) else {
+            return AgentActionResult::new(
+                format!("no element matching '{}'", query),
+                NdaDelta::default(),
+            );
+        };
+        let target = self.dom_tree.as_ref().and_then(|tree| {
+            let layout_engine = LayoutEngine2D::new(self.cascader.clone());
+            layout_engine
+                .build_layout_tree(tree)
+                .into_iter()
+                .find(|b| b.node_id == node_id)
+        });
+        let Some(b) = target else {
+            return AgentActionResult::new(
+                format!("node_{} has no layout box", node_id),
+                NdaDelta::default(),
+            );
+        };
+        let before = self.capture_state_document();
+        let status = if self.box_in_viewport(&b) {
+            format!("node_{} already in view", node_id)
+        } else {
+            // Align the box's top-left corner with the viewport origin,
+            // clamped at the document origin — the scrollIntoView contract.
+            self.scroll_x = b.x.max(0.0);
+            self.scroll_y = b.y.max(0.0);
+            self.trace_collector.record_console(
+                "info",
+                &format!("Scrolled node_{} into view at ({}, {})", node_id, self.scroll_x, self.scroll_y),
+            );
+            format!(
+                "scrolled node_{} into view (offset {}, {})",
+                node_id, self.scroll_x, self.scroll_y
+            )
+        };
+        let after = self.capture_state_document();
+        AgentActionResult::new(status, diff(&before, &after))
     }
 
     /// Navigate to a URL (fetch + load) and report the NDA delta between the
@@ -1214,6 +1286,16 @@ impl BrowserSession {
         encoder.triples
     }
 
+    /// Whether a layout box intersects the scrolled viewport rectangle.
+    /// Hidden boxes are never "in viewport" regardless of geometry.
+    fn box_in_viewport(&self, b: &LayoutBox) -> bool {
+        b.is_visible
+            && b.x < self.scroll_x + self.viewport_width
+            && b.x + b.width > self.scroll_x
+            && b.y < self.scroll_y + self.viewport_height
+            && b.y + b.height > self.scroll_y
+    }
+
     /// Capture session state as a lossless, agent-readable [`NdaDocument`].
     ///
     /// Unlike [`capture_state_nda`](Self::capture_state_nda) (which hashes its
@@ -1225,6 +1307,11 @@ impl BrowserSession {
         let mut doc = NdaDocument::new();
         doc.push_str(&self.session_id, SESSION_URL, &self.current_url);
         doc.push_str(&self.session_id, SESSION_TITLE, &self.page_title);
+        doc.push_str(
+            &self.session_id,
+            SESSION_SCROLL,
+            &format!("{},{}", self.scroll_x, self.scroll_y),
+        );
 
         for cookie in &self.cookies {
             doc.push_str(&cookie.name, SESSION_COOKIE, &cookie.value);
@@ -1238,7 +1325,8 @@ impl BrowserSession {
             let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
             doc.merge(&AgenticAomTree::to_nda_document(&aom_nodes));
 
-            // Layout geometry as readable literals ("x,y,w,h" + visibility).
+            // Layout geometry as readable literals ("x,y,w,h" + visibility),
+            // plus whether each box intersects the scrolled viewport.
             let layout_engine = LayoutEngine2D::new(self.cascader.clone());
             let boxes = layout_engine.build_layout_tree(tree);
             for b in &boxes {
@@ -1249,6 +1337,11 @@ impl BrowserSession {
                     &subject,
                     LAYOUT_VISIBILITY,
                     if b.is_visible { "visible" } else { "hidden" },
+                );
+                doc.push_str(
+                    &subject,
+                    LAYOUT_IN_VIEWPORT,
+                    if self.box_in_viewport(b) { "true" } else { "false" },
                 );
             }
         }
@@ -1650,5 +1743,111 @@ mod agent_action_tests {
         let result = session.agent_select_by_label("Country", "Mars");
         assert!(result.status.contains("no option matching"), "got {}", result.status);
         assert!(result.delta.is_empty());
+    }
+
+    #[test]
+    fn agent_scroll_moves_offset_and_flips_in_viewport_facts() {
+        use crate::predicates::{LAYOUT_IN_VIEWPORT, SESSION_SCROLL};
+        let mut session = BrowserSession::new("s22".to_string());
+        session.load_html("about:test", "<p>Top</p><p>Bottom far below</p>");
+        // Shrink the viewport so only the first paragraph starts in view.
+        session.viewport_height = 10.0;
+        let second_p = session
+            .dom_tree
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|n| n.tag_name == "p")
+            .nth(1)
+            .expect("second paragraph")
+            .id;
+
+        let result = session.agent_scroll(0, 16);
+
+        assert!(
+            result.status.contains("to offset (0, 16)"),
+            "got {}",
+            result.status
+        );
+        // The session scroll fact always records the new offset...
+        assert!(
+            result
+                .delta
+                .changed
+                .iter()
+                .any(|c| c.predicate == SESSION_SCROLL && c.old == "0,0" && c.new == "0,16"),
+            "expected scroll fact change, got {:?}",
+            result.delta
+        );
+        // ...and the below-the-fold paragraph scrolled into the viewport.
+        assert!(
+            result.delta.changed.iter().any(|c| c.subject == format!("node_{}", second_p)
+                && c.predicate == LAYOUT_IN_VIEWPORT
+                && c.old == "false"
+                && c.new == "true"),
+            "expected node_{} to enter the viewport, got {:?}",
+            second_p,
+            result.delta
+        );
+    }
+
+    #[test]
+    fn agent_scroll_clamps_at_document_origin() {
+        let mut session = BrowserSession::new("s23".to_string());
+        session.load_html("about:test", "<p>Only</p>");
+        let result = session.agent_scroll(-50, -50);
+        assert!(
+            result.status.contains("to offset (0, 0)"),
+            "got {}",
+            result.status
+        );
+        assert!(result.delta.is_empty(), "no facts move: {:?}", result.delta);
+    }
+
+    #[test]
+    fn agent_scroll_into_view_reaches_offscreen_element() {
+        let mut session = BrowserSession::new("s24".to_string());
+        session.load_html("about:test", "<p>filler text above</p><button>Go</button>");
+        session.viewport_height = 10.0;
+
+        let result = session.agent_scroll_into_view("Go");
+        assert!(
+            result.status.contains("into view"),
+            "got {}",
+            result.status
+        );
+        assert!(session.scroll_y > 0.0, "viewport moved down: {}", session.scroll_y);
+
+        // Second call is a no-op: the element is already visible.
+        let again = session.agent_scroll_into_view("Go");
+        assert!(
+            again.status.contains("already in view"),
+            "got {}",
+            again.status
+        );
+        assert!(again.delta.is_empty());
+    }
+
+    #[test]
+    fn agent_scroll_into_view_reports_missing_element() {
+        let mut session = BrowserSession::new("s25".to_string());
+        session.load_html("about:test", "<button>Go</button>");
+        let result = session.agent_scroll_into_view("Nowhere");
+        assert!(
+            result.status.contains("no element matching"),
+            "got {}",
+            result.status
+        );
+        assert!(result.delta.is_empty());
+    }
+
+    #[test]
+    fn observe_reports_scroll_and_in_viewport_facts_by_name() {
+        let mut session = BrowserSession::new("s26".to_string());
+        session.load_html("about:test", "<button>Go</button>");
+        let text = session.agent_observe();
+        assert!(text.contains("|scroll|0,0"), "got: {}", text);
+        assert!(text.contains("|inViewport|true"), "got: {}", text);
     }
 }
