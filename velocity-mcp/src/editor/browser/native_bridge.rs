@@ -3,8 +3,10 @@
 use velocity_browser::{
     AgentActionResult, AgenticAomTree, BrowserSession, NdaTriple, SwarmSessionOrchestrator,
 };
+use velocity_browser::agentic::outcome_scorer::extract_domain;
 use velocity_browser::agentic::{
-    ActionKind, ActionOutcome, OutcomeScorer, OutcomeSignals, Reflection, ReflectionEngine,
+    ActionKind, ActionOutcome, AdaptiveConfidence, OutcomeScorer, OutcomeSignals, Reflection,
+    ReflectionEngine,
 };
 use velocity_browser::screencast::ScreencastRecorder;
 use velocity_browser::vector_memory::{SiteVectorStore, VectorMemoryNode};
@@ -53,6 +55,9 @@ pub struct NativeBrowserBridge {
     /// Turns the outcome history into failure-pattern lessons
     /// (repeated failures, navigation loops, blocked clicks).
     pub reflector: ReflectionEngine,
+    /// Learned per-(role, action, domain) confidence fed by outcome scores;
+    /// powers "what should I try next" predictions.
+    pub confidence: AdaptiveConfidence,
 }
 
 static NATIVE_BRIDGES: LazyLock<Arc<Mutex<HashMap<String, Arc<Mutex<NativeBrowserBridge>>>>>> =
@@ -112,6 +117,7 @@ impl NativeBrowserBridge {
             checkpoints: HashMap::new(),
             scorer: OutcomeScorer::new(),
             reflector: ReflectionEngine::new(),
+            confidence: AdaptiveConfidence::new(),
         }
     }
 
@@ -719,11 +725,15 @@ impl NativeBrowserBridge {
             agent_confidence: 0.0,
         };
         let score = self.scorer.score(&kind, &signals);
+        let page_url = self.active_session.current_url.clone();
+        // Feed the learned confidence store so predict_learned improves with
+        // every observed outcome on this domain.
+        self.confidence.record(role, kind.label(), extract_domain(&page_url), score);
         self.scorer.record(ActionOutcome {
             action_kind: kind,
             target_selector: target.to_string(),
             target_role: role.to_string(),
-            page_url: self.active_session.current_url.clone(),
+            page_url,
             score,
             signals,
             timestamp_ms: std::time::SystemTime::now()
@@ -736,6 +746,25 @@ impl NativeBrowserBridge {
     /// Failure-pattern lessons derived from the recorded outcome history.
     pub fn reflect(&mut self) -> Vec<Reflection> {
         self.reflector.reflect(&self.scorer)
+    }
+
+    /// Suggest the next best action on the current page using the learned
+    /// per-domain confidence instead of the legacy hardcoded heuristic.
+    pub fn predict_learned(&self) -> Option<velocity_browser::PredictedActionTarget> {
+        let tree = self.active_session.dom_tree.as_ref()?;
+        let domain = extract_domain(&self.active_session.current_url);
+        velocity_browser::ActionPredictorEngine::predict_with_confidence(
+            tree,
+            &self.confidence,
+            domain,
+        )
+    }
+
+    /// Learned `(role, action, confidence, observations)` patterns for the
+    /// current domain, best first.
+    pub fn confidence_report(&self) -> Vec<(String, String, f64, u32)> {
+        self.confidence
+            .domain_report(extract_domain(&self.active_session.current_url))
     }
 
     /// Hover an element by node id.

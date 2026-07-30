@@ -270,7 +270,7 @@ impl OutcomeScorer {
 }
 
 /// Extract domain from a URL string.
-fn extract_domain(url: &str) -> &str {
+pub fn extract_domain(url: &str) -> &str {
     // Handle non-http schemes like about:blank, data:, javascript:
     if !url.contains("://") {
         return url;

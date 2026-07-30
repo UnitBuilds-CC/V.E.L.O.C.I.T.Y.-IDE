@@ -1118,6 +1118,18 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_predict".to_string(),
+            description: "Suggest the next best action on the current page using learned per-domain confidence: outcome scores from past native actions teach which (element role, action) combinations work on this domain, and the highest-confidence actionable element is proposed. Also reports the learned patterns for the domain.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({

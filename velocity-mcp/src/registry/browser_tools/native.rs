@@ -330,6 +330,7 @@ pub fn handle_native_tool(
         | "browser_native_history"
         | "browser_native_checkpoint"
         | "browser_native_reflect"
+        | "browser_native_predict"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -739,6 +740,66 @@ pub fn handle_native_tool(
         if !context.is_empty() {
             out.push_str("---\n");
             out.push_str(&context);
+        }
+        return Ok(Some(out));
+    }
+
+    // "What should I try next?" — the learned per-domain confidence ranks the
+    // page's actionable elements; before any history exists it falls back to
+    // a conservative default instead of a hardcoded optimism.
+    if name == "browser_native_predict" {
+        let suggestion = bridge.predict_learned();
+        let patterns = bridge.confidence_report();
+        let view = bridge.current_view();
+        // Enrich the node_N selector with the element's role and name.
+        let detail = suggestion
+            .as_ref()
+            .and_then(|p| view.elements.iter().find(|e| e.aom_id == p.target_selector));
+        if compact {
+            let sugg_json = suggestion.as_ref().map(|p| {
+                serde_json::json!({
+                    "target": p.target_selector,
+                    "action": p.action_type,
+                    "confidence": ((p.confidence_score as f64) * 100.0).round() / 100.0,
+                    "role": detail.map(|e| e.role.clone()),
+                    "name": detail.map(|e| e.name.clone()),
+                })
+            });
+            let pattern_json: Vec<serde_json::Value> = patterns
+                .iter()
+                .map(|(role, action, conf, obs)| {
+                    serde_json::json!({
+                        "role": role,
+                        "action": action,
+                        "confidence": (conf * 100.0).round() / 100.0,
+                        "observations": obs,
+                    })
+                })
+                .collect();
+            return Ok(Some(
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "suggestion": sugg_json,
+                    "patterns": pattern_json,
+                }))
+                .map_err(|e| format!("serialise predict report: {e}"))?,
+            ));
+        }
+        let mut out = match (&suggestion, detail) {
+            (Some(p), Some(e)) => format!(
+                "suggested next action: {} {} [{}] \"{}\" (confidence {:.2})\n",
+                p.action_type, p.target_selector, e.role, e.name, p.confidence_score
+            ),
+            (Some(p), None) => format!(
+                "suggested next action: {} {} (confidence {:.2})\n",
+                p.action_type, p.target_selector, p.confidence_score
+            ),
+            (None, _) => "(no actionable elements to predict from)\n".to_string(),
+        };
+        if !patterns.is_empty() {
+            out.push_str("learned patterns on this domain:\n");
+            for (role, action, conf, obs) in &patterns {
+                out.push_str(&format!("  {action} on {role}: {conf:.2} ({obs} obs)\n"));
+            }
         }
         return Ok(Some(out));
     }
@@ -2120,5 +2181,46 @@ mod native_label_tool_tests {
         assert_eq!(fill["error"], false);
         assert!(fill["score"].as_f64().expect("score") > 0.5, "{compact}");
         assert_eq!(outcomes[0]["error"], true, "{compact}");
+    }
+
+    #[test]
+    fn predict_tool_ranks_targets_by_learned_confidence() {
+        load("t30-predict");
+
+        // No history yet: prediction falls back to the conservative default
+        // and there are no learned patterns to report.
+        let out = call("browser_native_predict", json!({ "sessionId": "t30-predict" }));
+        assert!(out.contains("suggested next action:"), "{out}");
+        assert!(out.contains("0.70"), "default confidence before learning: {out}");
+        assert!(!out.contains("learned patterns"), "{out}");
+
+        // Three observed successful fills teach the store that textboxes work
+        // on this domain (min_observations = 3 before learned scores count).
+        for text in ["a@x.example", "b@x.example", "c@x.example"] {
+            call(
+                "browser_native_fill_label",
+                json!({ "sessionId": "t30-predict", "label": "Email", "text": text }),
+            );
+        }
+        let out = call("browser_native_predict", json!({ "sessionId": "t30-predict" }));
+        assert!(out.contains("suggested next action: fill"), "{out}");
+        assert!(out.contains("[textbox]"), "{out}");
+        assert!(out.contains("learned patterns on this domain:"), "{out}");
+        assert!(out.contains("fill on textbox:"), "{out}");
+        assert!(out.contains("(3 obs)"), "{out}");
+
+        let compact = call(
+            "browser_native_predict",
+            json!({ "sessionId": "t30-predict", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact predict is valid JSON");
+        assert_eq!(report["suggestion"]["action"], "fill", "{compact}");
+        assert!(
+            report["suggestion"]["confidence"].as_f64().expect("confidence") > 0.8,
+            "{compact}"
+        );
+        assert_eq!(report["patterns"][0]["role"], "textbox", "{compact}");
+        assert_eq!(report["patterns"][0]["observations"], 3, "{compact}");
     }
 }
