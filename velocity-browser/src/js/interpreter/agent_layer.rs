@@ -1018,12 +1018,12 @@ pub(super) fn resolve_click_target(query: &str) -> Option<usize> {
 }
 
 /// Roles that accept typed text/values.
-fn is_fillable_role(role: &str) -> bool {
+pub(super) fn is_fillable_role(role: &str) -> bool {
     matches!(role, "textbox" | "searchbox" | "spinbutton" | "combobox" | "slider")
 }
 
 /// Roles that toggle a checked state.
-fn is_checkable_role(role: &str) -> bool {
+pub(super) fn is_checkable_role(role: &str) -> bool {
     matches!(role, "checkbox" | "radio" | "switch")
 }
 

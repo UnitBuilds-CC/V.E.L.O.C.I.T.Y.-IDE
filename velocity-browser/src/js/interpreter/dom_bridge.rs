@@ -494,6 +494,90 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             }
             JsValue::String(out)
         }
+        "fillFormByLabel" => {
+            // Batch fill by accessible name: {label: value, ...} — the
+            // label-based sibling of fillForm (which matches name/id).
+            // Boolean values route to checkables, everything else to text
+            // controls. Reports what could not be matched so the agent can
+            // recover instead of guessing.
+            let mut filled = 0u32;
+            let mut missed = Vec::new();
+            if let Some(JsValue::Object(fields)) = args.first() {
+                let mut entries: Vec<_> = fields.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (label, value) in entries {
+                    let sub_method = if matches!(value, JsValue::Boolean(_)) { "checkByLabel" } else { "fillByLabel" };
+                    let ok = call_document_method(sub_method, &[JsValue::String(label.clone()), value.clone()]);
+                    if ok == JsValue::Boolean(true) {
+                        filled += 1;
+                    } else {
+                        missed.push(JsValue::String(label.clone()));
+                    }
+                }
+            }
+            let mut obj = HashMap::new();
+            obj.insert("filled".to_string(), JsValue::Number(filled as f64));
+            obj.insert("missed".to_string(), JsValue::Array(missed));
+            JsValue::Object(obj)
+        }
+        "readForm" => {
+            // Snapshot every form control the agent could act on.
+            let controls: Vec<JsValue> = super::agent_layer::get_interactive_elements()
+                .into_iter()
+                .filter(|el| super::agent_layer::is_fillable_role(el.role) || super::agent_layer::is_checkable_role(el.role))
+                .map(|el| {
+                    let checked = DOM_NODES.with(|nodes| {
+                        nodes.borrow().get(el.node_id).map(|n| n.attributes.contains_key("checked")).unwrap_or(false)
+                    });
+                    let mut obj = HashMap::new();
+                    obj.insert("label".to_string(), JsValue::String(el.name));
+                    obj.insert("role".to_string(), JsValue::String(el.role.to_string()));
+                    obj.insert("value".to_string(), JsValue::String(el.value));
+                    obj.insert("checked".to_string(), JsValue::Boolean(checked));
+                    obj.insert("disabled".to_string(), JsValue::Boolean(el.disabled));
+                    JsValue::Object(obj)
+                })
+                .collect();
+            JsValue::Array(controls)
+        }
+        "readFormText" => {
+            // Token-cheap rendering: one "label [role] = value" line per control.
+            let mut out = String::new();
+            for el in super::agent_layer::get_interactive_elements() {
+                let fillable = super::agent_layer::is_fillable_role(el.role);
+                let checkable = super::agent_layer::is_checkable_role(el.role);
+                if !fillable && !checkable { continue; }
+                let state = if checkable {
+                    let checked = DOM_NODES.with(|nodes| {
+                        nodes.borrow().get(el.node_id).map(|n| n.attributes.contains_key("checked")).unwrap_or(false)
+                    });
+                    if checked { "checked".to_string() } else { "unchecked".to_string() }
+                } else {
+                    el.value.clone()
+                };
+                out.push_str(&el.name);
+                out.push_str(" [");
+                out.push_str(el.role);
+                out.push_str("] = ");
+                out.push_str(&state);
+                out.push('\n');
+            }
+            JsValue::String(out)
+        }
+        "submitForm" => {
+            // Fire the submit event on the first <form> — listeners see it
+            // exactly as if the user pressed Enter.
+            let form_id = DOM_NODES.with(|nodes| {
+                nodes.borrow().iter().position(|n| n.node_type == 1 && n.tag == "form")
+            });
+            match form_id {
+                Some(id) => {
+                    fire_event(id, "submit");
+                    JsValue::Boolean(true)
+                }
+                None => JsValue::Boolean(false),
+            }
+        }
         "fillByLabel" => {
             // Type into a form control found by its accessible name — the
             // agent's "fill the Email field" primitive. Fires input + change

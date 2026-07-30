@@ -112,6 +112,87 @@ fn check_by_label_ignores_text_inputs() {
     assert_eq!(ok, JsValue::Boolean(false));
 }
 
+// ── Batch Form Primitives ────────────────────────────────────────────────────
+
+#[test]
+fn fill_form_by_label_fills_multiple_fields() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Email\"><input placeholder=\"City\">'");
+    let filled = eval_full("document.fillFormByLabel({Email: 'a@b.com', City: 'Lisbon'}).filled");
+    assert_eq!(filled, JsValue::Number(2.0));
+    let value = eval_full("document.querySelectorAll('input')[1].value");
+    assert_eq!(value, JsValue::String("Lisbon".to_string()));
+}
+
+#[test]
+fn fill_form_by_label_routes_booleans_to_checkboxes() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Email\"><input type=\"checkbox\" aria-label=\"Terms\">'");
+    let filled = eval_full("document.fillFormByLabel({Email: 'x@y.z', Terms: true}).filled");
+    assert_eq!(filled, JsValue::Number(2.0));
+    let checked = eval_full("document.querySelectorAll('input')[1].hasAttribute('checked')");
+    assert_eq!(checked, JsValue::Boolean(true));
+}
+
+#[test]
+fn fill_form_by_label_reports_missed_labels() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Email\">'");
+    let missed = eval_full("document.fillFormByLabel({Email: 'a', Phone: 'b'}).missed");
+    assert_eq!(missed, JsValue::Array(vec![JsValue::String("Phone".to_string())]));
+}
+
+#[test]
+fn read_form_lists_controls_with_state() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Email\" value=\"a@b.com\"><input type=\"checkbox\" aria-label=\"Terms\" checked>'");
+    let count = eval_full("document.readForm().length");
+    assert_eq!(count, JsValue::Number(2.0));
+    let labels = eval_full("document.readForm().map(function(c) { return c.label; }).sort().join(',')");
+    assert_eq!(labels, JsValue::String("Email,Terms".to_string()));
+}
+
+#[test]
+fn read_form_text_is_token_cheap() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Email\" value=\"a@b.com\"><input type=\"checkbox\" aria-label=\"Terms\" checked>'");
+    let text = eval_full("document.readFormText()");
+    if let JsValue::String(s) = &text {
+        assert!(s.contains("Email [textbox] = a@b.com"), "got: {}", s);
+        assert!(s.contains("Terms [checkbox] = checked"), "got: {}", s);
+    } else {
+        panic!("Expected string form text");
+    }
+}
+
+#[test]
+fn read_form_reflects_fill_by_label() {
+    eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        document.fillByLabel('Email', 'new@val.ue');
+    ");
+    let text = eval_full("document.readFormText()");
+    if let JsValue::String(s) = &text {
+        assert!(s.contains("Email [textbox] = new@val.ue"), "got: {}", s);
+    } else {
+        panic!("Expected string form text");
+    }
+}
+
+#[test]
+fn submit_form_fires_submit_listener() {
+    let result = eval_full("
+        document.body.innerHTML = '<form><input placeholder=\"Q\"></form>';
+        var submitted = false;
+        document.querySelector('form').addEventListener('submit', function() { submitted = true; });
+        document.submitForm();
+        submitted
+    ");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn submit_form_without_form_returns_false() {
+    eval_full("document.body.innerHTML = '<p>No form here</p>'");
+    let ok = eval_full("document.submitForm()");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
 #[test]
 fn interactive_element_has_role() {
     eval_full("document.body.innerHTML = '<button>Submit</button>'");
