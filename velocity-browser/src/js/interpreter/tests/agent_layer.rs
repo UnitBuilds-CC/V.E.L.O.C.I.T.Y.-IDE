@@ -261,3 +261,256 @@ fn agent_workflow_summarize_then_interact() {
         panic!("Expected object");
     }
 }
+
+// ── Table Extraction ─────────────────────────────────────────────────────────
+
+#[test]
+fn extract_tables_finds_table() {
+    eval_full("document.body.innerHTML = '<table><tr><th>Name</th><th>Age</th></tr><tr><td>Alice</td><td>30</td></tr></table>'");
+    let result = eval_full("document.extractTables().length");
+    assert_eq!(to_number(&result), 1.0);
+}
+
+#[test]
+fn extract_tables_headers() {
+    eval_full("document.body.innerHTML = '<table><tr><th>Name</th><th>Age</th></tr><tr><td>Alice</td><td>30</td></tr></table>'");
+    let result = eval_full("document.extractTables()[0].headers[0]");
+    assert_eq!(result, JsValue::String("Name".to_string()));
+}
+
+#[test]
+fn extract_tables_rows() {
+    eval_full("document.body.innerHTML = '<table><tr><th>Name</th></tr><tr><td>Alice</td></tr><tr><td>Bob</td></tr></table>'");
+    let result = eval_full("document.extractTables()[0].rows.length");
+    assert_eq!(to_number(&result), 2.0);
+}
+
+#[test]
+fn extract_tables_cell_value() {
+    eval_full("document.body.innerHTML = '<table><tr><td>CellValue</td></tr></table>'");
+    let result = eval_full("document.extractTables()[0].rows[0][0]");
+    assert_eq!(result, JsValue::String("CellValue".to_string()));
+}
+
+#[test]
+fn extract_tables_text_is_markdown() {
+    eval_full("document.body.innerHTML = '<table><tr><th>H</th></tr><tr><td>V</td></tr></table>'");
+    let result = eval_full("document.extractTablesText()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("| H |"), "got: {}", s);
+        assert!(s.contains("| --- |"), "got: {}", s);
+        assert!(s.contains("| V |"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn extract_tables_empty_page() {
+    eval_full("document.body.innerHTML = '<p>No tables here</p>'");
+    let result = eval_full("document.extractTables().length");
+    assert_eq!(to_number(&result), 0.0);
+}
+
+// ── Page-to-Markdown ─────────────────────────────────────────────────────────
+
+#[test]
+fn to_markdown_returns_string() {
+    eval_full("document.body.innerHTML = '<p>Hello world content</p>'");
+    let result = eval_full("typeof document.toMarkdown()");
+    assert_eq!(result, JsValue::String("string".to_string()));
+}
+
+#[test]
+fn to_markdown_headings() {
+    eval_full("document.body.innerHTML = '<h2>Section Title</h2><p>Body text here</p>'");
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("## Section Title"), "got: {}", s);
+        assert!(s.contains("Body text here"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn to_markdown_links() {
+    eval_full("document.body.innerHTML = '<p>See <a href=\"/docs\">the docs</a> now</p>'");
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("[the docs](/docs)"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn to_markdown_lists() {
+    eval_full("document.body.innerHTML = '<ul><li>First item</li><li>Second item</li></ul>'");
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("- First item"), "got: {}", s);
+        assert!(s.contains("- Second item"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn to_markdown_ordered_lists() {
+    eval_full("document.body.innerHTML = '<ol><li>Step one</li><li>Step two</li></ol>'");
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("1. Step one"), "got: {}", s);
+        assert!(s.contains("2. Step two"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn to_markdown_skips_boilerplate() {
+    eval_full("document.body.innerHTML = '<nav>Navigation junk</nav><p>Real content stays</p>'");
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(!s.contains("Navigation junk"), "got: {}", s);
+        assert!(s.contains("Real content stays"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn to_markdown_bold_and_code() {
+    eval_full("document.body.innerHTML = '<p>Use <strong>bold</strong> and <code>inline()</code> text</p>'");
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("**bold**"), "got: {}", s);
+        assert!(s.contains("`inline()`"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn to_markdown_includes_title() {
+    eval_full(r#"
+        document.head.innerHTML = '<title>Doc Title</title>';
+        document.body.innerHTML = '<p>Some content</p>';
+    "#);
+    let result = eval_full("document.toMarkdown()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("# Doc Title"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+// ── Bulk Form Fill ───────────────────────────────────────────────────────────
+
+#[test]
+fn fill_form_by_name() {
+    eval_full("document.body.innerHTML = '<input name=\"email\">'");
+    let result = eval_full("document.fillForm({email: 'a@b.com'})[0].ok");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn fill_form_sets_value() {
+    eval_full(r#"
+        document.body.innerHTML = '<input name="email">';
+        document.fillForm({email: 'a@b.com'});
+    "#);
+    let result = eval_full("document.getInteractiveElements()[0].value");
+    assert_eq!(result, JsValue::String("a@b.com".to_string()));
+}
+
+#[test]
+fn fill_form_by_id() {
+    eval_full("document.body.innerHTML = '<input id=\"user-field\">'");
+    let result = eval_full("document.fillForm({'user-field': 'bob'})[0].ok");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn fill_form_missing_field() {
+    eval_full("document.body.innerHTML = '<input name=\"email\">'");
+    let result = eval_full("document.fillForm({nonexistent: 'x'})[0].ok");
+    assert_eq!(result, JsValue::Boolean(false));
+}
+
+#[test]
+fn fill_form_missing_field_reason() {
+    eval_full("document.body.innerHTML = '<p>no inputs</p>'");
+    let result = eval_full("document.fillForm({email: 'x'})[0].reason");
+    assert_eq!(result, JsValue::String("not found".to_string()));
+}
+
+#[test]
+fn fill_form_disabled_field() {
+    eval_full("document.body.innerHTML = '<input name=\"email\" disabled>'");
+    let result = eval_full("document.fillForm({email: 'x'})[0].reason");
+    assert_eq!(result, JsValue::String("disabled".to_string()));
+}
+
+#[test]
+fn fill_form_checkbox() {
+    eval_full(r#"
+        document.body.innerHTML = '<input type="checkbox" name="agree">';
+        document.fillForm({agree: 'true'});
+    "#);
+    let result = eval_full("document.querySelector('input').hasAttribute('checked')");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn fill_form_multiple_fields() {
+    eval_full("document.body.innerHTML = '<input name=\"user\"><input name=\"pass\">'");
+    let result = eval_full("document.fillForm({user: 'alice', pass: 'secret'}).length");
+    assert_eq!(to_number(&result), 2.0);
+}
+
+// ── Link Map ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn get_links_finds_links() {
+    eval_full("document.body.innerHTML = '<a href=\"/one\">One</a><a href=\"/two\">Two</a>'");
+    let result = eval_full("document.getLinks().length");
+    assert_eq!(to_number(&result), 2.0);
+}
+
+#[test]
+fn get_links_has_text_and_href() {
+    eval_full("document.body.innerHTML = '<a href=\"/about\">About Us</a>'");
+    let text = eval_full("document.getLinks()[0].text");
+    let href = eval_full("document.getLinks()[0].href");
+    assert_eq!(text, JsValue::String("About Us".to_string()));
+    assert_eq!(href, JsValue::String("/about".to_string()));
+}
+
+#[test]
+fn get_links_deduplicates() {
+    eval_full("document.body.innerHTML = '<a href=\"/same\">A</a><a href=\"/same\">B</a>'");
+    let result = eval_full("document.getLinks().length");
+    assert_eq!(to_number(&result), 1.0);
+}
+
+#[test]
+fn get_links_skips_fragments_and_js() {
+    eval_full("document.body.innerHTML = '<a href=\"#top\">Top</a><a href=\"javascript:void(0)\">JS</a><a href=\"/real\">Real</a>'");
+    let result = eval_full("document.getLinks().length");
+    assert_eq!(to_number(&result), 1.0);
+}
+
+#[test]
+fn get_links_text_format() {
+    eval_full("document.body.innerHTML = '<a href=\"/page\">My Page</a>'");
+    let result = eval_full("document.getLinksText()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("My Page"), "got: {}", s);
+        assert!(s.contains("/page"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+

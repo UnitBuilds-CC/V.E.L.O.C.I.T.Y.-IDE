@@ -10,6 +10,10 @@
 //! - **Content extraction** — strip nav/footer/ads → main text only
 //! - **Page summary** — title, headings, stats in a few hundred bytes
 //! - **DOM diff** — snapshot comparison for wait-for-settlement
+//! - **Table extraction** — tables → structured headers + rows
+//! - **Page-to-Markdown** — densest page representation for LLMs
+//! - **Bulk form fill** — one call fills N fields
+//! - **Link map** — deduplicated navigation targets
 
 use super::dom_bridge::{DomElementSnapshot, snapshot_dom};
 
@@ -529,3 +533,398 @@ fn simple_hash(s: &str) -> u64 {
     }
     hash
 }
+
+// ── Table Extraction ─────────────────────────────────────────────────────────
+
+/// A table extracted as structured data — headers + rows, no markup.
+#[derive(Debug, Clone, Default)]
+pub(super) struct TableData {
+    pub caption: String,
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// Extract all tables in the DOM as structured data.
+///
+/// Raw HTML tables cost thousands of tokens; this yields headers + rows only.
+pub(super) fn extract_tables() -> Vec<TableData> {
+    let (snaps, _root) = snapshot_dom();
+    let mut tables = Vec::new();
+
+    for snap in &snaps {
+        if snap.node_type != 1 || snap.tag != "table" { continue; }
+        let mut table = TableData::default();
+
+        // Caption.
+        if let Some(cap_id) = find_descendant_by_tag(snap.id, "caption", &snaps) {
+            table.caption = normalized_text(cap_id, &snaps);
+        }
+
+        // Walk all <tr> descendants in document order.
+        let mut row_ids = Vec::new();
+        collect_descendants_by_tag(snap.id, "tr", &snaps, &mut row_ids);
+        for row_id in row_ids {
+            let Some(row) = snaps.get(row_id) else { continue };
+            let mut cells = Vec::new();
+            let mut is_header_row = false;
+            for &cell_id in &row.children {
+                let Some(cell) = snaps.get(cell_id) else { continue };
+                match cell.tag.as_str() {
+                    "th" => {
+                        is_header_row = true;
+                        cells.push(normalized_text(cell_id, &snaps));
+                    }
+                    "td" => cells.push(normalized_text(cell_id, &snaps)),
+                    _ => {}
+                }
+            }
+            if cells.is_empty() { continue; }
+            if is_header_row && table.headers.is_empty() {
+                table.headers = cells;
+            } else {
+                table.rows.push(cells);
+            }
+        }
+
+        if !table.headers.is_empty() || !table.rows.is_empty() {
+            tables.push(table);
+        }
+    }
+    tables
+}
+
+/// Serialize tables as Markdown — the most token-efficient tabular format.
+pub(super) fn tables_to_text(tables: &[TableData]) -> String {
+    let mut out = String::new();
+    for (i, table) in tables.iter().enumerate() {
+        if i > 0 { out.push('\n'); }
+        if !table.caption.is_empty() {
+            out.push_str("### ");
+            out.push_str(&table.caption);
+            out.push('\n');
+        }
+        if !table.headers.is_empty() {
+            out.push_str("| ");
+            out.push_str(&table.headers.join(" | "));
+            out.push_str(" |\n|");
+            for _ in &table.headers { out.push_str(" --- |"); }
+            out.push('\n');
+        }
+        for row in &table.rows {
+            out.push_str("| ");
+            out.push_str(&row.join(" | "));
+            out.push_str(" |\n");
+        }
+    }
+    out
+}
+
+/// Find the first descendant with the given tag (depth-first).
+fn find_descendant_by_tag(node_id: usize, tag: &str, snaps: &[DomElementSnapshot]) -> Option<usize> {
+    let node = snaps.get(node_id)?;
+    for &child in &node.children {
+        if let Some(c) = snaps.get(child) {
+            if c.node_type == 1 && c.tag == tag { return Some(child); }
+            if let Some(found) = find_descendant_by_tag(child, tag, snaps) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// Collect all descendants with the given tag in document order.
+fn collect_descendants_by_tag(node_id: usize, tag: &str, snaps: &[DomElementSnapshot], out: &mut Vec<usize>) {
+    let Some(node) = snaps.get(node_id) else { return };
+    for &child in &node.children {
+        if let Some(c) = snaps.get(child) {
+            if c.node_type == 1 && c.tag == tag { out.push(child); }
+            collect_descendants_by_tag(child, tag, snaps, out);
+        }
+    }
+}
+
+/// Whitespace-normalized text content of a node.
+fn normalized_text(node_id: usize, snaps: &[DomElementSnapshot]) -> String {
+    collect_text(node_id, snaps).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// ── Page-to-Markdown ─────────────────────────────────────────────────────────
+
+/// Convert the page's main content to Markdown.
+///
+/// Markdown is the densest page representation an LLM can consume:
+/// structure is preserved (headings, lists, links, tables) at a fraction
+/// of the token cost of HTML.
+pub(super) fn page_to_markdown() -> String {
+    let (snaps, root) = snapshot_dom();
+    let body_id = snaps.iter()
+        .find(|s| s.tag == "body" && s.node_type == 1)
+        .map(|s| s.id)
+        .unwrap_or(root);
+    let content_root = snaps.iter()
+        .find(|s| s.tag == "main" && s.node_type == 1)
+        .map(|s| s.id)
+        .unwrap_or(body_id);
+
+    let mut out = String::with_capacity(1024);
+    // Title first.
+    if let Some(title) = snaps.iter().find(|s| s.tag == "title" && s.node_type == 1) {
+        let t = normalized_text(title.id, &snaps);
+        if !t.is_empty() {
+            out.push_str("# ");
+            out.push_str(&t);
+            out.push_str("\n\n");
+        }
+    }
+    markdown_walk(content_root, &snaps, &mut out, 0);
+    // Collapse runs of 3+ newlines.
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out.trim_end().to_string() + "\n"
+}
+
+fn markdown_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut String, list_depth: usize) {
+    let Some(node) = snaps.get(node_id) else { return };
+    if node.node_type == 3 { return; } // handled by inline collection
+    if node.node_type != 1 { return; }
+    if is_boilerplate(node) { return; }
+
+    match node.tag.as_str() {
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+            let depth = heading_depth(&node.tag).unwrap_or(1) as usize;
+            let text = markdown_inline(node_id, snaps);
+            if !text.is_empty() {
+                out.push_str(&"#".repeat(depth));
+                out.push(' ');
+                out.push_str(&text);
+                out.push_str("\n\n");
+            }
+        }
+        "p" | "blockquote" => {
+            let text = markdown_inline(node_id, snaps);
+            if !text.is_empty() {
+                if node.tag == "blockquote" { out.push_str("> "); }
+                out.push_str(&text);
+                out.push_str("\n\n");
+            }
+        }
+        "pre" => {
+            let text = collect_text(node_id, snaps);
+            if !text.trim().is_empty() {
+                out.push_str("```\n");
+                out.push_str(text.trim_end());
+                out.push_str("\n```\n\n");
+            }
+        }
+        "ul" | "ol" => {
+            let ordered = node.tag == "ol";
+            let mut index = 1;
+            for &child in &node.children {
+                if let Some(c) = snaps.get(child) {
+                    if c.node_type == 1 && c.tag == "li" {
+                        out.push_str(&"  ".repeat(list_depth));
+                        if ordered {
+                            out.push_str(&format!("{}. ", index));
+                            index += 1;
+                        } else {
+                            out.push_str("- ");
+                        }
+                        let text = markdown_inline(child, snaps);
+                        out.push_str(&text);
+                        out.push('\n');
+                        // Nested lists inside this <li>.
+                        for &gc in &c.children {
+                            if let Some(g) = snaps.get(gc) {
+                                if g.node_type == 1 && (g.tag == "ul" || g.tag == "ol") {
+                                    markdown_walk(gc, snaps, out, list_depth + 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if list_depth == 0 { out.push('\n'); }
+        }
+        "table" => {
+            let mut row_ids = Vec::new();
+            collect_descendants_by_tag(node_id, "tr", snaps, &mut row_ids);
+            let mut header_done = false;
+            for row_id in row_ids {
+                let Some(row) = snaps.get(row_id) else { continue };
+                let mut cells = Vec::new();
+                let mut is_header = false;
+                for &cell_id in &row.children {
+                    if let Some(cell) = snaps.get(cell_id) {
+                        match cell.tag.as_str() {
+                            "th" => { is_header = true; cells.push(normalized_text(cell_id, snaps)); }
+                            "td" => cells.push(normalized_text(cell_id, snaps)),
+                            _ => {}
+                        }
+                    }
+                }
+                if cells.is_empty() { continue; }
+                out.push_str("| ");
+                out.push_str(&cells.join(" | "));
+                out.push_str(" |\n");
+                if is_header && !header_done {
+                    out.push('|');
+                    for _ in &cells { out.push_str(" --- |"); }
+                    out.push('\n');
+                    header_done = true;
+                }
+            }
+            out.push('\n');
+        }
+        "hr" => out.push_str("---\n\n"),
+        "img" => {
+            let alt = node.attributes.get("alt").cloned().unwrap_or_default();
+            let src = node.attributes.get("src").cloned().unwrap_or_default();
+            if !alt.is_empty() || !src.is_empty() {
+                out.push_str(&format!("![{}]({})\n\n", alt, src));
+            }
+        }
+        _ => {
+            for &child in &node.children {
+                markdown_walk(child, snaps, out, list_depth);
+            }
+        }
+    }
+}
+
+/// Collect inline Markdown for a node: text with links/emphasis/code preserved.
+fn markdown_inline(node_id: usize, snaps: &[DomElementSnapshot]) -> String {
+    let mut buf = String::new();
+    markdown_inline_walk(node_id, snaps, &mut buf);
+    buf.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn markdown_inline_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut String) {
+    let Some(node) = snaps.get(node_id) else { return };
+    if node.node_type == 3 {
+        out.push_str(&node.text_content);
+        return;
+    }
+    if node.node_type != 1 { return; }
+    match node.tag.as_str() {
+        "a" => {
+            let text = normalized_text(node_id, snaps);
+            match node.attributes.get("href") {
+                Some(href) if !href.is_empty() && !text.is_empty() => {
+                    out.push_str(&format!("[{}]({})", text, href));
+                }
+                _ => out.push_str(&text),
+            }
+            out.push(' ');
+        }
+        "strong" | "b" => {
+            let text = normalized_text(node_id, snaps);
+            if !text.is_empty() { out.push_str(&format!("**{}** ", text)); }
+        }
+        "em" | "i" => {
+            let text = normalized_text(node_id, snaps);
+            if !text.is_empty() { out.push_str(&format!("*{}* ", text)); }
+        }
+        "code" => {
+            let text = collect_text(node_id, snaps);
+            if !text.is_empty() { out.push_str(&format!("`{}` ", text.trim())); }
+        }
+        "br" => out.push('\n'),
+        _ => {
+            for &child in &node.children {
+                markdown_inline_walk(child, snaps, out);
+            }
+        }
+    }
+}
+
+// ── Bulk Form Fill ───────────────────────────────────────────────────────────
+
+/// Result of filling a single field.
+#[derive(Debug, Clone)]
+pub(super) struct FillResult {
+    pub field: String,
+    pub ok: bool,
+    pub reason: &'static str,
+}
+
+/// Fill multiple form fields in a single call.
+///
+/// Each `(field, value)` pair is matched against `name`, `id`, or
+/// `placeholder` of input/textarea/select elements. Checkboxes and radios
+/// treat "true"/"checked" as checked. One call replaces N agent round-trips.
+pub(super) fn fill_form(values: &[(String, String)]) -> Vec<FillResult> {
+    let (snaps, _root) = snapshot_dom();
+    let mut results = Vec::with_capacity(values.len());
+
+    for (field, value) in values {
+        let target = snaps.iter().find(|s| {
+            s.node_type == 1
+                && matches!(s.tag.as_str(), "input" | "textarea" | "select")
+                && (s.attributes.get("name").map(|v| v == field).unwrap_or(false)
+                    || s.attributes.get("id").map(|v| v == field).unwrap_or(false)
+                    || s.attributes.get("placeholder").map(|v| v == field).unwrap_or(false))
+        });
+        let Some(target) = target else {
+            results.push(FillResult { field: field.clone(), ok: false, reason: "not found" });
+            continue;
+        };
+        if target.attributes.contains_key("disabled") {
+            results.push(FillResult { field: field.clone(), ok: false, reason: "disabled" });
+            continue;
+        }
+        let input_type = target.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+        match input_type {
+            "checkbox" | "radio" => {
+                let checked = matches!(value.as_str(), "true" | "checked" | "1" | "on");
+                if checked {
+                    super::dom_bridge::set_node_attr(target.id, "checked", "checked");
+                } else {
+                    super::dom_bridge::remove_node_attr(target.id, "checked");
+                }
+            }
+            _ => super::dom_bridge::set_node_attr(target.id, "value", value),
+        }
+        results.push(FillResult { field: field.clone(), ok: true, reason: "" });
+    }
+    results
+}
+
+// ── Link Map ─────────────────────────────────────────────────────────────────
+
+/// A link as seen by an agent: text + destination.
+#[derive(Debug, Clone)]
+pub(super) struct LinkInfo {
+    pub text: String,
+    pub href: String,
+}
+
+/// Return all links on the page (text + href), deduplicated by href.
+///
+/// This is the agent's navigation map — where can I go from here?
+pub(super) fn get_links() -> Vec<LinkInfo> {
+    let (snaps, _root) = snapshot_dom();
+    let mut links = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for snap in &snaps {
+        if snap.node_type != 1 || snap.tag != "a" { continue; }
+        let Some(href) = snap.attributes.get("href") else { continue };
+        if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:") { continue; }
+        if !seen.insert(href.clone()) { continue; }
+        let text = normalized_text(snap.id, &snaps);
+        links.push(LinkInfo { text, href: href.clone() });
+    }
+    links
+}
+
+/// Serialize links as compact text lines: `[i] text → href`.
+pub(super) fn links_to_text(links: &[LinkInfo]) -> String {
+    let mut out = String::with_capacity(links.len() * 60);
+    for (i, link) in links.iter().enumerate() {
+        out.push_str(&format!("[{}] {} → {}\n", i, link.text, link.href));
+    }
+    out
+}
+

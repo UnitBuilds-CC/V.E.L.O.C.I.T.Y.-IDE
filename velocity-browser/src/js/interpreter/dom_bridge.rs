@@ -333,6 +333,60 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             obj.insert("textHash".to_string(), JsValue::Number(state.body_text_hash as f64));
             JsValue::Object(obj)
         }
+        "extractTables" => {
+            let tables = super::agent_layer::extract_tables();
+            let arr: Vec<JsValue> = tables.into_iter().map(|t| {
+                let mut obj = HashMap::new();
+                obj.insert("caption".to_string(), JsValue::String(t.caption));
+                obj.insert("headers".to_string(), JsValue::Array(
+                    t.headers.into_iter().map(JsValue::String).collect()));
+                obj.insert("rows".to_string(), JsValue::Array(
+                    t.rows.into_iter().map(|r| JsValue::Array(
+                        r.into_iter().map(JsValue::String).collect())).collect()));
+                JsValue::Object(obj)
+            }).collect();
+            JsValue::Array(arr)
+        }
+        "extractTablesText" => {
+            let tables = super::agent_layer::extract_tables();
+            JsValue::String(super::agent_layer::tables_to_text(&tables))
+        }
+        "toMarkdown" => {
+            JsValue::String(super::agent_layer::page_to_markdown())
+        }
+        "fillForm" => {
+            // Accepts an object: { fieldName: value, ... }
+            let mut pairs = Vec::new();
+            if let Some(JsValue::Object(map)) = args.first() {
+                for (k, v) in map {
+                    if k.starts_with("__") { continue; }
+                    pairs.push((k.clone(), super::coercion::to_string(v)));
+                }
+            }
+            let results = super::agent_layer::fill_form(&pairs);
+            let arr: Vec<JsValue> = results.into_iter().map(|r| {
+                let mut obj = HashMap::new();
+                obj.insert("field".to_string(), JsValue::String(r.field));
+                obj.insert("ok".to_string(), JsValue::Boolean(r.ok));
+                obj.insert("reason".to_string(), JsValue::String(r.reason.to_string()));
+                JsValue::Object(obj)
+            }).collect();
+            JsValue::Array(arr)
+        }
+        "getLinks" => {
+            let links = super::agent_layer::get_links();
+            let arr: Vec<JsValue> = links.into_iter().map(|l| {
+                let mut obj = HashMap::new();
+                obj.insert("text".to_string(), JsValue::String(l.text));
+                obj.insert("href".to_string(), JsValue::String(l.href));
+                JsValue::Object(obj)
+            }).collect();
+            JsValue::Array(arr)
+        }
+        "getLinksText" => {
+            let links = super::agent_layer::get_links();
+            JsValue::String(super::agent_layer::links_to_text(&links))
+        }
         _ => JsValue::Undefined,
     }
 }
@@ -1867,7 +1921,7 @@ pub(super) fn call_document_traversal_method(method: &str, args: &[JsValue]) -> 
 
 // ── Attribute helpers ────────────────────────────────────────────────────────
 
-fn set_node_attr(id: usize, key: &str, val: &str) {
+pub(super) fn set_node_attr(id: usize, key: &str, val: &str) {
     DOM_NODES.with(|nodes| {
         if let Some(node) = nodes.borrow_mut().get_mut(id) {
             node.attributes.insert(key.to_string(), val.to_string());
@@ -1875,7 +1929,7 @@ fn set_node_attr(id: usize, key: &str, val: &str) {
     });
 }
 
-fn remove_node_attr(id: usize, key: &str) {
+pub(super) fn remove_node_attr(id: usize, key: &str) {
     DOM_NODES.with(|nodes| {
         if let Some(node) = nodes.borrow_mut().get_mut(id) {
             node.attributes.remove(key);
