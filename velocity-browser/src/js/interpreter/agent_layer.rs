@@ -928,3 +928,86 @@ pub(super) fn links_to_text(links: &[LinkInfo]) -> String {
     out
 }
 
+// ── Semantic Element Finding ─────────────────────────────────────────────────
+
+/// A text-matched element with ranking metadata.
+#[derive(Debug, Clone)]
+pub(super) struct TextMatch {
+    pub node_id: usize,
+    pub selector: String,
+    pub exact: bool,
+    pub interactive: bool,
+}
+
+/// Find elements by their visible text (case-insensitive).
+///
+/// Agents think in labels ("the Login button"), not selectors. Matches are
+/// deepest-first (innermost element containing the text), ranked exact >
+/// interactive > shortest text.
+pub(super) fn find_by_text(query: &str) -> Vec<TextMatch> {
+    let (snaps, _root) = snapshot_dom();
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() { return Vec::new(); }
+
+    // Pass 1: all elements whose text contains the needle.
+    let mut candidates: Vec<usize> = Vec::new();
+    for snap in &snaps {
+        if snap.node_type != 1 { continue; }
+        if matches!(snap.tag.as_str(), "html" | "head" | "script" | "style" | "title") { continue; }
+        let text = normalized_text(snap.id, &snaps).to_lowercase();
+        if text.contains(&needle) {
+            candidates.push(snap.id);
+        }
+    }
+
+    // Pass 2: keep only deepest matches (no descendant also matches).
+    let candidate_set: std::collections::HashSet<usize> = candidates.iter().copied().collect();
+    let mut matches: Vec<TextMatch> = Vec::new();
+    for &id in &candidates {
+        let Some(snap) = snaps.get(id) else { continue };
+        let has_matching_child = snap.children.iter().any(|c| {
+            descendant_in_set(*c, &candidate_set, &snaps)
+        });
+        if has_matching_child { continue; }
+        let text = normalized_text(id, &snaps).to_lowercase();
+        matches.push(TextMatch {
+            node_id: id,
+            selector: generate_selector(&snaps, id),
+            exact: text == needle,
+            interactive: element_role(snap).is_some(),
+        });
+    }
+
+    // Rank: exact > interactive > shortest text.
+    matches.sort_by(|a, b| {
+        b.exact.cmp(&a.exact)
+            .then(b.interactive.cmp(&a.interactive))
+            .then(a.node_id.cmp(&b.node_id))
+    });
+    matches
+}
+
+fn descendant_in_set(id: usize, set: &std::collections::HashSet<usize>, snaps: &[DomElementSnapshot]) -> bool {
+    if set.contains(&id) { return true; }
+    let Some(node) = snaps.get(id) else { return false };
+    node.children.iter().any(|c| descendant_in_set(*c, set, snaps))
+}
+
+/// Resolve a text query to a clickable node: the best match itself if
+/// interactive, otherwise its nearest interactive ancestor.
+pub(super) fn resolve_click_target(query: &str) -> Option<usize> {
+    let matches = find_by_text(query);
+    let (snaps, _root) = snapshot_dom();
+    for m in &matches {
+        if m.interactive { return Some(m.node_id); }
+        // Walk up looking for an interactive ancestor.
+        let mut current = snaps.get(m.node_id).and_then(|n| n.parent);
+        while let Some(id) = current {
+            let Some(node) = snaps.get(id) else { break };
+            if element_role(node).is_some() { return Some(id); }
+            current = node.parent;
+        }
+    }
+    matches.first().map(|m| m.node_id)
+}
+

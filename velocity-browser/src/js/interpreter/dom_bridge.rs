@@ -330,7 +330,7 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             obj.insert("__type__".to_string(), JsValue::String("DomState".to_string()));
             obj.insert("nodeCount".to_string(), JsValue::Number(state.node_count as f64));
             obj.insert("interactiveCount".to_string(), JsValue::Number(state.interactive_count as f64));
-            obj.insert("textHash".to_string(), JsValue::Number(state.body_text_hash as f64));
+            obj.insert("textHash".to_string(), JsValue::Number(hash_to_js(state.body_text_hash)));
             JsValue::Object(obj)
         }
         "extractTables" => {
@@ -386,6 +386,53 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "getLinksText" => {
             let links = super::agent_layer::get_links();
             JsValue::String(super::agent_layer::links_to_text(&links))
+        }
+        "findByText" => {
+            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let matches = super::agent_layer::find_by_text(&query);
+            let arr: Vec<JsValue> = matches.into_iter().map(|m| {
+                let mut obj = HashMap::new();
+                if let JsValue::Object(handle) = element_handle(m.node_id) {
+                    obj = handle;
+                }
+                obj.insert("selector".to_string(), JsValue::String(m.selector));
+                obj.insert("exact".to_string(), JsValue::Boolean(m.exact));
+                obj.insert("interactive".to_string(), JsValue::Boolean(m.interactive));
+                JsValue::Object(obj)
+            }).collect();
+            JsValue::Array(arr)
+        }
+        "clickByText" => {
+            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            match super::agent_layer::resolve_click_target(&query) {
+                Some(id) => {
+                    fire_event(id, "click");
+                    JsValue::Boolean(true)
+                }
+                None => JsValue::Boolean(false),
+            }
+        }
+        "diffState" => {
+            // Compare a previously captured state against the current DOM.
+            let current = super::agent_layer::capture_dom_state();
+            let (prev_nodes, prev_interactive, prev_hash) = match args.first() {
+                Some(JsValue::Object(m)) => (
+                    m.get("nodeCount").map(super::coercion::to_number).unwrap_or(0.0) as usize,
+                    m.get("interactiveCount").map(super::coercion::to_number).unwrap_or(0.0) as usize,
+                    m.get("textHash").map(super::coercion::to_number).unwrap_or(0.0),
+                ),
+                _ => (0, 0, 0.0),
+            };
+            let text_changed = hash_to_js(current.body_text_hash) != prev_hash;
+            let node_delta = current.node_count as f64 - prev_nodes as f64;
+            let interactive_delta = current.interactive_count as f64 - prev_interactive as f64;
+            let mut obj = HashMap::new();
+            obj.insert("changed".to_string(), JsValue::Boolean(
+                text_changed || node_delta != 0.0 || interactive_delta != 0.0));
+            obj.insert("nodeDelta".to_string(), JsValue::Number(node_delta));
+            obj.insert("interactiveDelta".to_string(), JsValue::Number(interactive_delta));
+            obj.insert("textChanged".to_string(), JsValue::Boolean(text_changed));
+            JsValue::Object(obj)
         }
         _ => JsValue::Undefined,
     }
@@ -680,7 +727,11 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
             JsValue::Boolean(matches_selector(id, selector))
         }
-        "focus" | "blur" | "click" | "submit" | "reset" | "select" => JsValue::Undefined,
+        "click" => {
+            fire_event(id, "click");
+            JsValue::Undefined
+        }
+        "focus" | "blur" | "submit" | "reset" | "select" => JsValue::Undefined,
         // Scrolling.
         "scrollIntoView" | "scrollTo" | "scrollBy" | "scroll" => JsValue::Undefined,
         // Insertion.
@@ -1921,12 +1972,63 @@ pub(super) fn call_document_traversal_method(method: &str, args: &[JsValue]) -> 
 
 // ── Attribute helpers ────────────────────────────────────────────────────────
 
+/// Truncate a 64-bit hash to the 53-bit range exactly representable in f64,
+/// so round-tripping through a JS number stays lossless.
+fn hash_to_js(hash: u64) -> f64 {
+    (hash & ((1u64 << 53) - 1)) as f64
+}
+
 pub(super) fn set_node_attr(id: usize, key: &str, val: &str) {
     DOM_NODES.with(|nodes| {
         if let Some(node) = nodes.borrow_mut().get_mut(id) {
             node.attributes.insert(key.to_string(), val.to_string());
         }
     });
+}
+
+// ── Event firing ─────────────────────────────────────────────────────────────
+
+/// Fire an event on a node, bubbling up through ancestors.
+///
+/// Runs all registered listeners for `event_type` on the target and each
+/// ancestor (capture phase is not modeled — agents care about effects).
+pub(super) fn fire_event(target_id: usize, event_type: &str) {
+    // Build the event object once.
+    let mut event = HashMap::new();
+    event.insert("__type__".to_string(), JsValue::String("Event".to_string()));
+    event.insert("type".to_string(), JsValue::String(event_type.to_string()));
+    event.insert("target".to_string(), element_handle(target_id));
+    event.insert("bubbles".to_string(), JsValue::Boolean(true));
+    let event_val = JsValue::Object(event);
+
+    // Collect the bubble path (target → root) and each node's listeners
+    // up-front so no borrow is held while listeners run.
+    let mut path = Vec::new();
+    let mut current = Some(target_id);
+    while let Some(id) = current {
+        let (listeners, parent) = DOM_NODES.with(|nodes| {
+            let nodes = nodes.borrow();
+            match nodes.get(id) {
+                Some(n) => (
+                    n.event_listeners.get(event_type).cloned().unwrap_or_default(),
+                    n.parent,
+                ),
+                None => (Vec::new(), None),
+            }
+        });
+        path.push(listeners);
+        current = parent;
+    }
+
+    for listeners in path {
+        for listener in listeners {
+            let _ = super::function::call_function(
+                &listener,
+                &[event_val.clone()],
+                &crate::js::scope::Scope::new_global(),
+            );
+        }
+    }
 }
 
 pub(super) fn remove_node_attr(id: usize, key: &str) {

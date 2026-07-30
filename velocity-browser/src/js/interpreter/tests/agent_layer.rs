@@ -514,3 +514,153 @@ fn get_links_text_format() {
     }
 }
 
+// ── Semantic Element Finding ─────────────────────────────────────────────────
+
+#[test]
+fn find_by_text_finds_button() {
+    eval_full("document.body.innerHTML = '<button>Login</button><p>Other stuff</p>'");
+    let result = eval_full("document.findByText('Login').length");
+    assert_eq!(to_number(&result), 1.0);
+}
+
+#[test]
+fn find_by_text_case_insensitive() {
+    eval_full("document.body.innerHTML = '<button>Submit Order</button>'");
+    let result = eval_full("document.findByText('submit order').length");
+    assert_eq!(to_number(&result), 1.0);
+}
+
+#[test]
+fn find_by_text_exact_flag() {
+    eval_full("document.body.innerHTML = '<button>Login</button>'");
+    let result = eval_full("document.findByText('Login')[0].exact");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn find_by_text_interactive_flag() {
+    eval_full("document.body.innerHTML = '<button>Go</button>'");
+    let result = eval_full("document.findByText('Go')[0].interactive");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn find_by_text_returns_deepest() {
+    eval_full("document.body.innerHTML = '<div><p><span>Target text here</span></p></div>'");
+    let result = eval_full("document.findByText('Target text')[0].tagName");
+    assert_eq!(result, JsValue::String("SPAN".to_string()));
+}
+
+#[test]
+fn find_by_text_no_match() {
+    eval_full("document.body.innerHTML = '<p>Nothing relevant</p>'");
+    let result = eval_full("document.findByText('missing').length");
+    assert_eq!(to_number(&result), 0.0);
+}
+
+#[test]
+fn find_by_text_has_selector() {
+    eval_full("document.body.innerHTML = '<button id=\"go-btn\">Go Now</button>'");
+    let result = eval_full("document.findByText('Go Now')[0].selector");
+    assert_eq!(result, JsValue::String("#go-btn".to_string()));
+}
+
+// ── Click Dispatch ───────────────────────────────────────────────────────────
+
+#[test]
+fn click_fires_listener() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<button id="b">Go</button>';
+        var clicked = false;
+        document.querySelector('#b').addEventListener('click', function() { clicked = true; });
+        document.querySelector('#b').click();
+        clicked
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn click_bubbles_to_parent() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<div id="wrap"><button id="b">Go</button></div>';
+        var bubbled = false;
+        document.querySelector('#wrap').addEventListener('click', function() { bubbled = true; });
+        document.querySelector('#b').click();
+        bubbled
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn click_by_text_fires_listener() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<button>Save Draft</button>';
+        var saved = false;
+        document.querySelector('button').addEventListener('click', function() { saved = true; });
+        document.clickByText('Save Draft');
+        saved
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn click_by_text_returns_true_on_hit() {
+    eval_full("document.body.innerHTML = '<button>Continue</button>'");
+    let result = eval_full("document.clickByText('Continue')");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn click_by_text_returns_false_on_miss() {
+    eval_full("document.body.innerHTML = '<p>Plain paragraph text</p>'");
+    let result = eval_full("document.clickByText('Nonexistent Button')");
+    assert_eq!(result, JsValue::Boolean(false));
+}
+
+#[test]
+fn click_by_text_resolves_span_inside_button() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<button id="b"><span>Buy Now</span></button>';
+        var bought = false;
+        document.querySelector('#b').addEventListener('click', function() { bought = true; });
+        document.clickByText('Buy Now');
+        bought
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+// ── State Diff ───────────────────────────────────────────────────────────────
+
+#[test]
+fn diff_state_unchanged() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<p>Stable content</p>';
+        var before = document.captureState();
+        document.diffState(before).changed
+    "#);
+    assert_eq!(result, JsValue::Boolean(false));
+}
+
+#[test]
+fn diff_state_detects_change() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<p>Before content</p>';
+        var before = document.captureState();
+        document.body.innerHTML = '<p>After content</p><button>New</button>';
+        document.diffState(before).changed
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn diff_state_text_changed_flag() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<p>Original text</p>';
+        var before = document.captureState();
+        document.body.innerHTML = '<p>Modified text</p>';
+        document.diffState(before).textChanged
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+
