@@ -1249,5 +1249,56 @@ pub fn get_browser_tools() -> Vec<Tool> {
                 "required": ["sessionId"]
             }),
         },
+        Tool {
+            name: "browser_native_tab_open".to_string(),
+            description: "Open a new blank background tab in the live native browser session. Returns the refreshed tab list. Use browser_native_tab_switch to bring it to the foreground before acting on it.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "tabId": { "type": "string", "description": "Unique id for the new tab; must not collide with an existing tab." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON tab report instead of readable text." }
+                },
+                "required": ["sessionId", "tabId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_tab_list".to_string(),
+            description: "List every tab in the live native browser session with its id, title, URL, and which one is the active (foreground) tab that all other browser_native_* tools act on.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON tab report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_tab_switch".to_string(),
+            description: "Bring the named tab to the foreground; the previous foreground tab is parked in the background with its full state (DOM, cookies, focus, traces). Returns the tab list plus the view of the newly active tab.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "tabId": { "type": "string", "description": "Id of the tab to bring to the foreground." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON tab report instead of readable text." }
+                },
+                "required": ["sessionId", "tabId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_tab_close".to_string(),
+            description: "Close a background tab and drop its state. The active tab cannot be closed - switch to another tab first. Returns the refreshed tab list.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "tabId": { "type": "string", "description": "Id of the background tab to close." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON tab report instead of readable text." }
+                },
+                "required": ["sessionId", "tabId"]
+            }),
+        },
     ]
 }

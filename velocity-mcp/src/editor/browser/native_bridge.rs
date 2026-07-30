@@ -128,6 +128,69 @@ impl NativeBrowserBridge {
         self.swarm.spawn_swarm_tab(session_id)
     }
 
+    // -- Multi-tab surface ----------------------------------------------------
+    // The bridge always acts on `active_session` (the foreground tab); the
+    // swarm parks background tabs. Switching swaps the chosen background
+    // session into the foreground in place, so every existing action/view
+    // tool keeps targeting "the active tab" without change.
+
+    /// Open a new blank background tab. Fails on id collision with the
+    /// foreground tab or an existing background tab.
+    pub fn tab_open(&mut self, tab_id: &str) -> Result<(), String> {
+        if self.active_session.session_id == tab_id || self.swarm.get_session(tab_id).is_some() {
+            return Err(format!("tab '{tab_id}' already exists"));
+        }
+        self.swarm.spawn_swarm_tab(tab_id);
+        Ok(())
+    }
+
+    /// `(tab_id, url, title, is_active)` for the foreground tab plus every
+    /// background tab, in stable order.
+    pub fn tab_list(&self) -> Vec<(String, String, String, bool)> {
+        let mut tabs = vec![(
+            self.active_session.session_id.clone(),
+            self.active_session.current_url.clone(),
+            self.active_session.page_title.clone(),
+            true,
+        )];
+        for s in &self.swarm.swarm_sessions {
+            tabs.push((
+                s.session_id.clone(),
+                s.current_url.clone(),
+                s.page_title.clone(),
+                false,
+            ));
+        }
+        tabs
+    }
+
+    /// Bring a background tab to the foreground, parking the current
+    /// foreground tab in the swarm. The whole `BrowserSession` is swapped, so
+    /// per-tab state (DOM, cookies, focus, traces) travels with its tab.
+    pub fn tab_switch(&mut self, tab_id: &str) -> Result<(), String> {
+        if self.active_session.session_id == tab_id {
+            return Ok(());
+        }
+        let Some(target) = self.swarm.get_session_mut(tab_id) else {
+            return Err(format!("no tab '{tab_id}'"));
+        };
+        std::mem::swap(&mut self.active_session, target);
+        Ok(())
+    }
+
+    /// Close a background tab. The foreground tab cannot be closed - switch
+    /// away first so the bridge always has an active session.
+    pub fn tab_close(&mut self, tab_id: &str) -> Result<(), String> {
+        if self.active_session.session_id == tab_id {
+            return Err("cannot close the active tab; switch to another tab first".to_string());
+        }
+        if self.swarm.remove_session(tab_id) {
+            Ok(())
+        } else {
+            Err(format!("no tab '{tab_id}'"))
+        }
+    }
+
     pub fn capture_nda(&self) -> Vec<NdaTriple> {
         self.active_session.capture_state_nda()
     }

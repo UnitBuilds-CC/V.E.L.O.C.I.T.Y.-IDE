@@ -189,6 +189,34 @@ fn render_delta(delta: &NdaDelta) -> String {
     out
 }
 
+/// Readable one-line-per-tab listing; the active tab is starred.
+fn tab_lines(bridge: &NativeBrowserBridge) -> String {
+    let tabs = bridge.tab_list();
+    let mut out = format!("Tabs ({}):\n", tabs.len());
+    for (id, url, title, active) in &tabs {
+        out.push_str(&format!(
+            "  {}{} \"{}\" {}\n",
+            if *active { "* " } else { "  " },
+            id,
+            title,
+            if url.is_empty() { "(blank)" } else { url },
+        ));
+    }
+    out
+}
+
+fn tab_json(bridge: &NativeBrowserBridge) -> Value {
+    Value::Array(
+        bridge
+            .tab_list()
+            .into_iter()
+            .map(|(id, url, title, active)| {
+                serde_json::json!({ "tabId": id, "url": url, "title": title, "active": active })
+            })
+            .collect(),
+    )
+}
+
 /// Resolve the target node id from either an explicit `nodeId` (accepts a raw
 /// integer, `"5"`, or `"node_5"`) or a semantic `role` + `name` lookup.
 fn resolve_node(bridge: &NativeBrowserBridge, arguments: &Value) -> Result<usize, Box<dyn Error>> {
@@ -245,6 +273,10 @@ pub fn handle_native_tool(
         | "browser_native_read_form"
         | "browser_native_observe"
         | "browser_native_export_nda"
+        | "browser_native_tab_open"
+        | "browser_native_tab_list"
+        | "browser_native_tab_switch"
+        | "browser_native_tab_close"
         | "browser_native_settle" => arguments["sessionId"]
             .as_str()
             .ok_or("sessionId is required")?,
@@ -337,6 +369,49 @@ pub fn handle_native_tool(
             if let Some(facts) = facts {
                 out.push_str("---\n");
                 out.push_str(&facts);
+            }
+            out
+        }));
+    }
+
+    // Tab management: one foreground tab plus background tabs parked in the
+    // bridge's swarm. Every tab tool answers with the refreshed tab list so
+    // acting and observing stay inseparable; switching also returns the view
+    // of the tab that just came to the foreground.
+    if name.starts_with("browser_native_tab_") {
+        let status = match name {
+            "browser_native_tab_open" => {
+                let tab_id = arguments["tabId"].as_str().ok_or("tabId is required")?;
+                bridge.tab_open(tab_id)?;
+                format!("opened background tab '{tab_id}'")
+            }
+            "browser_native_tab_switch" => {
+                let tab_id = arguments["tabId"].as_str().ok_or("tabId is required")?;
+                bridge.tab_switch(tab_id)?;
+                format!("switched to tab '{tab_id}'")
+            }
+            "browser_native_tab_close" => {
+                let tab_id = arguments["tabId"].as_str().ok_or("tabId is required")?;
+                bridge.tab_close(tab_id)?;
+                format!("closed tab '{tab_id}'")
+            }
+            _ => format!("{} open tab(s)", bridge.tab_list().len()),
+        };
+        let switched = name == "browser_native_tab_switch";
+        return Ok(Some(if compact {
+            let mut report = serde_json::json!({ "status": status, "tabs": tab_json(&bridge) });
+            if switched {
+                report["view"] = serde_json::to_value(view_report(&bridge.current_view()))
+                    .map_err(|e| format!("serialise tab view: {e}"))?;
+            }
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| format!("serialise tab report: {e}"))?
+        } else {
+            let mut out = format!("{status}\n");
+            out.push_str(&tab_lines(&bridge));
+            if switched {
+                out.push_str("---\n");
+                out.push_str(&render_view(&bridge.current_view()));
             }
             out
         }));
@@ -820,5 +895,86 @@ mod native_label_tool_tests {
         )
         .expect_err("unknown format must be rejected");
         assert!(err.to_string().contains("unknown export format"), "{err}");
+    }
+
+    #[test]
+    fn tab_tools_open_switch_and_close_with_observed_state() {
+        load("t19-tabs");
+        let out = call(
+            "browser_native_tab_open",
+            json!({ "sessionId": "t19-tabs", "tabId": "t19-tabs-bg" }),
+        );
+        assert!(out.contains("opened background tab 't19-tabs-bg'"), "{out}");
+        assert!(out.contains("* t19-tabs \""), "original tab stays active: {out}");
+
+        let out = call(
+            "browser_native_tab_switch",
+            json!({ "sessionId": "t19-tabs", "tabId": "t19-tabs-bg" }),
+        );
+        assert!(out.contains("switched to tab 't19-tabs-bg'"), "{out}");
+        assert!(out.contains("* t19-tabs-bg \""), "new tab becomes active: {out}");
+        assert!(out.contains("URL:"), "switch returns the newly active view: {out}");
+
+        // Switching back must restore the parked tab with its page intact.
+        let out = call(
+            "browser_native_tab_switch",
+            json!({ "sessionId": "t19-tabs", "tabId": "t19-tabs" }),
+        );
+        assert!(
+            out.contains("http://local.test/form"),
+            "foreground state survives parking: {out}"
+        );
+
+        let out = call(
+            "browser_native_tab_close",
+            json!({ "sessionId": "t19-tabs", "tabId": "t19-tabs-bg" }),
+        );
+        assert!(out.contains("closed tab 't19-tabs-bg'"), "{out}");
+        assert!(out.contains("Tabs (1):"), "closed tab leaves the list: {out}");
+    }
+
+    #[test]
+    fn tab_close_active_and_duplicate_open_are_rejected() {
+        load("t19-taberr");
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_tab_close",
+            &json!({ "sessionId": "t19-taberr", "tabId": "t19-taberr" }),
+        )
+        .expect_err("closing the active tab must fail");
+        assert!(err.to_string().contains("cannot close the active tab"), "{err}");
+
+        call(
+            "browser_native_tab_open",
+            json!({ "sessionId": "t19-taberr", "tabId": "t19-taberr-bg" }),
+        );
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_tab_open",
+            &json!({ "sessionId": "t19-taberr", "tabId": "t19-taberr-bg" }),
+        )
+        .expect_err("duplicate tab id must be rejected");
+        assert!(err.to_string().contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn tab_list_compact_reports_active_flag() {
+        load("t19-tablist");
+        call(
+            "browser_native_tab_open",
+            json!({ "sessionId": "t19-tablist", "tabId": "t19-tablist-bg" }),
+        );
+        let out = call(
+            "browser_native_tab_list",
+            json!({ "sessionId": "t19-tablist", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&out).expect("compact tab list is valid JSON");
+        let tabs = report["tabs"].as_array().expect("tabs array");
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0]["tabId"], "t19-tablist");
+        assert_eq!(tabs[0]["active"], true);
+        assert_eq!(tabs[1]["tabId"], "t19-tablist-bg");
+        assert_eq!(tabs[1]["active"], false);
     }
 }

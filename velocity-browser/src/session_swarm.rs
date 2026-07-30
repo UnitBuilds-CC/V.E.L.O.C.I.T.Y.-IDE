@@ -117,6 +117,24 @@ impl SwarmSessionOrchestrator {
         self.swarm_sessions.iter().map(|s| s.session_id.as_str()).collect()
     }
 
+    /// Look up a swarm session by its session id.
+    pub fn get_session(&self, session_id: &str) -> Option<&BrowserSession> {
+        self.swarm_sessions.iter().find(|s| s.session_id == session_id)
+    }
+
+    /// Mutable lookup of a swarm session by its session id.
+    pub fn get_session_mut(&mut self, session_id: &str) -> Option<&mut BrowserSession> {
+        self.swarm_sessions.iter_mut().find(|s| s.session_id == session_id)
+    }
+
+    /// Remove a swarm session by id, dropping its metadata entry with it.
+    pub fn remove_session(&mut self, session_id: &str) -> bool {
+        match self.swarm_sessions.iter().position(|s| s.session_id == session_id) {
+            Some(idx) => self.terminate(idx),
+            None => false,
+        }
+    }
+
     /// Broadcast a URL to all swarm sessions.
     pub fn broadcast_navigate(&mut self, url: &str) {
         for session in &mut self.swarm_sessions {
@@ -232,5 +250,27 @@ mod tests {
         let mut swarm = SwarmSessionOrchestrator::new();
         let session = swarm.spawn_with_proxy("proxy_tab", ProxyType::Http("proxy.local:8080".to_string()));
         assert!(matches!(session.proxy_resolver.proxy_type, ProxyType::Http(_)));
+    }
+
+    #[test]
+    fn test_get_session_by_id() {
+        let mut swarm = SwarmSessionOrchestrator::new();
+        swarm.spawn_swarm_tab("tab-a");
+        swarm.spawn_swarm_tab("tab-b");
+        assert!(swarm.get_session("tab-b").is_some());
+        assert!(swarm.get_session("missing").is_none());
+        let tab = swarm.get_session_mut("tab-a").unwrap();
+        tab.current_url = "https://a.test".to_string();
+        assert_eq!(swarm.get_session("tab-a").unwrap().current_url, "https://a.test");
+    }
+
+    #[test]
+    fn test_remove_session_by_id() {
+        let mut swarm = SwarmSessionOrchestrator::new();
+        swarm.spawn_swarm_tab("tab-a");
+        swarm.spawn_swarm_tab("tab-b");
+        assert!(swarm.remove_session("tab-a"));
+        assert!(!swarm.remove_session("tab-a"), "second removal is a no-op");
+        assert_eq!(swarm.session_ids(), vec!["tab-b"]);
     }
 }
