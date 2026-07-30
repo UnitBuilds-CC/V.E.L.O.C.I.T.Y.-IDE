@@ -53,20 +53,41 @@ pub fn get_or_create_native_bridge(session_id: &str) -> Arc<Mutex<NativeBrowserB
         .clone()
 }
 
+/// Write raw bytes into the session artifact directory
+/// (`{workspace_root}/.velocity/browser_artifacts/{file_name}`) and return
+/// the path. All browser NDA/trace/fact artifacts go through here so they
+/// land in one predictable place.
+pub fn persist_browser_artifact(
+    workspace_root: &Path,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let artifacts_dir = workspace_root.join(".velocity").join("browser_artifacts");
+    let _ = std::fs::create_dir_all(&artifacts_dir);
+    let path = artifacts_dir.join(file_name);
+    std::fs::write(&path, bytes).map_err(|e| format!("failed to write browser artifact: {e}"))?;
+    Ok(path)
+}
+
+/// Encode NDA triples as their fixed 18-byte binary records.
+pub fn encode_nda_triples(triples: &[NdaTriple]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(triples.len() * 18);
+    for t in triples {
+        encoded.extend_from_slice(&t.to_bytes());
+    }
+    encoded
+}
+
 pub fn persist_native_nda_triples(
     workspace_root: &Path,
     session_id: &str,
     triples: &[NdaTriple],
 ) -> Result<PathBuf, String> {
-    let artifacts_dir = workspace_root.join(".velocity").join("browser_artifacts");
-    let _ = std::fs::create_dir_all(&artifacts_dir);
-    let nda_path = artifacts_dir.join(format!("{}_native.nda", session_id));
-    let mut encoded = Vec::new();
-    for t in triples {
-        encoded.extend_from_slice(&t.to_bytes());
-    }
-    std::fs::write(&nda_path, &encoded).map_err(|e| format!("failed to write native NDA: {e}"))?;
-    Ok(nda_path)
+    persist_browser_artifact(
+        workspace_root,
+        &format!("{}_native.nda", session_id),
+        &encode_nda_triples(triples),
+    )
 }
 
 impl NativeBrowserBridge {
@@ -109,6 +130,18 @@ impl NativeBrowserBridge {
 
     pub fn capture_nda(&self) -> Vec<NdaTriple> {
         self.active_session.capture_state_nda()
+    }
+
+    /// Lossless NDA document of the current session state (the same snapshot
+    /// the agent_* actions diff), for readable/binary export.
+    pub fn capture_document(&self) -> velocity_browser::NdaDocument {
+        self.active_session.capture_state_document()
+    }
+
+    /// Console/mutation/performance/network traces as NDA triples
+    /// (predicates 120-123).
+    pub fn export_traces_nda(&self) -> Vec<NdaTriple> {
+        self.active_session.trace_collector.export_traces_nda()
     }
 
     // -- Live agent-drive API ------------------------------------------------

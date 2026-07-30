@@ -1236,5 +1236,18 @@ pub fn get_browser_tools() -> Vec<Tool> {
                 "required": ["sessionId"]
             }),
         },
+        Tool {
+            name: "browser_native_export_nda".to_string(),
+            description: "Persist the live session's state as an NDA artifact under .velocity/browser_artifacts/. format=binary (default) writes the 18-byte hashed triple stream ({sessionId}_native.nda); format=readable writes and returns the lossless fact text ({sessionId}_facts.txt); format=trace writes console/mutation/performance/network traces ({sessionId}_trace.nda). Returns the artifact path and fact count.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "format": { "type": "string", "enum": ["binary", "readable", "trace"], "description": "Artifact format: binary NDA triples (default), readable fact text, or trace stream." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON export report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
     ]
 }

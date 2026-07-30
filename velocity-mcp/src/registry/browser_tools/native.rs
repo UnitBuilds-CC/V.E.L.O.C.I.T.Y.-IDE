@@ -14,7 +14,8 @@ use std::error::Error;
 use std::path::Path;
 
 use crate::editor::browser::native_bridge::{
-    get_or_create_native_bridge, NativeBrowserBridge, NativeBrowserView,
+    encode_nda_triples, get_or_create_native_bridge, persist_browser_artifact,
+    NativeBrowserBridge, NativeBrowserView,
 };
 use velocity_browser::NdaDelta;
 
@@ -212,7 +213,7 @@ fn resolve_node(bridge: &NativeBrowserBridge, arguments: &Value) -> Result<usize
 }
 
 pub fn handle_native_tool(
-    _root: &Path,
+    root: &Path,
     name: &str,
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
@@ -243,6 +244,7 @@ pub fn handle_native_tool(
         | "browser_native_press"
         | "browser_native_read_form"
         | "browser_native_observe"
+        | "browser_native_export_nda"
         | "browser_native_settle" => arguments["sessionId"]
             .as_str()
             .ok_or("sessionId is required")?,
@@ -277,6 +279,67 @@ pub fn handle_native_tool(
 
     if name == "browser_native_observe" {
         return Ok(Some(bridge.agent_observe()));
+    }
+
+    // NDA export persists the session state as an on-disk artifact another
+    // agent (or a later run) can consume without re-crawling the page.
+    // binary = 18-byte hashed triple stream, readable = lossless fact text,
+    // trace = console/mutation/performance/network traces (predicates 120-123).
+    if name == "browser_native_export_nda" {
+        let format = arguments["format"].as_str().unwrap_or("binary");
+        let (path, fact_count, facts) = match format {
+            "readable" => {
+                let facts = bridge.capture_document().facts_text();
+                let path = persist_browser_artifact(
+                    root,
+                    &format!("{session_id}_facts.txt"),
+                    facts.as_bytes(),
+                )?;
+                (path, facts.lines().count(), Some(facts))
+            }
+            "trace" => {
+                let triples = bridge.export_traces_nda();
+                let path = persist_browser_artifact(
+                    root,
+                    &format!("{session_id}_trace.nda"),
+                    &encode_nda_triples(&triples),
+                )?;
+                (path, triples.len(), None)
+            }
+            "binary" => {
+                let triples = bridge.capture_nda();
+                let path = persist_browser_artifact(
+                    root,
+                    &format!("{session_id}_native.nda"),
+                    &encode_nda_triples(&triples),
+                )?;
+                (path, triples.len(), None)
+            }
+            other => return Err(format!(
+                "unknown export format '{other}' (expected binary, readable, or trace)"
+            ).into()),
+        };
+        return Ok(Some(if compact {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "format": format,
+                "path": path.display().to_string(),
+                "factCount": fact_count,
+                "facts": facts,
+            }))
+            .map_err(|e| format!("serialise native export report: {e}"))?
+        } else {
+            let mut out = format!(
+                "Exported {} {} fact(s) to {}\n",
+                fact_count,
+                format,
+                path.display()
+            );
+            if let Some(facts) = facts {
+                out.push_str("---\n");
+                out.push_str(&facts);
+            }
+            out
+        }));
     }
 
     // Eval returns a JS result, not an NDA delta.
@@ -650,5 +713,112 @@ mod native_label_tool_tests {
         assert!(report["status"].as_str().unwrap().contains("clicked"));
         assert!(report.get("delta").is_some(), "report carries the delta");
         assert!(report["view"]["url"].as_str().unwrap().contains("local.test"));
+    }
+
+    /// Export tests write real artifacts, so they root themselves in the OS
+    /// temp dir instead of the workspace.
+    fn call_rooted(root: &Path, name: &str, args: serde_json::Value) -> String {
+        handle_native_tool(root, name, &args)
+            .expect("tool call succeeds")
+            .expect("native tool name is handled")
+    }
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("velocity_export_{tag}"));
+        let _ = std::fs::create_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn export_nda_binary_writes_triple_stream_artifact() {
+        load("t18-bin");
+        let root = temp_root("bin");
+        let out = call_rooted(
+            &root,
+            "browser_native_export_nda",
+            json!({ "sessionId": "t18-bin" }),
+        );
+        assert!(out.contains("binary"), "default format is binary: {out}");
+        assert!(out.contains("t18-bin_native.nda"), "output names the artifact: {out}");
+        let path = root
+            .join(".velocity")
+            .join("browser_artifacts")
+            .join("t18-bin_native.nda");
+        let bytes = std::fs::read(&path).expect("binary artifact exists");
+        assert!(!bytes.is_empty(), "a loaded page produces state triples");
+        assert_eq!(bytes.len() % 18, 0, "stream is whole 18-byte triple records");
+    }
+
+    #[test]
+    fn export_nda_readable_returns_and_persists_fact_text() {
+        load("t18-read");
+        let root = temp_root("read");
+        let out = call_rooted(
+            &root,
+            "browser_native_export_nda",
+            json!({ "sessionId": "t18-read", "format": "readable" }),
+        );
+        assert!(
+            out.contains("http://local.test/form"),
+            "readable export returns the fact text inline: {out}"
+        );
+        let path = root
+            .join(".velocity")
+            .join("browser_artifacts")
+            .join("t18-read_facts.txt");
+        let persisted = std::fs::read_to_string(&path).expect("facts artifact exists");
+        assert!(persisted.contains("http://local.test/form"), "persisted facts match: {persisted}");
+    }
+
+    #[test]
+    fn export_nda_trace_persists_trace_stream() {
+        load("t18-trace");
+        // Act first so the trace collector has something to export.
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t18-trace", "label": "Email", "text": "t@e.st" }),
+        );
+        let root = temp_root("trace");
+        let out = call_rooted(
+            &root,
+            "browser_native_export_nda",
+            json!({ "sessionId": "t18-trace", "format": "trace" }),
+        );
+        assert!(out.contains("t18-trace_trace.nda"), "output names the artifact: {out}");
+        let path = root
+            .join(".velocity")
+            .join("browser_artifacts")
+            .join("t18-trace_trace.nda");
+        let bytes = std::fs::read(&path).expect("trace artifact exists");
+        assert_eq!(bytes.len() % 18, 0, "trace stream is whole triple records");
+    }
+
+    #[test]
+    fn export_nda_compact_reports_path_and_fact_count() {
+        load("t18-compact");
+        let root = temp_root("compact");
+        let out = call_rooted(
+            &root,
+            "browser_native_export_nda",
+            json!({ "sessionId": "t18-compact", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&out).expect("compact export output is valid JSON");
+        assert_eq!(report["format"], "binary");
+        assert!(report["factCount"].as_u64().unwrap() > 0, "fact count reported");
+        assert!(report["path"].as_str().unwrap().contains("t18-compact_native.nda"));
+    }
+
+    #[test]
+    fn export_nda_rejects_unknown_format() {
+        load("t18-badfmt");
+        let root = temp_root("badfmt");
+        let err = handle_native_tool(
+            &root,
+            "browser_native_export_nda",
+            &json!({ "sessionId": "t18-badfmt", "format": "yaml" }),
+        )
+        .expect_err("unknown format must be rejected");
+        assert!(err.to_string().contains("unknown export format"), "{err}");
     }
 }
