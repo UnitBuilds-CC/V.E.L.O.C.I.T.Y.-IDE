@@ -983,6 +983,36 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_remember".to_string(),
+            description: "Index the current page of the native browser session into vector memory (title + visible text + optional note, TF-IDF embedded) so it can be recalled later by meaning, keyword, or tag without re-crawling. Returns the memory id and what was indexed.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "tags": { "type": "array", "items": { "type": "string" }, "description": "Categorical tags for later tag-mode recall (e.g. [\"login\", \"checkout\"])." },
+                    "outcome": { "type": "number", "description": "Outcome score 0.0-1.0 recording how well the interaction on this page went. Defaults to 0." },
+                    "note": { "type": "string", "description": "Optional free-text note indexed alongside the page text." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_recall".to_string(),
+            description: "Recall pages previously stored with browser_native_remember. Modes: semantic (TF-IDF cosine similarity, scored), keyword (substring over text/url), tag (exact tag match). Each hit lists memory id, url, similarity, tags, outcome, and a text snippet.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "query": { "type": "string", "description": "Search text (or the tag name in tag mode)." },
+                    "mode": { "type": "string", "enum": ["semantic", "keyword", "tag"], "description": "Recall strategy. Defaults to semantic." },
+                    "limit": { "type": "integer", "description": "Maximum hits to return. Defaults to 5." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId", "query"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({

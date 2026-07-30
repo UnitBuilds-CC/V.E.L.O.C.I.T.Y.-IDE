@@ -326,11 +326,19 @@ impl FastCssParser {
                 } else if rest.starts_with('*') {
                     rest = &rest[1..];
                 } else {
-                    // Tag name
+                    // Tag name. Unknown leading characters (e.g. stray '<'
+                    // when the fast scanner runs over raw page HTML around a
+                    // <style> block) are skipped one at a time so this loop
+                    // always advances instead of spinning forever.
                     let end = rest.find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
                         .unwrap_or(rest.len());
-                    if end > 0 { elements += 1; }
-                    rest = &rest[end..];
+                    if end > 0 {
+                        elements += 1;
+                        rest = &rest[end..];
+                    } else {
+                        let skip = rest.chars().next().map_or(1, |c| c.len_utf8());
+                        rest = &rest[skip..];
+                    }
                 }
             }
         }
@@ -439,6 +447,17 @@ mod tests {
         assert_eq!(rules[0].declarations[0].value, "red");
         assert_eq!(rules[0].declarations[1].property, "font-size");
         assert_eq!(rules[0].declarations[1].value, "14px");
+    }
+
+    /// parse_rules_fast is fed whole HTML documents by the session loader, so
+    /// the "selector" preceding a brace can be raw markup full of '<' and '>'.
+    /// compute_specificity used to spin forever on such garbage (regression).
+    #[test]
+    fn test_parse_terminates_on_raw_html_input() {
+        let html = "<html><head><title>T</title><style>.x { color: red; }</style></head>\
+                    <body><h1>Plans</h1></body></html>";
+        let rules = FastCssParser::parse_rules_fast(html);
+        assert!(!rules.is_empty());
     }
 
     #[test]

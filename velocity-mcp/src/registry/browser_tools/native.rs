@@ -219,6 +219,16 @@ fn tab_json(bridge: &NativeBrowserBridge) -> Value {
     )
 }
 
+/// First 160 characters of a stored page text, ellipsised, so recall
+/// listings stay token-cheap even when whole articles were indexed.
+fn memory_snippet(text: &str) -> String {
+    let mut s: String = text.chars().take(160).collect();
+    if text.chars().count() > 160 {
+        s.push('…');
+    }
+    s
+}
+
 /// Resolve the target node id from either an explicit `nodeId` (accepts a raw
 /// integer, `"5"`, or `"node_5"`) or a semantic `role` + `name` lookup.
 fn resolve_node(bridge: &NativeBrowserBridge, arguments: &Value) -> Result<usize, Box<dyn Error>> {
@@ -276,6 +286,8 @@ pub fn handle_native_tool(
         | "browser_native_read_form"
         | "browser_native_observe"
         | "browser_native_export_nda"
+        | "browser_native_remember"
+        | "browser_native_recall"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -314,6 +326,100 @@ pub fn handle_native_tool(
 
     if name == "browser_native_observe" {
         return Ok(Some(bridge.agent_observe()));
+    }
+
+    // Vector memory: remember indexes the current page's visible text so a
+    // later recall (in this or another tab of the session) finds it by
+    // meaning, keyword, or tag — no re-crawl, far fewer tokens than a page
+    // dump. Remember reports exactly what was indexed; recall is read-only.
+    if name == "browser_native_remember" {
+        let tags: Vec<String> = arguments["tags"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let outcome = arguments["outcome"].as_f64().unwrap_or(0.0);
+        let note = arguments["note"].as_str();
+        let (memory_id, url, chars) = bridge.remember_page(tags.clone(), outcome, note);
+        let total = bridge.memory_count();
+        return Ok(Some(if compact {
+            serde_json::to_string_pretty(&serde_json::json!({
+                "memoryId": memory_id,
+                "url": url,
+                "indexedChars": chars,
+                "tags": tags,
+                "outcome": outcome,
+                "memoryCount": total,
+            }))
+            .map_err(|e| format!("serialise remember report: {e}"))?
+        } else {
+            format!(
+                "remembered page as '{}' ({} chars from {}, tags [{}], outcome {:.2}) — {} memor{} stored\n",
+                memory_id,
+                chars,
+                if url.is_empty() { "(no url)" } else { url.as_str() },
+                tags.join(", "),
+                outcome,
+                total,
+                if total == 1 { "y" } else { "ies" },
+            )
+        }));
+    }
+
+    if name == "browser_native_recall" {
+        let query = arguments["query"].as_str().ok_or("query is required")?;
+        let mode = arguments["mode"].as_str().unwrap_or("semantic");
+        if !matches!(mode, "semantic" | "keyword" | "tag") {
+            return Err(format!(
+                "unknown recall mode '{mode}' (expected semantic, keyword, or tag)"
+            )
+            .into());
+        }
+        let limit = arguments["limit"].as_u64().unwrap_or(5) as usize;
+        let hits = bridge.recall_pages(query, mode, limit);
+        return Ok(Some(if compact {
+            let items: Vec<serde_json::Value> = hits
+                .iter()
+                .map(|(n, sim)| {
+                    serde_json::json!({
+                        "memoryId": n.id,
+                        "url": n.url,
+                        "similarity": sim,
+                        "tags": n.tags,
+                        "outcome": n.outcome_score,
+                        "snippet": memory_snippet(&n.text),
+                    })
+                })
+                .collect();
+            serde_json::to_string_pretty(&serde_json::json!({
+                "mode": mode,
+                "query": query,
+                "hits": items,
+            }))
+            .map_err(|e| format!("serialise recall report: {e}"))?
+        } else if hits.is_empty() {
+            format!("no memories matched '{query}' ({mode})\n")
+        } else {
+            let mut out = format!(
+                "{} memor{} matched '{}' ({}):\n",
+                hits.len(),
+                if hits.len() == 1 { "y" } else { "ies" },
+                query,
+                mode
+            );
+            for (n, sim) in &hits {
+                let score = sim.map(|s| format!("{s:.3}")).unwrap_or_else(|| "-".to_string());
+                out.push_str(&format!(
+                    "  [{}] {} {} tags [{}] outcome {:.2}\n      {}\n",
+                    score,
+                    n.id,
+                    if n.url.is_empty() { "(no url)" } else { n.url.as_str() },
+                    n.tags.join(", "),
+                    n.outcome_score,
+                    memory_snippet(&n.text),
+                ));
+            }
+            out
+        }));
     }
 
     // NDA export persists the session state as an on-disk artifact another
@@ -1036,5 +1142,79 @@ mod native_label_tool_tests {
         );
         assert!(out.contains("no element matching"), "{out}");
         assert!(out.contains("(no state change)"), "miss produces an empty delta: {out}");
+    }
+
+    #[test]
+    fn remember_tool_indexes_page_and_recall_finds_it_semantically() {
+        load("t21-mem");
+        let out = call(
+            "browser_native_remember",
+            json!({ "sessionId": "t21-mem", "tags": ["signup"], "outcome": 0.9 }),
+        );
+        assert!(out.contains("remembered page as 't21-mem:0'"), "{out}");
+        assert!(out.contains("http://local.test/form"), "report carries the url: {out}");
+        assert!(out.contains("1 memory stored"), "{out}");
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t21-mem", "query": "signup" }),
+        );
+        assert!(out.contains("1 memory matched 'signup' (semantic):"), "{out}");
+        assert!(out.contains("t21-mem:0"), "hit lists the memory id: {out}");
+        assert!(out.contains("http://local.test/form"), "hit lists the url: {out}");
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t21-mem", "query": "signup", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&out).expect("compact recall is valid JSON");
+        let hits = report["hits"].as_array().expect("hits array");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["memoryId"], "t21-mem:0");
+        assert!(hits[0]["similarity"].as_f64().expect("semantic score") > 0.0);
+    }
+
+    #[test]
+    fn recall_tool_supports_keyword_tag_and_empty_results() {
+        load("t21-modes");
+        call(
+            "browser_native_remember",
+            json!({
+                "sessionId": "t21-modes",
+                "tags": ["checkout"],
+                "outcome": 0.7,
+                "note": "special discount pricing page"
+            }),
+        );
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t21-modes", "query": "discount", "mode": "keyword" }),
+        );
+        assert!(out.contains("(keyword)"), "{out}");
+        assert!(out.contains("discount"), "note text is indexed and recallable: {out}");
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t21-modes", "query": "checkout", "mode": "tag" }),
+        );
+        assert!(out.contains("(tag)"), "{out}");
+        assert!(out.contains("tags [checkout]"), "{out}");
+        assert!(out.contains("outcome 0.70"), "{out}");
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t21-modes", "query": "quantum blockchain", "mode": "semantic" }),
+        );
+        assert!(out.contains("no memories matched 'quantum blockchain'"), "{out}");
+
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_recall",
+            &json!({ "sessionId": "t21-modes", "query": "x", "mode": "psychic" }),
+        )
+        .expect_err("unknown recall mode must be rejected");
+        assert!(err.to_string().contains("unknown recall mode"), "{err}");
     }
 }

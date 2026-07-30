@@ -788,6 +788,47 @@ impl BrowserSession {
         self.capture_state_document().facts_text()
     }
 
+    /// Visible text of the current page in reading order: the title followed
+    /// by all text content, with script/style/noscript subtrees skipped and
+    /// whitespace collapsed. This is the raw material `remember` feeds into
+    /// vector memory so pages can be recalled semantically later.
+    pub fn page_text(&self) -> String {
+        let Some(tree) = self.dom_tree.as_ref() else {
+            return String::new();
+        };
+        let mut buf = String::new();
+        if !self.page_title.is_empty() && self.page_title != "Untitled Page" {
+            buf.push_str(&self.page_title);
+            buf.push(' ');
+        }
+        for node in &tree.nodes {
+            if node.parent.is_none() {
+                Self::visible_text_walk(tree, node.id, &mut buf);
+            }
+        }
+        buf.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// Depth-first text collection that skips non-rendered subtrees. The
+    /// `<title>` subtree is skipped too because `page_text` already leads
+    /// with the page title.
+    fn visible_text_walk(tree: &DomTree, id: usize, out: &mut String) {
+        use crate::parser::html::NodeType;
+        let Some(node) = tree.get_node(id) else { return };
+        if node.node_type == NodeType::Element
+            && matches!(node.tag_name.as_str(), "script" | "style" | "noscript" | "title")
+        {
+            return;
+        }
+        if node.node_type == NodeType::Text {
+            out.push_str(&node.text_content);
+            out.push(' ');
+        }
+        for &child in &node.children {
+            Self::visible_text_walk(tree, child, out);
+        }
+    }
+
     // === Label-based semantic actions =======================================
     // The node-id actions above assume the agent already ran agent_observe and
     // picked a node. These variants resolve the target by accessible name via
@@ -1849,5 +1890,23 @@ mod agent_action_tests {
         let text = session.agent_observe();
         assert!(text.contains("|scroll|0,0"), "got: {}", text);
         assert!(text.contains("|inViewport|true"), "got: {}", text);
+    }
+
+    #[test]
+    fn page_text_collects_title_and_visible_text_skipping_scripts() {
+        let mut session = BrowserSession::new("s27".to_string());
+        session.load_html(
+            "about:test",
+            "<html><head><title>Pricing</title><script>var hidden = 1;</script>\
+             <style>.x { color: red; }</style></head>\
+             <body><h1>Plans</h1><p>Choose   the\n pro plan today.</p></body></html>",
+        );
+        assert_eq!(session.page_text(), "Pricing Plans Choose the pro plan today.");
+    }
+
+    #[test]
+    fn page_text_is_empty_without_a_loaded_page() {
+        let session = BrowserSession::new("s28".to_string());
+        assert_eq!(session.page_text(), "");
     }
 }

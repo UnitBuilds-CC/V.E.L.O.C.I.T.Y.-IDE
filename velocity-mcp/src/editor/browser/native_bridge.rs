@@ -4,7 +4,7 @@ use velocity_browser::{
     AgentActionResult, AgenticAomTree, BrowserSession, NdaTriple, SwarmSessionOrchestrator,
 };
 use velocity_browser::screencast::ScreencastRecorder;
-use velocity_browser::vector_memory::SiteVectorStore;
+use velocity_browser::vector_memory::{SiteVectorStore, VectorMemoryNode};
 use std::sync::{Arc, Mutex, LazyLock};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -205,6 +205,79 @@ impl NativeBrowserBridge {
     /// (predicates 120-123).
     pub fn export_traces_nda(&self) -> Vec<NdaTriple> {
         self.active_session.trace_collector.export_traces_nda()
+    }
+
+    // -- Vector memory --------------------------------------------------------
+    // The bridge-level store spans all tabs of a session id, so a page
+    // remembered in one tab is recallable from any other.
+
+    /// Index the current page (title + visible text + optional note) into
+    /// vector memory. Returns `(memory_id, url, indexed_char_count)`.
+    pub fn remember_page(
+        &mut self,
+        tags: Vec<String>,
+        outcome_score: f64,
+        note: Option<&str>,
+    ) -> (String, String, usize) {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut text = self.active_session.page_text();
+        if let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(note);
+        }
+        let url = self.active_session.current_url.clone();
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        text.hash(&mut hasher);
+        let chars = text.chars().count();
+        let id = self.vector_memory.insert_rich(
+            &self.active_session.session_id,
+            &url,
+            &text,
+            hasher.finish(),
+            tags,
+            outcome_score.clamp(0.0, 1.0),
+        );
+        (id, url, chars)
+    }
+
+    /// Recall remembered pages. `mode` is `"semantic"` (TF-IDF cosine,
+    /// scored), `"keyword"` (substring over text/url) or `"tag"` (exact tag
+    /// match). Hits are cloned out so the tool layer renders them without
+    /// borrowing the store.
+    pub fn recall_pages(
+        &self,
+        query: &str,
+        mode: &str,
+        limit: usize,
+    ) -> Vec<(VectorMemoryNode, Option<f64>)> {
+        match mode {
+            "keyword" => self
+                .vector_memory
+                .search(query, limit)
+                .into_iter()
+                .map(|n| (n.clone(), None))
+                .collect(),
+            "tag" => self
+                .vector_memory
+                .search_by_tag(query, limit)
+                .into_iter()
+                .map(|n| (n.clone(), None))
+                .collect(),
+            _ => self
+                .vector_memory
+                .semantic_search(query, limit)
+                .into_iter()
+                .map(|(n, sim)| (n.clone(), Some(sim)))
+                .collect(),
+        }
+    }
+
+    /// Total number of pages held in vector memory.
+    pub fn memory_count(&self) -> usize {
+        self.vector_memory.nodes.len()
     }
 
     // -- Live agent-drive API ------------------------------------------------
