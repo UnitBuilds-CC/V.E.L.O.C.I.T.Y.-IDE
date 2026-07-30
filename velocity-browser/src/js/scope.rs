@@ -15,6 +15,15 @@ use crate::js::vm::JsValue;
 pub struct Scope {
     pub locals: HashMap<String, JsValue>,
     pub parent: Option<ScopeRef>,
+    /// True for function-level and global scopes. `var` declarations hoist
+    /// up to the nearest scope with this flag set.
+    pub is_function_scope: bool,
+    /// Variables declared with `const` — reassignment should throw.
+    pub consts: std::collections::HashSet<String>,
+    /// Resources declared with `using` — disposed (Symbol.dispose called) when
+    /// the enclosing block scope exits. Stored in declaration order; disposed
+    /// in reverse (LIFO) per spec.
+    pub disposables: Vec<JsValue>,
 }
 
 /// Shared reference-counted scope pointer (allows closures to reference enclosing scopes).
@@ -26,6 +35,9 @@ impl Scope {
         Arc::new(Mutex::new(Scope {
             locals: HashMap::new(),
             parent: None,
+            is_function_scope: true,
+            consts: std::collections::HashSet::new(),
+            disposables: Vec::new(),
         }))
     }
 
@@ -34,7 +46,35 @@ impl Scope {
         Arc::new(Mutex::new(Scope {
             locals: HashMap::new(),
             parent: Some(Arc::clone(parent)),
+            is_function_scope: false,
+            consts: std::collections::HashSet::new(),
+            disposables: Vec::new(),
         }))
+    }
+
+    /// Create a child scope that acts as a function boundary (var hoisting target).
+    pub fn new_function_scope(parent: &ScopeRef) -> ScopeRef {
+        Arc::new(Mutex::new(Scope {
+            locals: HashMap::new(),
+            parent: Some(Arc::clone(parent)),
+            is_function_scope: true,
+            consts: std::collections::HashSet::new(),
+            disposables: Vec::new(),
+        }))
+    }
+
+    /// Register a disposable resource in this scope.
+    pub fn add_disposable(scope: &ScopeRef, resource: JsValue) {
+        let mut s = scope.lock().unwrap();
+        s.disposables.push(resource);
+    }
+
+    /// Drain all disposables from this scope (returns them in LIFO order for disposal).
+    pub fn take_disposables(scope: &ScopeRef) -> Vec<JsValue> {
+        let mut s = scope.lock().unwrap();
+        let mut items = std::mem::take(&mut s.disposables);
+        items.reverse(); // LIFO disposal per spec
+        items
     }
 
     /// Resolve a variable by walking up the scope chain.
@@ -68,6 +108,69 @@ impl Scope {
     pub fn declare(scope: &ScopeRef, name: &str, value: JsValue) {
         let mut s = scope.lock().unwrap();
         s.locals.insert(name.to_string(), value);
+    }
+
+    /// Declare a `var` variable — hoists to the nearest function/global scope.
+    pub fn declare_var(scope: &ScopeRef, name: &str, value: JsValue) {
+        let is_fn = { scope.lock().unwrap().is_function_scope };
+        if is_fn {
+            let mut s = scope.lock().unwrap();
+            s.locals.insert(name.to_string(), value);
+        } else {
+            let parent = { scope.lock().unwrap().parent.clone() };
+            match parent {
+                Some(p) => Scope::declare_var(&p, name, value),
+                None => {
+                    let mut s = scope.lock().unwrap();
+                    s.locals.insert(name.to_string(), value);
+                }
+            }
+        }
+    }
+
+    /// Declare a `const` variable in the current scope and mark it immutable.
+    pub fn declare_const(scope: &ScopeRef, name: &str, value: JsValue) {
+        let mut s = scope.lock().unwrap();
+        s.locals.insert(name.to_string(), value);
+        s.consts.insert(name.to_string());
+    }
+
+    /// Check if a variable is a const anywhere in the chain.
+    pub fn is_const(scope: &ScopeRef, name: &str) -> bool {
+        let s = scope.lock().unwrap();
+        if s.consts.contains(name) {
+            return true;
+        }
+        if let Some(ref parent) = s.parent {
+            return Scope::is_const(parent, name);
+        }
+        false
+    }
+
+    /// Agent-first: snapshot all visible bindings from this scope up the chain.
+    /// Returns a flat map of name → value for every variable visible at this point.
+    /// Inner scopes shadow outer ones (inner wins).
+    pub fn snapshot(scope: &ScopeRef) -> HashMap<String, JsValue> {
+        let mut result = HashMap::new();
+        Scope::collect_bindings(scope, &mut result);
+        result
+    }
+
+    fn collect_bindings(scope: &ScopeRef, out: &mut HashMap<String, JsValue>) {
+        let s = scope.lock().unwrap();
+        // Walk parent first so inner scopes can shadow
+        if let Some(ref parent) = s.parent {
+            Scope::collect_bindings(parent, out);
+        }
+        for (k, v) in &s.locals {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+
+    /// Agent-first: list only the bindings declared directly in this scope level.
+    pub fn local_keys(scope: &ScopeRef) -> Vec<String> {
+        let s = scope.lock().unwrap();
+        s.locals.keys().cloned().collect()
     }
 }
 

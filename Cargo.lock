@@ -4080,6 +4080,7 @@ dependencies = [
 name = "velocity-browser"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "ring",
  "rustls",
  "rustls-webpki",
