@@ -764,4 +764,56 @@ fn export_nda_bytes_via_js() {
     assert!(to_number(&result) > 0.0);
 }
 
+// ── Wait For Settlement ──────────────────────────────────────────────────────
+
+#[test]
+fn wait_for_settlement_settles_when_quiet() {
+    let result = eval_full("var s = document.waitForSettlement(); s.settled");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn wait_for_settlement_runs_pending_timers() {
+    let result = eval_full("var x = 0; setTimeout(function(){ x = 7; }, 0); document.waitForSettlement(); x");
+    assert_eq!(result, JsValue::Number(7.0));
+}
+
+#[test]
+fn wait_for_settlement_runs_chained_timers() {
+    let result = eval_full(
+        "var x = 0; setTimeout(function(){ x = 1; setTimeout(function(){ x = 2; }, 0); }, 0); document.waitForSettlement(); x"
+    );
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn wait_for_settlement_reports_timer_count() {
+    let result = eval_full("setTimeout(function(){}, 0); setTimeout(function(){}, 0); var s = document.waitForSettlement(); s.timersRun");
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn wait_for_settlement_never_settles_with_interval() {
+    let result = eval_full("setInterval(function(){}, 1); var s = document.waitForSettlement(); s.settled");
+    assert_eq!(result, JsValue::Boolean(false));
+}
+
+#[test]
+fn wait_for_settlement_observes_timer_dom_mutations() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<div id="box"></div>';
+        setTimeout(function(){ document.getElementById('box').setAttribute('data-x', '1'); }, 0);
+        document.waitForSettlement();
+        document.getElementById('box').getAttribute('data-x')
+    "#);
+    assert_eq!(result, JsValue::String("1".to_string()));
+}
+
+#[test]
+fn wait_for_settlement_reports_dom_state() {
+    eval_full("document.body.innerHTML = '<button>Go</button>'");
+    let result = eval_full("var s = document.waitForSettlement(); s.interactiveCount");
+    assert!(to_number(&result) >= 1.0);
+}
+
 

@@ -17,6 +17,45 @@ fn console_api() {
     clear_console_output();
 }
 
+#[test]
+fn console_table_renders_markdown() {
+    eval_full("console.table([{fruit: 'apple', qty: 3}])");
+    let output = get_console_output();
+    let rec = output.iter().rev().find(|r| r.level == "table").expect("table record");
+    match &rec.args[0] {
+        JsValue::String(s) => {
+            assert!(s.contains("| (index) | fruit | qty |"), "got: {}", s);
+            assert!(s.contains("| 0 | apple | 3 |"), "got: {}", s);
+        }
+        other => panic!("Expected rendered string, got {:?}", other),
+    }
+}
+
+#[test]
+fn console_table_renders_plain_object() {
+    eval_full("console.table({alpha: 'one', beta: 'two'})");
+    let output = get_console_output();
+    let rec = output.iter().rev().find(|r| {
+        r.level == "table" && matches!(&r.args[0], JsValue::String(s) if s.contains("alpha"))
+    }).expect("table record");
+    match &rec.args[0] {
+        JsValue::String(s) => {
+            assert!(s.contains("| alpha | one |"), "got: {}", s);
+            assert!(s.contains("| beta | two |"), "got: {}", s);
+        }
+        other => panic!("Expected rendered string, got {:?}", other),
+    }
+}
+
+#[test]
+fn get_console_text_exposes_logs_to_agents() {
+    let result = eval_full("console.log('settle-marker-42'); document.getConsoleText()");
+    match result {
+        JsValue::String(s) => assert!(s.contains("log: settle-marker-42"), "got: {}", s),
+        other => panic!("Expected string, got {:?}", other),
+    }
+}
+
 // ── AbortController ──────────────────────────────────────────────────────
 
 #[test]

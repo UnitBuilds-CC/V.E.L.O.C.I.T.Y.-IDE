@@ -349,7 +349,13 @@ pub fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
             push_console("timeEnd", vec![JsValue::String(format!("{}: {:.3}ms", label, elapsed))]);
             return Ok(JsValue::Undefined);
         }
-        "console.table" => { push_console("table", args.to_vec()); return Ok(JsValue::Undefined); }
+        "console.table" => {
+            // Render the value as an aligned Markdown table so agents (and the
+            // trace collector) get readable structure, not an opaque dump.
+            let text = console_table_text(args.first().unwrap_or(&JsValue::Undefined));
+            push_console("table", vec![JsValue::String(text)]);
+            return Ok(JsValue::Undefined);
+        }
         "console.trace" => { push_console("trace", args.to_vec()); return Ok(JsValue::Undefined); }
         "console.group" => { push_console("group", args.to_vec()); return Ok(JsValue::Undefined); }
         "console.groupEnd" => { push_console("groupEnd", vec![]); return Ok(JsValue::Undefined); }
@@ -567,6 +573,7 @@ pub fn call_native(name: &str, args: &[JsValue]) -> EvalResult {
         "setTimeout" => super::browser_env::set_timeout(args),
         "setInterval" => super::browser_env::set_interval(args),
         "clearTimeout" | "clearInterval" => super::browser_env::clear_timer(args),
+        "flushTimers" => JsValue::Number(super::browser_env::flush_timers() as f64),
         // Fetch API (simulated)
         "fetch" => super::browser_env::call_fetch(args),
         // Web platform globals.

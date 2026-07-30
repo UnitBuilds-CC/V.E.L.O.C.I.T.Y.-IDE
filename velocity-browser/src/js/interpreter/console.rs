@@ -104,6 +104,108 @@ pub(super) fn console_count_reset(label: &str) {
     if let Ok(mut counts) = CONSOLE_COUNTS.lock() { counts.insert(label.to_string(), 0); }
 }
 
+/// Render a value as a Markdown table for `console.table`.
+///
+/// Supported shapes mirror the browser API: array of objects (columns from key
+/// union), array of arrays (numbered columns), array of primitives, and plain
+/// objects (key/value rows). Anything else falls back to string coercion.
+pub(super) fn console_table_text(value: &JsValue) -> String {
+    fn cell(v: &JsValue) -> String {
+        super::coercion::to_string(v).replace('|', "\\|").replace('\n', " ")
+    }
+    fn render(headers: &[String], rows: &[Vec<String>]) -> String {
+        let mut out = String::new();
+        out.push_str("| ");
+        out.push_str(&headers.join(" | "));
+        out.push_str(" |\n|");
+        for _ in headers { out.push_str(" --- |"); }
+        out.push('\n');
+        for row in rows {
+            out.push_str("| ");
+            out.push_str(&row.join(" | "));
+            out.push_str(" |\n");
+        }
+        out
+    }
+
+    match value {
+        JsValue::Array(items) if !items.is_empty() => {
+            // Array of objects → columns are the union of keys (first-seen order).
+            if items.iter().all(|i| matches!(i, JsValue::Object(_))) {
+                let mut headers: Vec<String> = vec!["(index)".to_string()];
+                for item in items {
+                    if let JsValue::Object(map) = item {
+                        let mut keys: Vec<&String> = map.keys().filter(|k| !k.starts_with("__")).collect();
+                        keys.sort();
+                        for k in keys {
+                            if !headers.iter().any(|h| h == k) { headers.push(k.clone()); }
+                        }
+                    }
+                }
+                let rows: Vec<Vec<String>> = items.iter().enumerate().map(|(i, item)| {
+                    let mut row = vec![i.to_string()];
+                    if let JsValue::Object(map) = item {
+                        for h in &headers[1..] {
+                            row.push(map.get(h).map(cell).unwrap_or_default());
+                        }
+                    }
+                    row
+                }).collect();
+                return render(&headers, &rows);
+            }
+            // Array of arrays → numbered columns.
+            if items.iter().all(|i| matches!(i, JsValue::Array(_))) {
+                let width = items.iter().map(|i| if let JsValue::Array(a) = i { a.len() } else { 0 }).max().unwrap_or(0);
+                let mut headers = vec!["(index)".to_string()];
+                for c in 0..width { headers.push(c.to_string()); }
+                let rows: Vec<Vec<String>> = items.iter().enumerate().map(|(i, item)| {
+                    let mut row = vec![i.to_string()];
+                    if let JsValue::Array(a) = item {
+                        for c in 0..width { row.push(a.get(c).map(cell).unwrap_or_default()); }
+                    }
+                    row
+                }).collect();
+                return render(&headers, &rows);
+            }
+            // Array of primitives → single Values column.
+            let headers = vec!["(index)".to_string(), "Values".to_string()];
+            let rows: Vec<Vec<String>> = items.iter().enumerate()
+                .map(|(i, item)| vec![i.to_string(), cell(item)])
+                .collect();
+            render(&headers, &rows)
+        }
+        JsValue::Object(map) => {
+            let headers = vec!["(index)".to_string(), "Values".to_string()];
+            let mut keys: Vec<&String> = map.keys().filter(|k| !k.starts_with("__")).collect();
+            keys.sort();
+            let rows: Vec<Vec<String>> = keys.into_iter()
+                .map(|k| vec![k.clone(), map.get(k).map(cell).unwrap_or_default()])
+                .collect();
+            render(&headers, &rows)
+        }
+        other => cell(other),
+    }
+}
+
+/// Format captured console output as compact `level: message` lines so agents
+/// can read page diagnostics without a devtools UI.
+pub fn console_output_text() -> String {
+    let records = get_console_output();
+    let mut out = String::with_capacity(records.len() * 48);
+    for rec in &records {
+        out.push_str(&rec.level);
+        out.push_str(": ");
+        let mut first = true;
+        for arg in &rec.args {
+            if !first { out.push(' '); }
+            out.push_str(&super::coercion::to_string(arg));
+            first = false;
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// Capture a stack trace string for error reporting.
 /// Since we don't have real call frames, we produce a best-effort trace from
 /// the error name/message.

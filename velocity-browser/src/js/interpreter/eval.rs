@@ -411,7 +411,7 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
                 "encodeURIComponent" | "decodeURIComponent" | "Symbol" | "queueMicrotask" |
                 "Number" | "String" | "Boolean" | "requestAnimationFrame" | "requestIdleCallback" |
                 "atob" | "btoa" | "getComputedStyle" | "matchMedia" | "createImageBitmap" |
-                "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" |
+                "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" | "flushTimers" |
                 "fetch" => {
                     JsValue::NativeFunction(name.clone())
                 }
@@ -1188,7 +1188,7 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
             "encodeURIComponent" | "decodeURIComponent" | "Symbol" | "queueMicrotask" |
             "Number" | "String" | "Boolean" | "requestAnimationFrame" | "requestIdleCallback" |
             "atob" | "btoa" |
-            "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" |
+            "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" | "flushTimers" |
             "fetch" => {
                 return call_native(name, &evaluated_args);
             }

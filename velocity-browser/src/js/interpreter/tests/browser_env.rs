@@ -34,6 +34,38 @@ fn timer_ids_increment() {
     assert_eq!(result, JsValue::Boolean(true));
 }
 
+// ── Timer Flush ──────────────────────────────────────────────────────────────
+
+#[test]
+fn flush_timers_runs_timeout_callback() {
+    let result = eval_full("var x = 0; setTimeout(function() { x = 1; }, 0); flushTimers(); x");
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn flush_timers_returns_executed_count() {
+    let result = eval_full("setTimeout(function(){}, 0); setTimeout(function(){}, 0); flushTimers()");
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn flush_timers_removes_timeouts_after_run() {
+    let result = eval_full("setTimeout(function(){}, 0); flushTimers(); flushTimers()");
+    assert_eq!(result, JsValue::Number(0.0));
+}
+
+#[test]
+fn flush_timers_keeps_intervals_registered() {
+    let result = eval_full("setInterval(function(){}, 5); var a = flushTimers(); var b = flushTimers(); a + b");
+    assert_eq!(result, JsValue::Number(2.0));
+}
+
+#[test]
+fn flush_timers_skips_cleared_timers() {
+    let result = eval_full("var x = 0; var id = setTimeout(function(){ x = 1; }, 0); clearTimeout(id); flushTimers(); x");
+    assert_eq!(result, JsValue::Number(0.0));
+}
+
 // ── Browser Globals ──────────────────────────────────────────────────────────
 
 #[test]

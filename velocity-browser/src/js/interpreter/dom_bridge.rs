@@ -444,6 +444,31 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             obj.insert("textChanged".to_string(), JsValue::Boolean(text_changed));
             JsValue::Object(obj)
         }
+        "waitForSettlement" => {
+            // Deterministically pump the timer queue until the page stops
+            // scheduling work (or the round cap trips), then report the final
+            // DOM state — the agent's "page is quiet, act now" primitive.
+            let mut timers_run = 0u32;
+            let mut rounds = 0u32;
+            while rounds < 10 {
+                let ran = super::browser_env::flush_timers();
+                if ran == 0 { break; }
+                timers_run += ran;
+                rounds += 1;
+            }
+            let state = super::agent_layer::capture_dom_state();
+            let mut obj = HashMap::new();
+            obj.insert("__type__".to_string(), JsValue::String("Settlement".to_string()));
+            obj.insert("settled".to_string(), JsValue::Boolean(rounds < 10));
+            obj.insert("timersRun".to_string(), JsValue::Number(timers_run as f64));
+            obj.insert("nodeCount".to_string(), JsValue::Number(state.node_count as f64));
+            obj.insert("interactiveCount".to_string(), JsValue::Number(state.interactive_count as f64));
+            obj.insert("textHash".to_string(), JsValue::Number(hash_to_js(state.body_text_hash)));
+            JsValue::Object(obj)
+        }
+        "getConsoleText" => {
+            JsValue::String(super::console::console_output_text())
+        }
         _ => JsValue::Undefined,
     }
 }

@@ -22,6 +22,8 @@ struct TimerEntry {
     kind: TimerKind,
     delay_ms: f64,
     cancelled: bool,
+    /// The scheduled callback — stored so [`flush_timers`] can actually run it.
+    callback: JsValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +33,7 @@ enum TimerKind {
 }
 
 /// Register a new timer and return its id.
-fn register_timer(kind: TimerKind, delay_ms: f64) -> u32 {
+fn register_timer(kind: TimerKind, delay_ms: f64, callback: JsValue) -> u32 {
     let id = NEXT_TIMER_ID.with(|c| {
         let mut id = c.borrow_mut();
         let current = *id;
@@ -39,7 +41,7 @@ fn register_timer(kind: TimerKind, delay_ms: f64) -> u32 {
         current
     });
     TIMER_REGISTRY.with(|reg| {
-        reg.borrow_mut().insert(id, TimerEntry { kind, delay_ms, cancelled: false });
+        reg.borrow_mut().insert(id, TimerEntry { kind, delay_ms, cancelled: false, callback });
     });
     id
 }
@@ -55,15 +57,17 @@ fn cancel_timer(id: u32) {
 
 /// Handle `setTimeout(callback, delay)` — returns a numeric timer id.
 pub(super) fn set_timeout(args: &[JsValue]) -> JsValue {
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     let delay = args.get(1).and_then(|v| if let JsValue::Number(n) = v { Some(*n) } else { None }).unwrap_or(0.0);
-    let id = register_timer(TimerKind::Timeout, delay);
+    let id = register_timer(TimerKind::Timeout, delay, callback);
     JsValue::Number(id as f64)
 }
 
 /// Handle `setInterval(callback, delay)` — returns a numeric timer id.
 pub(super) fn set_interval(args: &[JsValue]) -> JsValue {
+    let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
     let delay = args.get(1).and_then(|v| if let JsValue::Number(n) = v { Some(*n) } else { None }).unwrap_or(0.0);
-    let id = register_timer(TimerKind::Interval, delay);
+    let id = register_timer(TimerKind::Interval, delay, callback);
     JsValue::Number(id as f64)
 }
 
@@ -73,6 +77,42 @@ pub(super) fn clear_timer(args: &[JsValue]) -> JsValue {
         cancel_timer(*id as u32);
     }
     JsValue::Undefined
+}
+
+/// Run all pending timer callbacks once, in registration order, and return how
+/// many were executed.
+///
+/// This is the interpreter's deterministic event-loop pump: timeouts fire and
+/// are removed; intervals fire once and stay registered. Callbacks are
+/// collected up-front (no registry borrow held during execution) so they can
+/// freely schedule or cancel timers themselves.
+pub(super) fn flush_timers() -> u32 {
+    let pending: Vec<(u32, TimerKind, JsValue)> = TIMER_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let mut v: Vec<_> = reg.iter()
+            .filter(|(_, e)| !e.cancelled)
+            .map(|(id, e)| (*id, e.kind, e.callback.clone()))
+            .collect();
+        v.sort_by_key(|(id, _, _)| *id);
+        v
+    });
+
+    let mut executed = 0u32;
+    for (id, kind, callback) in pending {
+        // A callback run earlier in this flush may have cancelled this timer.
+        let still_live = TIMER_REGISTRY.with(|reg| {
+            reg.borrow().get(&id).map(|e| !e.cancelled).unwrap_or(false)
+        });
+        if !still_live { continue; }
+        if kind == TimerKind::Timeout {
+            TIMER_REGISTRY.with(|reg| { reg.borrow_mut().remove(&id); });
+        }
+        if matches!(callback, JsValue::Function { .. } | JsValue::NativeFunction(_)) {
+            let _ = super::function::call_function(&callback, &[], &crate::js::scope::Scope::new_global());
+            executed += 1;
+        }
+    }
+    executed
 }
 
 /// Reset all timer state (for test isolation).
