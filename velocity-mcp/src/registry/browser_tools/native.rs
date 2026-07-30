@@ -86,6 +86,11 @@ fn predicate_name(p: u16) -> String {
         SESSION_COOKIE => "cookie",
         SESSION_STORAGE => "storage",
         SESSION_SCROLL => "scroll",
+        SESSION_LINK_COUNT => "links",
+        SESSION_FORM_COUNT => "forms",
+        SESSION_INTERACTIVE_COUNT => "interactive",
+        SESSION_TEXT_LENGTH => "textLength",
+        SESSION_HEADING => "heading",
         other => return format!("predicate_{other}"),
     };
     s.to_string()

@@ -15,7 +15,8 @@ use crate::net::{HttpClient, InspectorServer, ProxyResolver, QuicConnection, Tls
 use crate::nda::{NdaDocument, NdaTriple};
 use crate::predicates::{
     AOM_FOCUSED, LAYOUT_BOUNDS, LAYOUT_IN_VIEWPORT, LAYOUT_VISIBILITY, SESSION_COOKIE,
-    SESSION_SCROLL, SESSION_STORAGE, SESSION_TITLE, SESSION_URL,
+    SESSION_FORM_COUNT, SESSION_HEADING, SESSION_INTERACTIVE_COUNT, SESSION_LINK_COUNT,
+    SESSION_SCROLL, SESSION_STORAGE, SESSION_TEXT_LENGTH, SESSION_TITLE, SESSION_URL,
 };
 use crate::parser::{CssMatcher, FastCssParser, HtmlParser, StreamJitTokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -1385,6 +1386,55 @@ impl BrowserSession {
                     if self.box_in_viewport(b) { "true" } else { "false" },
                 );
             }
+
+            // Page digest: cheap aggregate facts (link/form/interactive
+            // counts, visible text length, headings in document order) so an
+            // agent can grasp and diff the page shape without walking the
+            // whole AOM.
+            let mut links = 0i64;
+            let mut forms = 0i64;
+            let mut interactive = 0i64;
+            for node in &tree.nodes {
+                if node.node_type != NodeType::Element {
+                    continue;
+                }
+                match node.tag_name.as_str() {
+                    "a" if node.attributes.contains_key("href") => {
+                        links += 1;
+                        interactive += 1;
+                    }
+                    "form" => forms += 1,
+                    "input" | "select" | "textarea" | "button" => interactive += 1,
+                    _ => {}
+                }
+            }
+            doc.push_int(&self.session_id, SESSION_LINK_COUNT, links);
+            doc.push_int(&self.session_id, SESSION_FORM_COUNT, forms);
+            doc.push_int(&self.session_id, SESSION_INTERACTIVE_COUNT, interactive);
+            doc.push_int(
+                &self.session_id,
+                SESSION_TEXT_LENGTH,
+                self.page_text().chars().count() as i64,
+            );
+            let mut heading_count = 0;
+            for node in &tree.nodes {
+                if node.node_type != NodeType::Element {
+                    continue;
+                }
+                let depth = node
+                    .tag_name
+                    .strip_prefix('h')
+                    .and_then(|d| d.parse::<u8>().ok())
+                    .filter(|d| (1..=6).contains(d));
+                let Some(depth) = depth else { continue };
+                let mut text = String::new();
+                Self::visible_text_walk(tree, node.id, &mut text);
+                let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !text.is_empty() && heading_count < 50 {
+                    doc.push_str(&self.session_id, SESSION_HEADING, &format!("h{}:{}", depth, text));
+                    heading_count += 1;
+                }
+            }
         }
 
         // Canvas contents as readable literals (drawn text/shapes/images).
@@ -1908,5 +1958,31 @@ mod agent_action_tests {
     fn page_text_is_empty_without_a_loaded_page() {
         let session = BrowserSession::new("s28".to_string());
         assert_eq!(session.page_text(), "");
+    }
+
+    #[test]
+    fn observe_reports_page_digest_counts_and_headings() {
+        let mut session = BrowserSession::new("s29".to_string());
+        session.load_html(
+            "about:test",
+            "<html><head><title>Pricing</title></head><body>\
+             <h1>Plans</h1><h2>Pro tier</h2>\
+             <a href=\"/a\">A</a><a href=\"/b\">B</a>\
+             <form><input name=\"q\" value=\"\"><button>Go</button></form>\
+             </body></html>",
+        );
+        let facts = session.agent_observe();
+        assert!(facts.contains("s29|links|2"), "{facts}");
+        assert!(facts.contains("s29|forms|1"), "{facts}");
+        // 2 links + input + button
+        assert!(facts.contains("s29|interactive|4"), "{facts}");
+        assert!(facts.contains("s29|heading|h1:Plans"), "{facts}");
+        assert!(facts.contains("s29|heading|h2:Pro tier"), "{facts}");
+        let expected_len = session.page_text().chars().count();
+        assert!(expected_len > 0, "digest page has visible text");
+        assert!(
+            facts.contains(&format!("s29|textLength|{expected_len}")),
+            "{facts}"
+        );
     }
 }
