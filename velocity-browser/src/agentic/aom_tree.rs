@@ -76,13 +76,28 @@ impl AgenticAomTree {
                 continue;
             }
 
-            let attr_name = node.attributes.get("aria-label")
-                .cloned()
-                .or_else(|| node.attributes.get("placeholder").cloned())
-                .or_else(|| node.attributes.get("name").cloned())
-                .or_else(|| node.attributes.get("id").cloned())
-                .or_else(|| node.attributes.get("title").cloned())
-                .unwrap_or_default();
+            // Buttons and links are known by what they show: visible text
+            // beats name/id attributes (which are developer plumbing, not
+            // what an agent reads on screen). aria-label still wins overall.
+            let content_named = matches!(role, "button" | "link");
+            let attr_name = if content_named {
+                node.attributes.get("aria-label")
+                    .cloned()
+                    .or_else(|| node.attributes.get("title").cloned())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| Some(collect_inner_text(tree, node.id)).filter(|s| !s.is_empty()))
+                    .or_else(|| node.attributes.get("name").cloned())
+                    .or_else(|| node.attributes.get("id").cloned())
+                    .unwrap_or_default()
+            } else {
+                node.attributes.get("aria-label")
+                    .cloned()
+                    .or_else(|| node.attributes.get("placeholder").cloned())
+                    .or_else(|| node.attributes.get("name").cloned())
+                    .or_else(|| node.attributes.get("id").cloned())
+                    .or_else(|| node.attributes.get("title").cloned())
+                    .unwrap_or_default()
+            };
             let name = if attr_name.is_empty() {
                 collect_inner_text(tree, node.id)
             } else {

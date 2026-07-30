@@ -1,5 +1,5 @@
 use crate::agentic::{ActionPredictorEngine, AgenticAomTree, NdaEncoder, PredictedActionTarget, VelocityOcrEngine};
-use crate::agent_api::{diff, AgentActionResult};
+use crate::agent_api::{diff, AgentActionResult, NdaDelta};
 use crate::dom::{CustomElementRegistry, DomTree, MutationBatcher, NativeMutationObserver, SlabDomTree};
 use crate::engine::{
     CanvasElement, CanvasExtractor, CaptchaSolverEngine, DeviceProfile, FileManager, FrameTarget,
@@ -712,6 +712,135 @@ impl BrowserSession {
         self.capture_state_document().facts_text()
     }
 
+    // === Label-based semantic actions =======================================
+    // The node-id actions above assume the agent already ran agent_observe and
+    // picked a node. These variants resolve the target by accessible name via
+    // the AOM, so a single call ("click 'Log In'") replaces an observe +
+    // parse + act round trip — fewer tokens, fewer mistakes.
+
+    /// Resolve a DOM node by accessible name using the AOM. Exact
+    /// (case-insensitive) name matches beat substring matches; among equal
+    /// ranks the more actionable node wins. `role_ok` filters candidate roles.
+    fn resolve_node_by_name(&self, query: &str, role_ok: fn(&str) -> bool) -> Option<usize> {
+        let tree = self.dom_tree.as_ref()?;
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return None;
+        }
+        let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
+        let mut best: Option<(u8, u8, usize)> = None; // (rank, actionability, node_id)
+        for node in &aom_nodes {
+            if !role_ok(&node.role) {
+                continue;
+            }
+            let name = node.name.to_lowercase();
+            let rank = if name == needle {
+                2
+            } else if name.contains(&needle) {
+                1
+            } else {
+                continue;
+            };
+            // AOM ids are "node_{id}" — recover the numeric DOM id.
+            let Some(id) = node.id.strip_prefix("node_").and_then(|s| s.parse().ok()) else {
+                continue;
+            };
+            let candidate = (rank, node.actionability_score, id);
+            if best.map(|b| (candidate.0, candidate.1) > (b.0, b.1)).unwrap_or(true) {
+                best = Some(candidate);
+            }
+        }
+        best.map(|(_, _, id)| id)
+    }
+
+    /// Click an element by its accessible name (button/link text, aria-label).
+    /// Resolves via the AOM and routes through [`agent_click`](Self::agent_click).
+    pub fn agent_click_by_text(&mut self, query: &str) -> AgentActionResult {
+        match self.resolve_node_by_name(query, |r| matches!(r, "button" | "link" | "checkbox" | "radio" | "generic")) {
+            Some(id) => self.agent_click(id),
+            None => AgentActionResult::new(
+                format!("no clickable element matching '{}'", query),
+                NdaDelta::default(),
+            ),
+        }
+    }
+
+    /// Fill a text control by its accessible name (label, placeholder,
+    /// aria-label). Routes through [`agent_type`](Self::agent_type).
+    pub fn agent_fill_by_label(&mut self, query: &str, text: &str) -> AgentActionResult {
+        match self.resolve_node_by_name(query, |r| matches!(r, "textbox" | "combobox")) {
+            Some(id) => self.agent_type(id, text),
+            None => AgentActionResult::new(
+                format!("no fillable control matching '{}'", query),
+                NdaDelta::default(),
+            ),
+        }
+    }
+
+    /// Set a checkbox/radio by its accessible name: toggles the `checked`
+    /// attribute to `state`, fires `change` listeners, and reports the delta.
+    pub fn agent_check_by_label(&mut self, query: &str, state: bool) -> AgentActionResult {
+        let Some(node_id) = self.resolve_node_by_name(query, |r| matches!(r, "checkbox" | "radio")) else {
+            return AgentActionResult::new(
+                format!("no checkable control matching '{}'", query),
+                NdaDelta::default(),
+            );
+        };
+        let before = self.capture_state_document();
+        let selector = self.selector_for_node(node_id);
+        if let Some(tree) = &mut self.dom_tree {
+            if let Some(node) = tree.get_node_mut(node_id) {
+                if state {
+                    node.attributes.insert("checked".to_string(), "checked".to_string());
+                } else {
+                    node.attributes.remove("checked");
+                }
+            }
+            if let Some(sel) = &selector {
+                let _ = self.js_vm.dispatch_event(tree, sel, "change");
+            }
+            self.mutation_observer.observe_attribute_change(node_id, "checked");
+        }
+        let after = self.capture_state_document();
+        let status = format!(
+            "{} node_{}",
+            if state { "checked" } else { "unchecked" },
+            node_id
+        );
+        AgentActionResult::new(status, diff(&before, &after))
+    }
+
+    /// Read the current form state as token-cheap text: one
+    /// `name [role] = value` line per fillable/checkable control, checkables
+    /// shown as checked/unchecked. The read-only sibling of the fill actions.
+    pub fn agent_read_form(&self) -> String {
+        let Some(tree) = &self.dom_tree else {
+            return String::new();
+        };
+        let aom_nodes = AgenticAomTree::build_aom_nodes(tree);
+        let mut out = String::new();
+        for node in &aom_nodes {
+            let checkable = matches!(node.role.as_str(), "checkbox" | "radio");
+            if !checkable && !matches!(node.role.as_str(), "textbox" | "combobox") {
+                continue;
+            }
+            let value = if checkable {
+                let checked = node
+                    .id
+                    .strip_prefix("node_")
+                    .and_then(|s| s.parse().ok())
+                    .and_then(|id: usize| tree.get_node(id))
+                    .map(|n| n.attributes.contains_key("checked"))
+                    .unwrap_or(false);
+                if checked { "checked" } else { "unchecked" }.to_string()
+            } else {
+                node.value.clone()
+            };
+            out.push_str(&format!("{} [{}] = {}\n", node.name, node.role, value));
+        }
+        out
+    }
+
     pub fn classify_interstitial(&self, html_snippet: &str) -> InterstitialKind {
         InterstitialClassifier::classify_page(&self.page_title, html_snippet)
     }
@@ -1084,5 +1213,87 @@ mod agent_action_tests {
         assert!(text.contains("|title|Observed Page"), "got: {}", text);
         // No raw predicate numbers — names only.
         assert!(!text.contains("|100|"), "got: {}", text);
+    }
+
+    #[test]
+    fn agent_click_by_text_resolves_button_by_visible_text() {
+        let mut session = BrowserSession::new("s7".to_string());
+        session.load_html("about:test", "<button id=\"b\">Log In</button>");
+        let result = session.agent_click_by_text("Log In");
+        assert!(result.status.contains("clicked"), "got {}", result.status);
+    }
+
+    #[test]
+    fn agent_click_by_text_reports_miss_with_empty_delta() {
+        let mut session = BrowserSession::new("s8".to_string());
+        session.load_html("about:test", "<button id=\"b\">Log In</button>");
+        let result = session.agent_click_by_text("Sign Up");
+        assert!(result.status.contains("no clickable element"), "got {}", result.status);
+        assert!(result.delta.is_empty());
+    }
+
+    #[test]
+    fn agent_fill_by_label_matches_placeholder_and_sets_value() {
+        let mut session = BrowserSession::new("s9".to_string());
+        session.load_html("about:test", "<input type=\"text\" placeholder=\"Email\">");
+        let input_id = node_id_by_tag(&session, "input");
+        let result = session.agent_fill_by_label("Email", "a@b.com");
+        assert!(result.status.contains("typed"), "got {}", result.status);
+        assert!(
+            result
+                .delta
+                .added
+                .contains(&(format!("node_{}", input_id), AOM_VALUE, "a@b.com".to_string())),
+            "expected value fact, got {:?}",
+            result.delta
+        );
+    }
+
+    #[test]
+    fn agent_fill_by_label_exact_match_beats_substring() {
+        let mut session = BrowserSession::new("s10".to_string());
+        session.load_html(
+            "about:test",
+            "<input type=\"text\" placeholder=\"Name suffix\"><input type=\"text\" placeholder=\"Name\">",
+        );
+        let result = session.agent_fill_by_label("Name", "Ada");
+        assert!(result.status.contains("typed"), "got {}", result.status);
+        let form = session.agent_read_form();
+        assert!(form.contains("Name [textbox] = Ada"), "got: {}", form);
+        assert!(form.contains("Name suffix [textbox] = \n"), "got: {}", form);
+    }
+
+    #[test]
+    fn agent_check_by_label_sets_and_clears_checked() {
+        let mut session = BrowserSession::new("s11".to_string());
+        session.load_html("about:test", "<input type=\"checkbox\" aria-label=\"Subscribe\">");
+        let checkbox_id = node_id_by_tag(&session, "input");
+
+        let result = session.agent_check_by_label("Subscribe", true);
+        assert!(result.status.contains("checked"), "got {}", result.status);
+        let checked = session.dom_tree.as_ref().unwrap()
+            .get_node(checkbox_id).unwrap()
+            .attributes.contains_key("checked");
+        assert!(checked);
+
+        let result = session.agent_check_by_label("Subscribe", false);
+        assert!(result.status.contains("unchecked"), "got {}", result.status);
+        let checked = session.dom_tree.as_ref().unwrap()
+            .get_node(checkbox_id).unwrap()
+            .attributes.contains_key("checked");
+        assert!(!checked);
+    }
+
+    #[test]
+    fn agent_read_form_lists_controls_with_state() {
+        let mut session = BrowserSession::new("s12".to_string());
+        session.load_html(
+            "about:test",
+            "<input type=\"text\" placeholder=\"Email\" value=\"x@y.z\">\
+             <input type=\"checkbox\" aria-label=\"Subscribe\" checked>",
+        );
+        let form = session.agent_read_form();
+        assert!(form.contains("Email [textbox] = x@y.z"), "got: {}", form);
+        assert!(form.contains("Subscribe [checkbox] = checked"), "got: {}", form);
     }
 }
