@@ -295,6 +295,8 @@ pub fn handle_native_tool(
         | "browser_native_recall"
         | "browser_native_page_text"
         | "browser_native_screencast"
+        | "browser_native_find"
+        | "browser_native_validate"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -401,6 +403,119 @@ pub fn handle_native_tool(
                 )
                 .into())
             }
+        }));
+    }
+
+    // Query the live AOM by role and/or text instead of dumping the whole
+    // element view — targeted reads keep big pages token-cheap.
+    if name == "browser_native_find" {
+        let role = arguments["role"].as_str();
+        let text = arguments["text"].as_str().unwrap_or("");
+        if role.is_none() && text.is_empty() {
+            return Err("at least one of role or text is required".into());
+        }
+        let limit = arguments["limit"].as_u64().unwrap_or(20) as usize;
+        let (mut hits, total) = bridge.find_elements(role, text);
+        let matched = hits.len();
+        hits.truncate(limit);
+        return Ok(Some(if compact {
+            let items: Vec<serde_json::Value> = hits
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "nodeId": e.node_id,
+                        "role": e.role,
+                        "name": e.name,
+                        "value": e.value,
+                        "actionability": e.actionability,
+                        "focused": e.is_focused,
+                    })
+                })
+                .collect();
+            serde_json::to_string_pretty(&serde_json::json!({
+                "matched": matched,
+                "total": total,
+                "hits": items,
+            }))
+            .map_err(|e| format!("serialise find report: {e}"))?
+        } else if hits.is_empty() {
+            format!(
+                "no elements matched role={} text=\"{}\" ({} elements on page)\n",
+                role.unwrap_or("*"),
+                text,
+                total
+            )
+        } else {
+            let mut out = format!(
+                "{matched} of {total} elements matched role={} text=\"{}\":\n",
+                role.unwrap_or("*"),
+                text
+            );
+            for e in &hits {
+                out.push_str(&format!(
+                    "  [{}] {} \"{}\"{}{} (act {})\n",
+                    e.node_id,
+                    e.role,
+                    e.name,
+                    if e.value.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" value=\"{}\"", e.value)
+                    },
+                    if e.is_focused { " *focused*" } else { "" },
+                    e.actionability,
+                ));
+            }
+            if matched > hits.len() {
+                out.push_str(&format!("  … {} more (raise limit)\n", matched - hits.len()));
+            }
+            out
+        }));
+    }
+
+    // Pre-flight HTML5 constraint validation: know why a submit would fail
+    // (required, type, pattern, length, range) before spending it.
+    if name == "browser_native_validate" {
+        let controls = bridge.validate_forms();
+        if controls.is_empty() {
+            return Ok(Some("(no form controls on page)".to_string()));
+        }
+        let invalid: Vec<_> = controls.iter().filter(|(_, _, f)| !f.is_empty()).collect();
+        return Ok(Some(if compact {
+            let items: Vec<serde_json::Value> = controls
+                .iter()
+                .map(|(id, name, failed)| {
+                    serde_json::json!({
+                        "nodeId": id,
+                        "name": name,
+                        "valid": failed.is_empty(),
+                        "failed": failed,
+                    })
+                })
+                .collect();
+            serde_json::to_string_pretty(&serde_json::json!({
+                "controls": controls.len(),
+                "invalid": invalid.len(),
+                "results": items,
+            }))
+            .map_err(|e| format!("serialise validate report: {e}"))?
+        } else if invalid.is_empty() {
+            format!("form is valid ({} control(s) checked)\n", controls.len())
+        } else {
+            let mut out = format!(
+                "{} of {} control(s) invalid:\n",
+                invalid.len(),
+                controls.len()
+            );
+            for (id, name, failed) in &invalid {
+                out.push_str(&format!(
+                    "  [{}] \"{}\": {}\n",
+                    id,
+                    name,
+                    failed.join(", ")
+                ));
+            }
+            out
         }));
     }
 
@@ -1417,5 +1532,78 @@ mod native_label_tool_tests {
         )
         .expect_err("unknown screencast action must be rejected");
         assert!(err.to_string().contains("unknown screencast action"), "{err}");
+    }
+
+    #[test]
+    fn find_tool_filters_aom_by_role_and_text() {
+        load("t25-find");
+        let out = call(
+            "browser_native_find",
+            json!({ "sessionId": "t25-find", "role": "button" }),
+        );
+        assert!(out.contains("Log In"), "button hit is listed: {out}");
+        assert!(out.contains("elements matched role=button"), "{out}");
+
+        let out = call(
+            "browser_native_find",
+            json!({ "sessionId": "t25-find", "text": "plan" }),
+        );
+        assert!(out.contains("\"Plan\""), "select matched by label text: {out}");
+
+        let out = call(
+            "browser_native_find",
+            json!({ "sessionId": "t25-find", "text": "zzz-nope" }),
+        );
+        assert!(out.contains("no elements matched"), "{out}");
+
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_find",
+            &json!({ "sessionId": "t25-find" }),
+        )
+        .expect_err("find without role or text must be rejected");
+        assert!(err.to_string().contains("at least one of role or text"), "{err}");
+    }
+
+    #[test]
+    fn validate_tool_reports_constraint_failures_then_valid() {
+        let html = r#"<html><head><title>Join</title></head><body>
+            <form id="j">
+              <input type="email" placeholder="Email" name="email" required />
+              <input type="text" name="nick" value="ok" />
+              <button type="submit">Join</button>
+            </form>
+        </body></html>"#;
+        get_or_create_native_bridge("t25-valid")
+            .lock()
+            .unwrap()
+            .load_html("http://local.test/join", html);
+
+        let out = call("browser_native_validate", json!({ "sessionId": "t25-valid" }));
+        assert!(out.contains("1 of 2 control(s) invalid"), "{out}");
+        assert!(out.contains("valueMissing"), "empty required email: {out}");
+
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t25-valid", "label": "Email", "text": "not-an-email" }),
+        );
+        let out = call("browser_native_validate", json!({ "sessionId": "t25-valid" }));
+        assert!(out.contains("typeMismatch"), "bad email flagged: {out}");
+
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t25-valid", "label": "Email", "text": "a@b.com" }),
+        );
+        let out = call("browser_native_validate", json!({ "sessionId": "t25-valid" }));
+        assert!(out.contains("form is valid (2 control(s) checked)"), "{out}");
+
+        let compact = call(
+            "browser_native_validate",
+            json!({ "sessionId": "t25-valid", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact validate is valid JSON");
+        assert_eq!(report["controls"], 2);
+        assert_eq!(report["invalid"], 0);
     }
 }

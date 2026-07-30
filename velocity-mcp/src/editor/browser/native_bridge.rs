@@ -520,6 +520,78 @@ impl NativeBrowserBridge {
         }
     }
 
+    /// Filter the live AOM by role and/or a case-insensitive substring over
+    /// accessible name and value. Returns `(hits, total_elements)` so the
+    /// agent can target elements on big pages without paying for the whole
+    /// element dump.
+    pub fn find_elements(&self, role: Option<&str>, text: &str) -> (Vec<NativeAomElement>, usize) {
+        let view = self.current_view();
+        let total = view.elements.len();
+        let text_lc = text.to_lowercase();
+        let hits = view
+            .elements
+            .into_iter()
+            .filter(|e| role.map(|r| e.role.eq_ignore_ascii_case(r)).unwrap_or(true))
+            .filter(|e| {
+                text_lc.is_empty()
+                    || e.name.to_lowercase().contains(&text_lc)
+                    || e.value.to_lowercase().contains(&text_lc)
+            })
+            .collect();
+        (hits, total)
+    }
+
+    /// Run HTML5 constraint validation over every form control on the page.
+    /// Returns `(node_id, accessible_name, failed_constraints)` per control;
+    /// an empty constraint list means the control is valid.
+    pub fn validate_forms(&self) -> Vec<(usize, String, Vec<&'static str>)> {
+        let Some(tree) = &self.active_session.dom_tree else {
+            return Vec::new();
+        };
+        let view = self.current_view();
+        let mut results = Vec::new();
+        for node in &tree.nodes {
+            if node.node_type != velocity_browser::parser::html::NodeType::Element {
+                continue;
+            }
+            if !matches!(node.tag_name.as_str(), "input" | "textarea" | "select") {
+                continue;
+            }
+            let state = velocity_browser::FormDataSerializer::validate_control(node);
+            let mut failed: Vec<&'static str> = Vec::new();
+            if state.value_missing {
+                failed.push("valueMissing");
+            }
+            if state.type_mismatch {
+                failed.push("typeMismatch");
+            }
+            if state.pattern_mismatch {
+                failed.push("patternMismatch");
+            }
+            if state.too_long {
+                failed.push("tooLong");
+            }
+            if state.too_short {
+                failed.push("tooShort");
+            }
+            if state.range_underflow {
+                failed.push("rangeUnderflow");
+            }
+            if state.range_overflow {
+                failed.push("rangeOverflow");
+            }
+            let name = view
+                .elements
+                .iter()
+                .find(|e| e.node_id == node.id)
+                .map(|e| e.name.clone())
+                .or_else(|| node.attributes.get("name").cloned())
+                .unwrap_or_default();
+            results.push((node.id, name, failed));
+        }
+        results
+    }
+
     /// Hover an element by node id.
     pub fn agent_hover(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.active_session.capture_state_document();

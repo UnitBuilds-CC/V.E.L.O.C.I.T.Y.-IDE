@@ -1038,6 +1038,33 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_find".to_string(),
+            description: "Query the live Agentic Object Model of the native browser session by role and/or a case-insensitive text match over accessible names and values. Returns only the matching elements with their node ids — far cheaper than reading the whole element view on big pages. At least one of role or text is required.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "role": { "type": "string", "description": "AOM role to filter by (button, link, textbox, combobox, checkbox, ...)." },
+                    "text": { "type": "string", "description": "Case-insensitive substring matched against each element's accessible name and value." },
+                    "limit": { "type": "integer", "description": "Maximum hits to return. Defaults to 20." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_validate".to_string(),
+            description: "Run HTML5 constraint validation over every form control on the current page of the native browser session (required, email/url/number type checks, pattern, minlength/maxlength, min/max range). Reports which controls would block a submit and why — check before submitting instead of burning a failed round trip.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({
