@@ -1133,9 +1133,77 @@ pub fn handle_native_tool(
                 }
                 return Ok(Some(out));
             }
+            "list" => {
+                // Discover inheritable experience: enumerate every artifact in
+                // the workspace so an agent can pick a file= to load from a
+                // previous session without knowing its id in advance.
+                let dir = root.join(".velocity").join("browser_artifacts");
+                let mut artifacts: Vec<(String, String, u64)> = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let meta = match entry.metadata() {
+                            Ok(m) if m.is_file() => m,
+                            _ => continue,
+                        };
+                        let file = entry.file_name().to_string_lossy().into_owned();
+                        let kind = if file.ends_with("_confidence.nda") {
+                            "confidence"
+                        } else if file.ends_with("_memory.nda") {
+                            "memory"
+                        } else if file.ends_with("_outcomes.nda") {
+                            "outcomes"
+                        } else if file.ends_with("_all.nda") {
+                            "all"
+                        } else if file.ends_with("_native.nda") {
+                            "state"
+                        } else if file.ends_with("_trace.nda") {
+                            "trace"
+                        } else if file.ends_with("_facts.txt") {
+                            "facts"
+                        } else {
+                            "other"
+                        };
+                        artifacts.push((file, kind.to_string(), meta.len()));
+                    }
+                }
+                artifacts.sort_by(|a, b| a.0.cmp(&b.0));
+                if compact {
+                    let artifact_json: Vec<serde_json::Value> = artifacts
+                        .iter()
+                        .map(|(file, kind, bytes)| {
+                            serde_json::json!({
+                                "file": file,
+                                "kind": kind,
+                                "bytes": bytes,
+                            })
+                        })
+                        .collect();
+                    return Ok(Some(
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "action": "list",
+                            "path": dir.display().to_string(),
+                            "artifacts": artifact_json,
+                        }))
+                        .map_err(|e| format!("serialise learn report: {e}"))?,
+                    ));
+                }
+                if artifacts.is_empty() {
+                    return Ok(Some("(no browser artifacts saved yet)\n".to_string()));
+                }
+                let mut out = format!(
+                    "{} artifact(s) in {}:\n",
+                    artifacts.len(),
+                    dir.display()
+                );
+                for (file, kind, bytes) in &artifacts {
+                    out.push_str(&format!("  {file} ({kind}, {bytes} bytes)\n"));
+                }
+                out.push_str("load one with action=load file=<name>\n");
+                return Ok(Some(out));
+            }
             other => {
                 return Err(format!(
-                    "unknown learn action '{other}' (expected save or load)"
+                    "unknown learn action '{other}' (expected save, load or list)"
                 )
                 .into())
             }
@@ -2853,6 +2921,64 @@ mod native_label_tool_tests {
         );
         assert!(out.contains("0 page memory(ies)"), "reload is idempotent: {out}");
         assert!(out.contains("0 action outcome(s)"), "{out}");
+    }
+
+    #[test]
+    fn learn_tool_lists_saved_artifacts() {
+        let root = temp_root("t36list");
+        // Start from a clean artifact directory so the listing is exact.
+        let _ = std::fs::remove_dir_all(root.join(".velocity").join("browser_artifacts"));
+
+        load("t36-list");
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t36-list", "action": "list" }),
+        );
+        assert!(
+            out.contains("(no browser artifacts saved yet)"),
+            "empty directory reported: {out}"
+        );
+
+        // Save two different stores, then list must surface both with kinds.
+        call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t36-list", "action": "save", "what": "confidence" }),
+        );
+        call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t36-list", "action": "save", "what": "all" }),
+        );
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t36-list", "action": "list" }),
+        );
+        assert!(out.contains("2 artifact(s) in"), "{out}");
+        assert!(out.contains("t36-list_all.nda (all,"), "{out}");
+        assert!(
+            out.contains("t36-list_confidence.nda (confidence,"),
+            "{out}"
+        );
+        assert!(out.contains("load one with action=load file=<name>"), "{out}");
+
+        // Compact mode returns the same inventory as JSON.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t36-list", "action": "list", "compact": true }),
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out).expect("compact list report is valid JSON");
+        assert_eq!(parsed["action"], "list");
+        let artifacts = parsed["artifacts"].as_array().expect("artifacts array");
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0]["file"], "t36-list_all.nda");
+        assert_eq!(artifacts[0]["kind"], "all");
+        assert!(artifacts[0]["bytes"].as_u64().unwrap() > 0);
+        assert_eq!(artifacts[1]["kind"], "confidence");
     }
 
     #[test]
