@@ -299,6 +299,7 @@ pub fn handle_native_tool(
         | "browser_native_validate"
         | "browser_native_links"
         | "browser_native_history"
+        | "browser_native_checkpoint"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -569,6 +570,94 @@ pub fn handle_native_tool(
                 ));
             }
             out
+        }));
+    }
+
+    // Named page-state checkpoints: snapshot now, act freely, then ask "what
+    // changed since?" — one delta spanning any number of actions.
+    if name == "browser_native_checkpoint" {
+        let action = arguments["action"].as_str().unwrap_or("save");
+        let ckpt_name = arguments["name"].as_str();
+        return Ok(Some(match action {
+            "save" => {
+                let ckpt_name = ckpt_name.ok_or("name is required for save")?;
+                let (facts, replaced) = bridge.checkpoint_save(ckpt_name);
+                if compact {
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "save", "name": ckpt_name,
+                        "facts": facts, "replaced": replaced,
+                    }))
+                    .map_err(|e| format!("serialise checkpoint report: {e}"))?
+                } else {
+                    format!(
+                        "checkpoint '{ckpt_name}' {} ({facts} facts)\n",
+                        if replaced { "replaced" } else { "saved" },
+                    )
+                }
+            }
+            "diff" => {
+                let ckpt_name = ckpt_name.ok_or("name is required for diff")?;
+                let delta = bridge
+                    .checkpoint_diff(ckpt_name)
+                    .ok_or_else(|| format!("no checkpoint '{ckpt_name}'"))?;
+                if compact {
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "diff", "name": ckpt_name,
+                        "delta": delta_report(&delta),
+                    }))
+                    .map_err(|e| format!("serialise checkpoint report: {e}"))?
+                } else {
+                    format!(
+                        "changes since checkpoint '{ckpt_name}':\n{}",
+                        render_delta(&delta),
+                    )
+                }
+            }
+            "list" => {
+                let ckpts = bridge.checkpoint_list();
+                if compact {
+                    let items: Vec<serde_json::Value> = ckpts
+                        .iter()
+                        .map(|(n, f)| serde_json::json!({ "name": n, "facts": f }))
+                        .collect();
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "list", "checkpoints": items,
+                    }))
+                    .map_err(|e| format!("serialise checkpoint report: {e}"))?
+                } else if ckpts.is_empty() {
+                    "(no checkpoints)".to_string()
+                } else {
+                    let mut out = format!(
+                        "{} checkpoint{}:\n",
+                        ckpts.len(),
+                        if ckpts.len() == 1 { "" } else { "s" },
+                    );
+                    for (n, f) in &ckpts {
+                        out.push_str(&format!("  {n} ({f} facts)\n"));
+                    }
+                    out
+                }
+            }
+            "drop" => {
+                let ckpt_name = ckpt_name.ok_or("name is required for drop")?;
+                if !bridge.checkpoint_drop(ckpt_name) {
+                    return Err(format!("no checkpoint '{ckpt_name}'").into());
+                }
+                if compact {
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "drop", "name": ckpt_name,
+                    }))
+                    .map_err(|e| format!("serialise checkpoint report: {e}"))?
+                } else {
+                    format!("checkpoint '{ckpt_name}' dropped\n")
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unknown checkpoint action '{other}' (save, diff, list, drop)"
+                )
+                .into())
+            }
         }));
     }
 
@@ -1807,5 +1896,91 @@ mod native_label_tool_tests {
         assert_eq!(report["entries"], 3);
         assert_eq!(report["current"], 1);
         assert_eq!(report["history"][1]["current"], true);
+    }
+
+    #[test]
+    fn checkpoint_tool_saves_diffs_lists_and_drops() {
+        load("t28-ckpt");
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "save", "name": "start" }),
+        );
+        assert!(out.contains("checkpoint 'start' saved"), "{out}");
+
+        // Nothing happened yet: the diff is empty.
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "diff", "name": "start" }),
+        );
+        assert!(out.contains("changes since checkpoint 'start':"), "{out}");
+        assert!(out.contains("(no state change)"), "{out}");
+
+        // Two actions later, one diff reports the accumulated change.
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t28-ckpt", "label": "Email", "text": "x@y.example" }),
+        );
+        call(
+            "browser_native_check_label",
+            json!({ "sessionId": "t28-ckpt", "label": "Subscribe", "checked": true }),
+        );
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "diff", "name": "start" }),
+        );
+        assert!(out.contains("x@y.example"), "fill shows in the delta: {out}");
+        assert!(!out.contains("(no state change)"), "{out}");
+
+        // Saving under the same name replaces the snapshot.
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "save", "name": "start" }),
+        );
+        assert!(out.contains("checkpoint 'start' replaced"), "{out}");
+
+        // list shows the snapshot, drop removes it.
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "list" }),
+        );
+        assert!(out.starts_with("1 checkpoint:"), "{out}");
+        assert!(out.contains("start ("), "{out}");
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "drop", "name": "start" }),
+        );
+        assert!(out.contains("checkpoint 'start' dropped"), "{out}");
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "list" }),
+        );
+        assert!(out.contains("(no checkpoints)"), "{out}");
+
+        // Missing checkpoint and unknown action are errors.
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_checkpoint",
+            &json!({ "sessionId": "t28-ckpt", "action": "diff", "name": "gone" }),
+        )
+        .expect_err("diff against a missing checkpoint must fail");
+        assert!(err.to_string().contains("no checkpoint 'gone'"), "{err}");
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_checkpoint",
+            &json!({ "sessionId": "t28-ckpt", "action": "teleport" }),
+        )
+        .expect_err("unknown checkpoint action must be rejected");
+        assert!(err.to_string().contains("unknown checkpoint action"), "{err}");
+
+        // Compact save carries the fact count.
+        let compact = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t28-ckpt", "action": "save", "name": "s2", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact checkpoint is valid JSON");
+        assert_eq!(report["action"], "save");
+        assert_eq!(report["replaced"], false);
+        assert!(report["facts"].as_u64().expect("facts count") > 0);
     }
 }

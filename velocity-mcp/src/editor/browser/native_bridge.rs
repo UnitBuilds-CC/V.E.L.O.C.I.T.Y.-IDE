@@ -41,6 +41,9 @@ pub struct NativeBrowserBridge {
     pub active_session: BrowserSession,
     pub screencast: ScreencastRecorder,
     pub vector_memory: SiteVectorStore,
+    /// Named page-state snapshots for cross-action diffing: "what changed
+    /// since I last looked", spanning any number of intermediate actions.
+    pub checkpoints: HashMap<String, velocity_browser::NdaDocument>,
 }
 
 static NATIVE_BRIDGES: LazyLock<Arc<Mutex<HashMap<String, Arc<Mutex<NativeBrowserBridge>>>>>> =
@@ -97,6 +100,7 @@ impl NativeBrowserBridge {
             active_session: BrowserSession::new(session_id.to_string()),
             screencast: ScreencastRecorder::new(session_id),
             vector_memory: SiteVectorStore::new(),
+            checkpoints: HashMap::new(),
         }
     }
 
@@ -639,6 +643,44 @@ impl NativeBrowserBridge {
             .map(|h| (h.url.clone(), h.title.clone()))
             .collect();
         (items, stack.current_index)
+    }
+
+    // -- Checkpoints ----------------------------------------------------------
+    // Named snapshots of the same lossless state document the agent_* actions
+    // diff, so "what changed since I last looked" can span any number of
+    // intermediate actions instead of one.
+
+    /// Snapshot the current page state under `name`. Returns the snapshot's
+    /// fact count and whether an existing checkpoint was replaced.
+    pub fn checkpoint_save(&mut self, name: &str) -> (usize, bool) {
+        let doc = self.active_session.capture_state_document();
+        let facts = doc.facts.len();
+        let replaced = self.checkpoints.insert(name.to_string(), doc).is_some();
+        (facts, replaced)
+    }
+
+    /// Diff the current page state against the named checkpoint. `None` when
+    /// no such checkpoint exists.
+    pub fn checkpoint_diff(&self, name: &str) -> Option<velocity_browser::NdaDelta> {
+        let before = self.checkpoints.get(name)?;
+        let after = self.active_session.capture_state_document();
+        Some(velocity_browser::agent_api::diff(before, &after))
+    }
+
+    /// All checkpoints as `(name, fact_count)`, sorted by name.
+    pub fn checkpoint_list(&self) -> Vec<(String, usize)> {
+        let mut out: Vec<(String, usize)> = self
+            .checkpoints
+            .iter()
+            .map(|(n, d)| (n.clone(), d.facts.len()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Remove the named checkpoint. False when it did not exist.
+    pub fn checkpoint_drop(&mut self, name: &str) -> bool {
+        self.checkpoints.remove(name).is_some()
     }
 
     /// Hover an element by node id.
