@@ -14,6 +14,13 @@ use std::collections::HashMap;
 thread_local! {
     static DOM_NODES: RefCell<Vec<DomNode>> = const { RefCell::new(Vec::new()) };
     static DOM_ROOT: RefCell<Option<usize>> = const { RefCell::new(None) };
+    /// The node holding keyboard focus — backs `document.activeElement`.
+    static FOCUSED_NODE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Node currently holding focus, if any (agent state export reads this).
+pub(super) fn focused_node() -> Option<usize> {
+    FOCUSED_NODE.with(|c| c.get())
 }
 
 #[derive(Debug, Clone)]
@@ -578,6 +585,19 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                 None => JsValue::Boolean(false),
             }
         }
+        "focusByLabel" => {
+            // Move focus to any interactive element found by accessible name —
+            // pairs with document.activeElement for keyboard-flow reasoning.
+            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            match super::agent_layer::resolve_focus_target(&query) {
+                Some(id) => {
+                    FOCUSED_NODE.with(|c| c.set(Some(id)));
+                    fire_event(id, "focus");
+                    JsValue::Boolean(true)
+                }
+                None => JsValue::Boolean(false),
+            }
+        }
         "selectByLabel" => {
             // Pick a dropdown option by visible text (or value) on a select
             // found by its accessible name — exact text wins over substring.
@@ -720,7 +740,12 @@ pub(super) fn get_document_property(prop: &str) -> JsValue {
             element_handle(root)
         }
         "cookie" => get_cookie_string(),
-        "activeElement" => JsValue::Null,
+        "activeElement" => {
+            match FOCUSED_NODE.with(|c| c.get()) {
+                Some(id) => element_handle(id),
+                None => JsValue::Null,
+            }
+        }
         "hasFocus" => JsValue::Boolean(true),
         // Document collections (empty in the in-memory DOM unless populated).
         "forms" | "images" | "links" | "scripts" | "embeds" | "plugins" | "styleSheets" => JsValue::Array(Vec::new()),
@@ -989,7 +1014,19 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             fire_event(id, "click");
             JsValue::Undefined
         }
-        "focus" | "blur" | "submit" | "reset" | "select" => JsValue::Undefined,
+        "focus" => {
+            FOCUSED_NODE.with(|c| c.set(Some(id)));
+            fire_event(id, "focus");
+            JsValue::Undefined
+        }
+        "blur" => {
+            if FOCUSED_NODE.with(|c| c.get()) == Some(id) {
+                FOCUSED_NODE.with(|c| c.set(None));
+            }
+            fire_event(id, "blur");
+            JsValue::Undefined
+        }
+        "submit" | "reset" | "select" => JsValue::Undefined,
         // Scrolling.
         "scrollIntoView" | "scrollTo" | "scrollBy" | "scroll" => JsValue::Undefined,
         // Insertion.

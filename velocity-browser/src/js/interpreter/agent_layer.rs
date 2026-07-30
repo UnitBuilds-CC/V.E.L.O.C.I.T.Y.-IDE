@@ -1055,6 +1055,11 @@ pub(super) fn resolve_check_target(query: &str) -> Option<usize> {
     resolve_control(query, is_checkable_role)
 }
 
+/// Resolve a label query to any interactive element (for focus moves).
+pub(super) fn resolve_focus_target(query: &str) -> Option<usize> {
+    resolve_control(query, |_| true)
+}
+
 // ── NDA Export ───────────────────────────────────────────────────────────────
 
 /// Export the current agent-visible page state as a lossless [`NdaDocument`].
@@ -1086,6 +1091,7 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
     }
 
     // One subject per interactive element, in actionability order.
+    let focused = super::dom_bridge::focused_node();
     for el in get_interactive_elements() {
         let subject = format!("el{}", el.node_id);
         doc.push_str(&subject, AOM_ROLE, el.role);
@@ -1101,6 +1107,9 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
         doc.push_int(&subject, AOM_ACTIONABILITY, actionability_score(el.role) as i64);
         if el.disabled {
             doc.push_int(&subject, AOM_DISABLED, 1);
+        }
+        if focused == Some(el.node_id) {
+            doc.push_int(&subject, crate::predicates::AOM_FOCUSED, 1);
         }
     }
 

@@ -245,6 +245,72 @@ fn select_by_label_matches_by_value() {
     assert_eq!(value, JsValue::String("pt".to_string()));
 }
 
+// ── Focus Model ──────────────────────────────────────────────────────────────
+
+#[test]
+fn focus_sets_active_element() {
+    let result = eval_full("
+        document.body.innerHTML = '<input id=\"a\" placeholder=\"Email\">';
+        document.querySelector('input').focus();
+        document.activeElement.id
+    ");
+    assert_eq!(result, JsValue::String("a".to_string()));
+}
+
+#[test]
+fn blur_clears_active_element() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        document.querySelector('input').focus();
+        document.querySelector('input').blur();
+        document.activeElement
+    ");
+    assert_eq!(result, JsValue::Null);
+}
+
+#[test]
+fn focus_fires_focus_listener() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        var focused = false;
+        document.querySelector('input').addEventListener('focus', function() { focused = true; });
+        document.querySelector('input').focus();
+        focused
+    ");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn focus_by_label_moves_focus() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\"><button>Save</button>';
+        document.focusByLabel('Save');
+        document.activeElement.tagName
+    ");
+    assert_eq!(result, JsValue::String("BUTTON".to_string()));
+}
+
+#[test]
+fn focus_by_label_misses_unknown() {
+    eval_full("document.body.innerHTML = '<button>Save</button>'");
+    let ok = eval_full("document.focusByLabel('Delete')");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
+#[test]
+fn export_nda_includes_focus_fact() {
+    eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        document.focusByLabel('Email');
+    ");
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    let facts = doc.readable_facts();
+    assert!(
+        facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_FOCUSED && o == "1"),
+        "expected a focused fact, got: {:?}", facts
+    );
+}
+
 #[test]
 fn interactive_element_has_role() {
     eval_full("document.body.innerHTML = '<button>Submit</button>'");
