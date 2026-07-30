@@ -331,6 +331,7 @@ pub fn handle_native_tool(
         | "browser_native_checkpoint"
         | "browser_native_reflect"
         | "browser_native_predict"
+        | "browser_native_brief"
         | "browser_native_learn"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
@@ -801,6 +802,142 @@ pub fn handle_native_tool(
             for (role, action, conf, obs) in &patterns {
                 out.push_str(&format!("  {action} on {role}: {conf:.2} ({obs} obs)\n"));
             }
+        }
+        return Ok(Some(out));
+    }
+
+    // One call that assembles everything the agent should know before acting:
+    // the page identity, this domain's learned patterns, the suggested next
+    // action, similar remembered pages, failure lessons and recent outcomes.
+    // Replaces a predict + recall + reflect round-trip, saving tokens.
+    if name == "browser_native_brief" {
+        let memory_limit = arguments["memories"].as_u64().unwrap_or(3) as usize;
+        let recent_n = arguments["recent"].as_u64().unwrap_or(5) as usize;
+        let view = bridge.current_view();
+        let patterns = bridge.confidence_report();
+        let suggestion = bridge.predict_learned();
+        let detail = suggestion
+            .as_ref()
+            .and_then(|p| view.elements.iter().find(|e| e.aom_id == p.target_selector));
+        // Similar past pages: the current page text is the semantic query.
+        let page_query = bridge.page_text();
+        let memories = if page_query.trim().is_empty() {
+            Vec::new()
+        } else {
+            bridge.recall_pages(&page_query, "semantic", memory_limit, 0.0)
+        };
+        let reflections = bridge.reflect();
+        if compact {
+            let sugg_json = suggestion.as_ref().map(|p| {
+                serde_json::json!({
+                    "target": p.target_selector,
+                    "action": p.action_type,
+                    "confidence": ((p.confidence_score as f64) * 100.0).round() / 100.0,
+                    "role": detail.map(|e| e.role.clone()),
+                    "name": detail.map(|e| e.name.clone()),
+                })
+            });
+            let pattern_json: Vec<serde_json::Value> = patterns
+                .iter()
+                .map(|(role, action, conf, obs)| {
+                    serde_json::json!({
+                        "role": role,
+                        "action": action,
+                        "confidence": (conf * 100.0).round() / 100.0,
+                        "observations": obs,
+                    })
+                })
+                .collect();
+            let memory_json: Vec<serde_json::Value> = memories
+                .iter()
+                .map(|(n, sim)| {
+                    serde_json::json!({
+                        "url": n.url,
+                        "similarity": sim,
+                        "outcome": n.outcome_score,
+                        "snippet": memory_snippet(&n.text),
+                    })
+                })
+                .collect();
+            let reflection_json: Vec<serde_json::Value> = reflections
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "category": format!("{:?}", r.category),
+                        "message": r.message,
+                        "strategy": r.suggested_strategy,
+                    })
+                })
+                .collect();
+            let outcome_json: Vec<serde_json::Value> = bridge
+                .scorer
+                .recent_context(recent_n)
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "action": o.action_kind.label(),
+                        "role": o.target_role,
+                        "score": (o.score * 100.0).round() / 100.0,
+                        "error": o.signals.error_thrown,
+                    })
+                })
+                .collect();
+            return Ok(Some(
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "url": view.url,
+                    "title": view.title,
+                    "elements": view.elements.len(),
+                    "suggestion": sugg_json,
+                    "patterns": pattern_json,
+                    "memories": memory_json,
+                    "reflections": reflection_json,
+                    "outcomes": outcome_json,
+                }))
+                .map_err(|e| format!("serialise brief report: {e}"))?,
+            ));
+        }
+        let mut out = format!(
+            "brief for {} — \"{}\" ({} interactive element(s))\n",
+            view.url,
+            view.title,
+            view.elements.len()
+        );
+        match (&suggestion, detail) {
+            (Some(p), Some(e)) => out.push_str(&format!(
+                "suggested next action: {} {} [{}] \"{}\" (confidence {:.2})\n",
+                p.action_type, p.target_selector, e.role, e.name, p.confidence_score
+            )),
+            (Some(p), None) => out.push_str(&format!(
+                "suggested next action: {} {} (confidence {:.2})\n",
+                p.action_type, p.target_selector, p.confidence_score
+            )),
+            (None, _) => {}
+        }
+        if !patterns.is_empty() {
+            out.push_str("learned patterns on this domain:\n");
+            for (role, action, conf, obs) in &patterns {
+                out.push_str(&format!("  {action} on {role}: {conf:.2} ({obs} obs)\n"));
+            }
+        }
+        if !memories.is_empty() {
+            out.push_str("similar remembered pages:\n");
+            for (n, sim) in &memories {
+                let score = sim.map(|s| format!("{s:.3}")).unwrap_or_else(|| "-".to_string());
+                out.push_str(&format!(
+                    "  [{}] {} (outcome {:.2}) {}\n",
+                    score,
+                    if n.url.is_empty() { "(no url)" } else { n.url.as_str() },
+                    n.outcome_score,
+                    memory_snippet(&n.text),
+                ));
+            }
+        }
+        if let Some(msg) = bridge.reflector.format_as_system_message(&reflections) {
+            out.push_str(&format!("{msg}\n"));
+        }
+        let context = bridge.scorer.format_for_context(recent_n);
+        if !context.is_empty() {
+            out.push_str(&context);
         }
         return Ok(Some(out));
     }
@@ -2716,5 +2853,60 @@ mod native_label_tool_tests {
         );
         assert!(out.contains("0 page memory(ies)"), "reload is idempotent: {out}");
         assert!(out.contains("0 action outcome(s)"), "{out}");
+    }
+
+    #[test]
+    fn brief_tool_bundles_pre_action_context() {
+        load("t35-brief");
+
+        // A fresh session's brief is just the page identity.
+        let out = call("browser_native_brief", json!({ "sessionId": "t35-brief" }));
+        assert!(out.contains("brief for http://local.test/form"), "{out}");
+        assert!(out.contains("\"Signup\""), "{out}");
+        assert!(!out.contains("learned patterns"), "{out}");
+        assert!(!out.contains("similar remembered pages"), "{out}");
+
+        // Build experience: a confident fill, a remembered page and two
+        // repeated failures for the reflector to chew on.
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t35-brief", "label": "Email", "text": "a@b.example" }),
+        );
+        call(
+            "browser_native_remember",
+            json!({
+                "sessionId": "t35-brief",
+                "note": "signup form with email subscribe plan",
+                "tags": ["signup"],
+                "outcome": 0.9,
+            }),
+        );
+        for _ in 0..2 {
+            call(
+                "browser_native_click_text",
+                json!({ "sessionId": "t35-brief", "text": "Launch Rocket" }),
+            );
+        }
+
+        let out = call("browser_native_brief", json!({ "sessionId": "t35-brief" }));
+        assert!(out.contains("learned patterns on this domain:"), "{out}");
+        assert!(out.contains("fill on textbox:"), "{out}");
+        assert!(out.contains("similar remembered pages:"), "{out}");
+        assert!(out.contains("outcome 0.90"), "{out}");
+        assert!(out.contains("[SELF-REFLECTION]"), "failures surface as lessons: {out}");
+        assert!(out.contains("Recent action outcomes:"), "{out}");
+
+        let compact = call(
+            "browser_native_brief",
+            json!({ "sessionId": "t35-brief", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact brief is valid JSON");
+        assert_eq!(report["url"], "http://local.test/form", "{compact}");
+        assert_eq!(report["title"], "Signup", "{compact}");
+        assert!(report["elements"].as_u64().expect("elements") > 0, "{compact}");
+        assert!(!report["patterns"].as_array().expect("patterns").is_empty(), "{compact}");
+        assert!(!report["memories"].as_array().expect("memories").is_empty(), "{compact}");
+        assert_eq!(report["outcomes"].as_array().expect("outcomes").len(), 3, "{compact}");
     }
 }
