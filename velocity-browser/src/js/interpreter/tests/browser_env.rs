@@ -91,9 +91,110 @@ fn location_properties() {
 
 #[test]
 fn document_properties() {
-    assert_eq!(eval_full("document.readyState"), JsValue::String("complete".to_string()));
+    // readyState starts at "loading" — waitForSettlement drives it to "complete".
+    assert_eq!(eval_full("document.readyState"), JsValue::String("loading".to_string()));
     assert_eq!(eval_full("document.hidden"), JsValue::Boolean(false));
     assert_eq!(eval_full("document.characterSet"), JsValue::String("UTF-8".to_string()));
+}
+
+// ── Document Lifecycle ───────────────────────────────────────────────────────
+
+#[test]
+fn ready_state_completes_after_settlement() {
+    let result = eval_full("document.waitForSettlement(); document.readyState");
+    assert_eq!(result, JsValue::String("complete".to_string()));
+}
+
+#[test]
+fn dom_content_loaded_fires_on_settlement() {
+    let result = eval_full("
+        var loaded = false;
+        document.addEventListener('DOMContentLoaded', function() { loaded = true; });
+        document.waitForSettlement();
+        loaded
+    ");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn window_load_listener_fires_on_settlement() {
+    let result = eval_full("
+        var n = 0;
+        window.addEventListener('load', function() { n = n + 1; });
+        document.waitForSettlement();
+        n
+    ");
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn lifecycle_fires_only_once() {
+    let result = eval_full("
+        var n = 0;
+        document.addEventListener('load', function() { n = n + 1; });
+        document.waitForSettlement();
+        document.waitForSettlement();
+        n
+    ");
+    assert_eq!(result, JsValue::Number(1.0));
+}
+
+#[test]
+fn lifecycle_listener_sees_event_type() {
+    let result = eval_full("
+        var seen = '';
+        document.addEventListener('DOMContentLoaded', function(e) { seen = e.type; });
+        document.waitForSettlement();
+        seen
+    ");
+    assert_eq!(result, JsValue::String("DOMContentLoaded".to_string()));
+}
+
+#[test]
+fn lifecycle_timers_pump_in_same_settlement() {
+    // A load handler that schedules a timeout — the same settlement call
+    // must run it.
+    let result = eval_full("
+        var x = 0;
+        document.addEventListener('load', function() { setTimeout(function() { x = 7; }, 0); });
+        document.waitForSettlement();
+        x
+    ");
+    assert_eq!(result, JsValue::Number(7.0));
+}
+
+#[test]
+fn document_dispatch_event_fires_custom_listener() {
+    let result = eval_full("
+        var got = false;
+        document.addEventListener('agent-ping', function() { got = true; });
+        document.dispatchEvent(new Event('agent-ping'));
+        got
+    ");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn remove_event_listener_stops_lifecycle_delivery() {
+    let result = eval_full("
+        var n = 0;
+        var f = function() { n = n + 1; };
+        document.addEventListener('load', f);
+        document.removeEventListener('load', f);
+        document.waitForSettlement();
+        n
+    ");
+    assert_eq!(result, JsValue::Number(0.0));
+}
+
+#[test]
+fn settlement_reports_lifecycle_listener_count() {
+    let result = eval_full("
+        document.addEventListener('DOMContentLoaded', function() {});
+        window.addEventListener('load', function() {});
+        document.waitForSettlement().lifecycleListenersRun
+    ");
+    assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]

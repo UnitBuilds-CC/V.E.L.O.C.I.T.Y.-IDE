@@ -882,6 +882,26 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         "prompt" => JsValue::Null,
                         "requestAnimationFrame" => super::browser_env::set_timeout(&evaluated_args),
                         "cancelAnimationFrame" => super::browser_env::clear_timer(&evaluated_args),
+                        // Window shares the page's lifecycle event target with
+                        // `document` — load/DOMContentLoaded land in one place.
+                        "addEventListener" => {
+                            let ev = evaluated_args.first().map(super::coercion::to_string).unwrap_or_default();
+                            let handler = evaluated_args.get(1).cloned().unwrap_or(JsValue::Undefined);
+                            super::browser_env::add_lifecycle_listener(&ev, handler);
+                            JsValue::Undefined
+                        }
+                        "removeEventListener" => {
+                            let ev = evaluated_args.first().map(super::coercion::to_string).unwrap_or_default();
+                            super::browser_env::remove_lifecycle_listeners(&ev);
+                            JsValue::Undefined
+                        }
+                        "dispatchEvent" => {
+                            let ev = evaluated_args.first().and_then(|v| {
+                                if let JsValue::Object(m) = v { m.get("type").map(super::coercion::to_string) } else { None }
+                            }).unwrap_or_default();
+                            super::browser_env::fire_lifecycle_event(&ev);
+                            JsValue::Boolean(true)
+                        }
                         "getSelection" => super::dom_bridge::make_selection(),
                         "getComputedStyle" => super::web_platform::get_computed_style(evaluated_args.first().unwrap_or(&JsValue::Undefined), evaluated_args.get(1)),
                         "matchMedia" => super::web_platform::match_media(&evaluated_args.first().map(super::coercion::to_string).unwrap_or_default()),

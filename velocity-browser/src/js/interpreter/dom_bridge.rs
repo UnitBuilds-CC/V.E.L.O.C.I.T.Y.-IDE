@@ -445,9 +445,12 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             JsValue::Object(obj)
         }
         "waitForSettlement" => {
-            // Deterministically pump the timer queue until the page stops
-            // scheduling work (or the round cap trips), then report the final
-            // DOM state — the agent's "page is quiet, act now" primitive.
+            // Deterministically finish the page load: fire the lifecycle
+            // (DOMContentLoaded/load, once) and pump the timer queue until the
+            // page stops scheduling work (or the round cap trips), then report
+            // the final DOM state — the agent's "page is quiet, act now"
+            // primitive.
+            let lifecycle_listeners = super::browser_env::advance_lifecycle();
             let mut timers_run = 0u32;
             let mut rounds = 0u32;
             while rounds < 10 {
@@ -461,6 +464,7 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             obj.insert("__type__".to_string(), JsValue::String("Settlement".to_string()));
             obj.insert("settled".to_string(), JsValue::Boolean(rounds < 10));
             obj.insert("timersRun".to_string(), JsValue::Number(timers_run as f64));
+            obj.insert("lifecycleListenersRun".to_string(), JsValue::Number(lifecycle_listeners as f64));
             obj.insert("nodeCount".to_string(), JsValue::Number(state.node_count as f64));
             obj.insert("interactiveCount".to_string(), JsValue::Number(state.interactive_count as f64));
             obj.insert("textHash".to_string(), JsValue::Number(hash_to_js(state.body_text_hash)));
@@ -489,6 +493,26 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                     e.method, e.url, e.status, if e.mocked { " (mocked)" } else { "" }));
             }
             JsValue::String(out)
+        }
+        "addEventListener" => {
+            // Page-level events (DOMContentLoaded, load, custom) live in the
+            // lifecycle registry shared with `window`.
+            let event_type = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let handler = args.get(1).cloned().unwrap_or(JsValue::Undefined);
+            super::browser_env::add_lifecycle_listener(&event_type, handler);
+            JsValue::Undefined
+        }
+        "removeEventListener" => {
+            let event_type = args.first().map(super::coercion::to_string).unwrap_or_default();
+            super::browser_env::remove_lifecycle_listeners(&event_type);
+            JsValue::Undefined
+        }
+        "dispatchEvent" => {
+            let event_type = args.first().and_then(|v| {
+                if let JsValue::Object(m) = v { m.get("type").map(super::coercion::to_string) } else { None }
+            }).unwrap_or_default();
+            super::browser_env::fire_lifecycle_event(&event_type);
+            JsValue::Boolean(true)
         }
         _ => JsValue::Undefined,
     }

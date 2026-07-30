@@ -122,6 +122,78 @@ pub fn reset_timers() {
     NEXT_TIMER_ID.with(|c| *c.borrow_mut() = 1);
 }
 
+// ── Document Lifecycle ───────────────────────────────────────────────────────
+
+thread_local! {
+    /// Page-level listeners (document/window addEventListener) keyed by event
+    /// type — DOMContentLoaded, load, and any custom events scripts dispatch.
+    static LIFECYCLE_LISTENERS: RefCell<HashMap<String, Vec<JsValue>>> = RefCell::new(HashMap::new());
+    /// Current `document.readyState` phase.
+    static READY_STATE: RefCell<&'static str> = const { RefCell::new("loading") };
+    /// Whether the DOMContentLoaded/load pair has already been dispatched.
+    static LIFECYCLE_FIRED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Current `document.readyState` value: "loading" → "interactive" → "complete".
+pub(super) fn ready_state() -> &'static str {
+    READY_STATE.with(|s| *s.borrow())
+}
+
+/// Register a page-level listener for `event_type` (document or window scope —
+/// both share the page's lifecycle target, matching how agents reason about
+/// "the page fired load").
+pub(super) fn add_lifecycle_listener(event_type: &str, handler: JsValue) {
+    if !matches!(handler, JsValue::Function { .. } | JsValue::NativeFunction(_)) {
+        return;
+    }
+    LIFECYCLE_LISTENERS.with(|l| {
+        l.borrow_mut().entry(event_type.to_string()).or_default().push(handler);
+    });
+}
+
+/// Remove all page-level listeners for `event_type`.
+pub(super) fn remove_lifecycle_listeners(event_type: &str) {
+    LIFECYCLE_LISTENERS.with(|l| {
+        l.borrow_mut().remove(event_type);
+    });
+}
+
+/// Fire all page-level listeners for `event_type`; returns how many ran.
+/// Listeners are cloned up-front so they can freely add/remove listeners.
+pub(super) fn fire_lifecycle_event(event_type: &str) -> u32 {
+    let listeners = LIFECYCLE_LISTENERS.with(|l| {
+        l.borrow().get(event_type).cloned().unwrap_or_default()
+    });
+    let mut event = HashMap::new();
+    event.insert("__type__".to_string(), JsValue::String("Event".to_string()));
+    event.insert("type".to_string(), JsValue::String(event_type.to_string()));
+    event.insert("target".to_string(), JsValue::String("document".to_string()));
+    event.insert("bubbles".to_string(), JsValue::Boolean(false));
+    let event_val = JsValue::Object(event);
+    let mut executed = 0u32;
+    for listener in listeners {
+        let _ = super::function::call_function(&listener, &[event_val.clone()], &crate::js::scope::Scope::new_global());
+        executed += 1;
+    }
+    executed
+}
+
+/// Drive the document through its load lifecycle exactly once:
+/// readyState → "interactive", fire DOMContentLoaded, readyState →
+/// "complete", fire load. Returns the number of listeners invoked; repeat
+/// calls are no-ops so settlement pumps can call this unconditionally.
+pub(super) fn advance_lifecycle() -> u32 {
+    if LIFECYCLE_FIRED.with(|c| c.get()) {
+        return 0;
+    }
+    LIFECYCLE_FIRED.with(|c| c.set(true));
+    READY_STATE.with(|s| *s.borrow_mut() = "interactive");
+    let mut executed = fire_lifecycle_event("DOMContentLoaded");
+    READY_STATE.with(|s| *s.borrow_mut() = "complete");
+    executed += fire_lifecycle_event("load");
+    executed
+}
+
 // ── Browser Global Objects ───────────────────────────────────────────────────
 
 /// Build the `navigator` object with common properties agents inspect.
@@ -213,7 +285,7 @@ pub(super) fn make_location(url: &str) -> JsValue {
 pub(super) fn make_document() -> JsValue {
     let mut map = HashMap::new();
     map.insert("__type__".to_string(), JsValue::String("Document".to_string()));
-    map.insert("readyState".to_string(), JsValue::String("complete".to_string()));
+    map.insert("readyState".to_string(), JsValue::String(ready_state().to_string()));
     map.insert("title".to_string(), JsValue::String(String::new()));
     map.insert("URL".to_string(), JsValue::String("about:blank".to_string()));
     map.insert("domain".to_string(), JsValue::String(String::new()));
