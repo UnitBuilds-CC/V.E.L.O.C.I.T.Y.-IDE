@@ -977,14 +977,18 @@ impl BrowserSession {
                 NdaDelta::default(),
             );
         };
-        // Rank candidate <option> children: exact text/value match beats substring.
+        // Rank candidate <option> descendants (real-world markup nests them
+        // under whitespace text nodes or <optgroup>): exact text/value match
+        // beats substring.
         let needle = option.trim().to_lowercase();
         let chosen = self.dom_tree.as_ref().and_then(|tree| {
             let select = tree.get_node(select_id)?;
             let mut best: Option<(u8, usize, String)> = None;
-            for &child in &select.children {
+            let mut stack: Vec<usize> = select.children.clone();
+            while let Some(child) = stack.pop() {
                 let Some(node) = tree.get_node(child) else { continue };
                 if node.tag_name != "option" {
+                    stack.extend(&node.children);
                     continue;
                 }
                 let text = node
@@ -995,6 +999,7 @@ impl BrowserSession {
                     .map(|n| n.text_content.trim())
                     .collect::<Vec<_>>()
                     .join(" ")
+                    .trim()
                     .to_lowercase();
                 let value = node.attributes.get("value").cloned()
                     .unwrap_or_else(|| text.clone());
@@ -1021,12 +1026,15 @@ impl BrowserSession {
         let before = self.capture_state_document();
         let selector = self.selector_for_node(select_id);
         if let Some(tree) = &mut self.dom_tree {
-            // Clear selection from siblings, mark the chosen option.
-            let siblings = tree.get_node(select_id).map(|n| n.children.clone()).unwrap_or_default();
-            for sib in siblings {
+            // Clear selection from every option under the select, then mark
+            // the chosen one.
+            let mut stack = tree.get_node(select_id).map(|n| n.children.clone()).unwrap_or_default();
+            while let Some(sib) = stack.pop() {
                 if let Some(node) = tree.get_node_mut(sib) {
                     if node.tag_name == "option" {
                         node.attributes.remove("selected");
+                    } else {
+                        stack.extend(node.children.clone());
                     }
                 }
             }

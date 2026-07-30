@@ -1119,5 +1119,122 @@ pub fn get_browser_tools() -> Vec<Tool> {
                 "required": ["sessionId", "key"]
             }),
         },
+        // -- Label-based semantic actions: target elements by what the agent
+        //    reads on screen, no node ids needed --
+        Tool {
+            name: "browser_native_click_text".to_string(),
+            description: "Click the clickable element (button, link, checkbox, radio) whose visible text or accessible name best matches the query. Exact matches beat substring matches; ties break on actionability. Returns the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "text": { "type": "string", "description": "Visible text or accessible name of the element to click (case-insensitive)." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "text"]
+            }),
+        },
+        Tool {
+            name: "browser_native_fill_label".to_string(),
+            description: "Fill the text input or textarea whose label, placeholder, or accessible name best matches the query. Returns the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "label": { "type": "string", "description": "Label/placeholder/accessible name of the control to fill (case-insensitive)." },
+                    "text": { "type": "string", "description": "Text to enter into the control's value." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "label", "text"]
+            }),
+        },
+        Tool {
+            name: "browser_native_check_label".to_string(),
+            description: "Check or uncheck the checkbox/radio whose label best matches the query and return the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "label": { "type": "string", "description": "Label/accessible name of the checkbox or radio (case-insensitive)." },
+                    "checked": { "type": "boolean", "description": "Desired state: true to check (default), false to uncheck." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "label"]
+            }),
+        },
+        Tool {
+            name: "browser_native_select_label".to_string(),
+            description: "Pick an option in the select/combobox whose label best matches the query. The option is matched by its visible text or value (exact beats substring). Returns the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "label": { "type": "string", "description": "Label/accessible name of the select control (case-insensitive)." },
+                    "option": { "type": "string", "description": "Visible text or value of the option to select." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "label", "option"]
+            }),
+        },
+        Tool {
+            name: "browser_native_focus_label".to_string(),
+            description: "Move session keyboard focus to the focusable element whose accessible name best matches the query. Focus is a readable fact (AOM focused) so the delta shows exactly where focus moved. Follow with browser_native_press to type or submit.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "label": { "type": "string", "description": "Accessible name of the element to focus (case-insensitive)." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "label"]
+            }),
+        },
+        Tool {
+            name: "browser_native_press".to_string(),
+            description: "Press a key against the session's focused element: 'Enter' submits the enclosing form, 'Tab' advances focus to the next control (wrapping), and a single character types into the focused control. Requires focus set via browser_native_focus_label. Returns the resulting NDA delta and refreshed AOM view.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "key": { "type": "string", "description": "Key to press: 'Enter', 'Tab', or a single character." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId", "key"]
+            }),
+        },
+        Tool {
+            name: "browser_native_read_form".to_string(),
+            description: "Read every form control on the page as compact text: one line per control with its accessible name, role, and current value or checked state. The cheapest way to verify form state before submitting.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_observe".to_string(),
+            description: "Dump the full readable fact base of the session (URL, title, AOM roles/names/values, focus, layout, cookies, storage) as 'subject predicate = object' lines. The complete observation an agent can diff or reason over.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_settle".to_string(),
+            description: "Flush pending timers and microtasks in the session's JS runtime and return the NDA delta of everything that changed while settling. Call after actions that trigger async work (setTimeout, fetch callbacks).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON action report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
     ]
 }

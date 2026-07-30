@@ -95,6 +95,11 @@ impl Html5Tokenizer {
                         self.state = Html5State::Comment;
                     } else if ch.is_alphabetic() {
                         is_end_tag = false;
+                        // A stale self_closing flag from a previous "/>" tag
+                        // must not leak into this one: only the TagName '>'
+                        // emission path used to reset it, so `<input />` made
+                        // every following attribute-bearing tag self-closing.
+                        self_closing = false;
                         current_tag.clear();
                         current_tag.push(ch.to_ascii_lowercase());
                         current_attrs.clear();
@@ -105,6 +110,7 @@ impl Html5Tokenizer {
                 }
                 Html5State::EndTagOpen => {
                     if ch.is_alphabetic() {
+                        self_closing = false;
                         current_tag.clear();
                         current_tag.push(ch.to_ascii_lowercase());
                         self.state = Html5State::TagName;
@@ -416,5 +422,20 @@ mod tests {
         assert_eq!(start_tags[0].name, "ul");
         assert_eq!(start_tags[1].name, "li");
         assert_eq!(start_tags[2].name, "li");
+    }
+
+    #[test]
+    fn test_self_closing_flag_does_not_leak_into_next_tag() {
+        // Regression: after `<input />`, the stale self_closing flag made the
+        // following attribute-bearing tags (select/option) self-closing, so
+        // their children were reparented as siblings.
+        let mut tok = Html5Tokenizer::new(
+            "<input type=\"checkbox\" /> <select aria-label=\"Plan\"><option value=\"pro\">Pro</option></select>",
+        );
+        let tokens = tok.tokenize();
+        let select = tokens.iter().find(|t| t.is_start_tag("select")).unwrap();
+        assert!(!select.self_closing, "select must not inherit self_closing from the input");
+        let option = tokens.iter().find(|t| t.is_start_tag("option")).unwrap();
+        assert!(!option.self_closing, "option must not inherit self_closing either");
     }
 }

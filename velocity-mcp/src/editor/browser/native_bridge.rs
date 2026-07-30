@@ -160,6 +160,59 @@ impl NativeBrowserBridge {
         self.active_session.eval_js(expr)
     }
 
+    // -- Label-based semantic actions ---------------------------------------
+    // These target elements the way the agent reads them: by visible text or
+    // accessible label, ranked by AOM actionability. No node ids required.
+
+    /// Click the clickable element whose accessible name best matches `query`.
+    pub fn agent_click_by_text(&mut self, query: &str) -> AgentActionResult {
+        self.active_session.agent_click_by_text(query)
+    }
+
+    /// Fill the text control whose label/placeholder best matches `query`.
+    pub fn agent_fill_by_label(&mut self, query: &str, text: &str) -> AgentActionResult {
+        self.active_session.agent_fill_by_label(query, text)
+    }
+
+    /// Check or uncheck the checkbox/radio whose label best matches `query`.
+    pub fn agent_check_by_label(&mut self, query: &str, state: bool) -> AgentActionResult {
+        self.active_session.agent_check_by_label(query, state)
+    }
+
+    /// Pick an option (by visible text or value) in the select whose label
+    /// best matches `query`.
+    pub fn agent_select_by_label(&mut self, query: &str, option: &str) -> AgentActionResult {
+        self.active_session.agent_select_by_label(query, option)
+    }
+
+    /// Move session keyboard focus to the focusable element whose accessible
+    /// name best matches `query`.
+    pub fn agent_focus_by_label(&mut self, query: &str) -> AgentActionResult {
+        self.active_session.agent_focus_by_label(query)
+    }
+
+    /// Press a key against the session's focused element: Enter submits the
+    /// enclosing form, Tab advances focus, single characters type into the
+    /// control. Requires a prior `agent_focus_by_label`.
+    pub fn agent_press(&mut self, key: &str) -> AgentActionResult {
+        self.active_session.agent_press(key)
+    }
+
+    /// Readable summary of every form control: name, role, and current state.
+    pub fn agent_read_form(&self) -> String {
+        self.active_session.agent_read_form()
+    }
+
+    /// Flush pending timers/microtasks and report what changed while settling.
+    pub fn agent_settle(&mut self) -> AgentActionResult {
+        self.active_session.agent_settle()
+    }
+
+    /// Full readable fact dump of the current session state.
+    pub fn agent_observe(&self) -> String {
+        self.active_session.agent_observe()
+    }
+
     /// Build the current readable AOM view: URL, title, and every element the
     /// agent can act on, each carrying the concrete `node_id` for actions.
     pub fn current_view(&self) -> NativeBrowserView {

@@ -234,7 +234,16 @@ pub fn handle_native_tool(
         | "browser_native_network"
         | "browser_native_screenshot"
         | "browser_native_hover"
-        | "browser_native_press_key" => arguments["sessionId"]
+        | "browser_native_press_key"
+        | "browser_native_click_text"
+        | "browser_native_fill_label"
+        | "browser_native_check_label"
+        | "browser_native_select_label"
+        | "browser_native_focus_label"
+        | "browser_native_press"
+        | "browser_native_read_form"
+        | "browser_native_observe"
+        | "browser_native_settle" => arguments["sessionId"]
             .as_str()
             .ok_or("sessionId is required")?,
         _ => return Ok(None),
@@ -254,6 +263,20 @@ pub fn handle_native_tool(
         } else {
             render_view(&view)
         }));
+    }
+
+    // Form summary and full fact dump are view-only readable text.
+    if name == "browser_native_read_form" {
+        let form = bridge.agent_read_form();
+        return Ok(Some(if form.is_empty() {
+            "(no form controls on page)".to_string()
+        } else {
+            form
+        }));
+    }
+
+    if name == "browser_native_observe" {
+        return Ok(Some(bridge.agent_observe()));
     }
 
     // Eval returns a JS result, not an NDA delta.
@@ -458,6 +481,34 @@ pub fn handle_native_tool(
         }
         "browser_native_back" => bridge.agent_back(),
         "browser_native_forward" => bridge.agent_forward(),
+        "browser_native_click_text" => {
+            let text = arguments["text"].as_str().ok_or("text is required")?;
+            bridge.agent_click_by_text(text)
+        }
+        "browser_native_fill_label" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            let text = arguments["text"].as_str().ok_or("text is required")?;
+            bridge.agent_fill_by_label(label, text)
+        }
+        "browser_native_check_label" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            let checked = arguments["checked"].as_bool().unwrap_or(true);
+            bridge.agent_check_by_label(label, checked)
+        }
+        "browser_native_select_label" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            let option = arguments["option"].as_str().ok_or("option is required")?;
+            bridge.agent_select_by_label(label, option)
+        }
+        "browser_native_focus_label" => {
+            let label = arguments["label"].as_str().ok_or("label is required")?;
+            bridge.agent_focus_by_label(label)
+        }
+        "browser_native_press" => {
+            let key = arguments["key"].as_str().ok_or("key is required")?;
+            bridge.agent_press(key)
+        }
+        "browser_native_settle" => bridge.agent_settle(),
         _ => unreachable!("native tool name already matched above"),
     };
 
@@ -480,5 +531,124 @@ pub fn handle_native_tool(
         out.push_str("---\n");
         out.push_str(&render_view(&view));
         Ok(Some(out))
+    }
+}
+
+#[cfg(test)]
+mod native_label_tool_tests {
+    use super::*;
+    use serde_json::json;
+
+    const FORM_HTML: &str = r#"<html><head><title>Signup</title></head><body>
+        <form id="f">
+          <input type="text" placeholder="Email" name="email" />
+          <input type="checkbox" aria-label="Subscribe" />
+          <select aria-label="Plan">
+            <option value="free">Free</option>
+            <option value="pro">Pro</option>
+          </select>
+          <button type="submit">Log In</button>
+        </form>
+    </body></html>"#;
+
+    /// Each test uses its own session id: bridges are process-global by id.
+    fn load(session: &str) {
+        let bridge = get_or_create_native_bridge(session);
+        bridge.lock().unwrap().load_html("http://local.test/form", FORM_HTML);
+    }
+
+    fn call(name: &str, args: serde_json::Value) -> String {
+        handle_native_tool(Path::new("."), name, &args)
+            .expect("tool call succeeds")
+            .expect("native tool name is handled")
+    }
+
+    #[test]
+    fn click_text_tool_acts_and_reports_observation() {
+        load("t17-click");
+        let out = call(
+            "browser_native_click_text",
+            json!({ "sessionId": "t17-click", "text": "Log In" }),
+        );
+        assert!(out.contains("clicked"), "status should report the click: {out}");
+        assert!(out.contains("Changes:"), "action output must include the delta section");
+        assert!(out.contains("URL:"), "action output must include the refreshed view");
+    }
+
+    #[test]
+    fn fill_label_then_read_form_shows_typed_value() {
+        load("t17-fill");
+        let out = call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t17-fill", "label": "Email", "text": "a@b.c" }),
+        );
+        assert!(out.contains("node_"), "fill should resolve a concrete node: {out}");
+        let form = call("browser_native_read_form", json!({ "sessionId": "t17-fill" }));
+        assert!(form.contains("a@b.c"), "read_form must show the typed value: {form}");
+        assert!(form.contains("unchecked"), "read_form must show checkbox state: {form}");
+    }
+
+    #[test]
+    fn check_and_select_label_tools_update_form_state() {
+        load("t17-check");
+        let out = call(
+            "browser_native_check_label",
+            json!({ "sessionId": "t17-check", "label": "Subscribe" }),
+        );
+        assert!(out.contains("checked"), "check status: {out}");
+        let out = call(
+            "browser_native_select_label",
+            json!({ "sessionId": "t17-check", "label": "Plan", "option": "Pro" }),
+        );
+        assert!(out.contains("selected 'pro'"), "select status: {out}");
+        let form = call("browser_native_read_form", json!({ "sessionId": "t17-check" }));
+        assert!(form.contains("checked"), "form shows checked state: {form}");
+        assert!(form.contains("pro"), "form shows selected value: {form}");
+    }
+
+    #[test]
+    fn focus_label_and_press_drive_session_keyboard() {
+        load("t17-press");
+        let miss = call(
+            "browser_native_press",
+            json!({ "sessionId": "t17-press", "key": "x" }),
+        );
+        assert!(miss.contains("nothing focused"), "press without focus: {miss}");
+        let out = call(
+            "browser_native_focus_label",
+            json!({ "sessionId": "t17-press", "label": "Email" }),
+        );
+        assert!(out.contains("focused"), "focus status: {out}");
+        let out = call(
+            "browser_native_press",
+            json!({ "sessionId": "t17-press", "key": "z" }),
+        );
+        assert!(out.contains("pressed"), "press status: {out}");
+        let form = call("browser_native_read_form", json!({ "sessionId": "t17-press" }));
+        assert!(form.contains('z'), "pressed character lands in the control: {form}");
+    }
+
+    #[test]
+    fn observe_and_settle_tools_return_readable_state() {
+        load("t17-observe");
+        let facts = call("browser_native_observe", json!({ "sessionId": "t17-observe" }));
+        assert!(facts.contains("http://local.test/form"), "observe includes url: {facts}");
+        assert!(facts.contains("button"), "observe includes AOM roles: {facts}");
+        let out = call("browser_native_settle", json!({ "sessionId": "t17-observe" }));
+        assert!(out.contains("settled"), "settle status: {out}");
+    }
+
+    #[test]
+    fn compact_flag_returns_json_action_report() {
+        load("t17-compact");
+        let out = call(
+            "browser_native_click_text",
+            json!({ "sessionId": "t17-compact", "text": "Log In", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&out).expect("compact output is valid JSON");
+        assert!(report["status"].as_str().unwrap().contains("clicked"));
+        assert!(report.get("delta").is_some(), "report carries the delta");
+        assert!(report["view"]["url"].as_str().unwrap().contains("local.test"));
     }
 }
