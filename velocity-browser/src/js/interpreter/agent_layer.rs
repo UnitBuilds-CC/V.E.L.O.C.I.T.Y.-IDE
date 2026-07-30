@@ -883,8 +883,14 @@ pub(super) fn fill_form(values: &[(String, String)]) -> Vec<FillResult> {
                 } else {
                     super::dom_bridge::remove_node_attr(target.id, "checked");
                 }
+                super::dom_bridge::fire_event(target.id, "change");
             }
-            _ => super::dom_bridge::set_node_attr(target.id, "value", value),
+            _ => {
+                super::dom_bridge::set_node_attr(target.id, "value", value);
+                // Real pages react to input/change — fire both so listeners run.
+                super::dom_bridge::fire_event(target.id, "input");
+                super::dom_bridge::fire_event(target.id, "change");
+            }
         }
         results.push(FillResult { field: field.clone(), ok: true, reason: "" });
     }

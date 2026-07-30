@@ -470,6 +470,30 @@ fn fill_form_multiple_fields() {
     assert_eq!(to_number(&result), 2.0);
 }
 
+#[test]
+fn fill_form_fires_input_event() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<input name="email">';
+        var fired = false;
+        document.querySelector('input').addEventListener('input', function() { fired = true; });
+        document.fillForm({email: 'a@b.com'});
+        fired
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn fill_form_fires_change_event() {
+    let result = eval_full(r#"
+        document.body.innerHTML = '<input type="checkbox" name="agree">';
+        var changed = false;
+        document.querySelector('input').addEventListener('change', function() { changed = true; });
+        document.fillForm({agree: 'true'});
+        changed
+    "#);
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
 // ── Link Map ─────────────────────────────────────────────────────────────────
 
 #[test]
