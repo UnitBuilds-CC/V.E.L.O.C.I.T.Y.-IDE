@@ -1131,13 +1131,14 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_learn".to_string(),
-            description: "Persist or restore the session's learned per-domain action confidence as an NDA artifact under .velocity/browser_artifacts/, so experience gathered in one session improves predictions in later ones. action=save exports every learned pattern; action=load imports a previously saved artifact into the current session.".to_string(),
+            description: "Persist or restore the session's experience stores as NDA artifacts under .velocity/browser_artifacts/, so what one session learned improves later ones. what=confidence (default) is the learned per-domain action confidence; what=memory is the vector page memory (remembered pages). action=save exports the store; action=load imports a previously saved artifact into the current session.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
-                    "action": { "type": "string", "description": "save (default) to persist learned patterns, load to restore them." },
-                    "file": { "type": "string", "description": "Artifact file name (default {sessionId}_confidence.nda). Pass another session's file to inherit its experience." },
+                    "action": { "type": "string", "description": "save (default) to persist the store, load to restore it." },
+                    "what": { "type": "string", "description": "Which store: confidence (default) or memory." },
+                    "file": { "type": "string", "description": "Artifact file name (default {sessionId}_{what}.nda). Pass another session's file to inherit its experience." },
                     "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
                 },
                 "required": ["sessionId"]

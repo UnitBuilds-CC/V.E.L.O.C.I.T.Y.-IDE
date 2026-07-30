@@ -117,6 +117,18 @@ pub const OCR_OPAQUE_REGION: u16 = 253;
 pub const LEARNED_CONFIDENCE: u16 = 280;
 /// Observation count backing a learned confidence pattern.
 pub const LEARNED_OBSERVATIONS: u16 = 281;
+/// Session id that recorded a remembered page.
+pub const MEMORY_SESSION: u16 = 282;
+/// URL of a remembered page.
+pub const MEMORY_URL: u16 = 283;
+/// Indexed text of a remembered page (embeddings are rebuilt from this).
+pub const MEMORY_TEXT: u16 = 284;
+/// Content hash of a remembered page, stored as the bit-equal i64.
+pub const MEMORY_TRIPLE_HASH: u16 = 285;
+/// One categorical tag on a remembered page (repeated per tag).
+pub const MEMORY_TAG: u16 = 286;
+/// Outcome score of a remembered page, scaled by 10_000 (9000 => 0.9).
+pub const MEMORY_OUTCOME: u16 = 287;
 
 /// Human-readable name for a predicate id — used when rendering NDA facts as
 /// text for LLM consumption (names cost fewer reasoning tokens than raw ids).
@@ -157,6 +169,12 @@ pub fn predicate_name(id: u16) -> &'static str {
         OCR_OPAQUE_REGION => "ocr.opaqueRegion",
         LEARNED_CONFIDENCE => "learned.confidence",
         LEARNED_OBSERVATIONS => "learned.observations",
+        MEMORY_SESSION => "memory.session",
+        MEMORY_URL => "memory.url",
+        MEMORY_TEXT => "memory.text",
+        MEMORY_TRIPLE_HASH => "memory.hash",
+        MEMORY_TAG => "memory.tag",
+        MEMORY_OUTCOME => "memory.outcome",
         _ => "unknown",
     }
 }
@@ -192,6 +210,8 @@ mod tests {
             SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
             LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
+            MEMORY_SESSION, MEMORY_URL, MEMORY_TEXT, MEMORY_TRIPLE_HASH,
+            MEMORY_TAG, MEMORY_OUTCOME,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {
@@ -212,6 +232,8 @@ mod tests {
             SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
             LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
+            MEMORY_SESSION, MEMORY_URL, MEMORY_TEXT, MEMORY_TRIPLE_HASH,
+            MEMORY_TAG, MEMORY_OUTCOME,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {

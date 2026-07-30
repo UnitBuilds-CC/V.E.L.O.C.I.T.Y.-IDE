@@ -805,32 +805,48 @@ pub fn handle_native_tool(
         return Ok(Some(out));
     }
 
-    // Persist / restore the learned confidence store as an NDA artifact so
-    // experience actually survives across sessions instead of dying with the
-    // process. The artifact is the lossless NdaDocument binary stream.
+    // Persist / restore the session's experience stores as NDA artifacts so
+    // they survive across sessions instead of dying with the process:
+    // what=confidence is the learned per-domain action confidence,
+    // what=memory is the vector page memory. Both artifacts are the lossless
+    // NdaDocument binary stream.
     if name == "browser_native_learn" {
         let action = arguments["action"].as_str().unwrap_or("save");
-        let default_file = format!("{session_id}_confidence.nda");
+        let what = arguments["what"].as_str().unwrap_or("confidence");
+        if !matches!(what, "confidence" | "memory") {
+            return Err(format!(
+                "unknown learn store '{what}' (expected confidence or memory)"
+            )
+            .into());
+        }
+        let default_file = format!("{session_id}_{what}.nda");
         let file_name = arguments["file"].as_str().unwrap_or(&default_file);
         match action {
             "save" => {
-                let doc = bridge.confidence.export_nda();
-                // Each pattern is two facts: confidence + observations.
-                let pattern_count = doc.facts.len() / 2;
+                let (doc, count, noun) = match what {
+                    "confidence" => {
+                        let doc = bridge.confidence.export_nda();
+                        // Each pattern is two facts: confidence + observations.
+                        let count = doc.facts.len() / 2;
+                        (doc, count, "learned pattern(s)")
+                    }
+                    _ => (
+                        bridge.vector_memory.export_nda(),
+                        bridge.memory_count(),
+                        "page memory(ies)",
+                    ),
+                };
                 let path = persist_browser_artifact(root, file_name, &doc.to_binary_stream())?;
                 return Ok(Some(if compact {
                     serde_json::to_string_pretty(&serde_json::json!({
                         "action": "save",
+                        "what": what,
                         "path": path.display().to_string(),
-                        "patternCount": pattern_count,
+                        "count": count,
                     }))
                     .map_err(|e| format!("serialise learn report: {e}"))?
                 } else {
-                    format!(
-                        "saved {} learned pattern(s) to {}\n",
-                        pattern_count,
-                        path.display()
-                    )
+                    format!("saved {count} {noun} to {}\n", path.display())
                 }));
             }
             "load" => {
@@ -842,6 +858,27 @@ pub fn handle_native_tool(
                     .map_err(|e| format!("failed to read learned patterns from {}: {e}", path.display()))?;
                 let doc = velocity_browser::NdaDocument::from_binary_stream(&bytes)
                     .map_err(|e| format!("invalid learned-pattern artifact: {e}"))?;
+                if what == "memory" {
+                    let restored = bridge.vector_memory.import_nda(&doc);
+                    let total = bridge.memory_count();
+                    return Ok(Some(if compact {
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "action": "load",
+                            "what": what,
+                            "path": path.display().to_string(),
+                            "restored": restored,
+                            "memoryCount": total,
+                        }))
+                        .map_err(|e| format!("serialise learn report: {e}"))?
+                    } else {
+                        format!(
+                            "restored {} page memory(ies) from {}\n{} memory(ies) now stored\n",
+                            restored,
+                            path.display(),
+                            total
+                        )
+                    }));
+                }
                 let restored = bridge.confidence.import_nda(&doc);
                 let patterns = bridge.confidence_report();
                 if compact {
@@ -859,6 +896,7 @@ pub fn handle_native_tool(
                     return Ok(Some(
                         serde_json::to_string_pretty(&serde_json::json!({
                             "action": "load",
+                            "what": what,
                             "path": path.display().to_string(),
                             "restored": restored,
                             "patterns": pattern_json,
@@ -2384,5 +2422,85 @@ mod native_label_tool_tests {
         )
         .expect_err("missing artifact must be reported");
         assert!(err.to_string().contains("failed to read learned patterns"), "{err}");
+    }
+
+    #[test]
+    fn learn_tool_persists_page_memory_across_sessions() {
+        load("t32-mem-a");
+        let root = temp_root("learn32");
+
+        // Remember the page with a distinctive note so recall can find it.
+        call(
+            "browser_native_remember",
+            json!({
+                "sessionId": "t32-mem-a",
+                "note": "alpha-bravo-memo signup page",
+                "tags": ["signup"],
+                "outcome": 0.9,
+            }),
+        );
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t32-mem-a", "action": "save", "what": "memory" }),
+        );
+        assert!(out.contains("saved 1 page memory(ies)"), "{out}");
+        assert!(out.contains("t32-mem-a_memory.nda"), "output names the artifact: {out}");
+
+        // A brand-new session remembers nothing...
+        load("t32-mem-b");
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t32-mem-b", "query": "alpha-bravo-memo", "mode": "keyword" }),
+        );
+        assert!(out.contains("no memories matched"), "fresh session is empty: {out}");
+
+        // ...until it loads what session A stored.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t32-mem-b",
+                "action": "load",
+                "what": "memory",
+                "file": "t32-mem-a_memory.nda",
+            }),
+        );
+        assert!(out.contains("restored 1 page memory(ies)"), "{out}");
+        assert!(out.contains("1 memory(ies) now stored"), "{out}");
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t32-mem-b", "query": "alpha-bravo-memo", "mode": "keyword" }),
+        );
+        assert!(out.contains("local.test/form"), "restored memory is searchable: {out}");
+        assert!(out.contains("signup"), "tags survive the round-trip: {out}");
+        assert!(out.contains("0.90"), "outcome survives the round-trip: {out}");
+
+        // Reloading the same artifact must not duplicate memories.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t32-mem-b",
+                "action": "load",
+                "what": "memory",
+                "file": "t32-mem-a_memory.nda",
+            }),
+        );
+        assert!(out.contains("restored 0 page memory(ies)"), "reload is idempotent: {out}");
+        assert!(out.contains("1 memory(ies) now stored"), "{out}");
+    }
+
+    #[test]
+    fn learn_tool_rejects_unknown_store() {
+        load("t32-mem-err");
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_learn",
+            &json!({ "sessionId": "t32-mem-err", "what": "cookies" }),
+        )
+        .expect_err("unknown store must be rejected");
+        assert!(err.to_string().contains("unknown learn store"), "{err}");
     }
 }

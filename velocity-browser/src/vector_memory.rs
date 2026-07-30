@@ -214,6 +214,91 @@ impl SiteVectorStore {
             })
             .collect();
     }
+
+    /// Export every remembered page as a lossless NDA document so memory
+    /// survives across sessions. Only the raw fields are stored (url, text,
+    /// hash, tags, outcome); embeddings and the IDF table are derived from
+    /// the text and rebuilt on import.
+    pub fn export_nda(&self) -> crate::nda::NdaDocument {
+        use crate::predicates::*;
+        let mut doc = crate::nda::NdaDocument::new();
+        for node in &self.nodes {
+            doc.push_str(&node.id, MEMORY_SESSION, &node.session_id);
+            doc.push_str(&node.id, MEMORY_URL, &node.url);
+            doc.push_str(&node.id, MEMORY_TEXT, &node.text);
+            doc.push_int(&node.id, MEMORY_TRIPLE_HASH, node.triple_hash as i64);
+            for tag in &node.tags {
+                doc.push_str(&node.id, MEMORY_TAG, tag);
+            }
+            doc.push_int(&node.id, MEMORY_OUTCOME, (node.outcome_score * 10_000.0).round() as i64);
+        }
+        doc
+    }
+
+    /// Restore pages from a document produced by [`Self::export_nda`],
+    /// re-inserting them so embeddings and IDF are rebuilt. Pages whose
+    /// content hash is already stored are skipped, making repeated loads
+    /// idempotent. Returns the number of pages restored.
+    pub fn import_nda(&mut self, doc: &crate::nda::NdaDocument) -> usize {
+        use crate::nda::NdaObject;
+        use crate::predicates::*;
+
+        #[derive(Default)]
+        struct Partial {
+            session_id: Option<String>,
+            url: Option<String>,
+            text: Option<String>,
+            triple_hash: Option<u64>,
+            tags: Vec<String>,
+            outcome: f64,
+        }
+
+        // Group facts per subject, preserving first-seen (export) order.
+        let mut order: Vec<String> = Vec::new();
+        let mut partial: HashMap<String, Partial> = HashMap::new();
+        for fact in &doc.facts {
+            let Some(subject) = doc.subject_str(fact) else { continue };
+            if !partial.contains_key(subject) {
+                order.push(subject.to_string());
+            }
+            let slot = partial.entry(subject.to_string()).or_default();
+            match (fact.predicate, &fact.object) {
+                (MEMORY_SESSION, NdaObject::Str(id)) => {
+                    slot.session_id = doc.dict.resolve(*id).map(str::to_string);
+                }
+                (MEMORY_URL, NdaObject::Str(id)) => {
+                    slot.url = doc.dict.resolve(*id).map(str::to_string);
+                }
+                (MEMORY_TEXT, NdaObject::Str(id)) => {
+                    slot.text = doc.dict.resolve(*id).map(str::to_string);
+                }
+                (MEMORY_TRIPLE_HASH, NdaObject::Int(n)) => slot.triple_hash = Some(*n as u64),
+                (MEMORY_TAG, NdaObject::Str(id)) => {
+                    if let Some(tag) = doc.dict.resolve(*id) {
+                        slot.tags.push(tag.to_string());
+                    }
+                }
+                (MEMORY_OUTCOME, NdaObject::Int(n)) => slot.outcome = *n as f64 / 10_000.0,
+                _ => {}
+            }
+        }
+
+        let mut restored = 0usize;
+        for subject in order {
+            let Some(p) = partial.remove(&subject) else { continue };
+            let (Some(session_id), Some(url), Some(text), Some(triple_hash)) =
+                (p.session_id, p.url, p.text, p.triple_hash)
+            else {
+                continue;
+            };
+            if self.index.contains_key(&triple_hash) {
+                continue;
+            }
+            self.insert_rich(&session_id, &url, &text, triple_hash, p.tags, p.outcome);
+            restored += 1;
+        }
+        restored
+    }
 }
 
 /// Compute cosine similarity between two sparse vectors.
@@ -331,5 +416,44 @@ mod tests {
         assert!(!tokens.contains(&"over".to_string()));
         assert!(tokens.contains(&"quick".to_string()));
         assert!(tokens.contains(&"brown".to_string()));
+    }
+
+    #[test]
+    fn export_import_round_trips_memories() {
+        let mut store = SiteVectorStore::new();
+        store.insert_rich(
+            "s1",
+            "https://a.com/login",
+            "user authentication login form email password",
+            11,
+            vec!["login".into(), "auth".into()],
+            0.9,
+        );
+        store.insert_rich("s1", "https://a.com/cart", "product cart checkout items", 22, vec![], 0.4);
+
+        // Round-trip through the binary stream, like the artifact on disk.
+        let bytes = store.export_nda().to_binary_stream();
+        let doc = crate::nda::NdaDocument::from_binary_stream(&bytes).expect("stream parses");
+
+        let mut fresh = SiteVectorStore::new();
+        assert_eq!(fresh.import_nda(&doc), 2);
+        assert_eq!(fresh.nodes.len(), 2);
+        assert_eq!(fresh.nodes[0].url, "https://a.com/login");
+        assert_eq!(fresh.nodes[0].tags, vec!["login".to_string(), "auth".to_string()]);
+        assert!((fresh.nodes[0].outcome_score - 0.9).abs() < 0.001);
+        assert_eq!(fresh.nodes[1].triple_hash, 22);
+        // Embeddings were rebuilt from text: semantic search works again.
+        let hits = fresh.semantic_search("login password authentication", 5);
+        assert!(!hits.is_empty());
+        assert!(hits[0].0.url.contains("login"));
+    }
+
+    #[test]
+    fn import_is_idempotent_by_content_hash() {
+        let mut store = SiteVectorStore::new();
+        store.insert_rich("s1", "https://a.com", "some page text", 33, vec![], 0.5);
+        let doc = store.export_nda();
+        assert_eq!(store.import_nda(&doc), 0, "already-stored pages are skipped");
+        assert_eq!(store.nodes.len(), 1);
     }
 }
