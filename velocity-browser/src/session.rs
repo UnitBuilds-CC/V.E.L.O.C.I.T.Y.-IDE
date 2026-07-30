@@ -210,13 +210,22 @@ impl BrowserSession {
     /// Native pure-Rust HTML document loading and DOM tree compilation
     pub fn load_html(&mut self, url: &str, html: &str) -> Vec<NdaTriple> {
         self.current_url = url.to_string();
-        self.history_stack.push_state(url, "{}", "");
+        // History traversal (back/forward) re-loads an entry the stack
+        // already points at: pushing again would truncate the forward
+        // entries and leave a duplicate, so only fresh navigations grow it.
+        if self.history_stack.items[self.history_stack.current_index].url != url {
+            self.history_stack.push_state(url, "{}", "");
+        }
         let mut _stream_tokenizer = StreamJitTokenizer::new();
         let _stream_tokens = _stream_tokenizer.tokenize_stream_chunk(html.as_bytes());
         let _fast_rules = FastCssParser::parse_rules_fast(html);
         let nodes = HtmlParser::parse_html5(html);
         let tree = DomTree::new(nodes);
         self.page_title = tree.extract_page_title();
+        // The title is only known after parsing; backfill the history entry
+        // so listings can show where each URL led.
+        let cur = self.history_stack.current_index;
+        self.history_stack.items[cur].title = self.page_title.clone();
         self.dom_tree = Some(tree);
 
         // Execute <script> tags automatically

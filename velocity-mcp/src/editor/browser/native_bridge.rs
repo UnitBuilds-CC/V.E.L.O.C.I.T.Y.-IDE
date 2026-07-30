@@ -628,6 +628,19 @@ impl NativeBrowserBridge {
         out
     }
 
+    /// The session's navigation history: every `(url, title)` entry in
+    /// stack order plus the index the session currently points at. Titles
+    /// are backfilled by the engine when each page parses.
+    pub fn history(&self) -> (Vec<(String, String)>, usize) {
+        let stack = &self.active_session.history_stack;
+        let items = stack
+            .items
+            .iter()
+            .map(|h| (h.url.clone(), h.title.clone()))
+            .collect();
+        (items, stack.current_index)
+    }
+
     /// Hover an element by node id.
     pub fn agent_hover(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.active_session.capture_state_document();

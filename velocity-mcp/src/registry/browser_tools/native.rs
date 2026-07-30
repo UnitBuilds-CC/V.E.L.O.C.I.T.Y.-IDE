@@ -298,6 +298,7 @@ pub fn handle_native_tool(
         | "browser_native_find"
         | "browser_native_validate"
         | "browser_native_links"
+        | "browser_native_history"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -521,6 +522,51 @@ pub fn handle_native_tool(
             }
             if matched > links.len() {
                 out.push_str(&format!("  … {} more (raise limit)\n", matched - links.len()));
+            }
+            out
+        }));
+    }
+
+    // The session's navigation history: where the agent has been, in stack
+    // order, with a marker on the entry it currently points at.
+    if name == "browser_native_history" {
+        let (entries, current) = bridge.history();
+        return Ok(Some(if compact {
+            let items: Vec<serde_json::Value> = entries
+                .iter()
+                .enumerate()
+                .map(|(i, (url, title))| {
+                    serde_json::json!({
+                        "index": i,
+                        "url": url,
+                        "title": title,
+                        "current": i == current,
+                    })
+                })
+                .collect();
+            serde_json::to_string_pretty(&serde_json::json!({
+                "entries": entries.len(),
+                "current": current,
+                "history": items,
+            }))
+            .map_err(|e| format!("serialise history report: {e}"))?
+        } else {
+            let mut out = format!(
+                "{} history entr{} (at #{current}):\n",
+                entries.len(),
+                if entries.len() == 1 { "y" } else { "ies" },
+            );
+            for (i, (url, title)) in entries.iter().enumerate() {
+                out.push_str(&format!(
+                    "  {}#{i} {}{}\n",
+                    if i == current { "> " } else { "  " },
+                    url,
+                    if title.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" \"{title}\"")
+                    },
+                ));
             }
             out
         }));
@@ -1708,5 +1754,58 @@ mod native_label_tool_tests {
             serde_json::from_str(&compact).expect("compact links is valid JSON");
         assert_eq!(report["matched"], 3);
         assert_eq!(report["links"].as_array().expect("links array").len(), 3);
+    }
+
+    #[test]
+    fn history_tool_lists_stack_and_traversal_keeps_forward_entries() {
+        load("t27-hist");
+        let two = r#"<html><head><title>Two</title></head><body><p>second</p></body></html>"#;
+        get_or_create_native_bridge("t27-hist")
+            .lock()
+            .unwrap()
+            .load_html("http://local.test/two", two);
+
+        let out = call("browser_native_history", json!({ "sessionId": "t27-hist" }));
+        assert!(out.starts_with("3 history entries (at #2):"), "{out}");
+        assert!(out.contains("> #2 http://local.test/two \"Two\""), "{out}");
+        assert!(out.contains("#1 http://local.test/form \"Signup\""), "titles are backfilled: {out}");
+        assert!(out.contains("#0 about:blank\n"), "seed entry has no title: {out}");
+
+        // Reloading the current entry must not grow the stack.
+        get_or_create_native_bridge("t27-hist")
+            .lock()
+            .unwrap()
+            .load_html("http://local.test/two", two);
+        let out = call("browser_native_history", json!({ "sessionId": "t27-hist" }));
+        assert!(out.starts_with("3 history entries (at #2):"), "reload does not duplicate: {out}");
+
+        // Going back then re-loading that entry (what agent_back does after
+        // a successful fetch) must keep the forward entry intact.
+        {
+            let bridge = get_or_create_native_bridge("t27-hist");
+            let mut b = bridge.lock().unwrap();
+            let url = b
+                .active_session
+                .history_stack
+                .back()
+                .expect("has a previous entry")
+                .url
+                .clone();
+            b.load_html(&url, FORM_HTML);
+        }
+        let out = call("browser_native_history", json!({ "sessionId": "t27-hist" }));
+        assert!(out.starts_with("3 history entries (at #1):"), "forward entry survives: {out}");
+        assert!(out.contains("> #1 http://local.test/form"), "{out}");
+        assert!(out.contains("  #2 http://local.test/two"), "{out}");
+
+        let compact = call(
+            "browser_native_history",
+            json!({ "sessionId": "t27-hist", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact history is valid JSON");
+        assert_eq!(report["entries"], 3);
+        assert_eq!(report["current"], 1);
+        assert_eq!(report["history"][1]["current"], true);
     }
 }

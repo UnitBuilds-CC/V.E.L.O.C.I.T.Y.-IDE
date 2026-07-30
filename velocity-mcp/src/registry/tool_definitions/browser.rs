@@ -1079,6 +1079,18 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_history".to_string(),
+            description: "List the native browser session's navigation history stack: every visited url with its page title in stack order, marking the entry the session currently points at. The token-cheap answer to \"where have I been\" — pairs with browser_native_back/forward.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({
