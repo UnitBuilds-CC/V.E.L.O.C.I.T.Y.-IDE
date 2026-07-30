@@ -32,6 +32,86 @@ fn get_interactive_elements_finds_input() {
     assert!(to_number(&result) >= 1.0);
 }
 
+// ── Form Fill Primitives ─────────────────────────────────────────────────────
+
+#[test]
+fn fill_by_label_sets_value() {
+    eval_full("document.body.innerHTML = '<input type=\"text\" placeholder=\"Email\">'");
+    let ok = eval_full("document.fillByLabel('Email', 'a@b.com')");
+    assert_eq!(ok, JsValue::Boolean(true));
+    let value = eval_full("document.querySelector('input').value");
+    assert_eq!(value, JsValue::String("a@b.com".to_string()));
+}
+
+#[test]
+fn fill_by_label_matches_label_element() {
+    eval_full("document.body.innerHTML = '<label for=\"u\">Username</label><input id=\"u\" type=\"text\">'");
+    let ok = eval_full("document.fillByLabel('username', 'alice')");
+    assert_eq!(ok, JsValue::Boolean(true));
+    let value = eval_full("document.getElementById('u').value");
+    assert_eq!(value, JsValue::String("alice".to_string()));
+}
+
+#[test]
+fn fill_by_label_fires_input_listener() {
+    let result = eval_full("
+        document.body.innerHTML = '<input type=\"text\" placeholder=\"City\">';
+        var events = '';
+        document.querySelector('input').addEventListener('input', function() { events = events + 'i'; });
+        document.querySelector('input').addEventListener('change', function() { events = events + 'c'; });
+        document.fillByLabel('City', 'Lisbon');
+        events
+    ");
+    assert_eq!(result, JsValue::String("ic".to_string()));
+}
+
+#[test]
+fn fill_by_label_misses_unknown_field() {
+    eval_full("document.body.innerHTML = '<input type=\"text\" placeholder=\"Email\">'");
+    let ok = eval_full("document.fillByLabel('Phone', '123')");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
+#[test]
+fn fill_by_label_skips_disabled_control() {
+    eval_full("document.body.innerHTML = '<input type=\"text\" placeholder=\"Email\" disabled>'");
+    let ok = eval_full("document.fillByLabel('Email', 'x')");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
+#[test]
+fn fill_by_label_prefers_exact_match() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Name of company\"><input placeholder=\"Name\">'");
+    eval_full("document.fillByLabel('Name', 'exact')");
+    let value = eval_full("document.querySelectorAll('input')[1].value");
+    assert_eq!(value, JsValue::String("exact".to_string()));
+}
+
+#[test]
+fn check_by_label_sets_checked() {
+    eval_full("document.body.innerHTML = '<label for=\"t\">Accept terms</label><input id=\"t\" type=\"checkbox\">'");
+    let ok = eval_full("document.checkByLabel('Accept terms')");
+    assert_eq!(ok, JsValue::Boolean(true));
+    let checked = eval_full("document.getElementById('t').hasAttribute('checked')");
+    assert_eq!(checked, JsValue::Boolean(true));
+}
+
+#[test]
+fn check_by_label_unchecks_with_false() {
+    eval_full("document.body.innerHTML = '<input type=\"checkbox\" aria-label=\"News\" checked>'");
+    let ok = eval_full("document.checkByLabel('News', false)");
+    assert_eq!(ok, JsValue::Boolean(true));
+    let checked = eval_full("document.querySelector('input').hasAttribute('checked')");
+    assert_eq!(checked, JsValue::Boolean(false));
+}
+
+#[test]
+fn check_by_label_ignores_text_inputs() {
+    eval_full("document.body.innerHTML = '<input type=\"text\" placeholder=\"Search\">'");
+    let ok = eval_full("document.checkByLabel('Search')");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
 #[test]
 fn interactive_element_has_role() {
     eval_full("document.body.innerHTML = '<button>Submit</button>'");

@@ -1017,6 +1017,44 @@ pub(super) fn resolve_click_target(query: &str) -> Option<usize> {
     matches.first().map(|m| m.node_id)
 }
 
+/// Roles that accept typed text/values.
+fn is_fillable_role(role: &str) -> bool {
+    matches!(role, "textbox" | "searchbox" | "spinbutton" | "combobox" | "slider")
+}
+
+/// Roles that toggle a checked state.
+fn is_checkable_role(role: &str) -> bool {
+    matches!(role, "checkbox" | "radio" | "switch")
+}
+
+/// Resolve a label query to a form control, preferring exact accessible-name
+/// matches over substring matches. Disabled controls are never returned.
+fn resolve_control(query: &str, role_ok: fn(&str) -> bool) -> Option<usize> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() { return None; }
+    let mut best: Option<(usize, u8)> = None;
+    for el in get_interactive_elements() {
+        if !role_ok(el.role) || el.disabled { continue; }
+        let name = el.name.to_lowercase();
+        let rank = if name == needle { 2 } else if name.contains(&needle) { 1 } else { continue };
+        match best {
+            Some((_, r)) if r >= rank => {}
+            _ => best = Some((el.node_id, rank)),
+        }
+    }
+    best.map(|(id, _)| id)
+}
+
+/// Resolve a label query to a fillable control (text/search/number/select).
+pub(super) fn resolve_fill_target(query: &str) -> Option<usize> {
+    resolve_control(query, is_fillable_role)
+}
+
+/// Resolve a label query to a checkable control (checkbox/radio/switch).
+pub(super) fn resolve_check_target(query: &str) -> Option<usize> {
+    resolve_control(query, is_checkable_role)
+}
+
 // ── NDA Export ───────────────────────────────────────────────────────────────
 
 /// Export the current agent-visible page state as a lossless [`NdaDocument`].

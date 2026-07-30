@@ -494,6 +494,48 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             }
             JsValue::String(out)
         }
+        "fillByLabel" => {
+            // Type into a form control found by its accessible name — the
+            // agent's "fill the Email field" primitive. Fires input + change
+            // like a real keystroke sequence would.
+            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let value = args.get(1).map(super::coercion::to_string).unwrap_or_default();
+            match super::agent_layer::resolve_fill_target(&query) {
+                Some(id) => {
+                    DOM_NODES.with(|nodes| {
+                        if let Some(node) = nodes.borrow_mut().get_mut(id) {
+                            node.attributes.insert("value".to_string(), value);
+                        }
+                    });
+                    fire_event(id, "input");
+                    fire_event(id, "change");
+                    JsValue::Boolean(true)
+                }
+                None => JsValue::Boolean(false),
+            }
+        }
+        "checkByLabel" => {
+            // Toggle a checkbox/radio/switch found by its accessible name.
+            // Second argument sets the state explicitly (defaults to checked).
+            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let checked = args.get(1).map(|v| matches!(v, JsValue::Boolean(true))).unwrap_or(true);
+            match super::agent_layer::resolve_check_target(&query) {
+                Some(id) => {
+                    DOM_NODES.with(|nodes| {
+                        if let Some(node) = nodes.borrow_mut().get_mut(id) {
+                            if checked {
+                                node.attributes.insert("checked".to_string(), "checked".to_string());
+                            } else {
+                                node.attributes.remove("checked");
+                            }
+                        }
+                    });
+                    fire_event(id, "change");
+                    JsValue::Boolean(true)
+                }
+                None => JsValue::Boolean(false),
+            }
+        }
         "addEventListener" => {
             // Page-level events (DOMContentLoaded, load, custom) live in the
             // lifecycle registry shared with `window`.
