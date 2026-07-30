@@ -469,6 +469,27 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "getConsoleText" => {
             JsValue::String(super::console::console_output_text())
         }
+        "getNetworkLog" => {
+            let entries = super::browser_env::fetch_log();
+            let arr: Vec<JsValue> = entries.into_iter().map(|e| {
+                let mut obj = HashMap::new();
+                obj.insert("url".to_string(), JsValue::String(e.url));
+                obj.insert("method".to_string(), JsValue::String(e.method));
+                obj.insert("status".to_string(), JsValue::Number(e.status as f64));
+                obj.insert("mocked".to_string(), JsValue::Boolean(e.mocked));
+                JsValue::Object(obj)
+            }).collect();
+            JsValue::Array(arr)
+        }
+        "getNetworkLogText" => {
+            let entries = super::browser_env::fetch_log();
+            let mut out = String::with_capacity(entries.len() * 48);
+            for e in &entries {
+                out.push_str(&format!("{} {} -> {}{}\n",
+                    e.method, e.url, e.status, if e.mocked { " (mocked)" } else { "" }));
+            }
+            JsValue::String(out)
+        }
         _ => JsValue::Undefined,
     }
 }

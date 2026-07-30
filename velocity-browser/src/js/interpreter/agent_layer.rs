@@ -1065,6 +1065,12 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
             doc.push_int(&subject, AOM_DISABLED, 1);
         }
     }
+
+    // Network activity the page triggered — one subject per fetch call.
+    for entry in super::browser_env::fetch_log() {
+        doc.push_str(&entry.url, crate::predicates::NET_METHOD, &entry.method);
+        doc.push_int(&entry.url, crate::predicates::NET_STATUS, entry.status as i64);
+    }
     doc
 }
 

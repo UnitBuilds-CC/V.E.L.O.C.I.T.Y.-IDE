@@ -816,4 +816,21 @@ fn wait_for_settlement_reports_dom_state() {
     assert!(to_number(&result) >= 1.0);
 }
 
+#[test]
+fn export_nda_includes_network_facts() {
+    eval_full("document.body.innerHTML = '<p>Page</p>'; fetch('https://api.example.com/data')");
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    let facts = doc.readable_facts();
+    assert!(
+        facts.iter().any(|(s, p, o)| s == "https://api.example.com/data"
+            && *p == crate::predicates::NET_METHOD && o == "GET"),
+        "expected net method fact, got {:?}", facts
+    );
+    assert!(
+        facts.iter().any(|(s, p, o)| s == "https://api.example.com/data"
+            && *p == crate::predicates::NET_STATUS && o == "200"),
+        "expected net status fact, got {:?}", facts
+    );
+}
+
 

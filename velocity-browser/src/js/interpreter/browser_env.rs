@@ -394,6 +394,39 @@ pub fn network_enabled() -> bool {
     NETWORK_ENABLED.with(|c| c.get())
 }
 
+// ── Fetch Log ────────────────────────────────────────────────────────────────
+
+thread_local! {
+    /// Every `fetch()` the page performed — agents read this to learn what
+    /// network activity a script triggered without a devtools panel.
+    static FETCH_LOG: RefCell<Vec<FetchLogEntry>> = const { RefCell::new(Vec::new()) };
+}
+
+/// One observed `fetch()` call. `status` 0 means the request failed outright.
+#[derive(Debug, Clone)]
+pub(super) struct FetchLogEntry {
+    pub url: String,
+    pub method: String,
+    pub status: u16,
+    pub mocked: bool,
+}
+
+fn log_fetch(url: &str, method: &str, status: u16, mocked: bool) {
+    FETCH_LOG.with(|log| {
+        log.borrow_mut().push(FetchLogEntry {
+            url: url.to_string(),
+            method: method.to_string(),
+            status,
+            mocked,
+        });
+    });
+}
+
+/// Snapshot of all fetches observed on this thread, in call order.
+pub(super) fn fetch_log() -> Vec<FetchLogEntry> {
+    FETCH_LOG.with(|log| log.borrow().clone())
+}
+
 /// Handle `fetch(url, options)` — returns a settled Promise wrapping a
 /// Response object.
 ///
@@ -424,6 +457,7 @@ pub(super) fn call_fetch(args: &[JsValue]) -> JsValue {
     }
 
     // Hermetic mode: mock 200 response.
+    log_fetch(&url, &method, 200, true);
     let mut response = HashMap::new();
     response.insert("__type__".to_string(), JsValue::String("Response".to_string()));
     response.insert("ok".to_string(), JsValue::Boolean(true));
@@ -473,6 +507,7 @@ fn fetch_over_network(url: &str, method: &str, body: &str, content_type: &str) -
             resolved_promise(JsValue::Object(response))
         }
         Err(e) => {
+            log_fetch(url, method, 0, false);
             let mut err = HashMap::new();
             err.insert("name".to_string(), JsValue::String("TypeError".to_string()));
             err.insert("message".to_string(), JsValue::String(format!("fetch failed: {}", e)));

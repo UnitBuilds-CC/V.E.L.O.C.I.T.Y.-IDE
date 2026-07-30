@@ -180,6 +180,43 @@ fn fetch_network_rejection_has_message() {
     }
 }
 
+// ── Network Log ──────────────────────────────────────────────────────────────
+
+#[test]
+fn network_log_records_mock_fetch() {
+    let result = eval_full("fetch('https://example.com/api'); var log = document.getNetworkLog(); log.length");
+    assert_eq!(result, JsValue::Number(1.0));
+    let url = eval_full("document.getNetworkLog()[0].url");
+    assert_eq!(url, JsValue::String("https://example.com/api".to_string()));
+    let mocked = eval_full("document.getNetworkLog()[0].mocked");
+    assert_eq!(mocked, JsValue::Boolean(true));
+}
+
+#[test]
+fn network_log_records_method() {
+    let result = eval_full("fetch('https://example.com/x', {method: 'post', body: 'a=1'}); document.getNetworkLog()[0].method");
+    assert_eq!(result, JsValue::String("POST".to_string()));
+}
+
+#[test]
+fn network_log_text_is_readable() {
+    let result = eval_full("fetch('https://example.com/y'); document.getNetworkLogText()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("GET https://example.com/y -> 200 (mocked)"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn network_log_records_real_failure_as_status_zero() {
+    super::super::browser_env::set_network_enabled(true);
+    eval_full("fetch('http://127.0.0.1:1/')");
+    super::super::browser_env::set_network_enabled(false);
+    let status = eval_full("document.getNetworkLog()[0].status");
+    assert_eq!(status, JsValue::Number(0.0));
+}
+
 // ── Headers ──────────────────────────────────────────────────────────────────
 
 #[test]
