@@ -1105,6 +1105,19 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_reflect".to_string(),
+            description: "Self-reflection over recent native browser actions: every action is scored from the NDA delta it actually produced, and this tool reports detected failure patterns (repeated failures, navigation loops, blocked clicks) with suggested strategy adjustments, plus the recent outcome scores.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "recent": { "type": "integer", "description": "How many recent action outcomes to include as context. Defaults to 5." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({

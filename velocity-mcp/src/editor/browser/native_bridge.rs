@@ -3,6 +3,9 @@
 use velocity_browser::{
     AgentActionResult, AgenticAomTree, BrowserSession, NdaTriple, SwarmSessionOrchestrator,
 };
+use velocity_browser::agentic::{
+    ActionKind, ActionOutcome, OutcomeScorer, OutcomeSignals, Reflection, ReflectionEngine,
+};
 use velocity_browser::screencast::ScreencastRecorder;
 use velocity_browser::vector_memory::{SiteVectorStore, VectorMemoryNode};
 use std::sync::{Arc, Mutex, LazyLock};
@@ -44,6 +47,12 @@ pub struct NativeBrowserBridge {
     /// Named page-state snapshots for cross-action diffing: "what changed
     /// since I last looked", spanning any number of intermediate actions.
     pub checkpoints: HashMap<String, velocity_browser::NdaDocument>,
+    /// Scores every native agent action from its observed NDA delta so the
+    /// agent can learn which targets work and which keep failing.
+    pub scorer: OutcomeScorer,
+    /// Turns the outcome history into failure-pattern lessons
+    /// (repeated failures, navigation loops, blocked clicks).
+    pub reflector: ReflectionEngine,
 }
 
 static NATIVE_BRIDGES: LazyLock<Arc<Mutex<HashMap<String, Arc<Mutex<NativeBrowserBridge>>>>>> =
@@ -101,6 +110,8 @@ impl NativeBrowserBridge {
             screencast: ScreencastRecorder::new(session_id),
             vector_memory: SiteVectorStore::new(),
             checkpoints: HashMap::new(),
+            scorer: OutcomeScorer::new(),
+            reflector: ReflectionEngine::new(),
         }
     }
 
@@ -681,6 +692,50 @@ impl NativeBrowserBridge {
     /// Remove the named checkpoint. False when it did not exist.
     pub fn checkpoint_drop(&mut self, name: &str) -> bool {
         self.checkpoints.remove(name).is_some()
+    }
+
+    // -- Outcome scoring & reflection --
+    // Every native action already returns its observed NDA delta; scoring that
+    // observation (instead of trusting the action) lets the reflection engine
+    // spot patterns like "clicking this keeps doing nothing".
+
+    /// Score a native action from its observed result and record it in the
+    /// outcome history. All signals derive from the NDA delta and status
+    /// string — nothing is self-reported.
+    pub fn record_outcome(&mut self, action: &str, role: &str, target: &str, result: &AgentActionResult) {
+        let kind = ActionKind::from_str(action);
+        let status = result.status.to_lowercase();
+        let signals = OutcomeSignals {
+            dom_changed: !result.delta.is_empty(),
+            url_changed: result.delta.changed.iter().any(|c| c.predicate == velocity_browser::predicates::SESSION_URL),
+            error_thrown: status.starts_with("no ")
+                || status.contains("failed")
+                || status.contains("error"),
+            target_removed: false,
+            content_added: result.delta.added.len() > result.delta.removed.len(),
+            network_request_fired: false,
+            // The engine is synchronous: every action returns, none time out.
+            completed_in_time: true,
+            agent_confidence: 0.0,
+        };
+        let score = self.scorer.score(&kind, &signals);
+        self.scorer.record(ActionOutcome {
+            action_kind: kind,
+            target_selector: target.to_string(),
+            target_role: role.to_string(),
+            page_url: self.active_session.current_url.clone(),
+            score,
+            signals,
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        });
+    }
+
+    /// Failure-pattern lessons derived from the recorded outcome history.
+    pub fn reflect(&mut self) -> Vec<Reflection> {
+        self.reflector.reflect(&self.scorer)
     }
 
     /// Hover an element by node id.

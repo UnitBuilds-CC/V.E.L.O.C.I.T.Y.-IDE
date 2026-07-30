@@ -196,6 +196,35 @@ fn render_delta(delta: &NdaDelta) -> String {
     out
 }
 
+/// `(action, coarse role, target)` for outcome scoring. The role groups
+/// similar targets so the reflection engine can spot repeated failures
+/// ("fill on textbox keeps failing") instead of one-off misses.
+fn outcome_descriptor(name: &str, arguments: &Value) -> (&'static str, &'static str, String) {
+    let text = |k: &str| arguments[k].as_str().unwrap_or("").to_string();
+    let node_target = arguments["nodeId"]
+        .as_u64()
+        .map(|n| format!("node_{n}"))
+        .unwrap_or_else(|| text("name"));
+    match name {
+        "browser_native_navigate" => ("navigate", "page", text("url")),
+        "browser_native_click" => ("click", "node", node_target),
+        "browser_native_type" => ("fill", "node", node_target),
+        "browser_native_select" => ("select", "node", node_target),
+        "browser_native_submit" => ("submit", "node", node_target),
+        "browser_native_scroll" | "browser_native_scroll_into_view" => {
+            ("scroll", "viewport", text("label"))
+        }
+        "browser_native_back" | "browser_native_forward" => ("navigate", "history", String::new()),
+        "browser_native_click_text" => ("click", "clickable", text("text")),
+        "browser_native_fill_label" => ("fill", "textbox", text("label")),
+        "browser_native_check_label" => ("check", "checkbox", text("label")),
+        "browser_native_select_label" => ("select", "combobox", text("label")),
+        "browser_native_focus_label" => ("focus", "control", text("label")),
+        "browser_native_press" => ("press", "keyboard", text("key")),
+        _ => ("settle", "page", String::new()),
+    }
+}
+
 /// Readable one-line-per-tab listing; the active tab is starred.
 fn tab_lines(bridge: &NativeBrowserBridge) -> String {
     let tabs = bridge.tab_list();
@@ -300,6 +329,7 @@ pub fn handle_native_tool(
         | "browser_native_links"
         | "browser_native_history"
         | "browser_native_checkpoint"
+        | "browser_native_reflect"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -659,6 +689,58 @@ pub fn handle_native_tool(
                 .into())
             }
         }));
+    }
+
+    // Failure-pattern lessons scored from real observations: what has the
+    // agent been trying that keeps not working, and what to try instead.
+    if name == "browser_native_reflect" {
+        let recent_n = arguments["recent"].as_u64().unwrap_or(5) as usize;
+        let reflections = bridge.reflect();
+        if compact {
+            let items: Vec<serde_json::Value> = reflections
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "category": format!("{:?}", r.category),
+                        "message": r.message,
+                        "confidence": r.confidence,
+                        "strategy": r.suggested_strategy,
+                    })
+                })
+                .collect();
+            let outcomes: Vec<serde_json::Value> = bridge
+                .scorer
+                .recent_context(recent_n)
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "action": o.action_kind.label(),
+                        "role": o.target_role,
+                        "target": o.target_selector,
+                        "url": o.page_url,
+                        "score": (o.score * 100.0).round() / 100.0,
+                        "error": o.signals.error_thrown,
+                    })
+                })
+                .collect();
+            return Ok(Some(
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "reflections": items,
+                    "outcomes": outcomes,
+                }))
+                .map_err(|e| format!("serialise reflect report: {e}"))?,
+            ));
+        }
+        let mut out = match bridge.reflector.format_as_system_message(&reflections) {
+            Some(msg) => format!("{msg}\n"),
+            None => "(no failure patterns detected)\n".to_string(),
+        };
+        let context = bridge.scorer.format_for_context(recent_n);
+        if !context.is_empty() {
+            out.push_str("---\n");
+            out.push_str(&context);
+        }
+        return Ok(Some(out));
     }
 
     // Pre-flight HTML5 constraint validation: know why a submit would fail
@@ -1153,6 +1235,11 @@ pub fn handle_native_tool(
         "browser_native_settle" => bridge.agent_settle(),
         _ => unreachable!("native tool name already matched above"),
     };
+
+    // Score the observed outcome so browser_native_reflect can learn from it:
+    // the signals come from the NDA delta the action actually produced.
+    let (action, role, target) = outcome_descriptor(name, arguments);
+    bridge.record_outcome(action, role, &target, &result);
 
     let view = bridge.current_view();
     if compact {
@@ -1982,5 +2069,56 @@ mod native_label_tool_tests {
         assert_eq!(report["action"], "save");
         assert_eq!(report["replaced"], false);
         assert!(report["facts"].as_u64().expect("facts count") > 0);
+    }
+
+    #[test]
+    fn reflect_tool_surfaces_repeated_failure_lessons() {
+        load("t29-reflect");
+
+        // Nothing recorded yet: no patterns, no outcome context.
+        let out = call("browser_native_reflect", json!({ "sessionId": "t29-reflect" }));
+        assert!(out.contains("(no failure patterns detected)"), "{out}");
+        assert!(!out.contains("Recent action outcomes"), "{out}");
+
+        // Two clicks on a target that does not exist: observed delta is empty
+        // and the status reports the miss, so both score as failures.
+        for _ in 0..2 {
+            let out = call(
+                "browser_native_click_text",
+                json!({ "sessionId": "t29-reflect", "text": "Launch Rocket" }),
+            );
+            assert!(out.contains("no clickable element"), "{out}");
+        }
+        let out = call("browser_native_reflect", json!({ "sessionId": "t29-reflect" }));
+        assert!(out.contains("[SELF-REFLECTION]"), "{out}");
+        assert!(out.contains("failed 2 times"), "{out}");
+        assert!(out.contains("clickable"), "{out}");
+        assert!(out.contains("Recent action outcomes:"), "{out}");
+        assert!(out.contains("click on [clickable]"), "{out}");
+
+        // A successful fill scores high and shows up in the outcome context.
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t29-reflect", "label": "Email", "text": "x@y.example" }),
+        );
+        let compact = call(
+            "browser_native_reflect",
+            json!({ "sessionId": "t29-reflect", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact reflect is valid JSON");
+        assert!(
+            !report["reflections"].as_array().expect("reflections").is_empty(),
+            "{compact}"
+        );
+        let outcomes = report["outcomes"].as_array().expect("outcomes");
+        assert_eq!(outcomes.len(), 3, "{compact}");
+        let fill = &outcomes[2];
+        assert_eq!(fill["action"], "fill");
+        assert_eq!(fill["role"], "textbox");
+        assert_eq!(fill["target"], "Email");
+        assert_eq!(fill["error"], false);
+        assert!(fill["score"].as_f64().expect("score") > 0.5, "{compact}");
+        assert_eq!(outcomes[0]["error"], true, "{compact}");
     }
 }
