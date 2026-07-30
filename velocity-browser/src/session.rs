@@ -14,7 +14,8 @@ use crate::layout::{DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutE
 use crate::net::{HttpClient, InspectorServer, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport};
 use crate::nda::{NdaDocument, NdaTriple};
 use crate::predicates::{
-    LAYOUT_BOUNDS, LAYOUT_VISIBILITY, SESSION_COOKIE, SESSION_STORAGE, SESSION_TITLE, SESSION_URL,
+    AOM_FOCUSED, LAYOUT_BOUNDS, LAYOUT_VISIBILITY, SESSION_COOKIE, SESSION_STORAGE, SESSION_TITLE,
+    SESSION_URL,
 };
 use crate::parser::{CssMatcher, FastCssParser, HtmlParser, StreamJitTokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -87,6 +88,8 @@ pub struct BrowserSession {
     pub shadow_hosts: Vec<ShadowHost>,
     pub frames: Vec<FrameTarget>,
     pub canvases: Vec<CanvasElement>,
+    /// Node currently holding keyboard focus — target of `agent_press`.
+    pub focused_node: Option<usize>,
 }
 
 impl BrowserSession {
@@ -141,6 +144,7 @@ impl BrowserSession {
             shadow_hosts: Vec::new(),
             frames: Vec::new(),
             canvases: Vec::new(),
+            focused_node: None,
         }
     }
 
@@ -841,6 +845,128 @@ impl BrowserSession {
         out
     }
 
+    // === Session focus model & keyboard ====================================
+
+    /// Roles that can receive keyboard focus at the session level.
+    fn is_focusable_role(role: &str) -> bool {
+        matches!(role, "button" | "link" | "textbox" | "checkbox" | "radio" | "combobox")
+    }
+
+    /// Move keyboard focus to a node by id: fires `blur` on the old node,
+    /// `focus` on the new one, and reports the NDA delta (focus is a fact).
+    pub fn agent_focus(&mut self, node_id: usize) -> AgentActionResult {
+        let before = self.capture_state_document();
+        let exists = self.dom_tree.as_ref().and_then(|t| t.get_node(node_id)).is_some();
+        if exists {
+            let old = self.focused_node.take();
+            if let (Some(old_id), Some(sel)) = (old, old.and_then(|id| self.selector_for_node(id))) {
+                if let Some(tree) = &mut self.dom_tree {
+                    let _ = self.js_vm.dispatch_event(tree, &sel, "blur");
+                }
+                self.mutation_observer.observe_attribute_change(old_id, "blur");
+            }
+            self.focused_node = Some(node_id);
+            if let Some(sel) = self.selector_for_node(node_id) {
+                if let Some(tree) = &mut self.dom_tree {
+                    let _ = self.js_vm.dispatch_event(tree, &sel, "focus");
+                }
+            }
+            self.mutation_observer.observe_attribute_change(node_id, "focus");
+        }
+        let after = self.capture_state_document();
+        let status = if exists {
+            format!("focused node_{}", node_id)
+        } else {
+            format!("node_{} not found", node_id)
+        };
+        AgentActionResult::new(status, diff(&before, &after))
+    }
+
+    /// Focus a control by its accessible name — any focusable role qualifies.
+    pub fn agent_focus_by_label(&mut self, query: &str) -> AgentActionResult {
+        match self.resolve_node_by_name(query, Self::is_focusable_role) {
+            Some(id) => self.agent_focus(id),
+            None => AgentActionResult::new(
+                format!("no focusable element matching '{}'", query),
+                NdaDelta::default(),
+            ),
+        }
+    }
+
+    /// Press a key on the focused node: fires `keydown`/`keyup` listeners,
+    /// types single characters into the value, `Enter` submits the enclosing
+    /// form, `Tab` advances focus to the next focusable control (wrapping).
+    pub fn agent_press(&mut self, key: &str) -> AgentActionResult {
+        let Some(node_id) = self.focused_node else {
+            return AgentActionResult::new(
+                format!("cannot press '{}': nothing focused", key),
+                NdaDelta::default(),
+            );
+        };
+        let before = self.capture_state_document();
+        let selector = self.selector_for_node(node_id);
+        if let (Some(tree), Some(sel)) = (&mut self.dom_tree, &selector) {
+            let _ = self.js_vm.dispatch_event(tree, sel, "keydown");
+        }
+
+        let status = match key {
+            "Enter" => {
+                if self.find_enclosing_form(node_id).is_some() {
+                    let submit = self.agent_submit(node_id);
+                    format!("pressed Enter: {}", submit.status)
+                } else {
+                    "pressed Enter".to_string()
+                }
+            }
+            "Tab" => {
+                // Advance to the next focusable node by DOM order, wrapping.
+                let next = self.dom_tree.as_ref().map(|tree| {
+                    let mut focusables: Vec<usize> = AgenticAomTree::build_aom_nodes(tree)
+                        .iter()
+                        .filter(|n| Self::is_focusable_role(&n.role))
+                        .filter_map(|n| n.id.strip_prefix("node_").and_then(|s| s.parse().ok()))
+                        .collect();
+                    focusables.sort_unstable();
+                    focusables
+                        .iter()
+                        .find(|&&id| id > node_id)
+                        .or_else(|| focusables.first())
+                        .copied()
+                });
+                match next.flatten() {
+                    Some(next_id) => {
+                        let moved = self.agent_focus(next_id);
+                        format!("pressed Tab: {}", moved.status)
+                    }
+                    None => "pressed Tab: no focusable elements".to_string(),
+                }
+            }
+            _ => {
+                // Single visible characters type into the focused control.
+                let mut chars = key.chars();
+                if let (Some(ch), None) = (chars.next(), chars.next()) {
+                    if let Some(tree) = &mut self.dom_tree {
+                        if let Some(node) = tree.get_node_mut(node_id) {
+                            let value = node.attributes.entry("value".to_string()).or_default();
+                            value.push(ch);
+                        }
+                        if let Some(sel) = &selector {
+                            let _ = self.js_vm.dispatch_event(tree, sel, "input");
+                        }
+                        self.mutation_observer.observe_attribute_change(node_id, "value");
+                    }
+                }
+                format!("pressed '{}' on node_{}", key, node_id)
+            }
+        };
+
+        if let (Some(tree), Some(sel)) = (&mut self.dom_tree, &selector) {
+            let _ = self.js_vm.dispatch_event(tree, sel, "keyup");
+        }
+        let after = self.capture_state_document();
+        AgentActionResult::new(status, diff(&before, &after))
+    }
+
     pub fn classify_interstitial(&self, html_snippet: &str) -> InterstitialKind {
         InterstitialClassifier::classify_page(&self.page_title, html_snippet)
     }
@@ -1040,6 +1166,11 @@ impl BrowserSession {
 
         // Canvas contents as readable literals (drawn text/shapes/images).
         doc.merge(&CanvasExtractor::extract_canvases_document(&self.canvases));
+
+        // Session-level keyboard focus is a fact the agent can diff on.
+        if let Some(id) = self.focused_node {
+            doc.push_str(&format!("node_{}", id), AOM_FOCUSED, "focused");
+        }
 
         doc
     }
@@ -1295,5 +1426,90 @@ mod agent_action_tests {
         let form = session.agent_read_form();
         assert!(form.contains("Email [textbox] = x@y.z"), "got: {}", form);
         assert!(form.contains("Subscribe [checkbox] = checked"), "got: {}", form);
+    }
+
+    #[test]
+    fn agent_focus_by_label_emits_focus_fact_in_delta() {
+        let mut session = BrowserSession::new("s13".to_string());
+        session.load_html("about:test", "<input type=\"text\" placeholder=\"Email\">");
+        let input_id = node_id_by_tag(&session, "input");
+        let result = session.agent_focus_by_label("Email");
+        assert!(result.status.contains("focused"), "got {}", result.status);
+        assert!(
+            result.delta.added.contains(&(
+                format!("node_{}", input_id),
+                crate::predicates::AOM_FOCUSED,
+                "focused".to_string()
+            )),
+            "expected focus fact, got {:?}",
+            result.delta
+        );
+    }
+
+    #[test]
+    fn agent_press_without_focus_reports_nothing_focused() {
+        let mut session = BrowserSession::new("s14".to_string());
+        session.load_html("about:test", "<input type=\"text\" placeholder=\"Email\">");
+        let result = session.agent_press("a");
+        assert!(result.status.contains("nothing focused"), "got {}", result.status);
+        assert!(result.delta.is_empty());
+    }
+
+    #[test]
+    fn agent_press_types_character_into_focused_control() {
+        let mut session = BrowserSession::new("s15".to_string());
+        session.load_html("about:test", "<input type=\"text\" placeholder=\"Email\">");
+        let input_id = node_id_by_tag(&session, "input");
+        session.agent_focus(input_id);
+        session.agent_press("h");
+        let result = session.agent_press("i");
+        assert!(result.status.contains("pressed 'i'"), "got {}", result.status);
+        let value = session.dom_tree.as_ref().unwrap()
+            .get_node(input_id).unwrap()
+            .attributes.get("value").cloned().unwrap_or_default();
+        assert_eq!(value, "hi");
+    }
+
+    #[test]
+    fn agent_press_tab_advances_focus_to_next_control() {
+        let mut session = BrowserSession::new("s16".to_string());
+        session.load_html(
+            "about:test",
+            "<input type=\"text\" placeholder=\"First\"><input type=\"text\" placeholder=\"Second\">",
+        );
+        let first = session.resolve_node_by_name("First", |_| true).unwrap();
+        let second = session.resolve_node_by_name("Second", |_| true).unwrap();
+        session.agent_focus(first);
+        let result = session.agent_press("Tab");
+        assert!(result.status.contains("focused"), "got {}", result.status);
+        assert_eq!(session.focused_node, Some(second));
+    }
+
+    #[test]
+    fn agent_press_tab_wraps_to_first_control() {
+        let mut session = BrowserSession::new("s17".to_string());
+        session.load_html(
+            "about:test",
+            "<input type=\"text\" placeholder=\"First\"><input type=\"text\" placeholder=\"Second\">",
+        );
+        let first = session.resolve_node_by_name("First", |_| true).unwrap();
+        let second = session.resolve_node_by_name("Second", |_| true).unwrap();
+        session.agent_focus(second);
+        session.agent_press("Tab");
+        assert_eq!(session.focused_node, Some(first));
+    }
+
+    #[test]
+    fn agent_press_enter_reports_submit_of_enclosing_form() {
+        let mut session = BrowserSession::new("s18".to_string());
+        session.load_html(
+            "about:test",
+            "<form action=\"about:submitted\"><input type=\"text\" name=\"q\"></form>",
+        );
+        let input_id = node_id_by_tag(&session, "input");
+        session.agent_focus(input_id);
+        let result = session.agent_press("Enter");
+        assert!(result.status.contains("pressed Enter"), "got {}", result.status);
+        assert!(result.status.contains("submitted"), "got {}", result.status);
     }
 }
