@@ -1017,3 +1017,69 @@ pub(super) fn resolve_click_target(query: &str) -> Option<usize> {
     matches.first().map(|m| m.node_id)
 }
 
+// ── NDA Export ───────────────────────────────────────────────────────────────
+
+/// Export the current agent-visible page state as a lossless [`NdaDocument`].
+///
+/// This is the zero-JSON path: page summary + every interactive element as
+/// dictionary-interned facts using the central predicate registry. The session
+/// layer serializes the document with `to_binary_stream()` (or seals it) —
+/// no serde, no JSON, and repeated roles/names cost one dictionary entry.
+pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
+    use crate::predicates::{
+        AOM_ACTIONABILITY, AOM_DISABLED, AOM_NAME, AOM_ROLE, AOM_SELECTOR, AOM_VALUE,
+        SESSION_FORM_COUNT, SESSION_HEADING, SESSION_INTERACTIVE_COUNT, SESSION_LINK_COUNT,
+        SESSION_TEXT_LENGTH, SESSION_TITLE,
+    };
+
+    let mut doc = crate::nda::NdaDocument::new();
+
+    // Page-level facts.
+    let summary = summarize_page();
+    if !summary.title.is_empty() {
+        doc.push_str("page", SESSION_TITLE, &summary.title);
+    }
+    doc.push_int("page", SESSION_LINK_COUNT, summary.link_count as i64);
+    doc.push_int("page", SESSION_FORM_COUNT, summary.form_count as i64);
+    doc.push_int("page", SESSION_INTERACTIVE_COUNT, summary.interactive_count as i64);
+    doc.push_int("page", SESSION_TEXT_LENGTH, summary.total_text_length as i64);
+    for (depth, text) in &summary.headings {
+        doc.push_str("page", SESSION_HEADING, &format!("h{}:{}", depth, text));
+    }
+
+    // One subject per interactive element, in actionability order.
+    for el in get_interactive_elements() {
+        let subject = format!("el{}", el.node_id);
+        doc.push_str(&subject, AOM_ROLE, el.role);
+        if !el.name.is_empty() {
+            doc.push_str(&subject, AOM_NAME, &el.name);
+        }
+        if !el.value.is_empty() {
+            doc.push_str(&subject, AOM_VALUE, &el.value);
+        }
+        if !el.selector.is_empty() {
+            doc.push_str(&subject, AOM_SELECTOR, &el.selector);
+        }
+        doc.push_int(&subject, AOM_ACTIONABILITY, actionability_score(el.role) as i64);
+        if el.disabled {
+            doc.push_int(&subject, AOM_DISABLED, 1);
+        }
+    }
+    doc
+}
+
+/// Render an NDA document's facts as compact `subject|predicate|object` lines.
+pub(super) fn nda_facts_to_text(doc: &crate::nda::NdaDocument) -> String {
+    let facts = doc.readable_facts();
+    let mut out = String::with_capacity(facts.len() * 40);
+    for (subject, predicate, object) in facts {
+        out.push_str(&subject);
+        out.push('|');
+        out.push_str(&predicate.to_string());
+        out.push('|');
+        out.push_str(&object);
+        out.push('\n');
+    }
+    out
+}
+

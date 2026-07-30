@@ -412,6 +412,16 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                 None => JsValue::Boolean(false),
             }
         }
+        "exportNdaText" => {
+            let doc = super::agent_layer::export_agent_state_nda();
+            JsValue::String(super::agent_layer::nda_facts_to_text(&doc))
+        }
+        "exportNdaBytes" => {
+            // Binary NDA stream as a byte array — the wire format for sessions.
+            let doc = super::agent_layer::export_agent_state_nda();
+            let bytes = doc.to_binary_stream();
+            JsValue::Array(bytes.into_iter().map(|b| JsValue::Number(b as f64)).collect())
+        }
         "diffState" => {
             // Compare a previously captured state against the current DOM.
             let current = super::agent_layer::capture_dom_state();

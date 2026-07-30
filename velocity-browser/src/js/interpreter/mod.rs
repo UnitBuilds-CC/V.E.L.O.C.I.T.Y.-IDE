@@ -44,3 +44,5 @@ pub use coercion::{to_number, to_string, to_boolean, typeof_str};
 pub use eval_script::{eval_expr, eval_script};
 pub use native::{call_native, json_parse, json_stringify, encode_uri_component, decode_uri_component};
 pub use console::*;
+pub use browser_env::{set_network_enabled, network_enabled};
+pub use agent_layer::export_agent_state_nda;

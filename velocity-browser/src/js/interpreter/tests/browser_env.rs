@@ -114,6 +114,40 @@ fn fetch_response_properties() {
     assert_eq!(result, JsValue::Number(200.0));
 }
 
+#[test]
+fn fetch_network_disabled_by_default() {
+    assert!(!super::super::browser_env::network_enabled());
+}
+
+#[test]
+fn fetch_network_toggle() {
+    super::super::browser_env::set_network_enabled(true);
+    assert!(super::super::browser_env::network_enabled());
+    super::super::browser_env::set_network_enabled(false);
+    assert!(!super::super::browser_env::network_enabled());
+}
+
+#[test]
+fn fetch_network_enabled_connection_failure_rejects() {
+    // Port 1 on loopback refuses instantly — hermetic test of the real path.
+    super::super::browser_env::set_network_enabled(true);
+    let result = eval_full("var p = fetch('http://127.0.0.1:1/'); p.__rejected__.name");
+    super::super::browser_env::set_network_enabled(false);
+    assert_eq!(result, JsValue::String("TypeError".to_string()));
+}
+
+#[test]
+fn fetch_network_rejection_has_message() {
+    super::super::browser_env::set_network_enabled(true);
+    let result = eval_full("var p = fetch('http://127.0.0.1:1/'); p.__rejected__.message");
+    super::super::browser_env::set_network_enabled(false);
+    if let JsValue::String(s) = &result {
+        assert!(s.starts_with("fetch failed"), "got: {}", s);
+    } else {
+        panic!("Expected string message");
+    }
+}
+
 // ── Headers ──────────────────────────────────────────────────────────────────
 
 #[test]

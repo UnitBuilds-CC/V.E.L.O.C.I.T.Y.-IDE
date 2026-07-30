@@ -32,6 +32,10 @@ pub const AOM_ACTIONABILITY: u16 = 13;
 pub const AOM_FOCUSED: u16 = 14;
 /// Node is expanded (aria-expanded=true).
 pub const AOM_EXPANDED: u16 = 15;
+/// Unique CSS selector resolving to the node.
+pub const AOM_SELECTOR: u16 = 16;
+/// Node is disabled (disabled attr / aria-disabled=true).
+pub const AOM_DISABLED: u16 = 17;
 
 // ---------------------------------------------------------------------------
 // Canvas / drawing: 40..=69
@@ -72,6 +76,16 @@ pub const SESSION_TITLE: u16 = 101;
 pub const SESSION_COOKIE: u16 = 102;
 /// A local/session storage key -> value pair.
 pub const SESSION_STORAGE: u16 = 103;
+/// Number of links on the page.
+pub const SESSION_LINK_COUNT: u16 = 104;
+/// Number of forms on the page.
+pub const SESSION_FORM_COUNT: u16 = 105;
+/// Number of interactive elements on the page.
+pub const SESSION_INTERACTIVE_COUNT: u16 = 106;
+/// Total visible text length in characters.
+pub const SESSION_TEXT_LENGTH: u16 = 107;
+/// A heading on the page, formatted "h{depth}:{text}".
+pub const SESSION_HEADING: u16 = 108;
 
 // ---------------------------------------------------------------------------
 // Network: 200..=249
@@ -111,9 +125,12 @@ mod tests {
     fn predicate_ids_are_unique() {
         let ids = [
             AOM_ROLE, AOM_NAME, AOM_VALUE, AOM_ACTIONABILITY, AOM_FOCUSED, AOM_EXPANDED,
+            AOM_SELECTOR, AOM_DISABLED,
             CANVAS_CONTEXT, CANVAS_SIZE, CANVAS_DRAW_CALLS, CANVAS_TEXT, CANVAS_SHAPE,
             CANVAS_IMAGE, CANVAS_SUMMARY, LAYOUT_BOUNDS, LAYOUT_VISIBILITY, LAYOUT_DISPLAY,
             SESSION_URL, SESSION_TITLE, SESSION_COOKIE, SESSION_STORAGE,
+            SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
+            SESSION_TEXT_LENGTH, SESSION_HEADING,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
         ];
         let mut seen = std::collections::HashSet::new();

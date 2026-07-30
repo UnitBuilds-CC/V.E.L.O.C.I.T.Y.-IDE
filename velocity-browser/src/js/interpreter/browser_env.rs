@@ -334,20 +334,56 @@ pub fn reset_storage() {
     SESSION_STORAGE.with(|s| s.borrow_mut().clear());
 }
 
-// ── Fetch API (simulated) ────────────────────────────────────────────────────
+// ── Fetch API ────────────────────────────────────────────────────────────────
 
-/// Handle `fetch(url, options)` — returns a pre-resolved Promise wrapping a
-/// Response object. In this engine, network I/O is handled at the session
-/// layer; the interpreter provides the API surface so scripts don't crash.
+thread_local! {
+    /// Real network I/O is opt-in: the host session enables it explicitly so
+    /// tests and untrusted scripts stay hermetic by default.
+    static NETWORK_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Per-interpreter HTTP client — persists cookies across fetches.
+    static HTTP_CLIENT: RefCell<Option<crate::net::HttpClient>> = const { RefCell::new(None) };
+}
+
+/// Enable or disable real network I/O for `fetch()` on this thread.
+pub fn set_network_enabled(enabled: bool) {
+    NETWORK_ENABLED.with(|c| c.set(enabled));
+}
+
+/// Whether real network I/O is enabled on this thread.
+pub fn network_enabled() -> bool {
+    NETWORK_ENABLED.with(|c| c.get())
+}
+
+/// Handle `fetch(url, options)` — returns a settled Promise wrapping a
+/// Response object.
+///
+/// With networking enabled (see [`set_network_enabled`]), the request runs on
+/// the from-scratch HTTP/1.1 + TLS 1.3 stack ([`crate::net::HttpClient`]) with
+/// persistent cookies; failures reject the promise like a real `fetch`.
+/// Disabled (the default), a mock 200 response preserves API-surface
+/// compatibility for hermetic execution.
 pub(super) fn call_fetch(args: &[JsValue]) -> JsValue {
     let url = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.clone()) } else { None }).unwrap_or_default();
-    let method = if let Some(JsValue::Object(opts)) = args.get(1) {
-        opts.get("method").and_then(|v| if let JsValue::String(s) = v { Some(s.to_uppercase()) } else { None }).unwrap_or_else(|| "GET".to_string())
+    let (method, body, content_type) = if let Some(JsValue::Object(opts)) = args.get(1) {
+        let method = opts.get("method").and_then(|v| if let JsValue::String(s) = v { Some(s.to_uppercase()) } else { None }).unwrap_or_else(|| "GET".to_string());
+        let body = opts.get("body").map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+        let content_type = match opts.get("headers") {
+            Some(JsValue::Object(headers)) => headers.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                .map(|(_, v)| crate::js::interpreter::coercion::to_string(v))
+                .unwrap_or_else(|| "application/json".to_string()),
+            _ => "application/json".to_string(),
+        };
+        (method, body, content_type)
     } else {
-        "GET".to_string()
+        ("GET".to_string(), String::new(), String::new())
     };
 
-    // Build a Response object.
+    if network_enabled() {
+        return fetch_over_network(&url, &method, &body, &content_type);
+    }
+
+    // Hermetic mode: mock 200 response.
     let mut response = HashMap::new();
     response.insert("__type__".to_string(), JsValue::String("Response".to_string()));
     response.insert("ok".to_string(), JsValue::Boolean(true));
@@ -359,12 +395,86 @@ pub(super) fn call_fetch(args: &[JsValue]) -> JsValue {
     response.insert("__body__".to_string(), JsValue::String(String::new()));
     response.insert("__method__".to_string(), JsValue::String(method));
 
-    // Wrap in a resolved Promise.
+    resolved_promise(JsValue::Object(response))
+}
+
+/// Perform a real request on the native HTTP client and wrap the outcome in a
+/// settled promise. GET-like methods use `get`; methods with a body use `post`.
+fn fetch_over_network(url: &str, method: &str, body: &str, content_type: &str) -> JsValue {
+    let result = HTTP_CLIENT.with(|client| {
+        let mut client = client.borrow_mut();
+        let client = client.get_or_insert_with(crate::net::HttpClient::new);
+        match method {
+            "POST" | "PUT" | "PATCH" | "DELETE" if !body.is_empty() || method == "POST" => {
+                client.post(url, body, content_type)
+            }
+            _ => client.get(url),
+        }
+    });
+
+    match result {
+        Ok(resp) => {
+            let mut headers = HashMap::new();
+            for (k, v) in &resp.headers {
+                headers.insert(k.clone(), JsValue::String(v.clone()));
+            }
+            let status = resp.status_code;
+            let mut response = HashMap::new();
+            response.insert("__type__".to_string(), JsValue::String("Response".to_string()));
+            response.insert("ok".to_string(), JsValue::Boolean((200..300).contains(&status)));
+            response.insert("status".to_string(), JsValue::Number(status as f64));
+            response.insert("statusText".to_string(), JsValue::String(status_text(status).to_string()));
+            response.insert("url".to_string(), JsValue::String(url.to_string()));
+            response.insert("redirected".to_string(), JsValue::Boolean(false));
+            response.insert("type".to_string(), JsValue::String("basic".to_string()));
+            response.insert("headers".to_string(), JsValue::Object(headers));
+            response.insert("__body__".to_string(), JsValue::String(resp.body));
+            response.insert("__method__".to_string(), JsValue::String(method.to_string()));
+            resolved_promise(JsValue::Object(response))
+        }
+        Err(e) => {
+            let mut err = HashMap::new();
+            err.insert("name".to_string(), JsValue::String("TypeError".to_string()));
+            err.insert("message".to_string(), JsValue::String(format!("fetch failed: {}", e)));
+            let mut promise = HashMap::new();
+            promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+            promise.insert("__rejected__".to_string(), JsValue::Object(err));
+            JsValue::Object(promise)
+        }
+    }
+}
+
+fn resolved_promise(val: JsValue) -> JsValue {
     let mut promise = HashMap::new();
     promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
-    promise.insert("__resolved__".to_string(), JsValue::Object(response));
+    promise.insert("__resolved__".to_string(), val);
     JsValue::Object(promise)
 }
+
+/// Canonical reason phrase for an HTTP status code.
+fn status_text(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        408 => "Request Timeout",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "",
+    }
+}
+
 
 // ── Headers ──────────────────────────────────────────────────────────────────
 

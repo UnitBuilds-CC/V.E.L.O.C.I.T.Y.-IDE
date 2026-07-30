@@ -687,4 +687,81 @@ fn diff_state_text_changed_flag() {
     assert_eq!(result, JsValue::Boolean(true));
 }
 
+// ── NDA Export ───────────────────────────────────────────────────────────────
+
+#[test]
+fn export_nda_has_facts() {
+    eval_full(r#"
+        document.head.innerHTML = '<title>NDA Page</title>';
+        document.body.innerHTML = '<button>Act</button><a href="/x">Link</a>';
+    "#);
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    assert!(!doc.facts.is_empty());
+}
+
+#[test]
+fn export_nda_contains_title_fact() {
+    eval_full(r#"
+        document.head.innerHTML = '<title>NDA Title Test</title>';
+        document.body.innerHTML = '<p>content</p>';
+    "#);
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    let facts = doc.readable_facts();
+    assert!(facts.iter().any(|(s, p, o)| s == "page"
+        && *p == crate::predicates::SESSION_TITLE
+        && o == "NDA Title Test"));
+}
+
+#[test]
+fn export_nda_contains_interactive_element_facts() {
+    eval_full("document.body.innerHTML = '<button id=\"go\">Go Now</button>'");
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    let facts = doc.readable_facts();
+    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_ROLE && o == "button"));
+    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_NAME && o == "Go Now"));
+    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_SELECTOR && o == "#go"));
+}
+
+#[test]
+fn export_nda_binary_roundtrip() {
+    eval_full(r#"
+        document.head.innerHTML = '<title>Roundtrip</title>';
+        document.body.innerHTML = '<button>Press</button>';
+    "#);
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    let bytes = doc.to_binary_stream();
+    let decoded = crate::nda::NdaDocument::from_binary_stream(&bytes).expect("decode");
+    assert_eq!(doc.readable_facts(), decoded.readable_facts());
+}
+
+#[test]
+fn export_nda_disabled_fact() {
+    eval_full("document.body.innerHTML = '<button disabled>Off</button>'");
+    let doc = super::super::agent_layer::export_agent_state_nda();
+    let facts = doc.readable_facts();
+    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_DISABLED && o == "1"));
+}
+
+#[test]
+fn export_nda_text_via_js() {
+    eval_full(r#"
+        document.head.innerHTML = '<title>JS NDA</title>';
+        document.body.innerHTML = '<button>Do It</button>';
+    "#);
+    let result = eval_full("document.exportNdaText()");
+    if let JsValue::String(s) = &result {
+        assert!(s.contains("JS NDA"), "got: {}", s);
+        assert!(s.contains("Do It"), "got: {}", s);
+    } else {
+        panic!("Expected string");
+    }
+}
+
+#[test]
+fn export_nda_bytes_via_js() {
+    eval_full("document.body.innerHTML = '<button>B</button>'");
+    let result = eval_full("document.exportNdaBytes().length");
+    assert!(to_number(&result) > 0.0);
+}
+
 
