@@ -129,6 +129,24 @@ pub const MEMORY_TRIPLE_HASH: u16 = 285;
 pub const MEMORY_TAG: u16 = 286;
 /// Outcome score of a remembered page, scaled by 10_000 (9000 => 0.9).
 pub const MEMORY_OUTCOME: u16 = 287;
+/// Action label of a recorded outcome ("click", "fill", ...).
+pub const OUTCOME_ACTION: u16 = 288;
+/// ARIA role of the target the action was taken on.
+pub const OUTCOME_ROLE: u16 = 289;
+/// Selector of the action target.
+pub const OUTCOME_SELECTOR: u16 = 290;
+/// Page URL where the action ran.
+pub const OUTCOME_URL: u16 = 291;
+/// Outcome score, scaled by 10_000 (9000 => 0.9).
+pub const OUTCOME_SCORE: u16 = 292;
+/// Observed signals packed as a bitmask: bit0 domChanged, bit1 urlChanged,
+/// bit2 errorThrown, bit3 targetRemoved, bit4 contentAdded,
+/// bit5 networkFired, bit6 completedInTime.
+pub const OUTCOME_SIGNALS: u16 = 293;
+/// Agent's own confidence signal, scaled by 10_000.
+pub const OUTCOME_CONFIDENCE: u16 = 294;
+/// Unix timestamp (ms) when the outcome was recorded.
+pub const OUTCOME_TIMESTAMP: u16 = 295;
 
 /// Human-readable name for a predicate id — used when rendering NDA facts as
 /// text for LLM consumption (names cost fewer reasoning tokens than raw ids).
@@ -175,6 +193,14 @@ pub fn predicate_name(id: u16) -> &'static str {
         MEMORY_TRIPLE_HASH => "memory.hash",
         MEMORY_TAG => "memory.tag",
         MEMORY_OUTCOME => "memory.outcome",
+        OUTCOME_ACTION => "outcome.action",
+        OUTCOME_ROLE => "outcome.role",
+        OUTCOME_SELECTOR => "outcome.selector",
+        OUTCOME_URL => "outcome.url",
+        OUTCOME_SCORE => "outcome.score",
+        OUTCOME_SIGNALS => "outcome.signals",
+        OUTCOME_CONFIDENCE => "outcome.confidence",
+        OUTCOME_TIMESTAMP => "outcome.timestamp",
         _ => "unknown",
     }
 }
@@ -195,6 +221,7 @@ mod tests {
         assert_eq!(NET_METHOD, 200);
         assert_eq!(OCR_TEXT, 252);
         assert_eq!(LEARNED_CONFIDENCE, 280);
+        assert_eq!(OUTCOME_ACTION, 288);
     }
 
     #[test]
@@ -212,6 +239,8 @@ mod tests {
             LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
             MEMORY_SESSION, MEMORY_URL, MEMORY_TEXT, MEMORY_TRIPLE_HASH,
             MEMORY_TAG, MEMORY_OUTCOME,
+            OUTCOME_ACTION, OUTCOME_ROLE, OUTCOME_SELECTOR, OUTCOME_URL,
+            OUTCOME_SCORE, OUTCOME_SIGNALS, OUTCOME_CONFIDENCE, OUTCOME_TIMESTAMP,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {
@@ -234,6 +263,8 @@ mod tests {
             LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
             MEMORY_SESSION, MEMORY_URL, MEMORY_TEXT, MEMORY_TRIPLE_HASH,
             MEMORY_TAG, MEMORY_OUTCOME,
+            OUTCOME_ACTION, OUTCOME_ROLE, OUTCOME_SELECTOR, OUTCOME_URL,
+            OUTCOME_SCORE, OUTCOME_SIGNALS, OUTCOME_CONFIDENCE, OUTCOME_TIMESTAMP,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {

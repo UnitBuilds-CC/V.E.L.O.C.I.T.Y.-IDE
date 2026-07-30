@@ -813,9 +813,9 @@ pub fn handle_native_tool(
     if name == "browser_native_learn" {
         let action = arguments["action"].as_str().unwrap_or("save");
         let what = arguments["what"].as_str().unwrap_or("confidence");
-        if !matches!(what, "confidence" | "memory") {
+        if !matches!(what, "confidence" | "memory" | "outcomes") {
             return Err(format!(
-                "unknown learn store '{what}' (expected confidence or memory)"
+                "unknown learn store '{what}' (expected confidence, memory or outcomes)"
             )
             .into());
         }
@@ -830,10 +830,15 @@ pub fn handle_native_tool(
                         let count = doc.facts.len() / 2;
                         (doc, count, "learned pattern(s)")
                     }
-                    _ => (
+                    "memory" => (
                         bridge.vector_memory.export_nda(),
                         bridge.memory_count(),
                         "page memory(ies)",
+                    ),
+                    _ => (
+                        bridge.scorer.export_nda(),
+                        bridge.scorer.history.len(),
+                        "action outcome(s)",
                     ),
                 };
                 let path = persist_browser_artifact(root, file_name, &doc.to_binary_stream())?;
@@ -858,6 +863,27 @@ pub fn handle_native_tool(
                     .map_err(|e| format!("failed to read learned patterns from {}: {e}", path.display()))?;
                 let doc = velocity_browser::NdaDocument::from_binary_stream(&bytes)
                     .map_err(|e| format!("invalid learned-pattern artifact: {e}"))?;
+                if what == "outcomes" {
+                    let restored = bridge.scorer.import_nda(&doc);
+                    let total = bridge.scorer.history.len();
+                    return Ok(Some(if compact {
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "action": "load",
+                            "what": what,
+                            "path": path.display().to_string(),
+                            "restored": restored,
+                            "outcomeCount": total,
+                        }))
+                        .map_err(|e| format!("serialise learn report: {e}"))?
+                    } else {
+                        format!(
+                            "restored {} action outcome(s) from {}\n{} outcome(s) now recorded\n",
+                            restored,
+                            path.display(),
+                            total
+                        )
+                    }));
+                }
                 if what == "memory" {
                     let restored = bridge.vector_memory.import_nda(&doc);
                     let total = bridge.memory_count();
@@ -2502,5 +2528,66 @@ mod native_label_tool_tests {
         )
         .expect_err("unknown store must be rejected");
         assert!(err.to_string().contains("unknown learn store"), "{err}");
+    }
+
+    #[test]
+    fn learn_tool_persists_outcome_history_across_sessions() {
+        load("t33-out-a");
+        let root = temp_root("learn33");
+
+        // Two clicks on a missing target record two scored failures.
+        for _ in 0..2 {
+            let out = call(
+                "browser_native_click_text",
+                json!({ "sessionId": "t33-out-a", "text": "Launch Rocket" }),
+            );
+            assert!(out.contains("no clickable element"), "{out}");
+        }
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t33-out-a", "action": "save", "what": "outcomes" }),
+        );
+        assert!(out.contains("saved 2 action outcome(s)"), "{out}");
+        assert!(out.contains("t33-out-a_outcomes.nda"), "output names the artifact: {out}");
+
+        // A brand-new session has no experience to reflect on...
+        load("t33-out-b");
+        let out = call("browser_native_reflect", json!({ "sessionId": "t33-out-b" }));
+        assert!(out.contains("(no failure patterns detected)"), "{out}");
+
+        // ...until it inherits session A's outcome history.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t33-out-b",
+                "action": "load",
+                "what": "outcomes",
+                "file": "t33-out-a_outcomes.nda",
+            }),
+        );
+        assert!(out.contains("restored 2 action outcome(s)"), "{out}");
+        assert!(out.contains("2 outcome(s) now recorded"), "{out}");
+
+        let out = call("browser_native_reflect", json!({ "sessionId": "t33-out-b" }));
+        assert!(out.contains("[SELF-REFLECTION]"), "inherited failures reflect: {out}");
+        assert!(out.contains("failed 2 times"), "{out}");
+        assert!(out.contains("Recent action outcomes:"), "{out}");
+        assert!(out.contains("click on [clickable]"), "{out}");
+
+        // Reloading the same artifact must not duplicate history.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t33-out-b",
+                "action": "load",
+                "what": "outcomes",
+                "file": "t33-out-a_outcomes.nda",
+            }),
+        );
+        assert!(out.contains("restored 0 action outcome(s)"), "reload is idempotent: {out}");
+        assert!(out.contains("2 outcome(s) now recorded"), "{out}");
     }
 }

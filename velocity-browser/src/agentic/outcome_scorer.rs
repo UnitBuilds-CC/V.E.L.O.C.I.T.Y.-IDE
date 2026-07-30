@@ -267,6 +267,152 @@ impl OutcomeScorer {
         }
         out
     }
+
+    /// Export the full outcome history as a lossless NDA document so
+    /// experience survives across sessions. Aggregated success rates are
+    /// derived state and rebuilt on import via [`Self::record`].
+    pub fn export_nda(&self) -> crate::nda::NdaDocument {
+        use crate::predicates::*;
+        let mut doc = crate::nda::NdaDocument::new();
+        for (idx, o) in self.history.iter().enumerate() {
+            let subject = format!("o{idx}");
+            doc.push_str(&subject, OUTCOME_ACTION, o.action_kind.label());
+            doc.push_str(&subject, OUTCOME_ROLE, &o.target_role);
+            doc.push_str(&subject, OUTCOME_SELECTOR, &o.target_selector);
+            doc.push_str(&subject, OUTCOME_URL, &o.page_url);
+            doc.push_int(&subject, OUTCOME_SCORE, (o.score * 10_000.0).round() as i64);
+            doc.push_int(&subject, OUTCOME_SIGNALS, signals_to_bits(&o.signals));
+            doc.push_int(
+                &subject,
+                OUTCOME_CONFIDENCE,
+                (o.signals.agent_confidence * 10_000.0).round() as i64,
+            );
+            doc.push_int(&subject, OUTCOME_TIMESTAMP, o.timestamp_ms as i64);
+        }
+        doc
+    }
+
+    /// Restore outcomes from a document produced by [`Self::export_nda`],
+    /// re-recording each one so success rates and the ring buffer rebuild.
+    /// Outcomes identical to an already-stored entry (same timestamp,
+    /// action, selector and url) are skipped, making repeated loads
+    /// idempotent. Returns the number of outcomes restored.
+    pub fn import_nda(&mut self, doc: &crate::nda::NdaDocument) -> usize {
+        use crate::nda::NdaObject;
+        use crate::predicates::*;
+
+        #[derive(Default)]
+        struct Partial {
+            action: Option<String>,
+            role: String,
+            selector: String,
+            url: Option<String>,
+            score: f64,
+            signal_bits: i64,
+            confidence: f64,
+            timestamp_ms: u64,
+        }
+
+        // Group facts per subject, preserving first-seen (export) order.
+        let mut order: Vec<String> = Vec::new();
+        let mut partial: HashMap<String, Partial> = HashMap::new();
+        for fact in &doc.facts {
+            let Some(subject) = doc.subject_str(fact) else { continue };
+            if !partial.contains_key(subject) {
+                order.push(subject.to_string());
+            }
+            let slot = partial.entry(subject.to_string()).or_default();
+            match (fact.predicate, &fact.object) {
+                (OUTCOME_ACTION, NdaObject::Str(id)) => {
+                    slot.action = doc.dict.resolve(*id).map(str::to_string);
+                }
+                (OUTCOME_ROLE, NdaObject::Str(id)) => {
+                    if let Some(role) = doc.dict.resolve(*id) {
+                        slot.role = role.to_string();
+                    }
+                }
+                (OUTCOME_SELECTOR, NdaObject::Str(id)) => {
+                    if let Some(sel) = doc.dict.resolve(*id) {
+                        slot.selector = sel.to_string();
+                    }
+                }
+                (OUTCOME_URL, NdaObject::Str(id)) => {
+                    slot.url = doc.dict.resolve(*id).map(str::to_string);
+                }
+                (OUTCOME_SCORE, NdaObject::Int(n)) => slot.score = *n as f64 / 10_000.0,
+                (OUTCOME_SIGNALS, NdaObject::Int(n)) => slot.signal_bits = *n,
+                (OUTCOME_CONFIDENCE, NdaObject::Int(n)) => {
+                    slot.confidence = *n as f64 / 10_000.0;
+                }
+                (OUTCOME_TIMESTAMP, NdaObject::Int(n)) => slot.timestamp_ms = *n as u64,
+                _ => {}
+            }
+        }
+
+        let mut restored = 0usize;
+        // Count identical outcomes already stored BEFORE this import so that
+        // duplicates inside one artifact (two identical failures in the same
+        // millisecond are one legitimate event each) all restore, while
+        // reloading the same artifact stays idempotent.
+        let mut already: HashMap<(u64, String, String, String), usize> = HashMap::new();
+        for o in &self.history {
+            *already
+                .entry((
+                    o.timestamp_ms,
+                    o.action_kind.label().to_string(),
+                    o.target_selector.clone(),
+                    o.page_url.clone(),
+                ))
+                .or_insert(0) += 1;
+        }
+        for subject in order {
+            let Some(p) = partial.remove(&subject) else { continue };
+            let (Some(action), Some(url)) = (p.action, p.url) else { continue };
+            let key = (p.timestamp_ms, action.clone(), p.selector.clone(), url.clone());
+            if let Some(count) = already.get_mut(&key) {
+                if *count > 0 {
+                    *count -= 1;
+                    continue;
+                }
+            }
+            self.record(ActionOutcome {
+                action_kind: ActionKind::from_str(&action),
+                target_selector: p.selector,
+                target_role: p.role,
+                page_url: url,
+                score: p.score,
+                signals: signals_from_bits(p.signal_bits, p.confidence),
+                timestamp_ms: p.timestamp_ms,
+            });
+            restored += 1;
+        }
+        restored
+    }
+}
+
+/// Pack the boolean outcome signals into a compact bitmask for NDA storage.
+fn signals_to_bits(s: &OutcomeSignals) -> i64 {
+    (s.dom_changed as i64)
+        | (s.url_changed as i64) << 1
+        | (s.error_thrown as i64) << 2
+        | (s.target_removed as i64) << 3
+        | (s.content_added as i64) << 4
+        | (s.network_request_fired as i64) << 5
+        | (s.completed_in_time as i64) << 6
+}
+
+/// Rebuild outcome signals from the bitmask produced by [`signals_to_bits`].
+fn signals_from_bits(bits: i64, agent_confidence: f64) -> OutcomeSignals {
+    OutcomeSignals {
+        dom_changed: bits & 1 != 0,
+        url_changed: bits & (1 << 1) != 0,
+        error_thrown: bits & (1 << 2) != 0,
+        target_removed: bits & (1 << 3) != 0,
+        content_added: bits & (1 << 4) != 0,
+        network_request_fired: bits & (1 << 5) != 0,
+        completed_in_time: bits & (1 << 6) != 0,
+        agent_confidence,
+    }
 }
 
 /// Extract domain from a URL string.
@@ -402,5 +548,70 @@ mod tests {
         }
         assert_eq!(scorer.history.len(), 3);
         assert_eq!(scorer.history[0].target_selector, "node_2");
+    }
+
+    #[test]
+    fn export_import_round_trips_outcome_history() {
+        let mut scorer = OutcomeScorer::new();
+        scorer.record(ActionOutcome {
+            action_kind: ActionKind::Click,
+            target_selector: "node_3".to_string(),
+            target_role: "button".to_string(),
+            page_url: "https://example.com/checkout".to_string(),
+            score: 0.85,
+            signals: OutcomeSignals {
+                dom_changed: true,
+                completed_in_time: true,
+                agent_confidence: 0.75,
+                ..Default::default()
+            },
+            timestamp_ms: 1000,
+        });
+        scorer.record(ActionOutcome {
+            action_kind: ActionKind::Fill,
+            target_selector: "node_9".to_string(),
+            target_role: "textbox".to_string(),
+            page_url: "https://example.com/checkout".to_string(),
+            score: 0.1,
+            signals: OutcomeSignals { error_thrown: true, ..Default::default() },
+            timestamp_ms: 2000,
+        });
+
+        let bytes = scorer.export_nda().to_binary_stream();
+        let doc = crate::nda::NdaDocument::from_binary_stream(&bytes).expect("decode");
+
+        let mut fresh = OutcomeScorer::new();
+        assert_eq!(fresh.import_nda(&doc), 2);
+        assert_eq!(fresh.history.len(), 2);
+
+        // Raw fields survive the round trip.
+        let first = &fresh.history[0];
+        assert_eq!(first.action_kind, ActionKind::Click);
+        assert_eq!(first.target_selector, "node_3");
+        assert!((first.score - 0.85).abs() < 0.001);
+        assert!(first.signals.dom_changed);
+        assert!(first.signals.completed_in_time);
+        assert!(!first.signals.error_thrown);
+        assert!((first.signals.agent_confidence - 0.75).abs() < 0.001);
+        assert_eq!(first.timestamp_ms, 1000);
+        assert!(fresh.history[1].signals.error_thrown);
+
+        // Aggregates are rebuilt by re-recording.
+        let rate = fresh.success_rate("example.com", "button", &ActionKind::Click);
+        assert_eq!(rate, Some(0.85));
+
+        // Repeated loads are idempotent.
+        assert_eq!(fresh.import_nda(&doc), 0);
+        assert_eq!(fresh.history.len(), 2);
+    }
+
+    #[test]
+    fn import_skips_incomplete_outcomes() {
+        let mut doc = crate::nda::NdaDocument::new();
+        // Missing url — must be skipped, not half-restored.
+        doc.push_str("o0", crate::predicates::OUTCOME_ACTION, "click");
+        let mut scorer = OutcomeScorer::new();
+        assert_eq!(scorer.import_nda(&doc), 0);
+        assert!(scorer.history.is_empty());
     }
 }
