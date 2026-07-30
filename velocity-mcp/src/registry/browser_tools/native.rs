@@ -813,9 +813,9 @@ pub fn handle_native_tool(
     if name == "browser_native_learn" {
         let action = arguments["action"].as_str().unwrap_or("save");
         let what = arguments["what"].as_str().unwrap_or("confidence");
-        if !matches!(what, "confidence" | "memory" | "outcomes") {
+        if !matches!(what, "confidence" | "memory" | "outcomes" | "all") {
             return Err(format!(
-                "unknown learn store '{what}' (expected confidence, memory or outcomes)"
+                "unknown learn store '{what}' (expected confidence, memory, outcomes or all)"
             )
             .into());
         }
@@ -823,6 +823,36 @@ pub fn handle_native_tool(
         let file_name = arguments["file"].as_str().unwrap_or(&default_file);
         match action {
             "save" => {
+                // what=all bundles every experience store into one artifact;
+                // the predicate ranges are disjoint so one document carries
+                // all three losslessly.
+                if what == "all" {
+                    let mut doc = bridge.confidence.export_nda();
+                    // Each confidence pattern is two facts.
+                    let patterns = doc.facts.len() / 2;
+                    doc.merge(&bridge.vector_memory.export_nda());
+                    doc.merge(&bridge.scorer.export_nda());
+                    let memories = bridge.memory_count();
+                    let outcomes = bridge.scorer.history.len();
+                    let path =
+                        persist_browser_artifact(root, file_name, &doc.to_binary_stream())?;
+                    return Ok(Some(if compact {
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "action": "save",
+                            "what": "all",
+                            "path": path.display().to_string(),
+                            "patterns": patterns,
+                            "memories": memories,
+                            "outcomes": outcomes,
+                        }))
+                        .map_err(|e| format!("serialise learn report: {e}"))?
+                    } else {
+                        format!(
+                            "saved {patterns} learned pattern(s), {memories} page memory(ies) and {outcomes} action outcome(s) to {}\n",
+                            path.display()
+                        )
+                    }));
+                }
                 let (doc, count, noun) = match what {
                     "confidence" => {
                         let doc = bridge.confidence.export_nda();
@@ -863,6 +893,29 @@ pub fn handle_native_tool(
                     .map_err(|e| format!("failed to read learned patterns from {}: {e}", path.display()))?;
                 let doc = velocity_browser::NdaDocument::from_binary_stream(&bytes)
                     .map_err(|e| format!("invalid learned-pattern artifact: {e}"))?;
+                if what == "all" {
+                    // Each importer only consumes its own predicate range, so
+                    // one bundled document restores all three stores.
+                    let patterns = bridge.confidence.import_nda(&doc);
+                    let memories = bridge.vector_memory.import_nda(&doc);
+                    let outcomes = bridge.scorer.import_nda(&doc);
+                    return Ok(Some(if compact {
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "action": "load",
+                            "what": "all",
+                            "path": path.display().to_string(),
+                            "patterns": patterns,
+                            "memories": memories,
+                            "outcomes": outcomes,
+                        }))
+                        .map_err(|e| format!("serialise learn report: {e}"))?
+                    } else {
+                        format!(
+                            "restored {patterns} learned pattern(s), {memories} page memory(ies) and {outcomes} action outcome(s) from {}\n",
+                            path.display()
+                        )
+                    }));
+                }
                 if what == "outcomes" {
                     let restored = bridge.scorer.import_nda(&doc);
                     let total = bridge.scorer.history.len();
@@ -2589,5 +2642,79 @@ mod native_label_tool_tests {
         );
         assert!(out.contains("restored 0 action outcome(s)"), "reload is idempotent: {out}");
         assert!(out.contains("2 outcome(s) now recorded"), "{out}");
+    }
+
+    #[test]
+    fn learn_tool_bundles_all_experience_stores() {
+        load("t34-all-a");
+        let root = temp_root("learn34");
+
+        // Build experience in all three stores: a successful fill records
+        // confidence + an outcome, and remember stores a page memory.
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t34-all-a", "label": "Email", "text": "a@b.example" }),
+        );
+        call(
+            "browser_native_remember",
+            json!({
+                "sessionId": "t34-all-a",
+                "note": "charlie-delta-memo pricing page",
+                "tags": ["pricing"],
+                "outcome": 0.8,
+            }),
+        );
+
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t34-all-a", "action": "save", "what": "all" }),
+        );
+        assert!(out.contains("1 page memory(ies)"), "{out}");
+        assert!(out.contains("1 action outcome(s)"), "{out}");
+        assert!(out.contains("t34-all-a_all.nda"), "output names the artifact: {out}");
+
+        // A fresh session inherits all three stores from the one bundle.
+        load("t34-all-b");
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t34-all-b",
+                "action": "load",
+                "what": "all",
+                "file": "t34-all-a_all.nda",
+            }),
+        );
+        assert!(out.contains("restored"), "{out}");
+        assert!(out.contains("1 page memory(ies)"), "{out}");
+        assert!(out.contains("1 action outcome(s)"), "{out}");
+
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t34-all-b", "query": "charlie-delta-memo", "mode": "keyword" }),
+        );
+        assert!(out.contains("pricing"), "bundled memory is searchable: {out}");
+
+        let out = call("browser_native_reflect", json!({ "sessionId": "t34-all-b" }));
+        assert!(
+            out.contains("Recent action outcomes:"),
+            "bundled outcomes feed reflection: {out}"
+        );
+        assert!(out.contains("fill on [textbox]"), "{out}");
+
+        // Reloading the bundle must not duplicate memories or outcomes.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t34-all-b",
+                "action": "load",
+                "what": "all",
+                "file": "t34-all-a_all.nda",
+            }),
+        );
+        assert!(out.contains("0 page memory(ies)"), "reload is idempotent: {out}");
+        assert!(out.contains("0 action outcome(s)"), "{out}");
     }
 }
