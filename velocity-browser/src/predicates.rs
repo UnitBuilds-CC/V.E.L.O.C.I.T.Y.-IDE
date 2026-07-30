@@ -104,6 +104,45 @@ pub const OCR_TEXT: u16 = 252;
 /// Formatted "x,y,w,h". Confidence is intentionally 0 - never fabricated.
 pub const OCR_OPAQUE_REGION: u16 = 253;
 
+/// Human-readable name for a predicate id — used when rendering NDA facts as
+/// text for LLM consumption (names cost fewer reasoning tokens than raw ids).
+pub fn predicate_name(id: u16) -> &'static str {
+    match id {
+        AOM_ROLE => "role",
+        AOM_NAME => "name",
+        AOM_VALUE => "value",
+        AOM_ACTIONABILITY => "actionability",
+        AOM_FOCUSED => "focused",
+        AOM_EXPANDED => "expanded",
+        AOM_SELECTOR => "selector",
+        AOM_DISABLED => "disabled",
+        CANVAS_CONTEXT => "canvas.context",
+        CANVAS_SIZE => "canvas.size",
+        CANVAS_DRAW_CALLS => "canvas.drawCalls",
+        CANVAS_TEXT => "canvas.text",
+        CANVAS_SHAPE => "canvas.shape",
+        CANVAS_IMAGE => "canvas.image",
+        CANVAS_SUMMARY => "canvas.summary",
+        LAYOUT_BOUNDS => "bounds",
+        LAYOUT_VISIBILITY => "visibility",
+        LAYOUT_DISPLAY => "display",
+        SESSION_URL => "url",
+        SESSION_TITLE => "title",
+        SESSION_COOKIE => "cookie",
+        SESSION_STORAGE => "storage",
+        SESSION_LINK_COUNT => "links",
+        SESSION_FORM_COUNT => "forms",
+        SESSION_INTERACTIVE_COUNT => "interactive",
+        SESSION_TEXT_LENGTH => "textLength",
+        SESSION_HEADING => "heading",
+        NET_METHOD => "net.method",
+        NET_STATUS => "net.status",
+        OCR_TEXT => "ocr.text",
+        OCR_OPAQUE_REGION => "ocr.opaqueRegion",
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +176,26 @@ mod tests {
         for id in ids {
             assert!(seen.insert(id), "duplicate predicate id {id}");
         }
+    }
+
+    #[test]
+    fn predicate_names_are_defined_and_unique() {
+        let ids = [
+            AOM_ROLE, AOM_NAME, AOM_VALUE, AOM_ACTIONABILITY, AOM_FOCUSED, AOM_EXPANDED,
+            AOM_SELECTOR, AOM_DISABLED,
+            CANVAS_CONTEXT, CANVAS_SIZE, CANVAS_DRAW_CALLS, CANVAS_TEXT, CANVAS_SHAPE,
+            CANVAS_IMAGE, CANVAS_SUMMARY, LAYOUT_BOUNDS, LAYOUT_VISIBILITY, LAYOUT_DISPLAY,
+            SESSION_URL, SESSION_TITLE, SESSION_COOKIE, SESSION_STORAGE,
+            SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
+            SESSION_TEXT_LENGTH, SESSION_HEADING,
+            NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            let name = predicate_name(id);
+            assert_ne!(name, "unknown", "predicate {id} has no name");
+            assert!(seen.insert(name), "duplicate predicate name {name}");
+        }
+        assert_eq!(predicate_name(9999), "unknown");
     }
 }

@@ -689,6 +689,29 @@ impl BrowserSession {
         AgentActionResult::new(status, diff(&before, &after))
     }
 
+    /// Drain pending event-loop work (timers, microtasks) and report the NDA
+    /// delta the settled work produced — the session-level "wait until the
+    /// page is quiet" primitive. An empty delta means the page really is idle.
+    pub fn agent_settle(&mut self) -> AgentActionResult {
+        let before = self.capture_state_document();
+        self.drain_event_loop();
+        let after = self.capture_state_document();
+        let delta = diff(&before, &after);
+        let status = if delta.is_empty() {
+            "settled: no changes".to_string()
+        } else {
+            format!("settled: {} facts changed", delta.len())
+        };
+        AgentActionResult::new(status, delta)
+    }
+
+    /// Observe the current page state as compact readable NDA fact lines —
+    /// the read-only counterpart of the `agent_*` actions. One line per fact,
+    /// `subject|predicate-name|object`, no JSON anywhere.
+    pub fn agent_observe(&self) -> String {
+        self.capture_state_document().facts_text()
+    }
+
     pub fn classify_interstitial(&self, html_snippet: &str) -> InterstitialKind {
         InterstitialClassifier::classify_page(&self.page_title, html_snippet)
     }
@@ -1030,5 +1053,36 @@ mod agent_action_tests {
         let result = session.agent_click(9999);
         assert!(result.status.contains("not found"));
         assert!(result.delta.is_empty());
+    }
+
+    #[test]
+    fn agent_settle_idle_page_reports_no_changes() {
+        let mut session = BrowserSession::new("s4".to_string());
+        session.load_html("about:test", "<p>Static</p>");
+        let result = session.agent_settle();
+        assert_eq!(result.status, "settled: no changes");
+        assert!(result.delta.is_empty());
+    }
+
+    #[test]
+    fn agent_settle_runs_scheduled_timer_and_reports_delta() {
+        let mut session = BrowserSession::new("s5".to_string());
+        session.load_html("about:test", "<button id=\"b\">Menu</button>");
+        // Schedule a timer that mutates the DOM, exactly as a page script would.
+        let _ = session.eval_js("setTimeout(document.getElementById('b').setAttribute('aria-expanded','true'), 0)");
+        let result = session.agent_settle();
+        assert!(result.status.starts_with("settled:"), "got {}", result.status);
+    }
+
+    #[test]
+    fn agent_observe_returns_readable_fact_lines() {
+        let mut session = BrowserSession::new("s6".to_string());
+        session.load_html("https://example.com/", "<button id=\"b\">Go</button>");
+        session.page_title = "Observed Page".to_string();
+        let text = session.agent_observe();
+        assert!(text.contains("|url|https://example.com/"), "got: {}", text);
+        assert!(text.contains("|title|Observed Page"), "got: {}", text);
+        // No raw predicate numbers — names only.
+        assert!(!text.contains("|100|"), "got: {}", text);
     }
 }

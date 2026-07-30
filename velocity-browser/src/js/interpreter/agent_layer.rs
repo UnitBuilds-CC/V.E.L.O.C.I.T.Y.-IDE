@@ -1070,16 +1070,6 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
 
 /// Render an NDA document's facts as compact `subject|predicate|object` lines.
 pub(super) fn nda_facts_to_text(doc: &crate::nda::NdaDocument) -> String {
-    let facts = doc.readable_facts();
-    let mut out = String::with_capacity(facts.len() * 40);
-    for (subject, predicate, object) in facts {
-        out.push_str(&subject);
-        out.push('|');
-        out.push_str(&predicate.to_string());
-        out.push('|');
-        out.push_str(&object);
-        out.push('\n');
-    }
-    out
+    doc.facts_text()
 }
 

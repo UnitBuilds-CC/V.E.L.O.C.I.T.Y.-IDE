@@ -191,6 +191,22 @@ impl NdaDocument {
         out
     }
 
+    /// Render all facts as compact `subject|predicate-name|object` lines — the
+    /// token-cheapest readable serialization for LLM consumption.
+    pub fn facts_text(&self) -> String {
+        let facts = self.readable_facts();
+        let mut out = String::with_capacity(facts.len() * 40);
+        for (subject, predicate, object) in facts {
+            out.push_str(&subject);
+            out.push('|');
+            out.push_str(crate::predicates::predicate_name(predicate));
+            out.push('|');
+            out.push_str(&object);
+            out.push('\n');
+        }
+        out
+    }
+
     /// Serialize to a self-describing binary stream (little-endian):
     /// `[dict_len u32] { [str_len u32][utf8 bytes] }* [fact_len u32]`
     /// `{ [subject u32][predicate u16][tag u8][payload] }*` where tag 0 => Str
@@ -490,6 +506,15 @@ mod tests {
         let bytes = triple.to_bytes();
         let decoded = NdaTriple::from_bytes(&bytes).unwrap();
         assert_eq!(triple, decoded);
+    }
+
+    #[test]
+    fn facts_text_uses_predicate_names() {
+        let mut doc = NdaDocument::new();
+        doc.push_str("page", crate::predicates::SESSION_TITLE, "My Title");
+        doc.push_int("page", crate::predicates::SESSION_LINK_COUNT, 3);
+        let text = doc.facts_text();
+        assert_eq!(text, "page|title|My Title\npage|links|3\n");
     }
 
     #[test]
