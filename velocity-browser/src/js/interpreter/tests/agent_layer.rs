@@ -193,6 +193,58 @@ fn submit_form_without_form_returns_false() {
     assert_eq!(ok, JsValue::Boolean(false));
 }
 
+// ── Select Primitives ────────────────────────────────────────────────────────
+
+#[test]
+fn select_by_label_picks_option_by_text() {
+    eval_full("document.body.innerHTML = '<label for=\"c\">Country</label><select id=\"c\"><option value=\"pt\">Portugal</option><option value=\"es\">Spain</option></select>'");
+    let ok = eval_full("document.selectByLabel('Country', 'Spain')");
+    assert_eq!(ok, JsValue::Boolean(true));
+    let value = eval_full("document.getElementById('c').value");
+    assert_eq!(value, JsValue::String("es".to_string()));
+}
+
+#[test]
+fn select_by_label_marks_option_selected() {
+    eval_full("
+        document.body.innerHTML = '<select aria-label=\"Size\"><option>Small</option><option>Large</option></select>';
+        document.selectByLabel('Size', 'large');
+    ");
+    let selected = eval_full("document.querySelectorAll('option')[1].hasAttribute('selected')");
+    assert_eq!(selected, JsValue::Boolean(true));
+    let other = eval_full("document.querySelectorAll('option')[0].hasAttribute('selected')");
+    assert_eq!(other, JsValue::Boolean(false));
+}
+
+#[test]
+fn select_by_label_fires_change() {
+    let result = eval_full("
+        document.body.innerHTML = '<select aria-label=\"Size\"><option>Small</option></select>';
+        var changed = false;
+        document.querySelector('select').addEventListener('change', function() { changed = true; });
+        document.selectByLabel('Size', 'Small');
+        changed
+    ");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn select_by_label_misses_unknown_option() {
+    eval_full("document.body.innerHTML = '<select aria-label=\"Size\"><option>Small</option></select>'");
+    let ok = eval_full("document.selectByLabel('Size', 'Gigantic')");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
+#[test]
+fn select_by_label_matches_by_value() {
+    eval_full("
+        document.body.innerHTML = '<select aria-label=\"Country\"><option value=\"pt\">Portugal</option></select>';
+        document.selectByLabel('Country', 'pt');
+    ");
+    let value = eval_full("document.querySelector('select').value");
+    assert_eq!(value, JsValue::String("pt".to_string()));
+}
+
 #[test]
 fn interactive_element_has_role() {
     eval_full("document.body.innerHTML = '<button>Submit</button>'");

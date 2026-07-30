@@ -578,6 +578,58 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                 None => JsValue::Boolean(false),
             }
         }
+        "selectByLabel" => {
+            // Pick a dropdown option by visible text (or value) on a select
+            // found by its accessible name — exact text wins over substring.
+            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let wanted = args.get(1).map(super::coercion::to_string).unwrap_or_default();
+            let needle = wanted.trim().to_lowercase();
+            let Some(select_id) = super::agent_layer::resolve_fill_target(&query) else {
+                return JsValue::Boolean(false);
+            };
+            let options: Vec<usize> = DOM_NODES.with(|nodes| {
+                nodes.borrow().get(select_id)
+                    .map(|n| n.children.iter().copied()
+                        .filter(|&c| nodes.borrow().get(c).map(|o| o.tag == "option").unwrap_or(false))
+                        .collect())
+                    .unwrap_or_default()
+            });
+            let mut best: Option<(usize, String, u8)> = None;
+            for opt_id in options {
+                let text = collect_text_content(opt_id).trim().to_string();
+                let value = DOM_NODES.with(|nodes| {
+                    nodes.borrow().get(opt_id).and_then(|o| o.attributes.get("value").cloned())
+                }).unwrap_or_else(|| text.clone());
+                let text_lc = text.to_lowercase();
+                let rank = if text_lc == needle || value.to_lowercase() == needle { 2 }
+                    else if text_lc.contains(&needle) && !needle.is_empty() { 1 }
+                    else { continue };
+                match best {
+                    Some((_, _, r)) if r >= rank => {}
+                    _ => best = Some((opt_id, value, rank)),
+                }
+            }
+            let Some((chosen_id, value, _)) = best else {
+                return JsValue::Boolean(false);
+            };
+            DOM_NODES.with(|nodes| {
+                let mut nodes = nodes.borrow_mut();
+                let siblings: Vec<usize> = nodes.get(select_id).map(|n| n.children.clone()).unwrap_or_default();
+                for sib in siblings {
+                    if let Some(opt) = nodes.get_mut(sib) {
+                        opt.attributes.remove("selected");
+                    }
+                }
+                if let Some(opt) = nodes.get_mut(chosen_id) {
+                    opt.attributes.insert("selected".to_string(), "selected".to_string());
+                }
+                if let Some(sel) = nodes.get_mut(select_id) {
+                    sel.attributes.insert("value".to_string(), value);
+                }
+            });
+            fire_event(select_id, "change");
+            JsValue::Boolean(true)
+        }
         "fillByLabel" => {
             // Type into a form control found by its accessible name — the
             // agent's "fill the Email field" primitive. Fires input + change
