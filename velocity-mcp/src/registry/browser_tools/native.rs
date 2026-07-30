@@ -293,6 +293,8 @@ pub fn handle_native_tool(
         | "browser_native_export_nda"
         | "browser_native_remember"
         | "browser_native_recall"
+        | "browser_native_page_text"
+        | "browser_native_screencast"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -331,6 +333,75 @@ pub fn handle_native_tool(
 
     if name == "browser_native_observe" {
         return Ok(Some(bridge.agent_observe()));
+    }
+
+    // The token-cheapest full read: title + visible body text, whitespace
+    // collapsed, scripts/styles skipped. maxChars keeps huge pages bounded.
+    if name == "browser_native_page_text" {
+        let text = bridge.page_text();
+        if text.is_empty() {
+            return Ok(Some("(no visible text on page)".to_string()));
+        }
+        let max_chars = arguments["maxChars"].as_u64().unwrap_or(0) as usize;
+        if max_chars > 0 && text.chars().count() > max_chars {
+            let truncated: String = text.chars().take(max_chars).collect();
+            return Ok(Some(format!(
+                "{truncated}…\n(truncated to {max_chars} of {} chars)",
+                text.chars().count()
+            )));
+        }
+        return Ok(Some(text));
+    }
+
+    // Structural screencast: frames record the page's shape (viewport, AOM
+    // element count, content hash) instead of pixels — a diffable timeline of
+    // how the page evolved across the agent's actions.
+    if name == "browser_native_screencast" {
+        let action = arguments["action"].as_str().unwrap_or("capture");
+        return Ok(Some(match action {
+            "capture" => {
+                let (idx, elements, hash) = bridge.screencast_capture();
+                let total = bridge.screencast_frames().len();
+                format!(
+                    "captured frame {idx} ({elements} elements, hash {hash:016x}) — {total} frame{} in timeline\n",
+                    if total == 1 { "" } else { "s" },
+                )
+            }
+            "list" => {
+                let frames = bridge.screencast_frames();
+                if frames.is_empty() {
+                    "(no frames captured)".to_string()
+                } else {
+                    let mut out = format!(
+                        "{} frame{} in timeline:\n",
+                        frames.len(),
+                        if frames.len() == 1 { "" } else { "s" },
+                    );
+                    for f in frames {
+                        out.push_str(&format!(
+                            "  frame {}: {}x{}, {} elements, hash {:016x}, t={}ms\n",
+                            f.frame_idx, f.width, f.height, f.element_count, f.frame_hash,
+                            f.timestamp_ms,
+                        ));
+                    }
+                    out
+                }
+            }
+            "save" => {
+                let path = bridge.screencast_save(root)?;
+                format!(
+                    "saved {} frame(s) to {}\n",
+                    bridge.screencast_frames().len(),
+                    path.display()
+                )
+            }
+            other => {
+                return Err(format!(
+                    "unknown screencast action '{other}' (expected capture, list, or save)"
+                )
+                .into())
+            }
+        }));
     }
 
     // Vector memory: remember indexes the current page's visible text so a
@@ -1289,5 +1360,62 @@ mod native_label_tool_tests {
             serde_json::from_str(&out).expect("compact recall is valid JSON");
         assert_eq!(report["minOutcome"], 0.8);
         assert_eq!(report["hits"].as_array().expect("hits array").len(), 1);
+    }
+
+    #[test]
+    fn page_text_tool_reads_visible_text_with_truncation() {
+        load("t24-text");
+        let out = call("browser_native_page_text", json!({ "sessionId": "t24-text" }));
+        assert!(out.starts_with("Signup"), "title leads the text: {out}");
+        assert!(out.contains("Log In"), "button text is visible: {out}");
+
+        let out = call(
+            "browser_native_page_text",
+            json!({ "sessionId": "t24-text", "maxChars": 6 }),
+        );
+        assert!(out.starts_with("Signup…"), "{out}");
+        assert!(out.contains("(truncated to 6 of"), "{out}");
+    }
+
+    #[test]
+    fn screencast_tool_captures_lists_and_saves_frames() {
+        load("t24-cast");
+        let out = call(
+            "browser_native_screencast",
+            json!({ "sessionId": "t24-cast", "action": "capture" }),
+        );
+        assert!(out.contains("captured frame 0"), "{out}");
+        assert!(out.contains("1 frame in timeline"), "{out}");
+
+        // Default action is capture.
+        let out = call("browser_native_screencast", json!({ "sessionId": "t24-cast" }));
+        assert!(out.contains("captured frame 1"), "{out}");
+
+        let out = call(
+            "browser_native_screencast",
+            json!({ "sessionId": "t24-cast", "action": "list" }),
+        );
+        assert!(out.contains("2 frames in timeline:"), "{out}");
+        assert!(out.contains("frame 0: 1920x1080"), "{out}");
+        assert!(out.contains("frame 1: 1920x1080"), "{out}");
+
+        let tmp = std::env::temp_dir();
+        let out = handle_native_tool(
+            &tmp,
+            "browser_native_screencast",
+            &json!({ "sessionId": "t24-cast", "action": "save" }),
+        )
+        .expect("save succeeds")
+        .expect("screencast tool is handled");
+        assert!(out.contains("saved 2 frame(s) to"), "{out}");
+        assert!(out.contains("t24-cast_screencast.json"), "{out}");
+
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_screencast",
+            &json!({ "sessionId": "t24-cast", "action": "explode" }),
+        )
+        .expect_err("unknown screencast action must be rejected");
+        assert!(err.to_string().contains("unknown screencast action"), "{err}");
     }
 }

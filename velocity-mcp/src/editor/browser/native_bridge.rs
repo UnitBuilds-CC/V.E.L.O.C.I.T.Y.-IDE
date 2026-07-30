@@ -295,6 +295,45 @@ impl NativeBrowserBridge {
         self.vector_memory.nodes.len()
     }
 
+    /// Visible text of the current page (title + body text, whitespace
+    /// collapsed) — the token-cheapest full read of a page.
+    pub fn page_text(&self) -> String {
+        self.active_session.page_text()
+    }
+
+    // -- Screencast -----------------------------------------------------------
+    // Structural screencast: each frame records the page's shape (viewport +
+    // AOM element count + content hash) instead of pixels, giving the agent a
+    // diffable timeline of how the page evolved across its actions.
+
+    /// Capture a frame of the current page state. Returns
+    /// `(frame_idx, element_count, frame_hash)`.
+    pub fn screencast_capture(&mut self) -> (u32, usize, u64) {
+        let element_count = self
+            .active_session
+            .dom_tree
+            .as_ref()
+            .map(|tree| AgenticAomTree::build_aom_nodes(tree).len())
+            .unwrap_or(0);
+        let frame = self.screencast.capture_frame(
+            self.active_session.viewport_width as u32,
+            self.active_session.viewport_height as u32,
+            element_count,
+        );
+        (frame.frame_idx, frame.element_count, frame.frame_hash)
+    }
+
+    /// All frames captured so far, oldest first.
+    pub fn screencast_frames(&self) -> &[velocity_browser::screencast::ScreencastFrame] {
+        &self.screencast.frames
+    }
+
+    /// Persist the frame timeline as JSON under
+    /// `.velocity/browser_artifacts/screencasts/`.
+    pub fn screencast_save(&self, workspace_root: &Path) -> Result<PathBuf, String> {
+        self.screencast.save_metadata(workspace_root)
+    }
+
     // -- Live agent-drive API ------------------------------------------------
     // These promote the native engine from a discarded side-channel to the
     // source of truth: each action drives the real DOM/AOM and returns the

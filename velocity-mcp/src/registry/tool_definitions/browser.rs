@@ -1014,6 +1014,30 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_page_text".to_string(),
+            description: "Read the visible text of the current page in the native browser session: title + body text in reading order, whitespace collapsed, script/style content skipped. The token-cheapest way to read a whole page. Set maxChars to bound the output on huge pages.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "maxChars": { "type": "integer", "description": "Truncate the text to this many characters (0 or omitted = no limit)." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
+            name: "browser_native_screencast".to_string(),
+            description: "Structural screencast of the native browser session: frames record the page's shape (viewport size, AOM element count, content hash) instead of pixels. Actions: capture (record a frame of the current state), list (show the frame timeline), save (persist the timeline as JSON under .velocity/browser_artifacts/screencasts/). Diff frame hashes to see when the page actually changed.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "action": { "type": "string", "enum": ["capture", "list", "save"], "description": "Screencast operation. Defaults to capture." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({
