@@ -311,6 +311,76 @@ fn export_nda_includes_focus_fact() {
     );
 }
 
+// ── Keyboard Primitives ──────────────────────────────────────────────────────
+
+#[test]
+fn type_text_appends_to_focused_value() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        document.focusByLabel('Email');
+        document.typeText('hi');
+        document.querySelector('input').value
+    ");
+    assert_eq!(result, JsValue::String("hi".to_string()));
+}
+
+#[test]
+fn type_text_without_focus_returns_false() {
+    eval_full("document.body.innerHTML = '<input placeholder=\"Email\">'");
+    let ok = eval_full("document.typeText('hi')");
+    assert_eq!(ok, JsValue::Boolean(false));
+}
+
+#[test]
+fn type_text_fires_keydown_per_char() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        var keys = '';
+        document.querySelector('input').addEventListener('keydown', function(e) { keys = keys + e.key; });
+        document.focusByLabel('Email');
+        document.typeText('abc');
+        keys
+    ");
+    assert_eq!(result, JsValue::String("abc".to_string()));
+}
+
+#[test]
+fn press_enter_submits_enclosing_form() {
+    let result = eval_full("
+        document.body.innerHTML = '<form><input placeholder=\"Q\"></form>';
+        var submitted = false;
+        document.querySelector('form').addEventListener('submit', function() { submitted = true; });
+        document.focusByLabel('Q');
+        document.pressKey('Enter');
+        submitted
+    ");
+    assert_eq!(result, JsValue::Boolean(true));
+}
+
+#[test]
+fn press_tab_advances_focus() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"First\"><input placeholder=\"Second\">';
+        document.focusByLabel('First');
+        document.pressKey('Tab');
+        document.activeElement.placeholder
+    ");
+    assert_eq!(result, JsValue::String("Second".to_string()));
+}
+
+#[test]
+fn press_key_delivers_key_to_listener() {
+    let result = eval_full("
+        document.body.innerHTML = '<input placeholder=\"Email\">';
+        var seen = '';
+        document.querySelector('input').addEventListener('keydown', function(e) { seen = e.key; });
+        document.focusByLabel('Email');
+        document.pressKey('Escape');
+        seen
+    ");
+    assert_eq!(result, JsValue::String("Escape".to_string()));
+}
+
 #[test]
 fn interactive_element_has_role() {
     eval_full("document.body.innerHTML = '<button>Submit</button>'");

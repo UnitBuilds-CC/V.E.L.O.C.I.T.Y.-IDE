@@ -585,6 +585,72 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                 None => JsValue::Boolean(false),
             }
         }
+        "typeText" => {
+            // Type into the focused element, one keystroke at a time:
+            // keydown → value grows → input, per character. Requires focus
+            // (use focusByLabel first) so agents model real keyboard flow.
+            let text = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let Some(id) = FOCUSED_NODE.with(|c| c.get()) else {
+                return JsValue::Boolean(false);
+            };
+            for ch in text.chars() {
+                fire_event_with(id, "keydown", &[("key", JsValue::String(ch.to_string()))]);
+                DOM_NODES.with(|nodes| {
+                    if let Some(node) = nodes.borrow_mut().get_mut(id) {
+                        let mut value = node.attributes.get("value").cloned().unwrap_or_default();
+                        value.push(ch);
+                        node.attributes.insert("value".to_string(), value);
+                    }
+                });
+                fire_event_with(id, "input", &[("key", JsValue::String(ch.to_string()))]);
+            }
+            JsValue::Boolean(true)
+        }
+        "pressKey" => {
+            // Press a named key on the focused element. Enter submits the
+            // enclosing form; Tab advances focus to the next interactive
+            // element in DOM order.
+            let key = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let Some(id) = FOCUSED_NODE.with(|c| c.get()) else {
+                return JsValue::Boolean(false);
+            };
+            fire_event_with(id, "keydown", &[("key", JsValue::String(key.clone()))]);
+            match key.as_str() {
+                "Enter" => {
+                    // Walk up to the enclosing form and submit it.
+                    let mut current = Some(id);
+                    while let Some(node_id) = current {
+                        let (is_form, parent) = DOM_NODES.with(|nodes| {
+                            let nodes = nodes.borrow();
+                            match nodes.get(node_id) {
+                                Some(n) => (n.tag == "form", n.parent),
+                                None => (false, None),
+                            }
+                        });
+                        if is_form {
+                            fire_event(node_id, "submit");
+                            break;
+                        }
+                        current = parent;
+                    }
+                }
+                "Tab" => {
+                    let mut interactive: Vec<usize> = super::agent_layer::get_interactive_elements()
+                        .into_iter().map(|el| el.node_id).collect();
+                    interactive.sort_unstable();
+                    if let Some(pos) = interactive.iter().position(|&n| n == id) {
+                        if let Some(&next) = interactive.get(pos + 1).or_else(|| interactive.first()) {
+                            FOCUSED_NODE.with(|c| c.set(Some(next)));
+                            fire_event(id, "blur");
+                            fire_event(next, "focus");
+                        }
+                    }
+                }
+                _ => {}
+            }
+            fire_event_with(id, "keyup", &[("key", JsValue::String(key))]);
+            JsValue::Boolean(true)
+        }
         "focusByLabel" => {
             // Move focus to any interactive element found by accessible name —
             // pairs with document.activeElement for keyboard-flow reasoning.
@@ -2288,12 +2354,21 @@ pub(super) fn set_node_attr(id: usize, key: &str, val: &str) {
 /// Runs all registered listeners for `event_type` on the target and each
 /// ancestor (capture phase is not modeled — agents care about effects).
 pub(super) fn fire_event(target_id: usize, event_type: &str) {
+    fire_event_with(target_id, event_type, &[]);
+}
+
+/// Like [`fire_event`], with extra fields merged into the event object
+/// (e.g. `key` for keyboard events).
+pub(super) fn fire_event_with(target_id: usize, event_type: &str, extra: &[(&str, JsValue)]) {
     // Build the event object once.
     let mut event = HashMap::new();
     event.insert("__type__".to_string(), JsValue::String("Event".to_string()));
     event.insert("type".to_string(), JsValue::String(event_type.to_string()));
     event.insert("target".to_string(), element_handle(target_id));
     event.insert("bubbles".to_string(), JsValue::Boolean(true));
+    for (k, v) in extra {
+        event.insert(k.to_string(), v.clone());
+    }
     let event_val = JsValue::Object(event);
 
     // Collect the bubble path (target → root) and each node's listeners
