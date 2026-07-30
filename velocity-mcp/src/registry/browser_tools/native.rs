@@ -368,14 +368,15 @@ pub fn handle_native_tool(
     if name == "browser_native_recall" {
         let query = arguments["query"].as_str().ok_or("query is required")?;
         let mode = arguments["mode"].as_str().unwrap_or("semantic");
-        if !matches!(mode, "semantic" | "keyword" | "tag") {
+        if !matches!(mode, "semantic" | "keyword" | "tag" | "similar") {
             return Err(format!(
-                "unknown recall mode '{mode}' (expected semantic, keyword, or tag)"
+                "unknown recall mode '{mode}' (expected semantic, keyword, tag, or similar)"
             )
             .into());
         }
         let limit = arguments["limit"].as_u64().unwrap_or(5) as usize;
-        let hits = bridge.recall_pages(query, mode, limit);
+        let min_outcome = arguments["minOutcome"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0);
+        let hits = bridge.recall_pages(query, mode, limit, min_outcome);
         return Ok(Some(if compact {
             let items: Vec<serde_json::Value> = hits
                 .iter()
@@ -393,18 +394,29 @@ pub fn handle_native_tool(
             serde_json::to_string_pretty(&serde_json::json!({
                 "mode": mode,
                 "query": query,
+                "minOutcome": min_outcome,
                 "hits": items,
             }))
             .map_err(|e| format!("serialise recall report: {e}"))?
         } else if hits.is_empty() {
-            format!("no memories matched '{query}' ({mode})\n")
+            if min_outcome > 0.0 {
+                format!("no memories matched '{query}' ({mode}, outcome >= {min_outcome:.2})\n")
+            } else {
+                format!("no memories matched '{query}' ({mode})\n")
+            }
         } else {
+            let filter = if min_outcome > 0.0 {
+                format!(", outcome >= {min_outcome:.2}")
+            } else {
+                String::new()
+            };
             let mut out = format!(
-                "{} memor{} matched '{}' ({}):\n",
+                "{} memor{} matched '{}' ({}{}):\n",
                 hits.len(),
                 if hits.len() == 1 { "y" } else { "ies" },
                 query,
-                mode
+                mode,
+                filter
             );
             for (n, sim) in &hits {
                 let score = sim.map(|s| format!("{s:.3}")).unwrap_or_else(|| "-".to_string());
@@ -1216,5 +1228,61 @@ mod native_label_tool_tests {
         )
         .expect_err("unknown recall mode must be rejected");
         assert!(err.to_string().contains("unknown recall mode"), "{err}");
+    }
+
+    #[test]
+    fn recall_tool_finds_similar_memories_and_filters_by_outcome() {
+        load("t22-sim");
+        call(
+            "browser_native_remember",
+            json!({ "sessionId": "t22-sim", "tags": ["attempt"], "outcome": 0.9, "note": "first pass" }),
+        );
+        call(
+            "browser_native_remember",
+            json!({ "sessionId": "t22-sim", "tags": ["attempt"], "outcome": 0.2, "note": "second pass" }),
+        );
+
+        // Same page indexed twice: similar mode on the first memory id must
+        // surface the second one with a high embedding score.
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t22-sim", "query": "t22-sim:0", "mode": "similar" }),
+        );
+        assert!(out.contains("(similar)"), "{out}");
+        assert!(out.contains("t22-sim:1"), "sibling memory is found: {out}");
+        assert!(!out.contains("t22-sim:0 http"), "source memory excludes itself: {out}");
+
+        // Unknown memory id is a miss, not an error.
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t22-sim", "query": "t22-sim:99", "mode": "similar" }),
+        );
+        assert!(out.contains("no memories matched 't22-sim:99' (similar)"), "{out}");
+
+        // minOutcome keeps only the successful attempt across any mode.
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t22-sim", "query": "attempt", "mode": "tag", "minOutcome": 0.8 }),
+        );
+        assert!(out.contains("1 memory matched 'attempt' (tag, outcome >= 0.80):"), "{out}");
+        assert!(out.contains("t22-sim:0"), "{out}");
+        assert!(!out.contains("t22-sim:1"), "low-outcome memory filtered: {out}");
+
+        // Filter that excludes everything reports the threshold in the miss.
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t22-sim", "query": "attempt", "mode": "tag", "minOutcome": 0.95 }),
+        );
+        assert!(out.contains("no memories matched 'attempt' (tag, outcome >= 0.95)"), "{out}");
+
+        // Compact report carries the filter value.
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t22-sim", "query": "attempt", "mode": "tag", "minOutcome": 0.8, "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&out).expect("compact recall is valid JSON");
+        assert_eq!(report["minOutcome"], 0.8);
+        assert_eq!(report["hits"].as_array().expect("hits array").len(), 1);
     }
 }

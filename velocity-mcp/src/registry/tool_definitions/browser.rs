@@ -999,14 +999,15 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_recall".to_string(),
-            description: "Recall pages previously stored with browser_native_remember. Modes: semantic (TF-IDF cosine similarity, scored), keyword (substring over text/url), tag (exact tag match). Each hit lists memory id, url, similarity, tags, outcome, and a text snippet.".to_string(),
+            description: "Recall pages previously stored with browser_native_remember. Modes: semantic (TF-IDF cosine similarity, scored), keyword (substring over text/url), tag (exact tag match), similar (query is a memory id; finds pages most similar to that memory, scored). Set minOutcome to only recall pages whose interaction outcome scored at least that high — i.e. recall what worked. Each hit lists memory id, url, similarity, tags, outcome, and a text snippet.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
-                    "query": { "type": "string", "description": "Search text (or the tag name in tag mode)." },
-                    "mode": { "type": "string", "enum": ["semantic", "keyword", "tag"], "description": "Recall strategy. Defaults to semantic." },
+                    "query": { "type": "string", "description": "Search text, the tag name in tag mode, or the memory id in similar mode." },
+                    "mode": { "type": "string", "enum": ["semantic", "keyword", "tag", "similar"], "description": "Recall strategy. Defaults to semantic." },
                     "limit": { "type": "integer", "description": "Maximum hits to return. Defaults to 5." },
+                    "minOutcome": { "type": "number", "description": "Only return memories with outcome score >= this value (0.0..=1.0). Defaults to 0 (no filter)." },
                     "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
                 },
                 "required": ["sessionId", "query"]

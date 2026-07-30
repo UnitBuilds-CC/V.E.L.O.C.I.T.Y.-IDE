@@ -244,35 +244,50 @@ impl NativeBrowserBridge {
     }
 
     /// Recall remembered pages. `mode` is `"semantic"` (TF-IDF cosine,
-    /// scored), `"keyword"` (substring over text/url) or `"tag"` (exact tag
-    /// match). Hits are cloned out so the tool layer renders them without
-    /// borrowing the store.
+    /// scored), `"keyword"` (substring over text/url), `"tag"` (exact tag
+    /// match) or `"similar"` (query is a memory id; embedding-similarity to
+    /// that memory, scored). `min_outcome` drops memories below the given
+    /// outcome score before the limit applies, so "recall what worked" is a
+    /// filter on any mode instead of a separate tool. Hits are cloned out so
+    /// the tool layer renders them without borrowing the store.
     pub fn recall_pages(
         &self,
         query: &str,
         mode: &str,
         limit: usize,
+        min_outcome: f64,
     ) -> Vec<(VectorMemoryNode, Option<f64>)> {
-        match mode {
+        let mut hits: Vec<(VectorMemoryNode, Option<f64>)> = match mode {
             "keyword" => self
                 .vector_memory
-                .search(query, limit)
+                .search(query, usize::MAX)
                 .into_iter()
                 .map(|n| (n.clone(), None))
                 .collect(),
             "tag" => self
                 .vector_memory
-                .search_by_tag(query, limit)
+                .search_by_tag(query, usize::MAX)
                 .into_iter()
                 .map(|n| (n.clone(), None))
                 .collect(),
-            _ => self
+            "similar" => self
                 .vector_memory
-                .semantic_search(query, limit)
+                .find_similar(query, usize::MAX)
                 .into_iter()
                 .map(|(n, sim)| (n.clone(), Some(sim)))
                 .collect(),
+            _ => self
+                .vector_memory
+                .semantic_search(query, usize::MAX)
+                .into_iter()
+                .map(|(n, sim)| (n.clone(), Some(sim)))
+                .collect(),
+        };
+        if min_outcome > 0.0 {
+            hits.retain(|(n, _)| n.outcome_score >= min_outcome);
         }
+        hits.truncate(limit);
+        hits
     }
 
     /// Total number of pages held in vector memory.
