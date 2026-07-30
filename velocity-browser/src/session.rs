@@ -967,6 +967,87 @@ impl BrowserSession {
         AgentActionResult::new(status, diff(&before, &after))
     }
 
+    /// Choose a dropdown option by its visible text (or `value` attribute) on
+    /// a select resolved by accessible name. Marks the option `selected`,
+    /// mirrors its value onto the select, and fires `change` listeners.
+    pub fn agent_select_by_label(&mut self, query: &str, option: &str) -> AgentActionResult {
+        let Some(select_id) = self.resolve_node_by_name(query, |r| r == "combobox") else {
+            return AgentActionResult::new(
+                format!("no select matching '{}'", query),
+                NdaDelta::default(),
+            );
+        };
+        // Rank candidate <option> children: exact text/value match beats substring.
+        let needle = option.trim().to_lowercase();
+        let chosen = self.dom_tree.as_ref().and_then(|tree| {
+            let select = tree.get_node(select_id)?;
+            let mut best: Option<(u8, usize, String)> = None;
+            for &child in &select.children {
+                let Some(node) = tree.get_node(child) else { continue };
+                if node.tag_name != "option" {
+                    continue;
+                }
+                let text = node
+                    .children
+                    .iter()
+                    .filter_map(|&c| tree.get_node(c))
+                    .filter(|n| n.node_type == NodeType::Text)
+                    .map(|n| n.text_content.trim())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                let value = node.attributes.get("value").cloned()
+                    .unwrap_or_else(|| text.clone());
+                let rank = if text == needle || value.to_lowercase() == needle {
+                    2
+                } else if text.contains(&needle) || value.to_lowercase().contains(&needle) {
+                    1
+                } else {
+                    continue;
+                };
+                if best.as_ref().map(|b| rank > b.0).unwrap_or(true) {
+                    best = Some((rank, child, value));
+                }
+            }
+            best.map(|(_, id, value)| (id, value))
+        });
+        let Some((option_id, value)) = chosen else {
+            return AgentActionResult::new(
+                format!("no option matching '{}' in '{}'", option, query),
+                NdaDelta::default(),
+            );
+        };
+
+        let before = self.capture_state_document();
+        let selector = self.selector_for_node(select_id);
+        if let Some(tree) = &mut self.dom_tree {
+            // Clear selection from siblings, mark the chosen option.
+            let siblings = tree.get_node(select_id).map(|n| n.children.clone()).unwrap_or_default();
+            for sib in siblings {
+                if let Some(node) = tree.get_node_mut(sib) {
+                    if node.tag_name == "option" {
+                        node.attributes.remove("selected");
+                    }
+                }
+            }
+            if let Some(node) = tree.get_node_mut(option_id) {
+                node.attributes.insert("selected".to_string(), "selected".to_string());
+            }
+            if let Some(node) = tree.get_node_mut(select_id) {
+                node.attributes.insert("value".to_string(), value.clone());
+            }
+            if let Some(sel) = &selector {
+                let _ = self.js_vm.dispatch_event(tree, sel, "change");
+            }
+            self.mutation_observer.observe_attribute_change(select_id, "value");
+        }
+        let after = self.capture_state_document();
+        AgentActionResult::new(
+            format!("selected '{}' on node_{}", value, select_id),
+            diff(&before, &after),
+        )
+    }
+
     pub fn classify_interstitial(&self, html_snippet: &str) -> InterstitialKind {
         InterstitialClassifier::classify_page(&self.page_title, html_snippet)
     }
@@ -1511,5 +1592,55 @@ mod agent_action_tests {
         let result = session.agent_press("Enter");
         assert!(result.status.contains("pressed Enter"), "got {}", result.status);
         assert!(result.status.contains("submitted"), "got {}", result.status);
+    }
+
+    #[test]
+    fn agent_select_by_label_picks_option_by_visible_text() {
+        let mut session = BrowserSession::new("s19".to_string());
+        session.load_html(
+            "about:test",
+            "<select aria-label=\"Country\">\
+             <option value=\"br\">Brazil</option>\
+             <option value=\"pt\">Portugal</option>\
+             </select>",
+        );
+        let select_id = node_id_by_tag(&session, "select");
+        let result = session.agent_select_by_label("Country", "Portugal");
+        assert!(result.status.contains("selected 'pt'"), "got {}", result.status);
+        let value = session.dom_tree.as_ref().unwrap()
+            .get_node(select_id).unwrap()
+            .attributes.get("value").cloned().unwrap_or_default();
+        assert_eq!(value, "pt");
+    }
+
+    #[test]
+    fn agent_select_by_label_moves_selected_attribute() {
+        let mut session = BrowserSession::new("s20".to_string());
+        session.load_html(
+            "about:test",
+            "<select aria-label=\"Country\">\
+             <option value=\"br\" selected>Brazil</option>\
+             <option value=\"pt\">Portugal</option>\
+             </select>",
+        );
+        session.agent_select_by_label("Country", "pt");
+        let tree = session.dom_tree.as_ref().unwrap();
+        let selected: Vec<String> = tree.nodes.iter()
+            .filter(|n| n.tag_name == "option" && n.attributes.contains_key("selected"))
+            .filter_map(|n| n.attributes.get("value").cloned())
+            .collect();
+        assert_eq!(selected, vec!["pt".to_string()]);
+    }
+
+    #[test]
+    fn agent_select_by_label_reports_missing_option() {
+        let mut session = BrowserSession::new("s21".to_string());
+        session.load_html(
+            "about:test",
+            "<select aria-label=\"Country\"><option value=\"br\">Brazil</option></select>",
+        );
+        let result = session.agent_select_by_label("Country", "Mars");
+        assert!(result.status.contains("no option matching"), "got {}", result.status);
+        assert!(result.delta.is_empty());
     }
 }

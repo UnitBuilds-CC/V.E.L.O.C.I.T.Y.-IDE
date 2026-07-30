@@ -20,13 +20,17 @@ pub struct PerformanceEntry {
     pub duration: f64,
 }
 
-static CONSOLE_OUTPUT: std::sync::Mutex<Vec<ConsoleRecord>> = std::sync::Mutex::new(Vec::new());
-#[allow(dead_code)]
-static PERFORMANCE_ENTRIES: std::sync::Mutex<Vec<PerformanceEntry>> = std::sync::Mutex::new(Vec::new());
-#[allow(dead_code)]
-static PERFORMANCE_MARKS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, f64>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
-static CONSOLE_TIMERS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, f64>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
-static CONSOLE_COUNTS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, u64>>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+// Console state is thread-local like the rest of the interpreter: each page
+// (and each test thread) owns its console, so parallel sessions never see
+// each other's records.
+thread_local! {
+    static CONSOLE_OUTPUT: std::cell::RefCell<Vec<ConsoleRecord>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PERFORMANCE_ENTRIES: std::cell::RefCell<Vec<PerformanceEntry>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PERFORMANCE_MARKS: std::cell::RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
+    static CONSOLE_TIMERS: std::cell::RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
+    static CONSOLE_COUNTS: std::cell::RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+}
+use std::cell::RefCell;
 
 pub fn perf_now() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -35,73 +39,71 @@ pub fn perf_now() -> f64 {
 
 pub(super) fn push_console(level: &str, args: Vec<JsValue>) {
     let rec = ConsoleRecord { level: level.to_string(), args, timestamp: perf_now() };
-    if let Ok(mut out) = CONSOLE_OUTPUT.lock() { out.push(rec); }
+    CONSOLE_OUTPUT.with(|o| o.borrow_mut().push(rec));
 }
 
 #[allow(dead_code)]
 pub fn get_console_output() -> Vec<ConsoleRecord> {
-    CONSOLE_OUTPUT.lock().map(|o| o.clone()).unwrap_or_default()
+    CONSOLE_OUTPUT.with(|o| o.borrow().clone())
 }
 
 pub fn clear_console_output() {
-    if let Ok(mut out) = CONSOLE_OUTPUT.lock() { out.clear(); }
+    CONSOLE_OUTPUT.with(|o| o.borrow_mut().clear());
 }
 
 #[allow(dead_code)]
 pub fn get_performance_entries() -> Vec<PerformanceEntry> {
-    PERFORMANCE_ENTRIES.lock().map(|e| e.clone()).unwrap_or_default()
+    PERFORMANCE_ENTRIES.with(|e| e.borrow().clone())
 }
 
 #[allow(dead_code)]
 pub fn clear_performance_entries() {
-    if let Ok(mut e) = PERFORMANCE_ENTRIES.lock() { e.clear(); }
+    PERFORMANCE_ENTRIES.with(|e| e.borrow_mut().clear());
 }
 
 pub(super) fn perf_mark(name: &str) {
     let now = perf_now();
-    if let Ok(mut marks) = PERFORMANCE_MARKS.lock() { marks.insert(name.to_string(), now); }
+    PERFORMANCE_MARKS.with(|m| m.borrow_mut().insert(name.to_string(), now));
 }
 
 pub(super) fn perf_measure(name: &str) -> f64 {
     let now = perf_now();
-    if let Ok(mut marks) = PERFORMANCE_MARKS.lock() {
-        if let Some(start) = marks.remove(name) {
-            let duration = now - start;
-            if let Ok(mut entries) = PERFORMANCE_ENTRIES.lock() {
-                entries.push(PerformanceEntry {
-                    name: name.to_string(),
-                    entry_type: "measure".to_string(),
-                    start_time: start,
-                    duration,
-                });
-            }
-            return duration;
-        }
+    let start = PERFORMANCE_MARKS.with(|m| m.borrow_mut().remove(name));
+    if let Some(start) = start {
+        let duration = now - start;
+        PERFORMANCE_ENTRIES.with(|e| {
+            e.borrow_mut().push(PerformanceEntry {
+                name: name.to_string(),
+                entry_type: "measure".to_string(),
+                start_time: start,
+                duration,
+            });
+        });
+        return duration;
     }
     0.0
 }
 
 pub(super) fn console_time(label: &str) {
-    if let Ok(mut timers) = CONSOLE_TIMERS.lock() { timers.insert(label.to_string(), perf_now()); }
+    CONSOLE_TIMERS.with(|t| t.borrow_mut().insert(label.to_string(), perf_now()));
 }
 
 pub(super) fn console_time_end(label: &str) -> Option<f64> {
     let now = perf_now();
-    if let Ok(mut timers) = CONSOLE_TIMERS.lock() {
-        if let Some(start) = timers.remove(label) { return Some(now - start); }
-    }
-    None
+    CONSOLE_TIMERS.with(|t| t.borrow_mut().remove(label)).map(|start| now - start)
 }
 
 pub(super) fn console_count(label: &str) -> u64 {
-    let mut counts = CONSOLE_COUNTS.lock().unwrap();
-    let entry = counts.entry(label.to_string()).or_insert(0);
-    *entry += 1;
-    *entry
+    CONSOLE_COUNTS.with(|c| {
+        let mut counts = c.borrow_mut();
+        let entry = counts.entry(label.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
+    })
 }
 
 pub(super) fn console_count_reset(label: &str) {
-    if let Ok(mut counts) = CONSOLE_COUNTS.lock() { counts.insert(label.to_string(), 0); }
+    CONSOLE_COUNTS.with(|c| { c.borrow_mut().insert(label.to_string(), 0); });
 }
 
 /// Render a value as a Markdown table for `console.table`.
