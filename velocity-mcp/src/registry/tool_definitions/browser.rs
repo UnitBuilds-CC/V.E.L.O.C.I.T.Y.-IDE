@@ -1065,6 +1065,20 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_links".to_string(),
+            description: "List the current page's navigation map in the native browser session: every link's text and href target in document order, with the node id to click. Optional case-insensitive filter over link text and href. The token-cheap answer to \"where can I go from here\".".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "filter": { "type": "string", "description": "Case-insensitive substring matched against link text and href." },
+                    "limit": { "type": "integer", "description": "Maximum links to return. Defaults to 50." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_back".to_string(),
             description: "Navigate the native browser session back to the previous page in its history stack and return the resulting NDA delta and refreshed AOM view.".to_string(),
             input_schema: json!({

@@ -297,6 +297,7 @@ pub fn handle_native_tool(
         | "browser_native_screencast"
         | "browser_native_find"
         | "browser_native_validate"
+        | "browser_native_links"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -468,6 +469,58 @@ pub fn handle_native_tool(
             }
             if matched > hits.len() {
                 out.push_str(&format!("  … {} more (raise limit)\n", matched - hits.len()));
+            }
+            out
+        }));
+    }
+
+    // The page's navigation map: every link's text and target in document
+    // order — the AOM view names links but never shows their hrefs.
+    if name == "browser_native_links" {
+        let filter = arguments["filter"].as_str().unwrap_or("");
+        let limit = arguments["limit"].as_u64().unwrap_or(50) as usize;
+        let mut links = bridge.links(filter);
+        let matched = links.len();
+        links.truncate(limit);
+        return Ok(Some(if compact {
+            let items: Vec<serde_json::Value> = links
+                .iter()
+                .map(|(id, text, href)| {
+                    serde_json::json!({ "nodeId": id, "text": text, "href": href })
+                })
+                .collect();
+            serde_json::to_string_pretty(&serde_json::json!({
+                "matched": matched,
+                "filter": filter,
+                "links": items,
+            }))
+            .map_err(|e| format!("serialise links report: {e}"))?
+        } else if links.is_empty() {
+            if filter.is_empty() {
+                "(no links on page)".to_string()
+            } else {
+                format!("no links matched \"{filter}\"\n")
+            }
+        } else {
+            let mut out = format!(
+                "{matched} link{}{}:\n",
+                if matched == 1 { "" } else { "s" },
+                if filter.is_empty() {
+                    String::new()
+                } else {
+                    format!(" matching \"{filter}\"")
+                },
+            );
+            for (id, text, href) in &links {
+                out.push_str(&format!(
+                    "  [{}] \"{}\" -> {}\n",
+                    id,
+                    if text.is_empty() { "(no text)" } else { text.as_str() },
+                    href,
+                ));
+            }
+            if matched > links.len() {
+                out.push_str(&format!("  … {} more (raise limit)\n", matched - links.len()));
             }
             out
         }));
@@ -1605,5 +1658,55 @@ mod native_label_tool_tests {
             serde_json::from_str(&compact).expect("compact validate is valid JSON");
         assert_eq!(report["controls"], 2);
         assert_eq!(report["invalid"], 0);
+    }
+
+    #[test]
+    fn links_tool_lists_navigation_map_with_filter_and_limit() {
+        let html = r#"<html><head><title>Nav</title></head><body>
+            <a href="/pricing">Pricing</a>
+            <a href="/docs">Docs</a>
+            <a href="https://ext.example/x">External <b>Deal</b></a>
+            <a name="top">Bare anchor</a>
+        </body></html>"#;
+        get_or_create_native_bridge("t26-links")
+            .lock()
+            .unwrap()
+            .load_html("http://local.test/nav", html);
+
+        let out = call("browser_native_links", json!({ "sessionId": "t26-links" }));
+        assert!(out.starts_with("3 links:"), "bare anchor is excluded: {out}");
+        assert!(out.contains("\"Pricing\" -> /pricing"), "{out}");
+        assert!(
+            out.contains("\"ExternalDeal\" -> https://ext.example/x"),
+            "nested text is included: {out}"
+        );
+
+        let out = call(
+            "browser_native_links",
+            json!({ "sessionId": "t26-links", "filter": "docs" }),
+        );
+        assert!(out.starts_with("1 link matching \"docs\":"), "{out}");
+        assert!(out.contains("-> /docs"), "{out}");
+
+        let out = call(
+            "browser_native_links",
+            json!({ "sessionId": "t26-links", "filter": "zzz-nope" }),
+        );
+        assert!(out.contains("no links matched"), "{out}");
+
+        let out = call(
+            "browser_native_links",
+            json!({ "sessionId": "t26-links", "limit": 1 }),
+        );
+        assert!(out.contains("… 2 more"), "truncation is reported: {out}");
+
+        let compact = call(
+            "browser_native_links",
+            json!({ "sessionId": "t26-links", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact links is valid JSON");
+        assert_eq!(report["matched"], 3);
+        assert_eq!(report["links"].as_array().expect("links array").len(), 3);
     }
 }

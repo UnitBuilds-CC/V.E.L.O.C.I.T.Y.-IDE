@@ -592,6 +592,42 @@ impl NativeBrowserBridge {
         results
     }
 
+    /// The page's navigation map: every `<a href>` as
+    /// `(node_id, link_text, href)`, in document order. Optional
+    /// case-insensitive filter over text and href. The token-cheap answer to
+    /// "where can I go from here" — the AOM view names links but never shows
+    /// their targets.
+    pub fn links(&self, filter: &str) -> Vec<(usize, String, String)> {
+        let Some(tree) = &self.active_session.dom_tree else {
+            return Vec::new();
+        };
+        let filter_lc = filter.to_lowercase();
+        let mut out = Vec::new();
+        for node in &tree.nodes {
+            if node.node_type != velocity_browser::parser::html::NodeType::Element
+                || node.tag_name != "a"
+            {
+                continue;
+            }
+            let Some(href) = node.attributes.get("href") else {
+                continue;
+            };
+            let text = tree
+                .text_content(node.id)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !filter_lc.is_empty()
+                && !text.to_lowercase().contains(&filter_lc)
+                && !href.to_lowercase().contains(&filter_lc)
+            {
+                continue;
+            }
+            out.push((node.id, text, href.clone()));
+        }
+        out
+    }
+
     /// Hover an element by node id.
     pub fn agent_hover(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.active_session.capture_state_document();
