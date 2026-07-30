@@ -161,6 +161,66 @@ impl AdaptiveConfidence {
     pub fn pattern_count(&self) -> usize {
         self.entries.len()
     }
+
+    /// Export every learned pattern (site-specific and generic) as a lossless
+    /// NDA document so experience survives across sessions. Subjects encode
+    /// the key as `role|action|domain` (generic entries use domain `*`); the
+    /// EMA is stored as an integer scaled by 10_000 to stay a literal fact.
+    pub fn export_nda(&self) -> crate::nda::NdaDocument {
+        use crate::predicates::{LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS};
+        let mut doc = crate::nda::NdaDocument::new();
+        let mut all: Vec<(&ConfidenceKey, &ConfidenceEntry)> =
+            self.entries.iter().chain(self.generic_entries.iter()).collect();
+        // Deterministic fact order so exports of equal state are identical.
+        all.sort_by(|a, b| {
+            (&a.0.domain, &a.0.role, &a.0.action).cmp(&(&b.0.domain, &b.0.role, &b.0.action))
+        });
+        for (key, entry) in all {
+            let subject = format!("{}|{}|{}", key.role, key.action, key.domain);
+            doc.push_int(&subject, LEARNED_CONFIDENCE, (entry.ema_score * 10_000.0).round() as i64);
+            doc.push_int(&subject, LEARNED_OBSERVATIONS, entry.observations as i64);
+        }
+        doc
+    }
+
+    /// Restore patterns from a document produced by [`Self::export_nda`].
+    /// Imported entries overwrite same-key entries; everything else is kept.
+    /// Returns the number of patterns restored.
+    pub fn import_nda(&mut self, doc: &crate::nda::NdaDocument) -> usize {
+        use crate::nda::NdaObject;
+        use crate::predicates::{LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS};
+        // Collect both halves of each pattern before constructing entries.
+        let mut partial: HashMap<String, (Option<f64>, Option<u32>)> = HashMap::new();
+        for fact in &doc.facts {
+            let Some(subject) = doc.subject_str(fact) else { continue };
+            let NdaObject::Int(n) = fact.object else { continue };
+            let slot = partial.entry(subject.to_string()).or_default();
+            match fact.predicate {
+                LEARNED_CONFIDENCE => slot.0 = Some(n as f64 / 10_000.0),
+                LEARNED_OBSERVATIONS => slot.1 = Some(n.max(0) as u32),
+                _ => {}
+            }
+        }
+        let mut restored = 0usize;
+        for (subject, (ema, observations)) in partial {
+            let (Some(ema_score), Some(observations)) = (ema, observations) else { continue };
+            let mut parts = subject.splitn(3, '|');
+            let (Some(role), Some(action), Some(domain)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let key = ConfidenceKey::new(role, action, domain);
+            let entry = ConfidenceEntry { ema_score, observations, alpha: 0.3 };
+            if domain == "*" {
+                self.generic_entries.insert(key, entry);
+            } else {
+                self.entries.insert(key, entry);
+            }
+            restored += 1;
+        }
+        restored
+    }
 }
 
 /// High-confidence button/link text patterns.
@@ -259,5 +319,53 @@ mod tests {
 
         let report = ac.domain_report("example.com");
         assert_eq!(report.len(), 2);
+    }
+
+    #[test]
+    fn export_import_round_trips_learned_state() {
+        let mut ac = AdaptiveConfidence::new();
+        for _ in 0..5 {
+            ac.record("textbox", "fill", "example.com", 0.9);
+        }
+        let learned = ac.predict("textbox", "fill", "example.com");
+        assert!(learned > 0.85, "precondition: learned high confidence");
+
+        // Round-trip through the binary stream, like the artifact on disk.
+        let bytes = ac.export_nda().to_binary_stream();
+        let doc = crate::nda::NdaDocument::from_binary_stream(&bytes).expect("stream parses");
+
+        let mut fresh = AdaptiveConfidence::new();
+        // site + generic entries for the one pattern
+        assert_eq!(fresh.import_nda(&doc), 2);
+        let restored = fresh.predict("textbox", "fill", "example.com");
+        assert!(
+            (restored - learned).abs() < 0.001,
+            "restored {restored} should match learned {learned}"
+        );
+        // Generic fallback survives too: unseen domain uses the "*" entry.
+        assert!(fresh.predict("textbox", "fill", "elsewhere.com") > 0.85);
+    }
+
+    #[test]
+    fn import_skips_malformed_facts() {
+        let mut doc = crate::nda::NdaDocument::new();
+        // Missing observations half; wrong subject shape; string object.
+        doc.push_int("textbox|fill|example.com", crate::predicates::LEARNED_CONFIDENCE, 9000);
+        doc.push_int("not-a-key", crate::predicates::LEARNED_CONFIDENCE, 9000);
+        doc.push_str("textbox|fill|x.com", crate::predicates::LEARNED_CONFIDENCE, "0.9");
+        let mut ac = AdaptiveConfidence::new();
+        assert_eq!(ac.import_nda(&doc), 0);
+        assert_eq!(ac.pattern_count(), 0);
+    }
+
+    #[test]
+    fn export_is_deterministic() {
+        let mut ac = AdaptiveConfidence::new();
+        ac.record("button", "click", "b.com", 0.8);
+        ac.record("textbox", "fill", "a.com", 0.9);
+        assert_eq!(
+            ac.export_nda().to_binary_stream(),
+            ac.export_nda().to_binary_stream()
+        );
     }
 }

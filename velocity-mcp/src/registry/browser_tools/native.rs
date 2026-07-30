@@ -331,6 +331,7 @@ pub fn handle_native_tool(
         | "browser_native_checkpoint"
         | "browser_native_reflect"
         | "browser_native_predict"
+        | "browser_native_learn"
         | "browser_native_tab_open"
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
@@ -802,6 +803,89 @@ pub fn handle_native_tool(
             }
         }
         return Ok(Some(out));
+    }
+
+    // Persist / restore the learned confidence store as an NDA artifact so
+    // experience actually survives across sessions instead of dying with the
+    // process. The artifact is the lossless NdaDocument binary stream.
+    if name == "browser_native_learn" {
+        let action = arguments["action"].as_str().unwrap_or("save");
+        let default_file = format!("{session_id}_confidence.nda");
+        let file_name = arguments["file"].as_str().unwrap_or(&default_file);
+        match action {
+            "save" => {
+                let doc = bridge.confidence.export_nda();
+                // Each pattern is two facts: confidence + observations.
+                let pattern_count = doc.facts.len() / 2;
+                let path = persist_browser_artifact(root, file_name, &doc.to_binary_stream())?;
+                return Ok(Some(if compact {
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "save",
+                        "path": path.display().to_string(),
+                        "patternCount": pattern_count,
+                    }))
+                    .map_err(|e| format!("serialise learn report: {e}"))?
+                } else {
+                    format!(
+                        "saved {} learned pattern(s) to {}\n",
+                        pattern_count,
+                        path.display()
+                    )
+                }));
+            }
+            "load" => {
+                let path = root
+                    .join(".velocity")
+                    .join("browser_artifacts")
+                    .join(file_name);
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("failed to read learned patterns from {}: {e}", path.display()))?;
+                let doc = velocity_browser::NdaDocument::from_binary_stream(&bytes)
+                    .map_err(|e| format!("invalid learned-pattern artifact: {e}"))?;
+                let restored = bridge.confidence.import_nda(&doc);
+                let patterns = bridge.confidence_report();
+                if compact {
+                    let pattern_json: Vec<serde_json::Value> = patterns
+                        .iter()
+                        .map(|(role, action, conf, obs)| {
+                            serde_json::json!({
+                                "role": role,
+                                "action": action,
+                                "confidence": (conf * 100.0).round() / 100.0,
+                                "observations": obs,
+                            })
+                        })
+                        .collect();
+                    return Ok(Some(
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "action": "load",
+                            "path": path.display().to_string(),
+                            "restored": restored,
+                            "patterns": pattern_json,
+                        }))
+                        .map_err(|e| format!("serialise learn report: {e}"))?,
+                    ));
+                }
+                let mut out = format!(
+                    "restored {} learned pattern(s) from {}\n",
+                    restored,
+                    path.display()
+                );
+                if !patterns.is_empty() {
+                    out.push_str("learned patterns on this domain:\n");
+                    for (role, action, conf, obs) in &patterns {
+                        out.push_str(&format!("  {action} on {role}: {conf:.2} ({obs} obs)\n"));
+                    }
+                }
+                return Ok(Some(out));
+            }
+            other => {
+                return Err(format!(
+                    "unknown learn action '{other}' (expected save or load)"
+                )
+                .into())
+            }
+        }
     }
 
     // Pre-flight HTML5 constraint validation: know why a submit would fail
@@ -2222,5 +2306,83 @@ mod native_label_tool_tests {
         );
         assert_eq!(report["patterns"][0]["role"], "textbox", "{compact}");
         assert_eq!(report["patterns"][0]["observations"], 3, "{compact}");
+    }
+
+    #[test]
+    fn learn_tool_persists_confidence_across_sessions() {
+        load("t31-learn-a");
+        let root = temp_root("learn31");
+
+        // Teach session A that fills on textboxes succeed on this domain.
+        for text in ["a@y.example", "b@y.example", "c@y.example"] {
+            call(
+                "browser_native_fill_label",
+                json!({ "sessionId": "t31-learn-a", "label": "Email", "text": text }),
+            );
+        }
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({ "sessionId": "t31-learn-a", "action": "save" }),
+        );
+        assert!(out.contains("saved"), "{out}");
+        assert!(out.contains("t31-learn-a_confidence.nda"), "output names the artifact: {out}");
+        let path = root
+            .join(".velocity")
+            .join("browser_artifacts")
+            .join("t31-learn-a_confidence.nda");
+        assert!(path.exists(), "confidence artifact persisted");
+
+        // A brand-new session starts from the conservative default...
+        load("t31-learn-b");
+        let out = call("browser_native_predict", json!({ "sessionId": "t31-learn-b" }));
+        assert!(out.contains("0.70"), "fresh session has no experience: {out}");
+
+        // ...until it loads the experience session A recorded.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t31-learn-b",
+                "action": "load",
+                "file": "t31-learn-a_confidence.nda",
+            }),
+        );
+        assert!(out.contains("restored 2 learned pattern(s)"), "site + generic: {out}");
+        assert!(out.contains("learned patterns on this domain:"), "{out}");
+        assert!(out.contains("fill on textbox:"), "{out}");
+
+        let compact = call(
+            "browser_native_predict",
+            json!({ "sessionId": "t31-learn-b", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact predict is valid JSON");
+        assert_eq!(report["suggestion"]["action"], "fill", "{compact}");
+        assert!(
+            report["suggestion"]["confidence"].as_f64().expect("confidence") > 0.8,
+            "restored experience drives prediction: {compact}"
+        );
+    }
+
+    #[test]
+    fn learn_tool_rejects_bad_action_and_missing_artifact() {
+        load("t31-learn-err");
+        let root = temp_root("learn31err");
+        let err = handle_native_tool(
+            &root,
+            "browser_native_learn",
+            &json!({ "sessionId": "t31-learn-err", "action": "forget" }),
+        )
+        .expect_err("unknown action must be rejected");
+        assert!(err.to_string().contains("unknown learn action"), "{err}");
+
+        let err = handle_native_tool(
+            &root,
+            "browser_native_learn",
+            &json!({ "sessionId": "t31-learn-err", "action": "load", "file": "nope.nda" }),
+        )
+        .expect_err("missing artifact must be reported");
+        assert!(err.to_string().contains("failed to read learned patterns"), "{err}");
     }
 }

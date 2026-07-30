@@ -13,6 +13,7 @@
 //! - 100..=129  Session / document
 //! - 200..=249  Network
 //! - 250..=279  OCR / opaque visual regions
+//! - 280..=299  Learned experience (adaptive confidence)
 //!
 //! Numeric values of already-persisted predicates are preserved to stay
 //! compatible with existing NDA streams and tests.
@@ -108,6 +109,15 @@ pub const OCR_TEXT: u16 = 252;
 /// Formatted "x,y,w,h". Confidence is intentionally 0 - never fabricated.
 pub const OCR_OPAQUE_REGION: u16 = 253;
 
+// ---------------------------------------------------------------------------
+// Learned experience (adaptive confidence): 280..=299
+// ---------------------------------------------------------------------------
+/// Learned EMA confidence for a "role|action|domain" pattern, scaled by
+/// 10_000 so the fact stays an integer literal (9000 => 0.9).
+pub const LEARNED_CONFIDENCE: u16 = 280;
+/// Observation count backing a learned confidence pattern.
+pub const LEARNED_OBSERVATIONS: u16 = 281;
+
 /// Human-readable name for a predicate id — used when rendering NDA facts as
 /// text for LLM consumption (names cost fewer reasoning tokens than raw ids).
 pub fn predicate_name(id: u16) -> &'static str {
@@ -145,6 +155,8 @@ pub fn predicate_name(id: u16) -> &'static str {
         NET_STATUS => "net.status",
         OCR_TEXT => "ocr.text",
         OCR_OPAQUE_REGION => "ocr.opaqueRegion",
+        LEARNED_CONFIDENCE => "learned.confidence",
+        LEARNED_OBSERVATIONS => "learned.observations",
         _ => "unknown",
     }
 }
@@ -164,6 +176,7 @@ mod tests {
         assert_eq!(SESSION_URL, 100);
         assert_eq!(NET_METHOD, 200);
         assert_eq!(OCR_TEXT, 252);
+        assert_eq!(LEARNED_CONFIDENCE, 280);
     }
 
     #[test]
@@ -178,6 +191,7 @@ mod tests {
             SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
             SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
+            LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {
@@ -197,6 +211,7 @@ mod tests {
             SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
             SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
+            LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {
