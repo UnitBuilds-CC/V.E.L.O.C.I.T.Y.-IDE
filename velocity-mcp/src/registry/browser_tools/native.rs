@@ -832,6 +832,14 @@ pub fn handle_native_tool(
         let memory_limit = arguments["memories"].as_u64().unwrap_or(3) as usize;
         let recent_n = arguments["recent"].as_u64().unwrap_or(5) as usize;
         let view = bridge.current_view();
+        // Structure digest: element counts + heading outline, minus the
+        // "Page:" identity line the brief header already carries.
+        let digest: String = bridge
+            .page_summary_text()
+            .lines()
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join("\n");
         let patterns = bridge.confidence_report();
         let suggestion = bridge.predict_learned();
         let detail = suggestion
@@ -905,6 +913,7 @@ pub fn handle_native_tool(
                     "url": view.url,
                     "title": view.title,
                     "elements": view.elements.len(),
+                    "digest": (!digest.is_empty()).then_some(digest.as_str()),
                     "suggestion": sugg_json,
                     "patterns": pattern_json,
                     "memories": memory_json,
@@ -920,6 +929,10 @@ pub fn handle_native_tool(
             view.title,
             view.elements.len()
         );
+        if !digest.is_empty() {
+            out.push_str(&digest);
+            out.push('\n');
+        }
         match (&suggestion, detail) {
             (Some(p), Some(e)) => out.push_str(&format!(
                 "suggested next action: {} {} [{}] \"{}\" (confidence {:.2})\n",
@@ -3137,6 +3150,39 @@ mod native_label_tool_tests {
         )
         .expect_err("unknown format is rejected");
         assert!(err.to_string().contains("unknown page_text format 'csv'"), "{err}");
+    }
+
+    #[test]
+    fn brief_includes_page_structure_digest() {
+        let bridge = get_or_create_native_bridge("t39-digest");
+        bridge.lock().unwrap().load_html(
+            "http://local.test/prices",
+            "<html><head><title>Prices</title></head><body>\
+             <h1>Plan Prices</h1><h2>Monthly</h2>\
+             <a href=\"/signup\">Sign up</a>\
+             <table><tr><td>x</td></tr></table></body></html>",
+        );
+        let out = call("browser_native_brief", json!({ "sessionId": "t39-digest" }));
+        assert!(out.contains("brief for http://local.test/prices"), "{out}");
+        assert!(out.contains("1 link(s)"), "counts surface in the brief: {out}");
+        assert!(out.contains("1 table(s)"), "{out}");
+        assert!(out.contains("Headings:"), "{out}");
+        assert!(out.contains("# Plan Prices"), "{out}");
+        assert!(out.contains("## Monthly"), "{out}");
+
+        let compact = call(
+            "browser_native_brief",
+            json!({ "sessionId": "t39-digest", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact brief is valid JSON");
+        let digest = report["digest"].as_str().expect("digest present");
+        assert!(digest.contains("1 link(s)"), "{compact}");
+        assert!(digest.contains("## Monthly"), "{compact}");
+        assert!(
+            !digest.contains("Page: Prices"),
+            "identity line stays out of digest: {compact}"
+        );
     }
 
     #[test]

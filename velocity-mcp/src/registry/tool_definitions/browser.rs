@@ -1132,7 +1132,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_brief".to_string(),
-            description: "One-call pre-action context bundle: page identity, suggested next action, learned per-domain patterns, semantically similar remembered pages, failure lessons and recent action outcomes. Replaces separate predict + recall + reflect calls, saving tokens.".to_string(),
+            description: "One-call pre-action context bundle: page identity, structure digest (element counts + heading outline), suggested next action, learned per-domain patterns, semantically similar remembered pages, failure lessons and recent action outcomes. Replaces separate predict + recall + reflect calls, saving tokens.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
