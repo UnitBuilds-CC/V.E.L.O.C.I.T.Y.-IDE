@@ -1145,7 +1145,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_learn".to_string(),
-            description: "Persist or restore the session's experience stores as NDA artifacts under .velocity/browser_artifacts/, so what one session learned improves later ones. what=confidence (default) is the learned per-domain action confidence; what=memory is the vector page memory (remembered pages); what=outcomes is the scored action-outcome history that feeds browser_native_reflect; what=all bundles all three stores into a single artifact. action=save exports the store; action=load imports a previously saved artifact into the current session; action=list enumerates every saved artifact (file, kind, size) so an agent can discover inheritable experience.".to_string(),
+            description: "Persist or restore the session's experience stores as NDA artifacts under .velocity/browser_artifacts/, so what one session learned improves later ones. what=confidence (default) is the learned per-domain action confidence; what=memory is the vector page memory (remembered pages); what=outcomes is the scored action-outcome history that feeds browser_native_reflect; what=all bundles all three stores into a single artifact. action=save exports the store; action=load imports a previously saved artifact into the current session; action=list enumerates every saved artifact (file, kind, size) so an agent can discover inheritable experience. Saving with file=default_all.nda publishes the bundle as the workspace default: every new session auto-inherits it on first use.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

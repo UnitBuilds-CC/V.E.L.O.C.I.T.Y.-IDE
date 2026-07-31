@@ -58,6 +58,9 @@ pub struct NativeBrowserBridge {
     /// Learned per-(role, action, domain) confidence fed by outcome scores;
     /// powers "what should I try next" predictions.
     pub confidence: AdaptiveConfidence,
+    /// Whether this session already tried to inherit the workspace-default
+    /// experience bundle; seeding runs at most once per session.
+    pub experience_seeded: bool,
 }
 
 static NATIVE_BRIDGES: LazyLock<Arc<Mutex<HashMap<String, Arc<Mutex<NativeBrowserBridge>>>>>> =
@@ -118,7 +121,29 @@ impl NativeBrowserBridge {
             scorer: OutcomeScorer::new(),
             reflector: ReflectionEngine::new(),
             confidence: AdaptiveConfidence::new(),
+            experience_seeded: false,
         }
+    }
+
+    /// Inherit the workspace-default experience bundle
+    /// (`.velocity/browser_artifacts/default_all.nda`) into this session's
+    /// stores. Runs at most once per session and is silent when no bundle
+    /// exists; returns (patterns, memories, outcomes) restored.
+    pub fn seed_default_experience(&mut self, workspace_root: &Path) -> Option<(usize, usize, usize)> {
+        if self.experience_seeded {
+            return None;
+        }
+        self.experience_seeded = true;
+        let path = workspace_root
+            .join(".velocity")
+            .join("browser_artifacts")
+            .join("default_all.nda");
+        let bytes = std::fs::read(&path).ok()?;
+        let doc = velocity_browser::NdaDocument::from_binary_stream(&bytes).ok()?;
+        let patterns = self.confidence.import_nda(&doc);
+        let memories = self.vector_memory.import_nda(&doc);
+        let outcomes = self.scorer.import_nda(&doc);
+        Some((patterns, memories, outcomes))
     }
 
     pub fn navigate(&mut self, url: &str) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {

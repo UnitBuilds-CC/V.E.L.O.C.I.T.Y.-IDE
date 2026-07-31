@@ -347,6 +347,10 @@ pub fn handle_native_tool(
     let mut bridge = bridge
         .lock()
         .map_err(|_| "native browser bridge lock poisoned")?;
+    // First touch of a session inherits the workspace-default experience
+    // bundle (default_all.nda) if one was saved, so learned patterns, page
+    // memories and outcome lessons carry over without an explicit load call.
+    bridge.seed_default_experience(root);
 
     // Read is view-only; everything else is an action producing a delta.
     if name == "browser_native_read" {
@@ -2979,6 +2983,88 @@ mod native_label_tool_tests {
         assert_eq!(artifacts[0]["kind"], "all");
         assert!(artifacts[0]["bytes"].as_u64().unwrap() > 0);
         assert_eq!(artifacts[1]["kind"], "confidence");
+    }
+
+    #[test]
+    fn default_experience_bundle_seeds_new_sessions() {
+        let root = temp_root("t37seed");
+        let _ = std::fs::remove_dir_all(root.join(".velocity").join("browser_artifacts"));
+
+        // Session A builds experience and publishes it as the workspace
+        // default bundle.
+        load("t37-seed-a");
+        call_rooted(
+            &root,
+            "browser_native_fill_label",
+            json!({ "sessionId": "t37-seed-a", "label": "Email", "text": "seed@b.example" }),
+        );
+        call_rooted(
+            &root,
+            "browser_native_remember",
+            json!({
+                "sessionId": "t37-seed-a",
+                "note": "golf-hotel-memo checkout page",
+                "tags": ["checkout"],
+                "outcome": 0.9,
+            }),
+        );
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t37-seed-a",
+                "action": "save",
+                "what": "all",
+                "file": "default_all.nda",
+            }),
+        );
+        assert!(out.contains("default_all.nda"), "{out}");
+        assert!(out.contains("1 page memory(ies)"), "{out}");
+
+        // A brand-new session inherits everything on its first rooted call —
+        // no explicit load needed.
+        load("t37-seed-b");
+        let out = call_rooted(
+            &root,
+            "browser_native_recall",
+            json!({ "sessionId": "t37-seed-b", "query": "golf-hotel-memo", "mode": "keyword" }),
+        );
+        assert!(out.contains("checkout"), "auto-seeded memory is searchable: {out}");
+
+        let out = call_rooted(&root, "browser_native_reflect", json!({ "sessionId": "t37-seed-b" }));
+        assert!(
+            out.contains("Recent action outcomes:"),
+            "auto-seeded outcomes feed reflection: {out}"
+        );
+        assert!(out.contains("fill on [textbox]"), "{out}");
+
+        // Seeding already applied the bundle, so an explicit load restores 0.
+        let out = call_rooted(
+            &root,
+            "browser_native_learn",
+            json!({
+                "sessionId": "t37-seed-b",
+                "action": "load",
+                "what": "all",
+                "file": "default_all.nda",
+            }),
+        );
+        assert!(out.contains("0 page memory(ies)"), "seed already applied: {out}");
+        assert!(out.contains("0 action outcome(s)"), "{out}");
+
+        // A session rooted elsewhere (no bundle) stays empty.
+        let bare = temp_root("t37bare");
+        let _ = std::fs::remove_dir_all(bare.join(".velocity").join("browser_artifacts"));
+        load("t37-seed-c");
+        let out = call_rooted(
+            &bare,
+            "browser_native_recall",
+            json!({ "sessionId": "t37-seed-c", "query": "golf-hotel-memo", "mode": "keyword" }),
+        );
+        assert!(
+            !out.contains("checkout"),
+            "no bundle means no inheritance: {out}"
+        );
     }
 
     #[test]
