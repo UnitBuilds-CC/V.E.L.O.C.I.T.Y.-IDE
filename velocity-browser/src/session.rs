@@ -846,6 +846,26 @@ impl BrowserSession {
         "aside", "svg", "iframe", "object", "embed",
     ];
 
+    /// Class/id fragments that mark a container as boilerplate even when its
+    /// tag looks harmless (e.g. `<div class="cookie-banner">`).
+    const BOILERPLATE_PATTERNS: &'static [&'static str] = &[
+        "sidebar", "footer", "menu", "advert", "banner", "cookie", "popup",
+        "modal", "social", "share", "related",
+    ];
+
+    /// True when the element's class or id matches a boilerplate pattern.
+    fn is_boilerplate_container(node: &crate::parser::html::DomNode) -> bool {
+        for key in ["class", "id"] {
+            if let Some(value) = node.attributes.get(key) {
+                let value = value.to_ascii_lowercase();
+                if Self::BOILERPLATE_PATTERNS.iter().any(|p| value.contains(p)) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Render the page as markdown: headings, paragraphs, lists, links and
     /// emphasis survive; boilerplate (nav/footer/script/...) is dropped.
     /// Structure costs the agent almost nothing and disambiguates a page far
@@ -868,11 +888,44 @@ impl BrowserSession {
         out.trim_end().to_string()
     }
 
+    /// Readability projection: markdown of just the main content region.
+    /// Roots at `<main>` (or `<article>`) when present, falls back to
+    /// `<body>`, and drops containers whose class/id look like chrome
+    /// (sidebar, cookie banner, ...). The cheapest way to read an article.
+    pub fn page_content_markdown(&self) -> String {
+        let Some(tree) = self.dom_tree.as_ref() else {
+            return String::new();
+        };
+        let root = ["main", "article", "body"]
+            .iter()
+            .find_map(|tag| tree.nodes.iter().find(|n| n.tag_name == *tag))
+            .map(|n| n.id);
+        let mut out = String::new();
+        if !self.page_title.is_empty() && self.page_title != "Untitled Page" {
+            out.push_str("# ");
+            out.push_str(&self.page_title);
+            out.push_str("\n\n");
+        }
+        match root {
+            Some(id) => Self::markdown_walk(tree, id, &mut out),
+            // Fragment documents have no body; render everything instead.
+            None => {
+                for node in &tree.nodes {
+                    if node.parent.is_none() {
+                        Self::markdown_walk(tree, node.id, &mut out);
+                    }
+                }
+            }
+        }
+        out.trim_end().to_string()
+    }
+
     fn markdown_walk(tree: &DomTree, id: usize, out: &mut String) {
         use crate::parser::html::NodeType;
         let Some(node) = tree.get_node(id) else { return };
         if node.node_type == NodeType::Element
-            && Self::BOILERPLATE_TAGS.contains(&node.tag_name.as_str())
+            && (Self::BOILERPLATE_TAGS.contains(&node.tag_name.as_str())
+                || Self::is_boilerplate_container(node))
         {
             return;
         }
@@ -2336,9 +2389,48 @@ mod agent_action_tests {
     }
 
     #[test]
+    fn page_content_markdown_roots_at_main_and_drops_chrome() {
+        let mut session = BrowserSession::new("s34".to_string());
+        session.load_html(
+            "about:test",
+            "<html><head><title>Post</title></head><body>\
+             <nav><a href=\"/home\">Home</a></nav>\
+             <div class=\"cookie-banner\"><p>We use cookies.</p></div>\
+             <main><h1>Story</h1><p>Body of the story.</p></main>\
+             <div class=\"sidebar\"><p>Trending now</p></div>\
+             </body></html>",
+        );
+        let content = session.page_content_markdown();
+        assert!(content.contains("# Post"), "{content}");
+        assert!(content.contains("# Story"), "{content}");
+        assert!(content.contains("Body of the story."), "{content}");
+        assert!(!content.contains("We use cookies."), "cookie banner dropped: {content}");
+        assert!(!content.contains("Trending now"), "sidebar dropped: {content}");
+        assert!(!content.contains("Home"), "nav dropped: {content}");
+        // Full markdown keeps everything outside <main> except pattern-marked
+        // chrome, which is now dropped there too.
+        let md = session.page_markdown();
+        assert!(!md.contains("We use cookies."), "{md}");
+        assert!(!md.contains("Trending now"), "{md}");
+    }
+
+    #[test]
+    fn page_content_markdown_falls_back_to_body_without_main() {
+        let mut session = BrowserSession::new("s35".to_string());
+        session.load_html(
+            "about:test",
+            "<html><body><h2>Notes</h2><p>Plain page.</p></body></html>",
+        );
+        let content = session.page_content_markdown();
+        assert!(content.contains("## Notes"), "{content}");
+        assert!(content.contains("Plain page."), "{content}");
+    }
+
+    #[test]
     fn page_projections_are_empty_without_a_loaded_page() {
         let session = BrowserSession::new("s33".to_string());
         assert_eq!(session.page_markdown(), "");
+        assert_eq!(session.page_content_markdown(), "");
         assert_eq!(session.page_tables_text(), "");
         assert_eq!(session.page_summary_text(), "");
     }

@@ -362,6 +362,11 @@ impl NativeBrowserBridge {
         self.active_session.page_summary_text()
     }
 
+    /// Readability projection: markdown of just the main content region.
+    pub fn page_content_markdown(&self) -> String {
+        self.active_session.page_content_markdown()
+    }
+
     // -- Screencast -----------------------------------------------------------
     // Structural screencast: each frame records the page's shape (viewport +
     // AOM element count + content hash) instead of pixels, giving the agent a

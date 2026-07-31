@@ -386,11 +386,12 @@ pub fn handle_native_tool(
         let (text, empty_msg) = match format {
             "text" => (bridge.page_text(), "(no visible text on page)"),
             "markdown" => (bridge.page_markdown(), "(no content to render as markdown)"),
+            "content" => (bridge.page_content_markdown(), "(no main content on page)"),
             "tables" => (bridge.page_tables_text(), "(no tables on page)"),
             "summary" => (bridge.page_summary_text(), "(nothing to summarize)"),
             other => {
                 return Err(format!(
-                    "unknown page_text format '{other}' (expected text, markdown, tables or summary)"
+                    "unknown page_text format '{other}' (expected text, markdown, content, tables or summary)"
                 )
                 .into())
             }
@@ -3121,6 +3122,12 @@ mod native_label_tool_tests {
             json!({ "sessionId": "t38-fmt", "format": "markdown" }),
         );
         assert!(out.contains("# Plan Prices"), "heading survives as markdown: {out}");
+
+        let out = call(
+            "browser_native_page_text",
+            json!({ "sessionId": "t38-fmt", "format": "content" }),
+        );
+        assert!(out.contains("# Plan Prices"), "content mode reads the body: {out}");
 
         let out = call(
             "browser_native_page_text",
