@@ -839,6 +839,290 @@ impl BrowserSession {
         }
     }
 
+    /// Tags that carry no readable content and are skipped by every
+    /// distilled page projection below.
+    const BOILERPLATE_TAGS: &'static [&'static str] = &[
+        "script", "style", "noscript", "title", "nav", "footer", "header",
+        "aside", "svg", "iframe", "object", "embed",
+    ];
+
+    /// Render the page as markdown: headings, paragraphs, lists, links and
+    /// emphasis survive; boilerplate (nav/footer/script/...) is dropped.
+    /// Structure costs the agent almost nothing and disambiguates a page far
+    /// better than flat text.
+    pub fn page_markdown(&self) -> String {
+        let Some(tree) = self.dom_tree.as_ref() else {
+            return String::new();
+        };
+        let mut out = String::new();
+        if !self.page_title.is_empty() && self.page_title != "Untitled Page" {
+            out.push_str("# ");
+            out.push_str(&self.page_title);
+            out.push_str("\n\n");
+        }
+        for node in &tree.nodes {
+            if node.parent.is_none() {
+                Self::markdown_walk(tree, node.id, &mut out);
+            }
+        }
+        out.trim_end().to_string()
+    }
+
+    fn markdown_walk(tree: &DomTree, id: usize, out: &mut String) {
+        use crate::parser::html::NodeType;
+        let Some(node) = tree.get_node(id) else { return };
+        if node.node_type == NodeType::Element
+            && Self::BOILERPLATE_TAGS.contains(&node.tag_name.as_str())
+        {
+            return;
+        }
+        match node.tag_name.as_str() {
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                let depth = node.tag_name.as_bytes()[1] - b'0';
+                let text = Self::inline_markdown(tree, id);
+                if !text.is_empty() {
+                    for _ in 0..depth {
+                        out.push('#');
+                    }
+                    out.push(' ');
+                    out.push_str(&text);
+                    out.push_str("\n\n");
+                }
+            }
+            "p" | "blockquote" => {
+                let text = Self::inline_markdown(tree, id);
+                if !text.is_empty() {
+                    out.push_str(&text);
+                    out.push_str("\n\n");
+                }
+            }
+            "ul" | "ol" => {
+                let ordered = node.tag_name == "ol";
+                let mut n = 0usize;
+                for &child in &node.children {
+                    let Some(item) = tree.get_node(child) else { continue };
+                    if item.tag_name != "li" {
+                        continue;
+                    }
+                    let text = Self::inline_markdown(tree, child);
+                    if text.is_empty() {
+                        continue;
+                    }
+                    n += 1;
+                    if ordered {
+                        out.push_str(&format!("{n}. {text}\n"));
+                    } else {
+                        out.push_str(&format!("- {text}\n"));
+                    }
+                }
+                if n > 0 {
+                    out.push('\n');
+                }
+            }
+            "table" => {
+                Self::table_markdown(tree, id, out);
+            }
+            _ => {
+                for &child in &node.children {
+                    Self::markdown_walk(tree, child, out);
+                }
+            }
+        }
+    }
+
+    /// Inline text of a node with markdown emphasis: links become
+    /// [text](href), strong/b become **text**, code becomes `text`.
+    fn inline_markdown(tree: &DomTree, id: usize) -> String {
+        use crate::parser::html::NodeType;
+        fn walk(tree: &DomTree, id: usize, out: &mut String) {
+            let Some(node) = tree.get_node(id) else { return };
+            if node.node_type == NodeType::Text {
+                out.push_str(&node.text_content);
+                out.push(' ');
+                return;
+            }
+            if BrowserSession::BOILERPLATE_TAGS.contains(&node.tag_name.as_str()) {
+                return;
+            }
+            match node.tag_name.as_str() {
+                "a" => {
+                    let mut inner = String::new();
+                    for &child in &node.children {
+                        walk(tree, child, &mut inner);
+                    }
+                    let text = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+                    match node.attributes.get("href") {
+                        Some(href) if !text.is_empty() => {
+                            out.push_str(&format!("[{text}]({href}) "));
+                        }
+                        _ => {
+                            out.push_str(&text);
+                            out.push(' ');
+                        }
+                    }
+                }
+                "strong" | "b" => {
+                    let mut inner = String::new();
+                    for &child in &node.children {
+                        walk(tree, child, &mut inner);
+                    }
+                    let text = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !text.is_empty() {
+                        out.push_str(&format!("**{text}** "));
+                    }
+                }
+                "em" | "i" => {
+                    let mut inner = String::new();
+                    for &child in &node.children {
+                        walk(tree, child, &mut inner);
+                    }
+                    let text = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !text.is_empty() {
+                        out.push_str(&format!("*{text}* "));
+                    }
+                }
+                "code" => {
+                    let mut inner = String::new();
+                    for &child in &node.children {
+                        walk(tree, child, &mut inner);
+                    }
+                    let text = inner.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !text.is_empty() {
+                        out.push_str(&format!("`{text}` "));
+                    }
+                }
+                _ => {
+                    for &child in &node.children {
+                        walk(tree, child, out);
+                    }
+                }
+            }
+        }
+        let mut buf = String::new();
+        walk(tree, id, &mut buf);
+        buf.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// Every table on the page rendered as markdown rows — the densest
+    /// faithful encoding of tabular data for an agent.
+    pub fn page_tables_text(&self) -> String {
+        let Some(tree) = self.dom_tree.as_ref() else {
+            return String::new();
+        };
+        let mut out = String::new();
+        for node in &tree.nodes {
+            if node.tag_name == "table" {
+                Self::table_markdown(tree, node.id, &mut out);
+            }
+        }
+        out.trim_end().to_string()
+    }
+
+    fn table_markdown(tree: &DomTree, table_id: usize, out: &mut String) {
+        let Some(table) = tree.get_node(table_id) else { return };
+        // Caption first, then every <tr> in document order (thead/tbody
+        // wrappers are transparent).
+        let mut rows: Vec<(bool, Vec<String>)> = Vec::new();
+        fn collect_rows(tree: &DomTree, id: usize, rows: &mut Vec<(bool, Vec<String>)>, out: &mut String) {
+            let Some(node) = tree.get_node(id) else { return };
+            match node.tag_name.as_str() {
+                "caption" => {
+                    let text = BrowserSession::inline_markdown(tree, id);
+                    if !text.is_empty() {
+                        out.push_str(&format!("Table: {text}\n"));
+                    }
+                }
+                "tr" => {
+                    let mut cells = Vec::new();
+                    let mut is_header = false;
+                    for &child in &node.children {
+                        let Some(cell) = tree.get_node(child) else { continue };
+                        match cell.tag_name.as_str() {
+                            "th" => {
+                                is_header = true;
+                                cells.push(BrowserSession::inline_markdown(tree, child));
+                            }
+                            "td" => cells.push(BrowserSession::inline_markdown(tree, child)),
+                            _ => {}
+                        }
+                    }
+                    if !cells.is_empty() {
+                        rows.push((is_header, cells));
+                    }
+                }
+                _ => {
+                    for &child in &node.children {
+                        collect_rows(tree, child, rows, out);
+                    }
+                }
+            }
+        }
+        for &child in &table.children {
+            collect_rows(tree, child, &mut rows, out);
+        }
+        for (i, (is_header, cells)) in rows.iter().enumerate() {
+            out.push_str(&format!("| {} |\n", cells.join(" | ")));
+            if i == 0 && *is_header {
+                out.push_str(&format!(
+                    "| {} |\n",
+                    vec!["---"; cells.len()].join(" | ")
+                ));
+            }
+        }
+        out.push('\n');
+    }
+
+    /// One-screen structural digest: title, element counts and the heading
+    /// outline. Enough to decide whether a page is worth reading in full.
+    pub fn page_summary_text(&self) -> String {
+        let Some(tree) = self.dom_tree.as_ref() else {
+            return String::new();
+        };
+        let (mut links, mut forms, mut images, mut interactive, mut tables) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut headings: Vec<(u8, String)> = Vec::new();
+        for node in &tree.nodes {
+            match node.tag_name.as_str() {
+                "a" => {
+                    if node.attributes.contains_key("href") {
+                        links += 1;
+                        interactive += 1;
+                    }
+                }
+                "form" => forms += 1,
+                "img" => images += 1,
+                "button" | "input" | "select" | "textarea" => interactive += 1,
+                "table" => tables += 1,
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                    let text = Self::inline_markdown(tree, node.id);
+                    if !text.is_empty() {
+                        headings.push((node.tag_name.as_bytes()[1] - b'0', text));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let title = if self.page_title.is_empty() {
+            self.current_url.clone()
+        } else {
+            self.page_title.clone()
+        };
+        let mut out = format!(
+            "Page: {title}\n{links} link(s), {forms} form(s), {interactive} interactive element(s), {images} image(s), {tables} table(s), {} chars of text\n",
+            self.page_text().chars().count()
+        );
+        if !headings.is_empty() {
+            out.push_str("Headings:\n");
+            for (depth, text) in &headings {
+                for _ in 0..*depth {
+                    out.push('#');
+                }
+                out.push_str(&format!(" {text}\n"));
+            }
+        }
+        out.trim_end().to_string()
+    }
+
     // === Label-based semantic actions =======================================
     // The node-id actions above assume the agent already ran agent_observe and
     // picked a node. These variants resolve the target by accessible name via
@@ -1993,5 +2277,69 @@ mod agent_action_tests {
             facts.contains(&format!("s29|textLength|{expected_len}")),
             "{facts}"
         );
+    }
+
+    #[test]
+    fn page_markdown_preserves_structure_and_strips_boilerplate() {
+        let mut session = BrowserSession::new("s30".to_string());
+        session.load_html(
+            "about:test",
+            "<html><head><title>Pricing</title><script>var hidden = 1;</script></head>\
+             <body><h1>Plans</h1>\
+             <p>Pick a <strong>plan</strong> from <a href=\"/list\">the list</a>.</p>\
+             <ul><li>Free</li><li>Pro</li></ul></body></html>",
+        );
+        let md = session.page_markdown();
+        assert!(md.starts_with("# Pricing"), "title leads: {md}");
+        assert!(md.contains("# Plans"), "{md}");
+        assert!(md.contains("**plan**"), "emphasis survives: {md}");
+        assert!(md.contains("[the list](/list)"), "links keep hrefs: {md}");
+        assert!(md.contains("- Free\n- Pro"), "list items render: {md}");
+        assert!(!md.contains("hidden"), "script content stripped: {md}");
+    }
+
+    #[test]
+    fn page_tables_text_renders_markdown_rows_with_header_separator() {
+        let mut session = BrowserSession::new("s31".to_string());
+        session.load_html(
+            "about:test",
+            "<html><body><table><caption>Plans</caption>\
+             <tr><th>Plan</th><th>Price</th></tr>\
+             <tr><td>Free</td><td>$0</td></tr>\
+             <tr><td>Pro</td><td>$9</td></tr></table></body></html>",
+        );
+        let tables = session.page_tables_text();
+        assert!(tables.contains("Table: Plans"), "{tables}");
+        assert!(tables.contains("| Plan | Price |"), "{tables}");
+        assert!(tables.contains("| --- | --- |"), "{tables}");
+        assert!(tables.contains("| Free | $0 |"), "{tables}");
+        assert!(tables.contains("| Pro | $9 |"), "{tables}");
+    }
+
+    #[test]
+    fn page_summary_text_digests_counts_and_heading_outline() {
+        let mut session = BrowserSession::new("s32".to_string());
+        session.load_html(
+            "about:test",
+            "<html><head><title>Pricing</title></head><body>\
+             <h1>Plans</h1><h2>Pro tier</h2>\
+             <a href=\"/a\">A</a>\
+             <table><tr><td>x</td></tr></table></body></html>",
+        );
+        let summary = session.page_summary_text();
+        assert!(summary.contains("Page: Pricing"), "{summary}");
+        assert!(summary.contains("1 link(s)"), "{summary}");
+        assert!(summary.contains("1 table(s)"), "{summary}");
+        assert!(summary.contains("Headings:"), "{summary}");
+        assert!(summary.contains("# Plans"), "{summary}");
+        assert!(summary.contains("## Pro tier"), "{summary}");
+    }
+
+    #[test]
+    fn page_projections_are_empty_without_a_loaded_page() {
+        let session = BrowserSession::new("s33".to_string());
+        assert_eq!(session.page_markdown(), "");
+        assert_eq!(session.page_tables_text(), "");
+        assert_eq!(session.page_summary_text(), "");
     }
 }

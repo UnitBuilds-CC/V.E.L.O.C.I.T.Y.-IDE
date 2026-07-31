@@ -1015,11 +1015,12 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_page_text".to_string(),
-            description: "Read the visible text of the current page in the native browser session: title + body text in reading order, whitespace collapsed, script/style content skipped. The token-cheapest way to read a whole page. Set maxChars to bound the output on huge pages.".to_string(),
+            description: "Read the current page in the native browser session as distilled text. format=text (default) is title + visible body text in reading order, whitespace collapsed, script/style content skipped — the token-cheapest way to read a whole page. format=markdown keeps document structure (headings, lists, links), format=tables renders every table as markdown rows, format=summary is a one-screen structural digest (title, headings, counts). Set maxChars to bound the output on huge pages.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "format": { "type": "string", "description": "text (default), markdown, tables or summary." },
                     "maxChars": { "type": "integer", "description": "Truncate the text to this many characters (0 or omitted = no limit)." }
                 },
                 "required": ["sessionId"]

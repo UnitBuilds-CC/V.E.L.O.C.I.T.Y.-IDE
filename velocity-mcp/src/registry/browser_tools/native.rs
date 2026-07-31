@@ -378,11 +378,25 @@ pub fn handle_native_tool(
     }
 
     // The token-cheapest full read: title + visible body text, whitespace
-    // collapsed, scripts/styles skipped. maxChars keeps huge pages bounded.
+    // collapsed, scripts/styles skipped. format switches to the engine's
+    // distilled projections (markdown structure, tables, page summary) and
+    // maxChars keeps huge pages bounded.
     if name == "browser_native_page_text" {
-        let text = bridge.page_text();
-        if text.is_empty() {
-            return Ok(Some("(no visible text on page)".to_string()));
+        let format = arguments["format"].as_str().unwrap_or("text");
+        let (text, empty_msg) = match format {
+            "text" => (bridge.page_text(), "(no visible text on page)"),
+            "markdown" => (bridge.page_markdown(), "(no content to render as markdown)"),
+            "tables" => (bridge.page_tables_text(), "(no tables on page)"),
+            "summary" => (bridge.page_summary_text(), "(nothing to summarize)"),
+            other => {
+                return Err(format!(
+                    "unknown page_text format '{other}' (expected text, markdown, tables or summary)"
+                )
+                .into())
+            }
+        };
+        if text.trim().is_empty() {
+            return Ok(Some(empty_msg.to_string()));
         }
         let max_chars = arguments["maxChars"].as_u64().unwrap_or(0) as usize;
         if max_chars > 0 && text.chars().count() > max_chars {
@@ -3065,6 +3079,64 @@ mod native_label_tool_tests {
             !out.contains("checkout"),
             "no bundle means no inheritance: {out}"
         );
+    }
+
+    #[test]
+    fn page_text_formats_render_markdown_tables_and_summary() {
+        let html = r#"<html><head><title>Prices</title></head><body>
+            <h1>Plan Prices</h1>
+            <p>Pick the plan that fits.</p>
+            <table>
+              <caption>Plans</caption>
+              <tr><th>Plan</th><th>Price</th></tr>
+              <tr><td>Free</td><td>$0</td></tr>
+              <tr><td>Pro</td><td>$9</td></tr>
+            </table>
+        </body></html>"#;
+        get_or_create_native_bridge("t38-fmt")
+            .lock()
+            .unwrap()
+            .load_html("http://local.test/prices", html);
+
+        // Default stays the plain visible-text read.
+        let out = call("browser_native_page_text", json!({ "sessionId": "t38-fmt" }));
+        assert!(out.contains("Plan Prices"), "{out}");
+        assert!(out.contains("Pick the plan that fits."), "{out}");
+
+        let out = call(
+            "browser_native_page_text",
+            json!({ "sessionId": "t38-fmt", "format": "markdown" }),
+        );
+        assert!(out.contains("# Plan Prices"), "heading survives as markdown: {out}");
+
+        let out = call(
+            "browser_native_page_text",
+            json!({ "sessionId": "t38-fmt", "format": "tables" }),
+        );
+        assert!(out.contains("Plan"), "{out}");
+        assert!(out.contains("| Free | $0 |"), "rows render as markdown cells: {out}");
+        assert!(out.contains("| Pro | $9 |"), "{out}");
+
+        let out = call(
+            "browser_native_page_text",
+            json!({ "sessionId": "t38-fmt", "format": "summary" }),
+        );
+        assert!(out.contains("Prices"), "summary names the page: {out}");
+
+        // maxChars still bounds every format.
+        let out = call(
+            "browser_native_page_text",
+            json!({ "sessionId": "t38-fmt", "format": "markdown", "maxChars": 10 }),
+        );
+        assert!(out.contains("(truncated to 10 of"), "{out}");
+
+        let err = handle_native_tool(
+            Path::new("."),
+            "browser_native_page_text",
+            &json!({ "sessionId": "t38-fmt", "format": "csv" }),
+        )
+        .expect_err("unknown format is rejected");
+        assert!(err.to_string().contains("unknown page_text format 'csv'"), "{err}");
     }
 
     #[test]

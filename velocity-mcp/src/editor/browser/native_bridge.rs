@@ -347,6 +347,21 @@ impl NativeBrowserBridge {
         self.active_session.page_text()
     }
 
+    /// Markdown projection of the page (headings, lists, links, tables).
+    pub fn page_markdown(&self) -> String {
+        self.active_session.page_markdown()
+    }
+
+    /// Every table on the page rendered as markdown rows.
+    pub fn page_tables_text(&self) -> String {
+        self.active_session.page_tables_text()
+    }
+
+    /// One-screen digest: identity, element counts, heading outline.
+    pub fn page_summary_text(&self) -> String {
+        self.active_session.page_summary_text()
+    }
+
     // -- Screencast -----------------------------------------------------------
     // Structural screencast: each frame records the page's shape (viewport +
     // AOM element count + content hash) instead of pixels, giving the agent a
