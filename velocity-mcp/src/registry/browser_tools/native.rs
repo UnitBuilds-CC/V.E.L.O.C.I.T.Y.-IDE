@@ -940,6 +940,13 @@ pub fn handle_native_tool(
             .and_then(|p| view.elements.iter().find(|e| e.aom_id == p.target_selector));
         // Similar past pages: the current page text is the semantic query.
         let page_query = bridge.page_text();
+        // Distilled content size: lets the agent notice silent page growth
+        // between turns without diffing or re-reading the whole page.
+        let mut content = bridge.page_content_markdown();
+        if content.is_empty() {
+            content = bridge.page_markdown();
+        }
+        let content_chars = content.chars().count();
         let memories = if page_query.trim().is_empty() {
             Vec::new()
         } else {
@@ -1006,6 +1013,7 @@ pub fn handle_native_tool(
                     "url": view.url,
                     "title": view.title,
                     "elements": view.elements.len(),
+                    "contentChars": (content_chars > 0).then_some(content_chars),
                     "digest": (!digest.is_empty()).then_some(digest.as_str()),
                     "suggestion": sugg_json,
                     "patterns": pattern_json,
@@ -1025,6 +1033,9 @@ pub fn handle_native_tool(
         if !digest.is_empty() {
             out.push_str(&digest);
             out.push('\n');
+        }
+        if content_chars > 0 {
+            out.push_str(&format!("Content: {} chars\n", content_chars));
         }
         match (&suggestion, detail) {
             (Some(p), Some(e)) => out.push_str(&format!(
@@ -3451,6 +3462,10 @@ mod native_label_tool_tests {
         assert!(out.contains("Headings:"), "{out}");
         assert!(out.contains("# Plan Prices"), "{out}");
         assert!(out.contains("## Monthly"), "{out}");
+        assert!(
+            out.contains("Content: ") && out.contains(" chars\n"),
+            "distilled content size surfaces in the brief: {out}"
+        );
 
         let compact = call(
             "browser_native_brief",
@@ -3465,6 +3480,10 @@ mod native_label_tool_tests {
             !digest.contains("Page: Prices"),
             "identity line stays out of digest: {compact}"
         );
+        let content_chars = report["contentChars"]
+            .as_u64()
+            .expect("contentChars present when a page is loaded");
+        assert!(content_chars > 0, "content size is non-zero: {compact}");
     }
 
     #[test]
