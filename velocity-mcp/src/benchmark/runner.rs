@@ -1,6 +1,6 @@
 use super::cpu::*;
 use super::gpu::*;
-use crate::compiler::driver::VulkanDriver;
+use velocity_ide::compiler::driver::VulkanDriver;
 use crate::ipc::shmem::SharedMemoryBuffer;
 use crate::protocol::nmcp_binary::NmcpBinaryFrame;
 use std::hint::black_box;

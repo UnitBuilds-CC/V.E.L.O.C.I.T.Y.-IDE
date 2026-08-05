@@ -368,24 +368,24 @@ impl BitNet3BLayerData {
         };
 
         let (nda_inputs_3200_active, nda_inputs_3200_pos) =
-            crate::compiler::driver::pack_inputs_nda(&inputs_3200);
+            velocity_ide::compiler::driver::pack_inputs_nda(&inputs_3200);
         let (nda_inputs_8640_active, nda_inputs_8640_pos) =
-            crate::compiler::driver::pack_inputs_nda(&inputs_8640);
+            velocity_ide::compiler::driver::pack_inputs_nda(&inputs_8640);
 
         let (wq_a, wq_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_q), 3200, 3200);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_q), 3200, 3200);
         let (wk_a, wk_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_k), 3200, 3200);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_k), 3200, 3200);
         let (wv_a, wv_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_v), 3200, 3200);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_v), 3200, 3200);
         let (wo_a, wo_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_o), 3200, 3200);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_o), 3200, 3200);
         let (wgate_a, wgate_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_gate), 3200, 8640);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_gate), 3200, 8640);
         let (wup_a, wup_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_up), 3200, 8640);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_up), 3200, 8640);
         let (wdown_a, wdown_p) =
-            crate::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_down), 8640, 3200);
+            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_down), 8640, 3200);
 
         Self {
             inputs_3200,

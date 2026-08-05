@@ -1,4 +1,4 @@
-use crate::compiler::driver::{
+use velocity_ide::compiler::driver::{
     VulkanBitNetLayer, VulkanDriver, VulkanNdaBitNetLayer, VulkanQwenLayer,
 };
 
@@ -106,7 +106,7 @@ impl BitNet3BGpuNdaLayerData {
             unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
         };
 
-        let (in_act, in_pos) = crate::compiler::driver::pack_inputs_nda(&inputs_3200);
+        let (in_act, in_pos) = velocity_ide::compiler::driver::pack_inputs_nda(&inputs_3200);
         let inputs_active = unsafe {
             std::slice::from_raw_parts(in_act.as_ptr() as *const u8, in_act.len() * 4).to_vec()
         };

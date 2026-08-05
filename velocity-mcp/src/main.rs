@@ -170,7 +170,7 @@ fn main() {
         println!("Starting V.E.L.O.C.I.T.Y. Native IDE Editor...");
 
         let mut gpu_name = "None".to_string();
-        match compiler::driver::VulkanDriver::init() {
+        match velocity_ide::compiler::driver::VulkanDriver::init() {
             Ok(driver) => {
                 let _ = driver.run_diagnostics();
                 gpu_name = driver.device_name();
