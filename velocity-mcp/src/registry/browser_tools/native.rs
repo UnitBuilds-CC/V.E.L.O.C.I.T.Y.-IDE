@@ -69,31 +69,9 @@ struct ActionReport {
 }
 
 fn predicate_name(p: u16) -> String {
-    use velocity_browser::predicates::*;
-    let s = match p {
-        AOM_ROLE => "role",
-        AOM_NAME => "name",
-        AOM_VALUE => "value",
-        AOM_ACTIONABILITY => "actionability",
-        AOM_FOCUSED => "focused",
-        AOM_EXPANDED => "expanded",
-        LAYOUT_BOUNDS => "bounds",
-        LAYOUT_VISIBILITY => "visibility",
-        LAYOUT_DISPLAY => "display",
-        LAYOUT_IN_VIEWPORT => "inViewport",
-        SESSION_URL => "url",
-        SESSION_TITLE => "title",
-        SESSION_COOKIE => "cookie",
-        SESSION_STORAGE => "storage",
-        SESSION_SCROLL => "scroll",
-        SESSION_LINK_COUNT => "links",
-        SESSION_FORM_COUNT => "forms",
-        SESSION_INTERACTIVE_COUNT => "interactive",
-        SESSION_TEXT_LENGTH => "textLength",
-        SESSION_HEADING => "heading",
-        other => return format!("predicate_{other}"),
-    };
-    s.to_string()
+    // Delegate to the engine's canonical registry so tool-side names never
+    // drift from the predicate ids they label.
+    velocity_browser::predicates::predicate_name(p).to_string()
 }
 
 fn view_report(view: &NativeBrowserView) -> ViewReport {
@@ -126,7 +104,7 @@ fn delta_report(delta: &NdaDelta) -> DeltaReport {
             .map(|(s, p, o)| FactReport {
                 subject: s.clone(),
                 predicate: predicate_name(*p),
-                object: o.clone(),
+                object: fact_snippet(o),
             })
             .collect(),
         removed: delta
@@ -135,7 +113,7 @@ fn delta_report(delta: &NdaDelta) -> DeltaReport {
             .map(|(s, p, o)| FactReport {
                 subject: s.clone(),
                 predicate: predicate_name(*p),
-                object: o.clone(),
+                object: fact_snippet(o),
             })
             .collect(),
         changed: delta
@@ -144,8 +122,8 @@ fn delta_report(delta: &NdaDelta) -> DeltaReport {
             .map(|c| ChangeReport {
                 subject: c.subject.clone(),
                 predicate: predicate_name(c.predicate),
-                old: c.old.clone(),
-                new: c.new.clone(),
+                old: fact_snippet(&c.old),
+                new: fact_snippet(&c.new),
             })
             .collect(),
     }
@@ -173,24 +151,38 @@ fn render_view(view: &NativeBrowserView) -> String {
     out
 }
 
+/// Diff lines are summaries, not state dumps: long fact values (like the
+/// distilled 8000-char content fact) collapse to a snippet so a content
+/// change reports its size instead of flooding the output.
+fn fact_snippet(value: &str) -> String {
+    const LIMIT: usize = 160;
+    let count = value.chars().count();
+    if count <= LIMIT {
+        return value.to_string();
+    }
+    let mut snippet: String = value.chars().take(LIMIT).collect();
+    snippet.push_str(&format!(" …(+{} chars)", count - LIMIT));
+    snippet
+}
+
 fn render_delta(delta: &NdaDelta) -> String {
     if delta.is_empty() {
         return "  (no state change)\n".to_string();
     }
     let mut out = String::new();
     for (s, p, o) in &delta.added {
-        out.push_str(&format!("  + {} {} = {}\n", s, predicate_name(*p), o));
+        out.push_str(&format!("  + {} {} = {}\n", s, predicate_name(*p), fact_snippet(o)));
     }
     for (s, p, o) in &delta.removed {
-        out.push_str(&format!("  - {} {} = {}\n", s, predicate_name(*p), o));
+        out.push_str(&format!("  - {} {} = {}\n", s, predicate_name(*p), fact_snippet(o)));
     }
     for c in &delta.changed {
         out.push_str(&format!(
             "  ~ {} {} : {} -> {}\n",
             c.subject,
             predicate_name(c.predicate),
-            c.old,
-            c.new
+            fact_snippet(&c.old),
+            fact_snippet(&c.new)
         ));
     }
     out
@@ -2611,6 +2603,51 @@ mod native_label_tool_tests {
         assert_eq!(report["action"], "save");
         assert_eq!(report["replaced"], false);
         assert!(report["facts"].as_u64().expect("facts count") > 0);
+    }
+
+    #[test]
+    fn checkpoint_diff_snippets_long_content_facts() {
+        load("t43-diff");
+        call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t43-diff", "action": "save", "name": "before" }),
+        );
+
+        // Navigate to a long article: the content fact changes by thousands
+        // of characters, but the diff stays a summary.
+        let long_para = "The quick brown fox jumps over the lazy dog. ".repeat(40);
+        let bridge = get_or_create_native_bridge("t43-diff");
+        bridge.lock().unwrap().load_html(
+            "http://local.test/article",
+            &format!("<html><head><title>Article</title></head><body><main><p>{long_para}</p></main></body></html>"),
+        );
+
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t43-diff", "action": "diff", "name": "before" }),
+        );
+        assert!(out.contains("content"), "content change surfaces: {out}");
+        assert!(out.contains("…(+"), "long values collapse to snippets: {out}");
+        assert!(
+            out.chars().count() < 4000,
+            "diff stays bounded, got {} chars",
+            out.chars().count()
+        );
+
+        let compact = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t43-diff", "action": "diff", "name": "before", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact diff is valid JSON");
+        let changed = report["delta"]["changed"].as_array().expect("changed array");
+        let content_change = changed
+            .iter()
+            .find(|c| c["predicate"] == "content")
+            .expect("content change present");
+        let new_value = content_change["new"].as_str().expect("new value");
+        assert!(new_value.contains("…(+"), "compact diff is snippeted too: {compact}");
+        assert!(new_value.chars().count() < 250, "{new_value}");
     }
 
     #[test]
