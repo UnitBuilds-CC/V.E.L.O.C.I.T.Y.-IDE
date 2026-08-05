@@ -275,7 +275,10 @@ fn wait_on_session(
     // mode=element with gone=true inverts the predicate: wake when the
     // element is NOT on the page (spinners, overlays, toasts disappearing).
     let gone = arguments["gone"].as_bool().unwrap_or(false);
-    if !matches!(mode, "content" | "element" | "url") {
+    // mode=stable: how many consecutive quiet polls (no move >= minDelta)
+    // declare the page settled.
+    let quiet_needed = arguments["stable"].as_u64().unwrap_or(3).clamp(2, 50) as usize;
+    if !matches!(mode, "content" | "element" | "url" | "stable") {
         return Err(format!("unknown wait mode '{mode}'").into());
     }
     if mode == "element" && label.trim().is_empty() {
@@ -292,6 +295,10 @@ fn wait_on_session(
     };
     let want = label.to_lowercase();
     let mut matched: Option<String> = None;
+    // mode=stable bookkeeping: streak of consecutive quiet polls and the
+    // content level the streak was last measured against.
+    let mut last_chars = baseline;
+    let mut quiet = 0usize;
     while start.elapsed().as_millis() < u128::from(timeout_ms) {
         std::thread::sleep(std::time::Duration::from_millis(poll_ms));
         let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
@@ -322,6 +329,22 @@ fn wait_on_session(
             } else if now.to_lowercase().contains(&want) {
                 matched = Some(format!("url {now}"));
                 break;
+            }
+        } else if mode == "stable" {
+            // Wake when the content stops moving: N consecutive polls with
+            // no move >= minDelta means the page has settled.
+            let now = distilled_content_chars(&bridge);
+            if content_delta_matches(last_chars, now, min_delta) {
+                // A real move: restart the streak from the new level.
+                last_chars = now;
+                quiet = 0;
+            } else {
+                quiet += 1;
+                if quiet >= quiet_needed {
+                    matched =
+                        Some(format!("content stable at {now} chars ({quiet} quiet polls)"));
+                    break;
+                }
             }
         } else {
             let now = distilled_content_chars(&bridge);
@@ -3223,6 +3246,30 @@ mod native_label_tool_tests {
             serde_json::from_str(&compact).expect("compact wait report is valid JSON");
         assert_eq!(report["status"], "matched", "{compact}");
         assert!(report["matched"].as_str().unwrap_or("").contains("gone"), "{compact}");
+    }
+
+    #[test]
+    fn wait_tool_stable_mode_detects_settlement() {
+        load("t53-stable");
+
+        // A static page is already settling: N consecutive quiet polls match.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t53-stable", "mode": "stable", "stable": 3, "timeout": 2000, "poll": 40 }),
+        );
+        assert!(out.starts_with("matched after "), "{out}");
+        assert!(out.contains("content stable at "), "{out}");
+        assert!(out.contains("3 quiet polls"), "{out}");
+
+        // Compact report carries the stable match.
+        let compact = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t53-stable", "mode": "stable", "stable": 2, "poll": 40, "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact wait report is valid JSON");
+        assert_eq!(report["status"], "matched", "{compact}");
+        assert_eq!(report["mode"], "stable", "{compact}");
     }
 
     #[test]

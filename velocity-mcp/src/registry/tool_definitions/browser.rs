@@ -1146,17 +1146,18 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_wait".to_string(),
-            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change by at least minDelta chars (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears (or, with gone=true, until it disappears - spinners, overlays, toasts); mode=url waits for navigation (with `label`: until the URL contains it, without: until the URL differs from the call-time URL). Reports matched or timeout with elapsed milliseconds.".to_string(),
+            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change by at least minDelta chars (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears (or, with gone=true, until it disappears - spinners, overlays, toasts); mode=url waits for navigation (with `label`: until the URL contains it, without: until the URL differs from the call-time URL); mode=stable waits until the distilled content size stays unchanged for `stable` consecutive polls (the page has fully settled). Reports matched or timeout with elapsed milliseconds.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
-                    "mode": { "type": "string", "enum": ["content", "element", "url"], "description": "What to wait for (default content)." },
+                    "mode": { "type": "string", "enum": ["content", "element", "url", "stable"], "description": "What to wait for (default content)." },
                     "label": { "type": "string", "description": "For mode=element: name fragment to wait for; for mode=url: URL fragment to wait for (both case-insensitive)." },
                     "timeout": { "type": "integer", "description": "Max wait in milliseconds (default 10000, max 60000)." },
                     "poll": { "type": "integer", "description": "Poll interval in milliseconds (default 100)." },
-                    "minDelta": { "type": "integer", "description": "For mode=content: minimum character-count change to count as a content move (default 1). Raise it to ignore tiny fluctuations like timestamps." },
+                    "minDelta": { "type": "integer", "description": "For mode=content/stable: minimum character-count change to count as a content move (default 1). Raise it to ignore tiny fluctuations like timestamps." },
                     "gone": { "type": "boolean", "description": "For mode=element: when true, wait until the element is GONE instead of appearing (default false)." },
+                    "stable": { "type": "integer", "description": "For mode=stable: number of consecutive unchanged polls required to declare the page settled (default 3, min 2, max 50). minDelta sets what counts as a change." },
                     "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
                 },
                 "required": ["sessionId"]
