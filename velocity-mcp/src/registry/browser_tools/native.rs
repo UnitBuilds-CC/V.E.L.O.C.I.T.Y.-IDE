@@ -1250,21 +1250,28 @@ pub fn handle_native_tool(
             )
         });
         // Assert-guard health: pass/fail counts over the outcome history,
-        // so a returning agent sees whether its recent guards are drifting
-        // without re-reading the raw outcome lines.
-        let (guards_passed, guards_failed) = bridge.scorer.history.iter().fold(
-            (0usize, 0usize),
-            |(passed, failed), o| {
-                if o.action_kind.label() != "assert" {
-                    return (passed, failed);
-                }
-                if o.score < 0.3 {
-                    (passed, failed + 1)
-                } else {
-                    (passed + 1, failed)
-                }
-            },
-        );
+        // plus the most-missed target, so a returning agent sees whether
+        // its recent guards are drifting — and which one — without
+        // re-reading the raw outcome lines.
+        let mut guards_passed = 0usize;
+        let mut guards_failed = 0usize;
+        let mut failed_targets: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for o in &bridge.scorer.history {
+            if o.action_kind.label() != "assert" {
+                continue;
+            }
+            if o.score < 0.3 {
+                guards_failed += 1;
+                *failed_targets.entry(&o.target_selector).or_default() += 1;
+            } else {
+                guards_passed += 1;
+            }
+        }
+        let most_missed: Option<(&str, usize)> = failed_targets
+            .iter()
+            .max_by_key(|(_, n)| **n)
+            .map(|(target, n)| (*target, *n));
         if compact {
             let sugg_json = suggestion.as_ref().map(|p| {
                 serde_json::json!({
@@ -1338,6 +1345,9 @@ pub fn handle_native_tool(
                         serde_json::json!({
                             "passed": guards_passed,
                             "failed": guards_failed,
+                            "mostMissed": most_missed.map(|(target, n)| {
+                                serde_json::json!({ "target": target, "count": n })
+                            }),
                         })
                     }),
                     "digest": (!digest.is_empty()).then_some(digest.as_str()),
@@ -1375,10 +1385,15 @@ pub fn handle_native_tool(
             out.push('\n');
         }
         if guards_passed + guards_failed > 0 {
-            out.push_str(&format!(
-                "Guards: {} passed, {} failed assert(s)\n",
+            let mut line = format!(
+                "Guards: {} passed, {} failed assert(s)",
                 guards_passed, guards_failed
-            ));
+            );
+            if let Some((target, n)) = most_missed {
+                line.push_str(&format!("; most missed: \"{target}\" ({n}x)"));
+            }
+            out.push_str(&line);
+            out.push('\n');
         }
         match (&suggestion, detail) {
             (Some(p), Some(e)) => out.push_str(&format!(
@@ -3595,6 +3610,34 @@ mod native_label_tool_tests {
         );
         assert!(compact.contains("\"failed\": 2"), "{compact}");
         assert!(compact.contains("\"passed\": 0"), "{compact}");
+    }
+
+    #[test]
+    fn brief_guards_name_most_missed_target() {
+        load("t58-most");
+
+        // Two misses on one label, one on another: the breakdown points
+        // at the repeater instead of forcing a read of the outcome list.
+        call(
+            "browser_native_assert",
+            json!({ "sessionId": "t58-most", "label": "zebra" }),
+        );
+        call(
+            "browser_native_assert",
+            json!({ "sessionId": "t58-most", "label": "zebra" }),
+        );
+        call(
+            "browser_native_assert",
+            json!({ "sessionId": "t58-most", "label": "unicorn" }),
+        );
+        let out = call("browser_native_brief", json!({ "sessionId": "t58-most" }));
+        assert!(out.contains("most missed: \"zebra\" (2x)"), "{out}");
+        let compact = call(
+            "browser_native_brief",
+            json!({ "sessionId": "t58-most", "compact": true }),
+        );
+        assert!(compact.contains("\"target\": \"zebra\""), "{compact}");
+        assert!(compact.contains("\"count\": 2"), "{compact}");
     }
 
     #[test]
