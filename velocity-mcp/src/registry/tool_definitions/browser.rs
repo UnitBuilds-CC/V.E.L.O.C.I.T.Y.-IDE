@@ -1165,7 +1165,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_assert".to_string(),
-            description: "Assert page-state conditions in one call instead of observe-then-read. Checks that the distilled page content contains `text` and/or that an element whose name contains `label` exists. With waitMs > 0 the checks poll until the conditions hold or the grace period elapses (guard-after-action on async pages). Reports 'assert ok' or 'assert FAILED' with per-check detail (actual content snippet, element count) - a failed assertion is a result, not an error.".to_string(),
+            description: "Assert page-state conditions in one call instead of observe-then-read. Checks that the distilled page content contains `text` and/or that an element whose name contains `label` exists. With waitMs > 0 the checks poll until the conditions hold or the grace period elapses (guard-after-action on async pages). Reports 'assert ok' or 'assert FAILED' with per-check detail (actual content snippet, element count) - a failed assertion is a result, not an error. Failed checks are recorded in the outcome history, so repeated misses surface in browser_native_reflect.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

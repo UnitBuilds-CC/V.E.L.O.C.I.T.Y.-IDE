@@ -17,7 +17,7 @@ use crate::editor::browser::native_bridge::{
     encode_nda_triples, get_or_create_native_bridge, persist_browser_artifact,
     NativeBrowserBridge, NativeBrowserView,
 };
-use velocity_browser::NdaDelta;
+use velocity_browser::{AgentActionResult, NdaDelta};
 
 #[derive(Serialize)]
 struct ElementReport {
@@ -463,6 +463,7 @@ fn render_assert_report(
 /// With waitMs > 0 the checks poll (lock released between polls) until the
 /// conditions hold or the grace period elapses.
 fn assert_on_session(
+    root: &Path,
     session_id: &str,
     arguments: &Value,
     compact: bool,
@@ -476,6 +477,12 @@ fn assert_on_session(
     let wait_ms = arguments["waitMs"].as_u64().unwrap_or(0).min(60_000);
     let poll_ms = arguments["poll"].as_u64().unwrap_or(100).clamp(20, 1_000);
     let arc = get_or_create_native_bridge(session_id);
+    // First-touch experience inheritance, matching every other tool: the
+    // default bundle is seeded before the first evaluation runs.
+    {
+        let mut bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        bridge.seed_default_experience(root);
+    }
     let start = std::time::Instant::now();
     let checks = loop {
         let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
@@ -488,6 +495,23 @@ fn assert_on_session(
         std::thread::sleep(std::time::Duration::from_millis(poll_ms));
     };
     let waited = (wait_ms > 0).then(|| start.elapsed().as_millis() as u64);
+    // Failed guards are learning signals: record each missed check in the
+    // outcome history so browser_native_reflect spots repeated "expected
+    // X" misses exactly like repeated dead clicks.
+    if checks.iter().any(|(_, _, ok, _)| !*ok) {
+        let mut bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        for (what, value, ok, _) in &checks {
+            if *ok {
+                continue;
+            }
+            let role = if what == "text" { "content" } else { "element" };
+            let result = AgentActionResult::new(
+                format!("assert failed: {what} \"{value}\" not satisfied"),
+                NdaDelta::default(),
+            );
+            bridge.record_outcome("assert", role, value, &result);
+        }
+    }
     Ok(Some(render_assert_report(&checks, waited, compact)?))
 }
 
@@ -694,7 +718,7 @@ pub fn handle_native_tool(
     // Assert can poll with a waitMs grace period, so it likewise bypasses
     // the handler-wide guard and re-locks per poll.
     if name == "browser_native_assert" {
-        return assert_on_session(session_id, arguments, compact);
+        return assert_on_session(root, session_id, arguments, compact);
     }
     let bridge = get_or_create_native_bridge(session_id);
     let mut bridge = bridge
@@ -3479,6 +3503,36 @@ mod native_label_tool_tests {
             json!({ "sessionId": "t55-waitassert", "label": "log in" }),
         );
         assert!(out.starts_with("assert ok: "), "{out}");
+    }
+
+    #[test]
+    fn failed_asserts_feed_the_reflection_loop() {
+        load("t56-reflect");
+
+        // Two failed guards on the same missing element: reflect must spot
+        // the repeated assertion failure like any other repeated miss.
+        for _ in 0..2 {
+            let out = call(
+                "browser_native_assert",
+                json!({ "sessionId": "t56-reflect", "label": "Checkout" }),
+            );
+            assert!(out.starts_with("assert FAILED:"), "{out}");
+        }
+        let out = call("browser_native_reflect", json!({ "sessionId": "t56-reflect" }));
+        assert!(out.contains("[SELF-REFLECTION]"), "{out}");
+        assert!(out.contains("failed 2 times"), "{out}");
+        assert!(out.contains("assert on [element]"), "{out}");
+
+        // Passing guards record nothing: a session with only successful
+        // asserts has no outcome context to show.
+        load("t56-clean");
+        let out = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t56-clean", "label": "log in" }),
+        );
+        assert!(out.starts_with("assert ok: "), "{out}");
+        let out = call("browser_native_reflect", json!({ "sessionId": "t56-clean" }));
+        assert!(!out.contains("Recent action outcomes"), "{out}");
     }
 
     #[test]
