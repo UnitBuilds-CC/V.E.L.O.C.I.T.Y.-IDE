@@ -2153,6 +2153,49 @@ mod native_label_tool_tests {
     }
 
     #[test]
+    fn remember_indexes_distilled_markdown_not_raw_text() {
+        let bridge = get_or_create_native_bridge("t41-mem");
+        bridge.lock().unwrap().load_html(
+            "http://local.test/article",
+            "<html><head><title>Article</title></head><body>\
+             <nav><a href=\"/home\">Home link chrome</a></nav>\
+             <div class=\"cookie-banner\"><p>We use cookies here.</p></div>\
+             <main><h1>Story Headline</h1><p>Body of the story.</p></main>\
+             </body></html>",
+        );
+        // Raw page text carries the chrome noise.
+        let raw = call("browser_native_page_text", json!({ "sessionId": "t41-mem" }));
+        assert!(raw.contains("Home link chrome"), "{raw}");
+
+        let remember = call(
+            "browser_native_remember",
+            json!({ "sessionId": "t41-mem", "tags": ["article"], "outcome": 0.8, "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&remember).expect("compact remember is valid JSON");
+        let indexed = report["indexedChars"].as_u64().expect("indexedChars") as usize;
+        assert!(indexed > 0, "{remember}");
+        assert!(
+            indexed < raw.len(),
+            "boilerplate stripped before indexing: {indexed} vs {} raw chars",
+            raw.len()
+        );
+
+        // Content words are recallable...
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t41-mem", "query": "story", "mode": "keyword" }),
+        );
+        assert!(out.contains("1 memory matched 'story'"), "{out}");
+        // ...but chrome words never made it into memory.
+        let out = call(
+            "browser_native_recall",
+            json!({ "sessionId": "t41-mem", "query": "cookies", "mode": "keyword" }),
+        );
+        assert!(out.contains("no memories matched"), "boilerplate not indexed: {out}");
+    }
+
+    #[test]
     fn recall_tool_supports_keyword_tag_and_empty_results() {
         load("t21-modes");
         call(

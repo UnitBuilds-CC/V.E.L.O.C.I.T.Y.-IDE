@@ -984,7 +984,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_remember".to_string(),
-            description: "Index the current page of the native browser session into vector memory (title + visible text + optional note, TF-IDF embedded) so it can be recalled later by meaning, keyword, or tag without re-crawling. Returns the memory id and what was indexed.".to_string(),
+            description: "Index the current page of the native browser session into vector memory (distilled markdown — title, headings and content with boilerplate stripped — plus optional note, TF-IDF embedded) so it can be recalled later by meaning, keyword, or tag without re-crawling. Returns the memory id and what was indexed.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

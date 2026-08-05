@@ -266,7 +266,13 @@ impl NativeBrowserBridge {
         note: Option<&str>,
     ) -> (String, String, usize) {
         use std::hash::{DefaultHasher, Hash, Hasher};
-        let mut text = self.active_session.page_text();
+        // Store the distilled markdown projection (structure + content,
+        // boilerplate stripped) instead of flat text: recall snippets stay
+        // readable and the embedding is cleaner without chrome noise.
+        let mut text = self.active_session.page_markdown();
+        if text.is_empty() {
+            text = self.active_session.page_text();
+        }
         if let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) {
             if !text.is_empty() {
                 text.push(' ');
