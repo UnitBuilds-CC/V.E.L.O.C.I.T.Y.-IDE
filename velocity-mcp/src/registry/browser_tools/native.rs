@@ -252,6 +252,12 @@ fn distilled_content_chars(bridge: &NativeBrowserBridge) -> usize {
     content.chars().count()
 }
 
+/// Whether a content-size move clears the significance threshold. Kept pure
+/// so the wait loop's only judgment call is trivially testable.
+fn content_delta_matches(baseline: usize, now: usize, min_delta: usize) -> bool {
+    now.max(baseline) - now.min(baseline) >= min_delta
+}
+
 /// Block until a predicate holds on the session or the timeout elapses.
 /// Locks are taken per poll so concurrent updates remain observable.
 fn wait_on_session(
@@ -262,6 +268,9 @@ fn wait_on_session(
     let mode = arguments["mode"].as_str().unwrap_or("content");
     let timeout_ms = arguments["timeout"].as_u64().unwrap_or(10_000).clamp(1, 60_000);
     let poll_ms = arguments["poll"].as_u64().unwrap_or(100).clamp(20, 1_000);
+    // Significance threshold for mode=content: ignore tiny fluctuations
+    // (timestamps, counters) and only wake on a real content move.
+    let min_delta = arguments["minDelta"].as_u64().unwrap_or(1).max(1) as usize;
     let label = arguments["label"].as_str().unwrap_or("");
     if !matches!(mode, "content" | "element") {
         return Err(format!("unknown wait mode '{mode}'").into());
@@ -292,7 +301,7 @@ fn wait_on_session(
             }
         } else {
             let now = distilled_content_chars(&bridge);
-            if now != baseline {
+            if content_delta_matches(baseline, now, min_delta) {
                 matched = Some(format!("content {baseline} -> {now} chars"));
                 break;
             }
@@ -3105,6 +3114,31 @@ mod native_label_tool_tests {
             + last["removed"].as_u64().unwrap()
             + last["changed"].as_u64().unwrap();
         assert!(touched >= 1, "the fill touched at least one fact: {compact}");
+    }
+
+    #[test]
+    fn content_delta_threshold_ignores_small_moves() {
+        // Growth and shrinkage both count, symmetric around the baseline.
+        assert!(content_delta_matches(100, 260, 150));
+        assert!(content_delta_matches(260, 100, 150));
+        // Exact threshold matches; one char under does not.
+        assert!(content_delta_matches(100, 250, 150));
+        assert!(!content_delta_matches(100, 249, 150));
+        // Default threshold (1) still ignores a static page.
+        assert!(!content_delta_matches(100, 100, 1));
+    }
+
+    #[test]
+    fn wait_tool_honours_min_delta_argument() {
+        load("t50-mindelta");
+        // A static page with a large threshold times out just like the
+        // default — but the argument path is exercised end to end.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t50-mindelta", "mode": "content", "minDelta": 500, "timeout": 250, "poll": 50 }),
+        );
+        assert!(out.starts_with("timeout after "), "{out}");
+        assert!(out.contains("no 'content' change observed"), "{out}");
     }
 
     #[test]
