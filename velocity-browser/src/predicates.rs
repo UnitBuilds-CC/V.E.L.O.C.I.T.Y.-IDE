@@ -91,6 +91,9 @@ pub const SESSION_TEXT_LENGTH: u16 = 107;
 pub const SESSION_HEADING: u16 = 108;
 /// Current scroll offset of the session viewport, formatted "x,y".
 pub const SESSION_SCROLL: u16 = 109;
+/// Distilled page content (readability markdown projection, boilerplate
+/// stripped, capped) — the readable core of the page in one fact.
+pub const SESSION_CONTENT: u16 = 110;
 
 // ---------------------------------------------------------------------------
 // Network: 200..=249
@@ -181,6 +184,7 @@ pub fn predicate_name(id: u16) -> &'static str {
         SESSION_TEXT_LENGTH => "textLength",
         SESSION_HEADING => "heading",
         SESSION_SCROLL => "scroll",
+        SESSION_CONTENT => "content",
         NET_METHOD => "net.method",
         NET_STATUS => "net.status",
         OCR_TEXT => "ocr.text",
@@ -234,7 +238,7 @@ mod tests {
             LAYOUT_IN_VIEWPORT,
             SESSION_URL, SESSION_TITLE, SESSION_COOKIE, SESSION_STORAGE,
             SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
-            SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
+            SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL, SESSION_CONTENT,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
             LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
             MEMORY_SESSION, MEMORY_URL, MEMORY_TEXT, MEMORY_TRIPLE_HASH,
@@ -258,7 +262,7 @@ mod tests {
             LAYOUT_IN_VIEWPORT,
             SESSION_URL, SESSION_TITLE, SESSION_COOKIE, SESSION_STORAGE,
             SESSION_LINK_COUNT, SESSION_FORM_COUNT, SESSION_INTERACTIVE_COUNT,
-            SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL,
+            SESSION_TEXT_LENGTH, SESSION_HEADING, SESSION_SCROLL, SESSION_CONTENT,
             NET_METHOD, NET_STATUS, OCR_TEXT, OCR_OPAQUE_REGION,
             LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS,
             MEMORY_SESSION, MEMORY_URL, MEMORY_TEXT, MEMORY_TRIPLE_HASH,

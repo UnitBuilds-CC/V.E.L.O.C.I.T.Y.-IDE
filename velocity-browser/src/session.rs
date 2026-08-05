@@ -14,9 +14,10 @@ use crate::layout::{DisplayMode, FlexAlignmentSolver, FlexDirection, FlexLayoutE
 use crate::net::{HttpClient, InspectorServer, ProxyResolver, QuicConnection, TlsFingerprintRotator, WebBluetoothTransport};
 use crate::nda::{NdaDocument, NdaTriple};
 use crate::predicates::{
-    AOM_FOCUSED, LAYOUT_BOUNDS, LAYOUT_IN_VIEWPORT, LAYOUT_VISIBILITY, SESSION_COOKIE,
-    SESSION_FORM_COUNT, SESSION_HEADING, SESSION_INTERACTIVE_COUNT, SESSION_LINK_COUNT,
-    SESSION_SCROLL, SESSION_STORAGE, SESSION_TEXT_LENGTH, SESSION_TITLE, SESSION_URL,
+    AOM_FOCUSED, LAYOUT_BOUNDS, LAYOUT_IN_VIEWPORT, LAYOUT_VISIBILITY, SESSION_CONTENT,
+    SESSION_COOKIE, SESSION_FORM_COUNT, SESSION_HEADING, SESSION_INTERACTIVE_COUNT,
+    SESSION_LINK_COUNT, SESSION_SCROLL, SESSION_STORAGE, SESSION_TEXT_LENGTH, SESSION_TITLE,
+    SESSION_URL,
 };
 use crate::parser::{CssMatcher, FastCssParser, HtmlParser, StreamJitTokenizer};
 use crate::session_auth::{AuthReseeder, AuthTokenState};
@@ -1781,6 +1782,22 @@ impl BrowserSession {
                     heading_count += 1;
                 }
             }
+
+            // Distilled content: the readability projection (main/article
+            // region, boilerplate stripped) capped so one fact carries the
+            // readable core of the page without bloating the state document.
+            let mut content = self.page_content_markdown();
+            if content.is_empty() {
+                content = self.page_markdown();
+            }
+            const CONTENT_FACT_CHARS: usize = 8000;
+            if content.chars().count() > CONTENT_FACT_CHARS {
+                content = content.chars().take(CONTENT_FACT_CHARS).collect::<String>();
+                content.push('…');
+            }
+            if !content.is_empty() {
+                doc.push_str(&self.session_id, SESSION_CONTENT, &content);
+            }
         }
 
         // Canvas contents as readable literals (drawn text/shapes/images).
@@ -2424,6 +2441,39 @@ mod agent_action_tests {
         let content = session.page_content_markdown();
         assert!(content.contains("## Notes"), "{content}");
         assert!(content.contains("Plain page."), "{content}");
+    }
+
+    #[test]
+    fn capture_state_document_carries_distilled_content_fact() {
+        let mut session = BrowserSession::new("s36".to_string());
+        session.load_html(
+            "about:test",
+            "<html><head><title>Post</title></head><body>\
+             <nav><a href=\"/home\">Home chrome</a></nav>\
+             <div class=\"cookie-banner\"><p>We use cookies.</p></div>\
+             <main><h1>Story</h1><p>Body of the story.</p></main>\
+             </body></html>",
+        );
+        let facts = session.capture_state_document().facts_text();
+        assert!(facts.contains("|content|"), "content fact emitted: {facts}");
+        assert!(facts.contains("Body of the story."), "{facts}");
+        assert!(!facts.contains("We use cookies."), "boilerplate stays out: {facts}");
+    }
+
+    #[test]
+    fn content_fact_is_capped_at_8000_chars() {
+        let mut session = BrowserSession::new("s37".to_string());
+        let filler = "word ".repeat(3000); // 15000 chars of body text
+        session.load_html("about:test", &format!("<html><body><p>{filler}</p></body></html>"));
+        let doc = session.capture_state_document();
+        let fact = doc
+            .facts
+            .iter()
+            .find(|f| f.predicate == crate::predicates::SESSION_CONTENT)
+            .expect("content fact present");
+        let text = doc.object_display(fact).expect("content resolves");
+        assert_eq!(text.chars().count(), 8001, "capped at 8000 + ellipsis");
+        assert!(text.ends_with('…'), "got {} chars", text.chars().count());
     }
 
     #[test]
