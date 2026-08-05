@@ -66,6 +66,10 @@ struct ActionReport {
     status: String,
     delta: DeltaReport,
     view: ViewReport,
+    /// `(chars_before, chars_after)` of the distilled content fact — present
+    /// only when the action actually changed the page's readable core.
+    #[serde(rename = "contentChange", skip_serializing_if = "Option::is_none")]
+    content_change: Option<(usize, usize)>,
 }
 
 fn predicate_name(p: u16) -> String {
@@ -202,6 +206,40 @@ fn fold_by_predicate(mut lines: Vec<(u16, String)>) -> Vec<String> {
         }
     }
     out
+}
+
+/// Distilled-content change as `(chars_before, chars_after)` — the one signal
+/// that tells an agent whether re-reading the page after an action is worth
+/// a page_text call.
+fn content_change_signal(delta: &NdaDelta) -> Option<(usize, usize)> {
+    use velocity_browser::predicates::SESSION_CONTENT;
+    if let Some(c) = delta.changed.iter().find(|c| c.predicate == SESSION_CONTENT) {
+        return Some((c.old.chars().count(), c.new.chars().count()));
+    }
+    let added = delta
+        .added
+        .iter()
+        .find(|(_, p, _)| *p == SESSION_CONTENT)
+        .map(|(_, _, o)| o.chars().count());
+    let removed = delta
+        .removed
+        .iter()
+        .find(|(_, p, _)| *p == SESSION_CONTENT)
+        .map(|(_, _, o)| o.chars().count());
+    match (removed, added) {
+        (Some(a), Some(b)) => Some((a, b)),
+        (Some(a), None) => Some((a, 0)),
+        (None, Some(b)) => Some((0, b)),
+        (None, None) => None,
+    }
+}
+
+/// Readable one-liner for [`content_change_signal`]; empty when unchanged.
+fn content_change_note(delta: &NdaDelta) -> String {
+    match content_change_signal(delta) {
+        Some((from, to)) => format!("Content changed: {from} -> {to} chars\n"),
+        None => String::new(),
+    }
 }
 
 fn render_delta(delta: &NdaDelta) -> String {
@@ -1697,10 +1735,12 @@ pub fn handle_native_tool(
                 status: result.status.clone(),
                 delta: delta_report(&result.delta),
                 view: view_report(&view),
+                content_change: content_change_signal(&result.delta),
             };
             return Ok(Some(serde_json::to_string_pretty(&report).unwrap_or_default()));
         } else {
             let mut out = format!("{}\nChanges:\n{}", result.status, render_delta(&result.delta));
+            out.push_str(&content_change_note(&result.delta));
             out.push_str(&render_view(&view));
             return Ok(Some(out));
         }
@@ -1715,10 +1755,12 @@ pub fn handle_native_tool(
                 status: result.status.clone(),
                 delta: delta_report(&result.delta),
                 view: view_report(&view),
+                content_change: content_change_signal(&result.delta),
             };
             return Ok(Some(serde_json::to_string_pretty(&report).unwrap_or_default()));
         } else {
             let mut out = format!("{}\nChanges:\n{}", result.status, render_delta(&result.delta));
+            out.push_str(&content_change_note(&result.delta));
             out.push_str(&render_view(&view));
             return Ok(Some(out));
         }
@@ -1800,6 +1842,7 @@ pub fn handle_native_tool(
             status: result.status.clone(),
             delta: delta_report(&result.delta),
             view: view_report(&view),
+            content_change: content_change_signal(&result.delta),
         };
         Ok(Some(
             serde_json::to_string_pretty(&report)
@@ -1810,6 +1853,7 @@ pub fn handle_native_tool(
         out.push_str(&format!("{}\n", result.status));
         out.push_str("Changes:\n");
         out.push_str(&render_delta(&result.delta));
+        out.push_str(&content_change_note(&result.delta));
         out.push_str("---\n");
         out.push_str(&render_view(&view));
         Ok(Some(out))
@@ -2746,6 +2790,59 @@ mod native_label_tool_tests {
             .count();
         assert!(bounds_lines <= 4, "at most 4 explicit bounds lines: {out}");
         assert!(out.contains("content"), "summary facts still present: {out}");
+    }
+
+    #[test]
+    fn content_change_signal_detects_fact_changes() {
+        use velocity_browser::predicates::SESSION_CONTENT;
+        use velocity_browser::{FactChange, NdaDelta};
+
+        // A changed content fact reports before/after char counts.
+        let mut delta = NdaDelta::default();
+        delta.changed.push(FactChange {
+            subject: "s1".to_string(),
+            predicate: SESSION_CONTENT,
+            old: "ab".to_string(),
+            new: "abcdef".to_string(),
+        });
+        assert_eq!(content_change_signal(&delta), Some((2, 6)));
+        assert_eq!(
+            content_change_note(&delta),
+            "Content changed: 2 -> 6 chars\n"
+        );
+
+        // Add/remove pairs (page transitions) also count.
+        let mut delta = NdaDelta::default();
+        delta.removed.push(("s1".to_string(), SESSION_CONTENT, "old".to_string()));
+        delta.added.push(("s1".to_string(), SESSION_CONTENT, "newtext".to_string()));
+        assert_eq!(content_change_signal(&delta), Some((3, 7)));
+
+        // No content fact touched: no signal, no note.
+        let empty = NdaDelta::default();
+        assert_eq!(content_change_signal(&empty), None);
+        assert_eq!(content_change_note(&empty), "");
+    }
+
+    #[test]
+    fn action_reports_omit_content_change_when_unchanged() {
+        load("t45-sig");
+        // Filling an input changes a value fact but never the content fact.
+        let out = call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t45-sig", "label": "Email", "text": "a@b.example" }),
+        );
+        assert!(!out.contains("Content changed:"), "{out}");
+
+        let compact = call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t45-sig", "label": "Email", "text": "c@d.example", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact action report is valid JSON");
+        assert!(
+            report.get("contentChange").is_none(),
+            "field absent when content is unchanged: {compact}"
+        );
     }
 
     #[test]
