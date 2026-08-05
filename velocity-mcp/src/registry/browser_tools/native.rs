@@ -272,6 +272,9 @@ fn wait_on_session(
     // (timestamps, counters) and only wake on a real content move.
     let min_delta = arguments["minDelta"].as_u64().unwrap_or(1).max(1) as usize;
     let label = arguments["label"].as_str().unwrap_or("");
+    // mode=element with gone=true inverts the predicate: wake when the
+    // element is NOT on the page (spinners, overlays, toasts disappearing).
+    let gone = arguments["gone"].as_bool().unwrap_or(false);
     if !matches!(mode, "content" | "element" | "url") {
         return Err(format!("unknown wait mode '{mode}'").into());
     }
@@ -294,11 +297,16 @@ fn wait_on_session(
         let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
         if mode == "element" {
             let view = bridge.current_view();
-            if let Some(e) = view
+            let found = view
                 .elements
                 .iter()
-                .find(|e| e.name.to_lowercase().contains(&want))
-            {
+                .find(|e| e.name.to_lowercase().contains(&want));
+            if gone {
+                if found.is_none() {
+                    matched = Some(format!("\"{label}\" gone"));
+                    break;
+                }
+            } else if let Some(e) = found {
                 matched = Some(format!("{} \"{}\" (aom {})", e.role, e.name, e.aom_id));
                 break;
             }
@@ -3185,6 +3193,36 @@ mod native_label_tool_tests {
             serde_json::from_str(&compact).expect("compact wait report is valid JSON");
         assert_eq!(report["status"], "timeout", "{compact}");
         assert_eq!(report["mode"], "url", "{compact}");
+    }
+
+    #[test]
+    fn wait_tool_gone_flag_inverts_element_predicate() {
+        load("t52-gone");
+
+        // An element that never existed is already gone: matches fast.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t52-gone", "mode": "element", "label": "Nonexistent", "gone": true, "timeout": 2000 }),
+        );
+        assert!(out.starts_with("matched after "), "{out}");
+        assert!(out.contains("\"Nonexistent\" gone"), "{out}");
+
+        // An element that IS on the page never becomes gone: timeout.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t52-gone", "mode": "element", "label": "log in", "gone": true, "timeout": 250, "poll": 50 }),
+        );
+        assert!(out.starts_with("timeout after "), "{out}");
+
+        // Compact report carries the inverted match.
+        let compact = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t52-gone", "mode": "element", "label": "Nonexistent", "gone": true, "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact wait report is valid JSON");
+        assert_eq!(report["status"], "matched", "{compact}");
+        assert!(report["matched"].as_str().unwrap_or("").contains("gone"), "{compact}");
     }
 
     #[test]

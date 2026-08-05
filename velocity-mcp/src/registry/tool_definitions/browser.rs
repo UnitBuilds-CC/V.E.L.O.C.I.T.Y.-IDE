@@ -1146,7 +1146,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_wait".to_string(),
-            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change by at least minDelta chars (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears; mode=url waits for navigation (with `label`: until the URL contains it, without: until the URL differs from the call-time URL). Reports matched or timeout with elapsed milliseconds.".to_string(),
+            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change by at least minDelta chars (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears (or, with gone=true, until it disappears - spinners, overlays, toasts); mode=url waits for navigation (with `label`: until the URL contains it, without: until the URL differs from the call-time URL). Reports matched or timeout with elapsed milliseconds.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1156,6 +1156,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
                     "timeout": { "type": "integer", "description": "Max wait in milliseconds (default 10000, max 60000)." },
                     "poll": { "type": "integer", "description": "Poll interval in milliseconds (default 100)." },
                     "minDelta": { "type": "integer", "description": "For mode=content: minimum character-count change to count as a content move (default 1). Raise it to ignore tiny fluctuations like timestamps." },
+                    "gone": { "type": "boolean", "description": "For mode=element: when true, wait until the element is GONE instead of appearing (default false)." },
                     "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
                 },
                 "required": ["sessionId"]
