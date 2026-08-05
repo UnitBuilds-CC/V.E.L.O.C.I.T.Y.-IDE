@@ -1033,6 +1033,17 @@ pub fn handle_native_tool(
             bridge.recall_pages(&page_query, "semantic", memory_limit, 0.0)
         };
         let reflections = bridge.reflect();
+        // What the most recent action changed: the rolling `_pre` checkpoint
+        // exists once any action has run, so a returning agent learns the
+        // effect of its previous turn in the same call it re-orients with.
+        let last_change = bridge.checkpoint_diff("_pre").map(|d| {
+            (
+                d.added.len(),
+                d.removed.len(),
+                d.changed.len(),
+                content_change_signal(&d),
+            )
+        });
         if compact {
             let sugg_json = suggestion.as_ref().map(|p| {
                 serde_json::json!({
@@ -1094,6 +1105,14 @@ pub fn handle_native_tool(
                     "title": view.title,
                     "elements": view.elements.len(),
                     "contentChars": (content_chars > 0).then_some(content_chars),
+                    "lastChange": last_change.as_ref().map(|(added, removed, changed, cc)| {
+                        serde_json::json!({
+                            "added": added,
+                            "removed": removed,
+                            "changed": changed,
+                            "contentChange": cc.map(|(from, to)| serde_json::json!([from, to])),
+                        })
+                    }),
                     "digest": (!digest.is_empty()).then_some(digest.as_str()),
                     "suggestion": sugg_json,
                     "patterns": pattern_json,
@@ -1116,6 +1135,17 @@ pub fn handle_native_tool(
         }
         if content_chars > 0 {
             out.push_str(&format!("Content: {} chars\n", content_chars));
+        }
+        if let Some((added, removed, changed, cc)) = last_change {
+            let mut line = format!(
+                "Last action: {} added, {} removed, {} changed fact(s)",
+                added, removed, changed
+            );
+            if let Some((from, to)) = cc {
+                line.push_str(&format!("; content {} -> {} chars", from, to));
+            }
+            out.push_str(&line);
+            out.push('\n');
         }
         match (&suggestion, detail) {
             (Some(p), Some(e)) => out.push_str(&format!(
@@ -3042,6 +3072,39 @@ mod native_label_tool_tests {
             diff.contains("x@y.example -> z@w.example"),
             "changed fact spans exactly the last action, old -> new: {diff}"
         );
+    }
+
+    #[test]
+    fn brief_reports_last_action_change_summary() {
+        load("t49-last");
+
+        // Before any action there is no `_pre`: no summary line.
+        let out = call("browser_native_brief", json!({ "sessionId": "t49-last" }));
+        assert!(!out.contains("Last action:"), "{out}");
+
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t49-last", "label": "Email", "text": "q@r.example" }),
+        );
+        let out = call("browser_native_brief", json!({ "sessionId": "t49-last" }));
+        assert!(
+            out.contains("Last action: "),
+            "summary surfaces after an action: {out}"
+        );
+        assert!(out.contains("changed fact(s)"), "{out}");
+
+        let compact = call(
+            "browser_native_brief",
+            json!({ "sessionId": "t49-last", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact brief is valid JSON");
+        let last = &report["lastChange"];
+        assert!(last.is_object(), "lastChange present after an action: {compact}");
+        let touched = last["added"].as_u64().unwrap()
+            + last["removed"].as_u64().unwrap()
+            + last["changed"].as_u64().unwrap();
+        assert!(touched >= 1, "the fill touched at least one fact: {compact}");
     }
 
     #[test]
