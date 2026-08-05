@@ -372,20 +372,15 @@ fn wait_on_session(
     }))
 }
 
-/// Check page-state conditions in one call and report failure in-band.
-/// A failed assertion is a result (with enough detail to diagnose), never
-/// a tool error, so agents can use it as a cheap guard after any action.
-fn assert_on_session(
+/// Evaluate the assert conditions against the current bridge state.
+/// Returns `(what, expected value, ok, detail-on-failure)` per check.
+fn evaluate_assert_checks(
     bridge: &NativeBrowserBridge,
-    arguments: &Value,
-    compact: bool,
-) -> Result<Option<String>, Box<dyn Error>> {
-    let text = arguments["text"].as_str().unwrap_or("").trim().to_lowercase();
-    let label = arguments["label"].as_str().unwrap_or("").trim().to_lowercase();
-    if text.is_empty() && label.is_empty() {
-        return Err("assert needs at least one of: text, label".into());
-    }
-    // (what, expected value, ok, detail-on-failure)
+    raw_text: &str,
+    raw_label: &str,
+) -> Vec<(String, String, bool, String)> {
+    let text = raw_text.trim().to_lowercase();
+    let label = raw_label.trim().to_lowercase();
     let mut checks: Vec<(String, String, bool, String)> = Vec::new();
     if !text.is_empty() {
         let mut content = bridge.page_content_markdown();
@@ -398,7 +393,7 @@ fn assert_on_session(
             content.chars().count(),
             fact_snippet(&content)
         );
-        checks.push(("text".to_string(), arguments["text"].as_str().unwrap_or("").to_string(), ok, detail));
+        checks.push(("text".to_string(), raw_text.to_string(), ok, detail));
     }
     if !label.is_empty() {
         let view = bridge.current_view();
@@ -408,26 +403,42 @@ fn assert_on_session(
             .any(|e| e.name.to_lowercase().contains(&label));
         checks.push((
             "element".to_string(),
-            arguments["label"].as_str().unwrap_or("").to_string(),
+            raw_label.to_string(),
             ok,
             format!("{} element(s) in view", view.elements.len()),
         ));
     }
+    checks
+}
+
+/// Render an assert verdict. `waited_ms` is only set when the call used a
+/// waitMs grace period, in which case the report carries the elapsed time.
+fn render_assert_report(
+    checks: &[(String, String, bool, String)],
+    waited_ms: Option<u64>,
+    compact: bool,
+) -> Result<String, Box<dyn Error>> {
     let all_ok = checks.iter().all(|(_, _, ok, _)| *ok);
     if compact {
-        let json = serde_json::json!({
+        let mut json = serde_json::json!({
             "ok": all_ok,
             "checks": checks.iter().map(|(what, value, ok, detail)| {
                 serde_json::json!({ "what": what, "value": value, "ok": ok, "detail": detail })
             }).collect::<Vec<_>>(),
         });
-        return Ok(Some(
-            serde_json::to_string_pretty(&json)
-                .map_err(|e| format!("serialise assert report: {e}"))?,
-        ));
+        if let Some(elapsed) = waited_ms {
+            json["elapsedMs"] = serde_json::json!(elapsed);
+        }
+        return serde_json::to_string_pretty(&json)
+            .map_err(|e| format!("serialise assert report: {e}").into());
     }
+    let prefix = match waited_ms {
+        Some(elapsed) => format!("after {elapsed} ms: "),
+        None => String::new(),
+    };
     let mut out = String::new();
     if all_ok {
+        out.push_str(&prefix);
         out.push_str("assert ok: ");
         let parts: Vec<String> = checks
             .iter()
@@ -436,13 +447,48 @@ fn assert_on_session(
         out.push_str(&parts.join("; "));
         out.push('\n');
     } else {
+        out.push_str(&prefix);
         out.push_str("assert FAILED:\n");
-        for (what, value, ok, detail) in &checks {
+        for (what, value, ok, detail) in checks {
             let verdict = if *ok { "ok" } else { "FAILED" };
             out.push_str(&format!("  - {what} \"{value}\": {verdict} ({detail})\n"));
         }
     }
-    Ok(Some(out))
+    Ok(out)
+}
+
+/// Check page-state conditions in one call and report failure in-band.
+/// A failed assertion is a result (with enough detail to diagnose), never
+/// a tool error, so agents can use it as a cheap guard after any action.
+/// With waitMs > 0 the checks poll (lock released between polls) until the
+/// conditions hold or the grace period elapses.
+fn assert_on_session(
+    session_id: &str,
+    arguments: &Value,
+    compact: bool,
+) -> Result<Option<String>, Box<dyn Error>> {
+    let raw_text = arguments["text"].as_str().unwrap_or("");
+    let raw_label = arguments["label"].as_str().unwrap_or("");
+    if raw_text.trim().is_empty() && raw_label.trim().is_empty() {
+        return Err("assert needs at least one of: text, label".into());
+    }
+    // waitMs grants a grace period for async pages to reach the state.
+    let wait_ms = arguments["waitMs"].as_u64().unwrap_or(0).min(60_000);
+    let poll_ms = arguments["poll"].as_u64().unwrap_or(100).clamp(20, 1_000);
+    let arc = get_or_create_native_bridge(session_id);
+    let start = std::time::Instant::now();
+    let checks = loop {
+        let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        let checks = evaluate_assert_checks(&bridge, raw_text, raw_label);
+        let all_ok = checks.iter().all(|(_, _, ok, _)| *ok);
+        if all_ok || start.elapsed().as_millis() >= u128::from(wait_ms) {
+            break checks;
+        }
+        drop(bridge);
+        std::thread::sleep(std::time::Duration::from_millis(poll_ms));
+    };
+    let waited = (wait_ms > 0).then(|| start.elapsed().as_millis() as u64);
+    Ok(Some(render_assert_report(&checks, waited, compact)?))
 }
 
 fn render_delta(delta: &NdaDelta) -> String {
@@ -645,15 +691,15 @@ pub fn handle_native_tool(
     if name == "browser_native_wait" {
         return wait_on_session(session_id, arguments, compact);
     }
+    // Assert can poll with a waitMs grace period, so it likewise bypasses
+    // the handler-wide guard and re-locks per poll.
+    if name == "browser_native_assert" {
+        return assert_on_session(session_id, arguments, compact);
+    }
     let bridge = get_or_create_native_bridge(session_id);
     let mut bridge = bridge
         .lock()
         .map_err(|_| "native browser bridge lock poisoned")?;
-    // Assertions are read-only checks that report failure instead of
-    // erroring, so they short-circuit before any action bookkeeping.
-    if name == "browser_native_assert" {
-        return assert_on_session(&bridge, arguments, compact);
-    }
     // First touch of a session inherits the workspace-default experience
     // bundle (default_all.nda) if one was saved, so learned patterns, page
     // memories and outcome lessons carry over without an explicit load call.
@@ -3400,6 +3446,39 @@ mod native_label_tool_tests {
             json!({ "sessionId": "t54-assert" }),
         );
         assert!(err.to_string().contains("assert needs at least one of"), "{err}");
+    }
+
+    #[test]
+    fn assert_tool_wait_ms_grace_period_polls() {
+        load("t55-waitassert");
+
+        // A condition that already holds matches immediately even with a
+        // grace period, and the report carries the elapsed time.
+        let out = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t55-waitassert", "label": "log in", "waitMs": 2000, "poll": 50 }),
+        );
+        assert!(out.starts_with("after "), "{out}");
+        assert!(out.contains("assert ok: "), "{out}");
+
+        // A condition that never holds burns the whole grace period and
+        // then reports failure with the elapsed time.
+        let compact = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t55-waitassert", "label": "Checkout", "waitMs": 250, "poll": 50, "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact assert report is valid JSON");
+        assert_eq!(report["ok"], false, "{compact}");
+        let elapsed = report["elapsedMs"].as_u64().expect("elapsedMs present when waiting");
+        assert!(elapsed >= 200, "grace period should be spent: {compact}");
+
+        // Without waitMs the report stays free of timing noise.
+        let out = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t55-waitassert", "label": "log in" }),
+        );
+        assert!(out.starts_with("assert ok: "), "{out}");
     }
 
     #[test]
