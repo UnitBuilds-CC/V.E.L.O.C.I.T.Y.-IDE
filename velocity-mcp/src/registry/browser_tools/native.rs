@@ -156,13 +156,52 @@ fn render_view(view: &NativeBrowserView) -> String {
 /// change reports its size instead of flooding the output.
 fn fact_snippet(value: &str) -> String {
     const LIMIT: usize = 160;
-    let count = value.chars().count();
+    // Diff lines must stay one line: collapse newlines from markdown-shaped
+    // values before truncating.
+    let flat = if value.contains('\n') {
+        value.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        value.to_string()
+    };
+    let count = flat.chars().count();
     if count <= LIMIT {
-        return value.to_string();
+        return flat;
     }
-    let mut snippet: String = value.chars().take(LIMIT).collect();
+    let mut snippet: String = flat.chars().take(LIMIT).collect();
     snippet.push_str(&format!(" …(+{} chars)", count - LIMIT));
     snippet
+}
+
+/// Keep at most this many lines per predicate before folding the rest.
+const DELTA_LINES_PER_PREDICATE: usize = 4;
+
+/// Fold a list of rendered diff lines per predicate: the first few lines stay
+/// explicit, the remainder collapses into one "(N more ...)" tail line.
+fn fold_by_predicate(mut lines: Vec<(u16, String)>) -> Vec<String> {
+    use std::collections::HashMap;
+    let mut grouped: HashMap<u16, Vec<String>> = HashMap::new();
+    let mut order: Vec<u16> = Vec::new();
+    for (p, text) in lines.drain(..) {
+        if !grouped.contains_key(&p) {
+            order.push(p);
+        }
+        grouped.entry(p).or_default().push(text);
+    }
+    let mut out = Vec::new();
+    for p in order {
+        let texts = grouped.remove(&p).unwrap_or_default();
+        let total = texts.len();
+        let keep = total.min(DELTA_LINES_PER_PREDICATE);
+        out.extend(texts.iter().take(keep).cloned());
+        if total > keep {
+            out.push(format!(
+                "    ({} more {} change(s))",
+                total - keep,
+                predicate_name(p)
+            ));
+        }
+    }
+    out
 }
 
 fn render_delta(delta: &NdaDelta) -> String {
@@ -170,20 +209,43 @@ fn render_delta(delta: &NdaDelta) -> String {
         return "  (no state change)\n".to_string();
     }
     let mut out = String::new();
-    for (s, p, o) in &delta.added {
-        out.push_str(&format!("  + {} {} = {}\n", s, predicate_name(*p), fact_snippet(o)));
+    let added: Vec<(u16, String)> = delta
+        .added
+        .iter()
+        .map(|(s, p, o)| (*p, format!("  + {} {} = {}", s, predicate_name(*p), fact_snippet(o))))
+        .collect();
+    for line in fold_by_predicate(added) {
+        out.push_str(&line);
+        out.push('\n');
     }
-    for (s, p, o) in &delta.removed {
-        out.push_str(&format!("  - {} {} = {}\n", s, predicate_name(*p), fact_snippet(o)));
+    let removed: Vec<(u16, String)> = delta
+        .removed
+        .iter()
+        .map(|(s, p, o)| (*p, format!("  - {} {} = {}", s, predicate_name(*p), fact_snippet(o))))
+        .collect();
+    for line in fold_by_predicate(removed) {
+        out.push_str(&line);
+        out.push('\n');
     }
-    for c in &delta.changed {
-        out.push_str(&format!(
-            "  ~ {} {} : {} -> {}\n",
-            c.subject,
-            predicate_name(c.predicate),
-            fact_snippet(&c.old),
-            fact_snippet(&c.new)
-        ));
+    let changed: Vec<(u16, String)> = delta
+        .changed
+        .iter()
+        .map(|c| {
+            (
+                c.predicate,
+                format!(
+                    "  ~ {} {} : {} -> {}",
+                    c.subject,
+                    predicate_name(c.predicate),
+                    fact_snippet(&c.old),
+                    fact_snippet(&c.new)
+                ),
+            )
+        })
+        .collect();
+    for line in fold_by_predicate(changed) {
+        out.push_str(&line);
+        out.push('\n');
     }
     out
 }
@@ -2648,6 +2710,42 @@ mod native_label_tool_tests {
         let new_value = content_change["new"].as_str().expect("new value");
         assert!(new_value.contains("…(+"), "compact diff is snippeted too: {compact}");
         assert!(new_value.chars().count() < 250, "{new_value}");
+    }
+
+    #[test]
+    fn delta_output_folds_repeated_predicate_lines() {
+        let bridge = get_or_create_native_bridge("t44-fold");
+        bridge.lock().unwrap().load_html(
+            "http://local.test/list",
+            "<html><body><ul><li>alpha</li><li>bravo</li><li>charlie</li>\
+             <li>delta</li><li>echo</li><li>foxtrot</li></ul></body></html>",
+        );
+        call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t44-fold", "action": "save", "name": "a" }),
+        );
+        // Same structure, every row renamed: six name changes at once.
+        bridge.lock().unwrap().load_html(
+            "http://local.test/list",
+            "<html><body><ul><li>one</li><li>two</li><li>three</li>\
+             <li>four</li><li>five</li><li>six</li></ul></body></html>",
+        );
+
+        let out = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t44-fold", "action": "diff", "name": "a" }),
+        );
+        assert!(out.contains("~ node_"), "explicit lines stay: {out}");
+        assert!(
+            out.contains("(1 more bounds change(s))"),
+            "overflowing predicate folds into a count: {out}"
+        );
+        let bounds_lines = out
+            .lines()
+            .filter(|l| l.starts_with("  ~") && l.contains(" bounds "))
+            .count();
+        assert!(bounds_lines <= 4, "at most 4 explicit bounds lines: {out}");
+        assert!(out.contains("content"), "summary facts still present: {out}");
     }
 
     #[test]
