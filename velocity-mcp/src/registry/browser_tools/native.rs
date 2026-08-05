@@ -1819,6 +1819,9 @@ pub fn handle_native_tool(
 
     if name == "browser_native_hover" {
         let node_id = resolve_node(&bridge, arguments)?;
+        // Rolling auto-checkpoint: `_pre` always holds the state immediately
+        // before the most recent action, so diff works without an explicit save.
+        bridge.checkpoint_save("_pre");
         let result = bridge.agent_hover(node_id);
         let view = bridge.current_view();
         if compact {
@@ -1839,6 +1842,8 @@ pub fn handle_native_tool(
 
     if name == "browser_native_press_key" {
         let key = arguments["key"].as_str().ok_or("key is required")?;
+        // Rolling auto-checkpoint (see browser_native_hover).
+        bridge.checkpoint_save("_pre");
         let result = bridge.agent_press_key(key);
         let view = bridge.current_view();
         if compact {
@@ -1856,6 +1861,10 @@ pub fn handle_native_tool(
             return Ok(Some(out));
         }
     }
+
+    // Rolling auto-checkpoint (see browser_native_hover): every action path
+    // that reaches this dispatch leaves its pre-state diffable as `_pre`.
+    bridge.checkpoint_save("_pre");
 
     let result = match name {
         "browser_native_navigate" => {
@@ -2760,13 +2769,15 @@ mod native_label_tool_tests {
         );
         assert!(out.contains("checkpoint 'start' replaced"), "{out}");
 
-        // list shows the snapshot, drop removes it.
+        // list shows the snapshots (the rolling `_pre` auto-checkpoint from
+        // the actions above is always present), drop removes the named one.
         let out = call(
             "browser_native_checkpoint",
             json!({ "sessionId": "t28-ckpt", "action": "list" }),
         );
-        assert!(out.starts_with("1 checkpoint:"), "{out}");
+        assert!(out.starts_with("2 checkpoints:"), "{out}");
         assert!(out.contains("start ("), "{out}");
+        assert!(out.contains("_pre ("), "rolling auto-checkpoint is listed: {out}");
         let out = call(
             "browser_native_checkpoint",
             json!({ "sessionId": "t28-ckpt", "action": "drop", "name": "start" }),
@@ -2776,7 +2787,8 @@ mod native_label_tool_tests {
             "browser_native_checkpoint",
             json!({ "sessionId": "t28-ckpt", "action": "list" }),
         );
-        assert!(out.contains("(no checkpoints)"), "{out}");
+        assert!(out.starts_with("1 checkpoint:"), "only `_pre` remains: {out}");
+        assert!(out.contains("_pre ("), "{out}");
 
         // Missing checkpoint and unknown action are errors.
         let err = handle_native_tool(
@@ -2989,6 +3001,47 @@ mod native_label_tool_tests {
             json!({ "sessionId": "t47-wait-err", "mode": "idle" }),
         );
         assert!(err.to_string().contains("unknown wait mode 'idle'"), "{err}");
+    }
+
+    #[test]
+    fn actions_keep_a_rolling_pre_checkpoint() {
+        load("t48-auto");
+
+        // No explicit save: the first action still leaves a `_pre` snapshot.
+        let out = call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t48-auto", "label": "Email", "text": "x@y.example" }),
+        );
+        assert!(out.contains("Changes:"), "{out}");
+
+        let list = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t48-auto", "action": "list" }),
+        );
+        assert!(list.contains("_pre"), "auto-checkpoint is listed: {list}");
+
+        // Diff against `_pre` shows exactly what the last action changed.
+        let diff = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t48-auto", "action": "diff", "name": "_pre" }),
+        );
+        assert!(diff.contains("x@y.example"), "filled value surfaces in the diff: {diff}");
+
+        // A second action rolls the checkpoint forward: `_pre` now holds the
+        // state right before that action, not before the first one.
+        call(
+            "browser_native_fill_label",
+            json!({ "sessionId": "t48-auto", "label": "Email", "text": "z@w.example" }),
+        );
+        let diff = call(
+            "browser_native_checkpoint",
+            json!({ "sessionId": "t48-auto", "action": "diff", "name": "_pre" }),
+        );
+        assert!(diff.contains("z@w.example"), "second fill is the new value: {diff}");
+        assert!(
+            diff.contains("x@y.example -> z@w.example"),
+            "changed fact spans exactly the last action, old -> new: {diff}"
+        );
     }
 
     #[test]

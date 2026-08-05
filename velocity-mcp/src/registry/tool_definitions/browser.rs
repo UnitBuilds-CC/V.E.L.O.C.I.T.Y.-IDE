@@ -1093,7 +1093,7 @@ pub fn get_browser_tools() -> Vec<Tool> {
         },
         Tool {
             name: "browser_native_checkpoint".to_string(),
-            description: "Named page-state checkpoints in the native browser session. action=save snapshots the current state under a name; action=diff reports everything that changed since that snapshot as one NDA delta (spanning any number of actions); action=list and action=drop manage saved checkpoints.".to_string(),
+            description: "Named page-state checkpoints in the native browser session. action=save snapshots the current state under a name; action=diff reports everything that changed since that snapshot as one NDA delta (spanning any number of actions); action=list and action=drop manage saved checkpoints. Every action also auto-saves a rolling '_pre' checkpoint, so diff against name=_pre always shows the effect of the most recent action without an explicit save.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
