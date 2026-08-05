@@ -1145,6 +1145,22 @@ pub fn get_browser_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "browser_native_wait".to_string(),
+            description: "Block until a condition holds on the page or the timeout elapses, instead of polling observe/brief. mode=content (default) waits for the distilled content size to change (async updates, lazy loading); mode=element waits until an element whose name contains `label` appears. Reports matched or timeout with elapsed milliseconds.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Session id of the live native browser session." },
+                    "mode": { "type": "string", "enum": ["content", "element"], "description": "What to wait for (default content)." },
+                    "label": { "type": "string", "description": "For mode=element: name fragment to wait for (case-insensitive)." },
+                    "timeout": { "type": "integer", "description": "Max wait in milliseconds (default 10000, max 60000)." },
+                    "poll": { "type": "integer", "description": "Poll interval in milliseconds (default 100)." },
+                    "compact": { "type": "boolean", "description": "When true, return a JSON report instead of readable text." }
+                },
+                "required": ["sessionId"]
+            }),
+        },
+        Tool {
             name: "browser_native_learn".to_string(),
             description: "Persist or restore the session's experience stores as NDA artifacts under .velocity/browser_artifacts/, so what one session learned improves later ones. what=confidence (default) is the learned per-domain action confidence; what=memory is the vector page memory (remembered pages); what=outcomes is the scored action-outcome history that feeds browser_native_reflect; what=all bundles all three stores into a single artifact. action=save exports the store; action=load imports a previously saved artifact into the current session; action=list enumerates every saved artifact (file, kind, size) so an agent can discover inheritable experience. Saving with file=default_all.nda publishes the bundle as the workspace default: every new session auto-inherits it on first use.".to_string(),
             input_schema: json!({

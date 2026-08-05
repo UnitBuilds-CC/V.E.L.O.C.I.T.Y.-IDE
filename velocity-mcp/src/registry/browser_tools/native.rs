@@ -242,6 +242,80 @@ fn content_change_note(delta: &NdaDelta) -> String {
     }
 }
 
+/// Size of the distilled content projection (readability markdown, with the
+/// plain markdown as fallback) — the baseline `browser_native_wait` watches.
+fn distilled_content_chars(bridge: &NativeBrowserBridge) -> usize {
+    let mut content = bridge.page_content_markdown();
+    if content.is_empty() {
+        content = bridge.page_markdown();
+    }
+    content.chars().count()
+}
+
+/// Block until a predicate holds on the session or the timeout elapses.
+/// Locks are taken per poll so concurrent updates remain observable.
+fn wait_on_session(
+    session_id: &str,
+    arguments: &Value,
+    compact: bool,
+) -> Result<Option<String>, Box<dyn Error>> {
+    let mode = arguments["mode"].as_str().unwrap_or("content");
+    let timeout_ms = arguments["timeout"].as_u64().unwrap_or(10_000).clamp(1, 60_000);
+    let poll_ms = arguments["poll"].as_u64().unwrap_or(100).clamp(20, 1_000);
+    let label = arguments["label"].as_str().unwrap_or("");
+    if !matches!(mode, "content" | "element") {
+        return Err(format!("unknown wait mode '{mode}'").into());
+    }
+    if mode == "element" && label.trim().is_empty() {
+        return Err("label is required for mode=element".into());
+    }
+    let arc = get_or_create_native_bridge(session_id);
+    let start = std::time::Instant::now();
+    let baseline = {
+        let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        distilled_content_chars(&bridge)
+    };
+    let want = label.to_lowercase();
+    let mut matched: Option<String> = None;
+    while start.elapsed().as_millis() < u128::from(timeout_ms) {
+        std::thread::sleep(std::time::Duration::from_millis(poll_ms));
+        let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        if mode == "element" {
+            let view = bridge.current_view();
+            if let Some(e) = view
+                .elements
+                .iter()
+                .find(|e| e.name.to_lowercase().contains(&want))
+            {
+                matched = Some(format!("{} \"{}\" (aom {})", e.role, e.name, e.aom_id));
+                break;
+            }
+        } else {
+            let now = distilled_content_chars(&bridge);
+            if now != baseline {
+                matched = Some(format!("content {baseline} -> {now} chars"));
+                break;
+            }
+        }
+    }
+    let elapsed = start.elapsed().as_millis() as u64;
+    if compact {
+        return Ok(Some(
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if matched.is_some() { "matched" } else { "timeout" },
+                "mode": mode,
+                "matched": matched,
+                "elapsedMs": elapsed,
+            }))
+            .map_err(|e| format!("serialise wait report: {e}"))?,
+        ));
+    }
+    Ok(Some(match matched {
+        Some(m) => format!("matched after {elapsed} ms: {m}\n"),
+        None => format!("timeout after {elapsed} ms: no '{mode}' change observed\n"),
+    }))
+}
+
 fn render_delta(delta: &NdaDelta) -> String {
     if delta.is_empty() {
         return "  (no state change)\n".to_string();
@@ -429,12 +503,18 @@ pub fn handle_native_tool(
         | "browser_native_tab_list"
         | "browser_native_tab_switch"
         | "browser_native_tab_close"
-        | "browser_native_settle" => arguments["sessionId"]
+        | "browser_native_settle"
+        | "browser_native_wait" => arguments["sessionId"]
             .as_str()
             .ok_or("sessionId is required")?,
         _ => return Ok(None),
     };
     let compact = arguments["compact"].as_bool().unwrap_or(false);
+    // Wait polls the session with the lock released between checks, so it
+    // runs before the handler-wide guard is taken.
+    if name == "browser_native_wait" {
+        return wait_on_session(session_id, arguments, compact);
+    }
     let bridge = get_or_create_native_bridge(session_id);
     let mut bridge = bridge
         .lock()
@@ -1900,6 +1980,10 @@ mod native_label_tool_tests {
             .expect("native tool name is handled")
     }
 
+    fn call_err(name: &str, args: serde_json::Value) -> Box<dyn Error> {
+        handle_native_tool(Path::new("."), name, &args).expect_err("tool call fails")
+    }
+
     #[test]
     fn click_text_tool_acts_and_reports_observation() {
         load("t17-click");
@@ -2854,6 +2938,57 @@ mod native_label_tool_tests {
             report.get("contentChange").is_none(),
             "field absent when content is unchanged: {compact}"
         );
+    }
+
+    #[test]
+    fn wait_tool_matches_element_and_times_out() {
+        load("t47-wait");
+
+        // An element that already exists matches on the first poll.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t47-wait", "mode": "element", "label": "log in", "timeout": 2000 }),
+        );
+        assert!(out.starts_with("matched after "), "{out}");
+        assert!(out.contains("\"Log In\""), "{out}");
+
+        let compact = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t47-wait", "mode": "element", "label": "log in", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact wait report is valid JSON");
+        assert_eq!(report["status"], "matched", "{compact}");
+        assert!(report["matched"].as_str().unwrap().contains("Log In"), "{compact}");
+
+        // Nothing named "Nonexistent" appears: the wait times out.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t47-wait", "mode": "element", "label": "Nonexistent", "timeout": 250, "poll": 50 }),
+        );
+        assert!(out.starts_with("timeout after "), "{out}");
+
+        // Static content never changes: content mode times out too.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t47-wait", "mode": "content", "timeout": 250, "poll": 50 }),
+        );
+        assert!(out.contains("no 'content' change observed"), "{out}");
+    }
+
+    #[test]
+    fn wait_tool_rejects_bad_arguments() {
+        load("t47-wait-err");
+        let err = call_err(
+            "browser_native_wait",
+            json!({ "sessionId": "t47-wait-err", "mode": "element" }),
+        );
+        assert!(err.to_string().contains("label is required"), "{err}");
+        let err = call_err(
+            "browser_native_wait",
+            json!({ "sessionId": "t47-wait-err", "mode": "idle" }),
+        );
+        assert!(err.to_string().contains("unknown wait mode 'idle'"), "{err}");
     }
 
     #[test]
