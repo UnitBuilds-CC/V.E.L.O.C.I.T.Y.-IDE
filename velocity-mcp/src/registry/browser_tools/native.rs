@@ -372,6 +372,79 @@ fn wait_on_session(
     }))
 }
 
+/// Check page-state conditions in one call and report failure in-band.
+/// A failed assertion is a result (with enough detail to diagnose), never
+/// a tool error, so agents can use it as a cheap guard after any action.
+fn assert_on_session(
+    bridge: &NativeBrowserBridge,
+    arguments: &Value,
+    compact: bool,
+) -> Result<Option<String>, Box<dyn Error>> {
+    let text = arguments["text"].as_str().unwrap_or("").trim().to_lowercase();
+    let label = arguments["label"].as_str().unwrap_or("").trim().to_lowercase();
+    if text.is_empty() && label.is_empty() {
+        return Err("assert needs at least one of: text, label".into());
+    }
+    // (what, expected value, ok, detail-on-failure)
+    let mut checks: Vec<(String, String, bool, String)> = Vec::new();
+    if !text.is_empty() {
+        let mut content = bridge.page_content_markdown();
+        if content.is_empty() {
+            content = bridge.page_markdown();
+        }
+        let ok = content.to_lowercase().contains(&text);
+        let detail = format!(
+            "content is {} chars: {}",
+            content.chars().count(),
+            fact_snippet(&content)
+        );
+        checks.push(("text".to_string(), arguments["text"].as_str().unwrap_or("").to_string(), ok, detail));
+    }
+    if !label.is_empty() {
+        let view = bridge.current_view();
+        let ok = view
+            .elements
+            .iter()
+            .any(|e| e.name.to_lowercase().contains(&label));
+        checks.push((
+            "element".to_string(),
+            arguments["label"].as_str().unwrap_or("").to_string(),
+            ok,
+            format!("{} element(s) in view", view.elements.len()),
+        ));
+    }
+    let all_ok = checks.iter().all(|(_, _, ok, _)| *ok);
+    if compact {
+        let json = serde_json::json!({
+            "ok": all_ok,
+            "checks": checks.iter().map(|(what, value, ok, detail)| {
+                serde_json::json!({ "what": what, "value": value, "ok": ok, "detail": detail })
+            }).collect::<Vec<_>>(),
+        });
+        return Ok(Some(
+            serde_json::to_string_pretty(&json)
+                .map_err(|e| format!("serialise assert report: {e}"))?,
+        ));
+    }
+    let mut out = String::new();
+    if all_ok {
+        out.push_str("assert ok: ");
+        let parts: Vec<String> = checks
+            .iter()
+            .map(|(what, value, _, _)| format!("{what} \"{value}\""))
+            .collect();
+        out.push_str(&parts.join("; "));
+        out.push('\n');
+    } else {
+        out.push_str("assert FAILED:\n");
+        for (what, value, ok, detail) in &checks {
+            let verdict = if *ok { "ok" } else { "FAILED" };
+            out.push_str(&format!("  - {what} \"{value}\": {verdict} ({detail})\n"));
+        }
+    }
+    Ok(Some(out))
+}
+
 fn render_delta(delta: &NdaDelta) -> String {
     if delta.is_empty() {
         return "  (no state change)\n".to_string();
@@ -560,6 +633,7 @@ pub fn handle_native_tool(
         | "browser_native_tab_switch"
         | "browser_native_tab_close"
         | "browser_native_settle"
+        | "browser_native_assert"
         | "browser_native_wait" => arguments["sessionId"]
             .as_str()
             .ok_or("sessionId is required")?,
@@ -575,6 +649,11 @@ pub fn handle_native_tool(
     let mut bridge = bridge
         .lock()
         .map_err(|_| "native browser bridge lock poisoned")?;
+    // Assertions are read-only checks that report failure instead of
+    // erroring, so they short-circuit before any action bookkeeping.
+    if name == "browser_native_assert" {
+        return assert_on_session(&bridge, arguments, compact);
+    }
     // First touch of a session inherits the workspace-default experience
     // bundle (default_all.nda) if one was saved, so learned patterns, page
     // memories and outcome lessons carry over without an explicit load call.
@@ -3270,6 +3349,57 @@ mod native_label_tool_tests {
             serde_json::from_str(&compact).expect("compact wait report is valid JSON");
         assert_eq!(report["status"], "matched", "{compact}");
         assert_eq!(report["mode"], "stable", "{compact}");
+    }
+
+    #[test]
+    fn assert_tool_checks_content_and_elements() {
+        load("t54-assert");
+
+        // Both conditions hold on the fixture page (the distilled content
+        // is the readable core - here the title heading - and the AOM
+        // carries the form controls).
+        let out = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t54-assert", "text": "Signup", "label": "log in" }),
+        );
+        assert!(out.starts_with("assert ok: "), "{out}");
+        assert!(out.contains("text \"Signup\""), "{out}");
+        assert!(out.contains("element \"log in\""), "{out}");
+
+        // A missing text fragment fails in-band with diagnostic detail.
+        let out = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t54-assert", "text": "zebra" }),
+        );
+        assert!(out.starts_with("assert FAILED:"), "{out}");
+        assert!(out.contains("text \"zebra\": FAILED"), "{out}");
+        assert!(out.contains("content is"), "{out}");
+
+        // Mixed pass/fail reports both verdicts.
+        let out = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t54-assert", "text": "Signup", "label": "Checkout" }),
+        );
+        assert!(out.starts_with("assert FAILED:"), "{out}");
+        assert!(out.contains("text \"Signup\": ok"), "{out}");
+        assert!(out.contains("element \"Checkout\": FAILED"), "{out}");
+
+        // Compact report carries per-check results.
+        let compact = call(
+            "browser_native_assert",
+            json!({ "sessionId": "t54-assert", "label": "subscribe", "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact assert report is valid JSON");
+        assert_eq!(report["ok"], true, "{compact}");
+        assert_eq!(report["checks"][0]["what"], "element", "{compact}");
+
+        // No conditions at all is a usage error, not a silent pass.
+        let err = call_err(
+            "browser_native_assert",
+            json!({ "sessionId": "t54-assert" }),
+        );
+        assert!(err.to_string().contains("assert needs at least one of"), "{err}");
     }
 
     #[test]
