@@ -272,7 +272,7 @@ fn wait_on_session(
     // (timestamps, counters) and only wake on a real content move.
     let min_delta = arguments["minDelta"].as_u64().unwrap_or(1).max(1) as usize;
     let label = arguments["label"].as_str().unwrap_or("");
-    if !matches!(mode, "content" | "element") {
+    if !matches!(mode, "content" | "element" | "url") {
         return Err(format!("unknown wait mode '{mode}'").into());
     }
     if mode == "element" && label.trim().is_empty() {
@@ -280,9 +280,12 @@ fn wait_on_session(
     }
     let arc = get_or_create_native_bridge(session_id);
     let start = std::time::Instant::now();
-    let baseline = {
+    let (baseline, baseline_url) = {
         let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
-        distilled_content_chars(&bridge)
+        (
+            distilled_content_chars(&bridge),
+            bridge.current_view().url,
+        )
     };
     let want = label.to_lowercase();
     let mut matched: Option<String> = None;
@@ -297,6 +300,19 @@ fn wait_on_session(
                 .find(|e| e.name.to_lowercase().contains(&want))
             {
                 matched = Some(format!("{} \"{}\" (aom {})", e.role, e.name, e.aom_id));
+                break;
+            }
+        } else if mode == "url" {
+            // With a label: wake once the URL contains it. Without: wake on
+            // any navigation away from the baseline (SPA or full loads).
+            let now = bridge.current_view().url;
+            if label.trim().is_empty() {
+                if now != baseline_url {
+                    matched = Some(format!("url {now}"));
+                    break;
+                }
+            } else if now.to_lowercase().contains(&want) {
+                matched = Some(format!("url {now}"));
                 break;
             }
         } else {
@@ -3139,6 +3155,36 @@ mod native_label_tool_tests {
         );
         assert!(out.starts_with("timeout after "), "{out}");
         assert!(out.contains("no 'content' change observed"), "{out}");
+    }
+
+    #[test]
+    fn wait_tool_url_mode_matches_and_times_out() {
+        load("t51-url");
+
+        // With a label matching the current URL: matches on the first poll.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t51-url", "mode": "url", "label": "local.test/form", "timeout": 2000 }),
+        );
+        assert!(out.starts_with("matched after "), "{out}");
+        assert!(out.contains("url http://local.test/form"), "{out}");
+
+        // Without a label, no navigation means timeout.
+        let out = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t51-url", "mode": "url", "timeout": 250, "poll": 50 }),
+        );
+        assert!(out.starts_with("timeout after "), "{out}");
+
+        // A label that never appears also times out.
+        let compact = call(
+            "browser_native_wait",
+            json!({ "sessionId": "t51-url", "mode": "url", "label": "nowhere.example", "timeout": 250, "poll": 50, "compact": true }),
+        );
+        let report: serde_json::Value =
+            serde_json::from_str(&compact).expect("compact wait report is valid JSON");
+        assert_eq!(report["status"], "timeout", "{compact}");
+        assert_eq!(report["mode"], "url", "{compact}");
     }
 
     #[test]
