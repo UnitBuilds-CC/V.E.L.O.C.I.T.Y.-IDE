@@ -1249,6 +1249,22 @@ pub fn handle_native_tool(
                 content_change_signal(&d),
             )
         });
+        // Assert-guard health: pass/fail counts over the outcome history,
+        // so a returning agent sees whether its recent guards are drifting
+        // without re-reading the raw outcome lines.
+        let (guards_passed, guards_failed) = bridge.scorer.history.iter().fold(
+            (0usize, 0usize),
+            |(passed, failed), o| {
+                if o.action_kind.label() != "assert" {
+                    return (passed, failed);
+                }
+                if o.score < 0.3 {
+                    (passed, failed + 1)
+                } else {
+                    (passed + 1, failed)
+                }
+            },
+        );
         if compact {
             let sugg_json = suggestion.as_ref().map(|p| {
                 serde_json::json!({
@@ -1318,6 +1334,12 @@ pub fn handle_native_tool(
                             "contentChange": cc.map(|(from, to)| serde_json::json!([from, to])),
                         })
                     }),
+                    "guards": ((guards_passed + guards_failed) > 0).then(|| {
+                        serde_json::json!({
+                            "passed": guards_passed,
+                            "failed": guards_failed,
+                        })
+                    }),
                     "digest": (!digest.is_empty()).then_some(digest.as_str()),
                     "suggestion": sugg_json,
                     "patterns": pattern_json,
@@ -1351,6 +1373,12 @@ pub fn handle_native_tool(
             }
             out.push_str(&line);
             out.push('\n');
+        }
+        if guards_passed + guards_failed > 0 {
+            out.push_str(&format!(
+                "Guards: {} passed, {} failed assert(s)\n",
+                guards_passed, guards_failed
+            ));
         }
         match (&suggestion, detail) {
             (Some(p), Some(e)) => out.push_str(&format!(
@@ -3533,6 +3561,40 @@ mod native_label_tool_tests {
         assert!(out.starts_with("assert ok: "), "{out}");
         let out = call("browser_native_reflect", json!({ "sessionId": "t56-clean" }));
         assert!(!out.contains("Recent action outcomes"), "{out}");
+    }
+
+    #[test]
+    fn brief_reports_guard_health() {
+        load("t57-guards");
+
+        // No asserts yet: the brief carries no guards line or key.
+        let out = call("browser_native_brief", json!({ "sessionId": "t57-guards" }));
+        assert!(!out.contains("Guards:"), "{out}");
+        let compact = call(
+            "browser_native_brief",
+            json!({ "sessionId": "t57-guards", "compact": true }),
+        );
+        assert!(compact.contains("\"guards\": null"), "{compact}");
+
+        // Two failed guards enter the outcome history and surface in the
+        // brief as a summary. Passing asserts record nothing (Batch 56),
+        // so the failed count is exactly the number of failed checks.
+        call(
+            "browser_native_assert",
+            json!({ "sessionId": "t57-guards", "label": "zebra" }),
+        );
+        call(
+            "browser_native_assert",
+            json!({ "sessionId": "t57-guards", "label": "unicorn" }),
+        );
+        let out = call("browser_native_brief", json!({ "sessionId": "t57-guards" }));
+        assert!(out.contains("Guards: 0 passed, 2 failed"), "{out}");
+        let compact = call(
+            "browser_native_brief",
+            json!({ "sessionId": "t57-guards", "compact": true }),
+        );
+        assert!(compact.contains("\"failed\": 2"), "{compact}");
+        assert!(compact.contains("\"passed\": 0"), "{compact}");
     }
 
     #[test]
