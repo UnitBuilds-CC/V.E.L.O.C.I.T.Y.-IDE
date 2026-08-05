@@ -8,10 +8,10 @@ use crate::site_map::verifier::MathOp;
 use crate::site_map::NdaNode;
 
 use super::optimizer::optimize_ast;
-use super::types::{run_sequence, JitControlFlow, JitFn, JitProgram, JitState, JitVal, VarRegistry};
-use super::vm_helpers::{
-    add_vals, apply_vec_op, broadcast_float, broadcast_scalar, compare_vals,
+use super::types::{
+    run_sequence, JitControlFlow, JitFn, JitProgram, JitState, JitVal, VarRegistry,
 };
+use super::vm_helpers::{add_vals, apply_vec_op, broadcast_float, broadcast_scalar, compare_vals};
 use super::x86_emitter::{asm_gemv_available, compile_scalar_block, count_nodes, gemv_native};
 
 /// Maximum iterations for `While` loops — safety limit against infinite loops.
@@ -143,6 +143,23 @@ pub fn compile_node(node: &NdaNode, counter: &mut usize, registry: &VarRegistry)
     wrap_debug(node, res)
 }
 
+/// Compile nodes straight to interpreter closures, skipping the native
+/// scalar fast path.  Used by the JIT fallback when a scalar block observes
+/// non-scalar bindings at runtime.
+pub fn compile_interpreter_sequence(
+    nodes: &[NdaNode],
+    counter: &mut usize,
+    registry: &VarRegistry,
+) -> Vec<JitFn> {
+    nodes
+        .iter()
+        .map(|n| {
+            *counter += 1;
+            compile_node_dispatch(n, counter, registry)
+        })
+        .collect()
+}
+
 fn node_to_str(node: &NdaNode) -> String {
     match node {
         NdaNode::Int { value } => format!("Int({})", value),
@@ -223,6 +240,10 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
         }
     }
 
+    compile_node_dispatch(node, counter, registry)
+}
+
+fn compile_node_dispatch(node: &NdaNode, counter: &mut usize, registry: &VarRegistry) -> JitFn {
     match node {
         NdaNode::Matrix {
             rows,
@@ -581,9 +602,7 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                         }
                     }
                 } else {
-                    let r_fn = rhs_fn
-                        .as_ref()
-                        .ok_or("Missing rhs for binary Bitwise op")?;
+                    let r_fn = rhs_fn.as_ref().ok_or("Missing rhs for binary Bitwise op")?;
                     r_fn(state)?;
                     let r = state.stack.pop().ok_or("Stack underflow in Bitwise rhs")?;
                     bitwise_binary(op, l, r)
@@ -676,9 +695,7 @@ fn compile_node_inner(node: &NdaNode, counter: &mut usize, registry: &VarRegistr
                     v.clone()
                 } else if (a as usize) + 4 <= state.heap.len() {
                     let v = i32::from_le_bytes(
-                        state.heap[a as usize..(a as usize) + 4]
-                            .try_into()
-                            .unwrap(),
+                        state.heap[a as usize..(a as usize) + 4].try_into().unwrap(),
                     );
                     JitVal::Scalar(v, 0)
                 } else {
@@ -842,10 +859,14 @@ fn is_pure_scalar(node: &NdaNode) -> bool {
         } => {
             is_pure_scalar(cond)
                 && then_body.iter().all(is_pure_scalar)
-                && else_body.as_ref().is_none_or(|eb| eb.iter().all(is_pure_scalar))
+                && else_body
+                    .as_ref()
+                    .is_none_or(|eb| eb.iter().all(is_pure_scalar))
         }
         NdaNode::Scope { children } => children.iter().all(is_pure_scalar),
-        NdaNode::Return { value } => is_pure_scalar(value),
+        // Return must stay on the interpreter path: the native scalar block
+        // cannot propagate JitControlFlow::Return to run_sequence, so sibling
+        // nodes would wrongly keep executing after a Return.
         _ => false,
     }
 }

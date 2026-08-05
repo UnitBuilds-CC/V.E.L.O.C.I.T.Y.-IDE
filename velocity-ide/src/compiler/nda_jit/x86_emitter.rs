@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::nda::NdaMatrix;
 use crate::nda_int::NdaVec;
 use crate::site_map::verifier::{CmpOp, VecOpKind};
 use crate::site_map::NdaNode;
 
-use super::types::{JitControlFlow, JitFn, JitState, JitVal, VarRegistry};
+use super::compiler::compile_interpreter_sequence;
+use super::optimizer::gather_written_vars;
+use super::types::{run_sequence, JitControlFlow, JitFn, JitState, JitVal, VarRegistry};
 
 pub use super::exec_page::ExecPage;
 
@@ -92,10 +94,14 @@ fn is_pure_scalar(node: &NdaNode) -> bool {
         } => {
             is_pure_scalar(cond)
                 && then_body.iter().all(is_pure_scalar)
-                && else_body.as_ref().is_none_or(|eb| eb.iter().all(is_pure_scalar))
+                && else_body
+                    .as_ref()
+                    .is_none_or(|eb| eb.iter().all(is_pure_scalar))
         }
         NdaNode::Scope { children } => children.iter().all(is_pure_scalar),
-        NdaNode::Return { value } => is_pure_scalar(value),
+        // `Return` must stay on the interpreter path: the native block can
+        // only jump to its own epilogue and cannot signal JitControlFlow::Return
+        // back to run_sequence, so sibling nodes would wrongly keep executing.
         _ => false,
     }
 }
@@ -263,7 +269,7 @@ fn compile_scalar_node(
             )?;
             if *stack_depth != 1 {
                 return Err(
-                    "Let initialization must leave exactly 1 value on the stack".to_string(),
+                    "Let initialization must leave exactly 1 value on the stack".to_string()
                 );
             }
             let modrm = 0xC0 | (dest_reg as u8 & 7);
@@ -795,6 +801,81 @@ pub fn pre_register_variables(node: &NdaNode, registry: &VarRegistry) {
     }
 }
 
+/// Walk a pure-scalar block collecting runtime load obligations:
+/// - every loaded hash (native code can only represent scalar bindings, so a
+///   non-scalar binding at runtime forces the interpreter fallback), and
+/// - loads on the always-executed path with no earlier definition in the
+///   block, which must error as "undefined variable" like the interpreter.
+fn gather_load_checks(
+    node: &NdaNode,
+    registry: &VarRegistry,
+    defined: &mut std::collections::HashSet<u64>,
+    loaded: &mut std::collections::HashSet<u64>,
+    checks: &mut Vec<(usize, u64)>,
+    always: bool,
+) {
+    match node {
+        NdaNode::Load { name_hash } => {
+            loaded.insert(*name_hash);
+            if always && !defined.contains(name_hash) {
+                checks.push((registry.get_or_create_slot(*name_hash), *name_hash));
+            }
+        }
+        NdaNode::Let { name_hash, init } => {
+            gather_load_checks(init, registry, defined, loaded, checks, always);
+            if always {
+                defined.insert(*name_hash);
+            }
+        }
+        NdaNode::Store { name_hash, value } => {
+            gather_load_checks(value, registry, defined, loaded, checks, always);
+            if always {
+                defined.insert(*name_hash);
+            }
+        }
+        NdaNode::Scope { children } => {
+            for child in children {
+                gather_load_checks(child, registry, defined, loaded, checks, always);
+            }
+        }
+        NdaNode::Loop { body, .. } => {
+            for child in body {
+                gather_load_checks(child, registry, defined, loaded, checks, false);
+            }
+        }
+        NdaNode::While { cond, body } => {
+            // The condition runs at least once; the body may never run.
+            gather_load_checks(cond, registry, defined, loaded, checks, always);
+            for child in body {
+                gather_load_checks(child, registry, defined, loaded, checks, false);
+            }
+        }
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            gather_load_checks(cond, registry, defined, loaded, checks, always);
+            for child in then_body {
+                gather_load_checks(child, registry, defined, loaded, checks, false);
+            }
+            if let Some(eb) = else_body {
+                for child in eb {
+                    gather_load_checks(child, registry, defined, loaded, checks, false);
+                }
+            }
+        }
+        NdaNode::Add { lhs, rhs } | NdaNode::Compare { lhs, rhs, .. } => {
+            gather_load_checks(lhs, registry, defined, loaded, checks, always);
+            gather_load_checks(rhs, registry, defined, loaded, checks, always);
+        }
+        NdaNode::VecOp { operand, .. } => {
+            gather_load_checks(operand, registry, defined, loaded, checks, always);
+        }
+        _ => {}
+    }
+}
+
 pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option<JitFn> {
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -809,6 +890,35 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
         for node in nodes {
             pre_register_variables(node, registry);
         }
+
+        // Loads on the always-executed path must observe the same bindings as
+        // the interpreter: definitions earlier in the block mask them, any
+        // other unbound load is a runtime error.
+        let mut defined = std::collections::HashSet::new();
+        let mut loaded_hashes = std::collections::HashSet::new();
+        let mut load_checks: Vec<(usize, u64)> = Vec::new();
+        for node in nodes {
+            gather_load_checks(
+                node,
+                registry,
+                &mut defined,
+                &mut loaded_hashes,
+                &mut load_checks,
+                true,
+            );
+        }
+        let all_loaded_slots: Vec<usize> = loaded_hashes
+            .iter()
+            .map(|h| registry.get_or_create_slot(*h))
+            .collect();
+        let mut written_hashes = std::collections::HashSet::new();
+        for node in nodes {
+            gather_written_vars(node, &mut written_hashes);
+        }
+        let written_slots: Vec<usize> = written_hashes
+            .iter()
+            .map(|h| registry.get_or_create_slot(*h))
+            .collect();
 
         let mut emitter = X86Emitter::new();
         let mut loop_depth = 0;
@@ -864,7 +974,9 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
                 &mut next_label_id,
                 epilogue_label,
                 &mut stack_depth,
-            ).is_err() {
+            )
+            .is_err()
+            {
                 return None;
             }
         }
@@ -937,53 +1049,98 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
 
         let total_slots = registry.total_slots();
         let num_nodes = nodes.len();
-        Some(Arc::new(#[allow(clippy::needless_range_loop)]
-        move |state: &mut JitState<'_>| {
-            state.executed_nodes += num_nodes;
-
-            let num_slots = state.variables.len().max(total_slots);
-            let mut temp_vars = vec![0i32; num_slots];
-            for i in 0..state.variables.len() {
-                if let Some(JitVal::Scalar(val, _)) = state.variables[i] {
-                    temp_vars[i] = val;
+        let fallback_nodes = nodes.to_vec();
+        let fallback_registry = registry.clone();
+        let fallback_fns: Arc<Mutex<Option<Vec<JitFn>>>> = Arc::new(Mutex::new(None));
+        Some(Arc::new(
+            #[allow(clippy::needless_range_loop)]
+            move |state: &mut JitState<'_>| {
+                // Undefined loads on the always-executed path error exactly like
+                // the interpreter closure path does.
+                for (slot, hash) in &load_checks {
+                    if state
+                        .variables
+                        .get(*slot)
+                        .and_then(|opt| opt.as_ref())
+                        .is_none()
+                    {
+                        return Err(format!("undefined variable (hash {:016x})", hash));
+                    }
                 }
-            }
-
-            let initial_stack_len = state.stack.len();
-            let mut temp_stack = vec![0i32; initial_stack_len + 64];
-            for i in 0..initial_stack_len {
-                if let JitVal::Scalar(val, _) = state.stack[i] {
-                    temp_stack[i] = val;
+                // The native block only represents scalars; if any load would
+                // observe a vector/float binding, interpret the block instead.
+                let needs_fallback = all_loaded_slots.iter().any(|slot| {
+                    matches!(
+                        state.variables.get(*slot),
+                        Some(Some(JitVal::Vector(_))) | Some(Some(JitVal::Float(_)))
+                    )
+                });
+                if needs_fallback {
+                    let mut guard = fallback_fns.lock().unwrap();
+                    if guard.is_none() {
+                        *guard = Some(compile_interpreter_sequence(
+                            &fallback_nodes,
+                            &mut 0usize,
+                            &fallback_registry,
+                        ));
+                    }
+                    let fns = guard.as_ref().unwrap().clone();
+                    drop(guard);
+                    return run_sequence(&fns, state);
                 }
-            }
 
-            let final_len = unsafe {
-                func(
-                    temp_vars.as_mut_ptr(),
-                    temp_stack.as_mut_ptr(),
-                    initial_stack_len as i32,
-                )
-            };
+                state.executed_nodes += num_nodes;
 
-            if final_len < 0 || final_len as usize > temp_stack.len() {
-                return Err("Stack corruption in native scalar loop".to_string());
-            }
+                let num_slots = state.variables.len().max(total_slots);
+                let mut temp_vars = vec![0i32; num_slots];
+                for i in 0..state.variables.len() {
+                    if let Some(JitVal::Scalar(val, _)) = state.variables[i] {
+                        temp_vars[i] = val;
+                    }
+                }
 
-            if state.variables.len() < num_slots {
-                state.variables.resize(num_slots, None);
-            }
-            for i in 0..num_slots {
-                state.variables[i] = Some(JitVal::Scalar(temp_vars[i], 0));
-            }
+                let initial_stack_len = state.stack.len();
+                let mut temp_stack = vec![0i32; initial_stack_len + 64];
+                for i in 0..initial_stack_len {
+                    if let JitVal::Scalar(val, _) = state.stack[i] {
+                        temp_stack[i] = val;
+                    }
+                }
 
-            state.stack.truncate(0);
-            for i in 0..final_len as usize {
-                state.stack.push(JitVal::Scalar(temp_stack[i], 0));
-            }
+                let final_len = unsafe {
+                    func(
+                        temp_vars.as_mut_ptr(),
+                        temp_stack.as_mut_ptr(),
+                        initial_stack_len as i32,
+                    )
+                };
 
-            let _keep_alive = &page;
+                if final_len < 0 || final_len as usize > temp_stack.len() {
+                    return Err("Stack corruption in native scalar loop".to_string());
+                }
 
-            Ok(JitControlFlow::Continue)
-        }))
+                if state.variables.len() < num_slots {
+                    state.variables.resize(num_slots, None);
+                }
+                // Only write back slots this block may have stored to; read-only
+                // slots keep their original bindings (None stays None so unbound
+                // loads keep erroring, and vector/float values survive).
+                for slot in &written_slots {
+                    state.variables[*slot] = Some(JitVal::Scalar(temp_vars[*slot], 0));
+                }
+
+                // The native code only touches stack entries at/above the initial
+                // depth, so keep the original JitVals below and append the new
+                // scalar results instead of rebuilding the whole stack.
+                state.stack.truncate(initial_stack_len);
+                for i in initial_stack_len..final_len as usize {
+                    state.stack.push(JitVal::Scalar(temp_stack[i], 0));
+                }
+
+                let _keep_alive = &page;
+
+                Ok(JitControlFlow::Continue)
+            },
+        ))
     }
 }
