@@ -128,4 +128,69 @@ mod tests {
         assert_eq!(triples.len(), 1);
         assert_eq!(triples[0].predicate_id, OCR_OPAQUE_REGION);
     }
+
+    #[test]
+    fn is_recognized_false_for_opaque() {
+        let b = OcrTextBoundingBox {
+            text: String::new(),
+            x: 0, y: 0, width: 10, height: 10,
+            confidence: 0.0,
+        };
+        assert!(!b.is_recognized());
+    }
+
+    #[test]
+    fn is_recognized_true_with_text_and_confidence() {
+        let b = OcrTextBoundingBox {
+            text: "Hello".into(),
+            x: 0, y: 0, width: 10, height: 10,
+            confidence: 0.95,
+        };
+        assert!(b.is_recognized());
+    }
+
+    #[test]
+    fn is_recognized_false_with_text_but_zero_confidence() {
+        let b = OcrTextBoundingBox {
+            text: "Hello".into(),
+            x: 0, y: 0, width: 10, height: 10,
+            confidence: 0.0,
+        };
+        assert!(!b.is_recognized());
+    }
+
+    #[test]
+    fn default_threshold_is_128() {
+        let engine = VelocityOcrEngine::default();
+        assert_eq!(engine.luminance_threshold, 128);
+    }
+
+    #[test]
+    fn export_nda_multiple_boxes() {
+        let engine = VelocityOcrEngine::new();
+        let boxes = vec![
+            OcrTextBoundingBox { text: String::new(), x: 0, y: 0, width: 10, height: 10, confidence: 0.0 },
+            OcrTextBoundingBox { text: String::new(), x: 20, y: 30, width: 40, height: 50, confidence: 0.0 },
+        ];
+        let triples = engine.export_ocr_nda("sess", &boxes);
+        assert_eq!(triples.len(), 2);
+    }
+
+    #[test]
+    fn dark_pixel_buffer_produces_regions() {
+        let engine = VelocityOcrEngine::new();
+        let mut buffer = PixelBuffer::new(50, 50);
+        // Fill first half with dark pixels, second half with light
+        for y in 0..50 {
+            for x in 0..25 {
+                buffer.set_pixel(x, y, 10, 10, 10, 255);
+            }
+            for x in 25..50 {
+                buffer.set_pixel(x, y, 250, 250, 250, 255);
+            }
+        }
+        let regions = engine.process_pixel_buffer(&buffer);
+        // Should detect at least one opaque region (dark area)
+        assert!(!regions.is_empty());
+    }
 }

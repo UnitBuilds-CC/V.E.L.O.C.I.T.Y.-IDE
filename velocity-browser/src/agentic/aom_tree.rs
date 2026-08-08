@@ -26,6 +26,178 @@ fn inner_text_walk(tree: &DomTree, id: usize, out: &mut String) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::html::{DomNode, NodeType};
+    use std::collections::HashMap;
+
+    fn make_node(id: usize, tag: &str, attrs: &[(&str, &str)]) -> DomNode {
+        let mut attributes = HashMap::new();
+        for (k, v) in attrs {
+            attributes.insert(k.to_string(), v.to_string());
+        }
+        DomNode {
+            id,
+            node_type: NodeType::Element,
+            tag_name: tag.to_string(),
+            attributes,
+            text_content: String::new(),
+            children: Vec::new(),
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn button_role_and_actionability() {
+        let tree = DomTree::new(vec![make_node(0, "button", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].role, "button");
+        assert_eq!(nodes[0].actionability_score, 100);
+    }
+
+    #[test]
+    fn link_role_and_actionability() {
+        let tree = DomTree::new(vec![make_node(0, "a", &[("href", "/page")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].role, "link");
+        assert_eq!(nodes[0].actionability_score, 100);
+    }
+
+    #[test]
+    fn input_text_role() {
+        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "text")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "textbox");
+        assert_eq!(nodes[0].actionability_score, 90);
+    }
+
+    #[test]
+    fn input_checkbox_role() {
+        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "checkbox")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "checkbox");
+        assert_eq!(nodes[0].actionability_score, 90);
+    }
+
+    #[test]
+    fn heading_role() {
+        let tree = DomTree::new(vec![make_node(0, "h1", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "heading");
+        assert_eq!(nodes[0].actionability_score, 40);
+    }
+
+    #[test]
+    fn generic_div_without_label_skipped() {
+        let tree = DomTree::new(vec![make_node(0, "div", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn generic_div_with_aria_label_included() {
+        let tree = DomTree::new(vec![make_node(0, "div", &[("aria-label", "sidebar")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "sidebar");
+    }
+
+    #[test]
+    fn aria_label_overrides_visible_text() {
+        let tree = DomTree::new(vec![make_node(0, "button", &[("aria-label", "Close dialog")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].name, "Close dialog");
+    }
+
+    #[test]
+    fn to_nda_triples_includes_role_and_actionability() {
+        let nodes = vec![AgenticAomNode {
+            id: "n0".into(),
+            role: "button".into(),
+            name: "Submit".into(),
+            value: String::new(),
+            actionability_score: 100,
+            is_focused: false,
+            is_expanded: false,
+        }];
+        let triples = AgenticAomTree::to_nda_triples(&nodes);
+        // role + name + actionability = 3
+        assert_eq!(triples.len(), 3);
+        let role_triple = triples.iter().find(|t| t.predicate_id == AOM_ROLE).unwrap();
+        assert_eq!(role_triple.object_hash, crate::nda::hash_str("button"));
+    }
+
+    #[test]
+    fn to_nda_triples_includes_focused() {
+        let nodes = vec![AgenticAomNode {
+            id: "n0".into(),
+            role: "textbox".into(),
+            name: "email".into(),
+            value: String::new(),
+            actionability_score: 90,
+            is_focused: true,
+            is_expanded: false,
+        }];
+        let triples = AgenticAomTree::to_nda_triples(&nodes);
+        let focused = triples.iter().find(|t| t.predicate_id == AOM_FOCUSED);
+        assert!(focused.is_some());
+    }
+
+    #[test]
+    fn to_nda_triples_includes_expanded() {
+        let nodes = vec![AgenticAomNode {
+            id: "n0".into(),
+            role: "combobox".into(),
+            name: "select".into(),
+            value: String::new(),
+            actionability_score: 90,
+            is_focused: false,
+            is_expanded: true,
+        }];
+        let triples = AgenticAomTree::to_nda_triples(&nodes);
+        let expanded = triples.iter().find(|t| t.predicate_id == AOM_EXPANDED);
+        assert!(expanded.is_some());
+    }
+
+    #[test]
+    fn to_nda_document_nonempty() {
+        let nodes = vec![AgenticAomNode {
+            id: "n0".into(),
+            role: "button".into(),
+            name: "OK".into(),
+            value: "val".into(),
+            actionability_score: 100,
+            is_focused: false,
+            is_expanded: false,
+        }];
+        let doc = AgenticAomTree::to_nda_document(&nodes);
+        assert!(!doc.facts.is_empty());
+    }
+
+    #[test]
+    fn input_submit_is_button_role() {
+        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "submit")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "button");
+    }
+
+    #[test]
+    fn select_is_combobox() {
+        let tree = DomTree::new(vec![make_node(0, "select", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "combobox");
+    }
+
+    #[test]
+    fn value_attribute_captured() {
+        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "text"), ("value", "hello")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].value, "hello");
+    }
+}
 #[derive(Debug, Clone)]
 pub struct AgenticAomNode {
     pub id: String,

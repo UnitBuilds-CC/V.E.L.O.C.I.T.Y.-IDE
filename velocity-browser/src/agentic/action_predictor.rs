@@ -125,4 +125,50 @@ mod tests {
         let p = pred.unwrap();
         assert!(p.target_selector.contains("1")); // button is index 1
     }
+
+    #[test]
+    fn predicts_text_input_fill() {
+        let tree = make_dom(&[("input", vec![("type", "text"), ("aria-label", "Name")])]);
+        let pred = ActionPredictorEngine::predict_next_action(&tree);
+        assert!(pred.is_some());
+        assert_eq!(pred.unwrap().action_type, "fill");
+    }
+
+    #[test]
+    fn predicts_textarea_fill() {
+        let tree = make_dom(&[("textarea", vec![])]);
+        let pred = ActionPredictorEngine::predict_next_action(&tree);
+        assert!(pred.is_some());
+        assert_eq!(pred.unwrap().action_type, "fill");
+    }
+
+    #[test]
+    fn predicts_select_action() {
+        let tree = make_dom(&[("select", vec![])]);
+        let pred = ActionPredictorEngine::predict_next_action(&tree);
+        assert!(pred.is_some());
+        assert_eq!(pred.unwrap().action_type, "select");
+    }
+
+    #[test]
+    fn empty_tree_no_prediction() {
+        let tree = DomTree { nodes: Vec::new() };
+        let pred = ActionPredictorEngine::predict_next_action(&tree);
+        assert!(pred.is_none());
+    }
+
+    #[test]
+    fn non_interactive_elements_ignored() {
+        let tree = make_dom(&[("div", vec![]), ("span", vec![]), ("p", vec![])]);
+        let pred = ActionPredictorEngine::predict_next_action(&tree);
+        assert!(pred.is_none());
+    }
+
+    #[test]
+    fn onclick_attribute_detected() {
+        let tree = make_dom(&[("div", vec![("onclick", "doStuff()")])]);
+        let pred = ActionPredictorEngine::predict_next_action(&tree);
+        assert!(pred.is_some());
+        assert_eq!(pred.unwrap().action_type, "click");
+    }
 }
