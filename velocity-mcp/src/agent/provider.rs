@@ -1,4 +1,44 @@
 use super::models::*;
+use std::sync::{Mutex, LazyLock};
+use std::time::{Duration, Instant};
+
+/// Cached model catalog entry with expiration.
+struct CachedCatalog {
+    models: Vec<ModelInfo>,
+    fetched_at: Instant,
+}
+
+/// Global model catalog cache (provider -> cached catalog).
+/// Reduces API calls when users switch between providers or refresh model lists.
+static MODEL_CATALOG_CACHE: LazyLock<Mutex<std::collections::HashMap<String, CachedCatalog>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// Cache TTL for model catalogs (10 minutes).
+const CATALOG_CACHE_TTL: Duration = Duration::from_secs(600);
+
+/// Get cached models for a provider, or None if cache miss/expired.
+fn get_cached_catalog(provider_key: &str) -> Option<Vec<ModelInfo>> {
+    let cache = MODEL_CATALOG_CACHE.lock().ok()?;
+    let entry = cache.get(provider_key)?;
+    if entry.fetched_at.elapsed() < CATALOG_CACHE_TTL {
+        Some(entry.models.clone())
+    } else {
+        None
+    }
+}
+
+/// Store models in the cache for a provider.
+fn set_cached_catalog(provider_key: &str, models: Vec<ModelInfo>) {
+    if let Ok(mut cache) = MODEL_CATALOG_CACHE.lock() {
+        cache.insert(
+            provider_key.to_string(),
+            CachedCatalog {
+                models,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+}
 
 pub fn openrouter_api_key() -> String {
     std::env::var("OPENROUTER_API_KEY").unwrap_or_default()
@@ -428,6 +468,11 @@ fn fetch_openai_compatible_models(
     if api_key.trim().is_empty() {
         return Err(format!("No API key configured for {provider_label}"));
     }
+    // Check cache first
+    let cache_key = format!("{}:{}", provider_label, base_url);
+    if let Some(cached) = get_cached_catalog(&cache_key) {
+        return Ok(cached);
+    }
     let url = format!("{base_url}/v1/models");
     let response = ureq::get(&url)
         .timeout(std::time::Duration::from_secs(15))
@@ -483,6 +528,8 @@ fn fetch_openai_compatible_models(
     if models.is_empty() {
         return Err(format!("No models returned by {provider_label}"));
     }
+    // Cache the result for future calls
+    set_cached_catalog(&cache_key, models.clone());
     Ok(models)
 }
 
@@ -570,6 +617,11 @@ pub fn fetch_anthropic_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     if api_key.trim().is_empty() {
         return Err("No API key configured for Anthropic".to_string());
     }
+    // Check cache first
+    let cache_key = "Anthropic:https://api.anthropic.com";
+    if let Some(cached) = get_cached_catalog(cache_key) {
+        return Ok(cached);
+    }
     let response = ureq::get("https://api.anthropic.com/v1/models")
         .timeout(std::time::Duration::from_secs(15))
         .set("x-api-key", api_key)
@@ -581,7 +633,7 @@ pub fn fetch_anthropic_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
         .into_json()
         .map_err(|e| format!("Anthropic model catalog parse failed: {e}"))?;
     let models = body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default();
-    Ok(models.iter().filter_map(|m| {
+    let result: Vec<ModelInfo> = models.iter().filter_map(|m| {
         let id = m.get("id").and_then(|v| v.as_str())?;
         let display = m.get("display_name").and_then(|v| v.as_str()).unwrap_or(id);
         Some(ModelInfo {
@@ -591,7 +643,10 @@ pub fn fetch_anthropic_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
             supports_tools: id.contains("claude") && !id.contains("haiku"),
             supports_thinking: id.contains("claude") && (id.contains("sonnet") || id.contains("opus")),
         })
-    }).collect())
+    }).collect();
+    // Cache the result
+    set_cached_catalog(cache_key, result.clone());
+    Ok(result)
 }
 
 /// AWS Bedrock — uses BEDROCK_PROXY_URL as an OpenAI-compatible gateway.

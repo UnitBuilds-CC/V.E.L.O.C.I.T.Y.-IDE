@@ -319,6 +319,73 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
     let system_chars: usize = system.iter().map(|m| m.content.len()).sum();
     let remaining_budget = BUDGET.saturating_sub(system_chars);
 
+    // Calculate total size to determine if we need to drop messages
+    let total_chars: usize = non_system.iter().map(|m| m.content.len()).sum();
+    let needs_truncation = total_chars > remaining_budget;
+
+    // If we need to truncate, create a summary of older messages that will be dropped
+    let mut summary_message: Option<ChatMessage> = None;
+    if needs_truncation && non_system.len() > 4 {
+        // Keep the last 4 messages intact, summarize the rest
+        let messages_to_summarize = &non_system[..non_system.len().saturating_sub(4)];
+        if !messages_to_summarize.is_empty() {
+            let mut summary_parts = Vec::new();
+            let mut user_msg_count = 0;
+            let mut assistant_msg_count = 0;
+            let mut tool_uses = std::collections::HashSet::new();
+
+            for m in messages_to_summarize {
+                match m.role.as_str() {
+                    "user" => {
+                        user_msg_count += 1;
+                        // Extract key topics from user messages (first 100 chars)
+                        let preview = m.content.chars().take(100).collect::<String>();
+                        if !preview.trim().is_empty() {
+                            summary_parts.push(format!("User asked about: {}...", preview.trim()));
+                        }
+                    }
+                    "assistant" => {
+                        assistant_msg_count += 1;
+                        // Track tool usage
+                        if let Some(arr) = m.tool_calls.as_ref().and_then(|v| v.as_array()) {
+                            for tc in arr {
+                                if let Some(name) = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()) {
+                                    tool_uses.insert(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut summary_text = format!(
+                "[Earlier conversation summary: {} user messages, {} assistant responses",
+                user_msg_count, assistant_msg_count
+            );
+            if !tool_uses.is_empty() {
+                let tools: Vec<_> = tool_uses.iter().take(5).cloned().collect();
+                summary_text.push_str(&format!(", tools used: {}", tools.join(", ")));
+            }
+            summary_text.push_str(". Details compressed to optimize context budget.]");
+
+            if !summary_parts.is_empty() {
+                summary_text.push_str("\n\nKey topics from earlier conversation:");
+                for part in summary_parts.iter().take(3) {
+                    summary_text.push_str(&format!("\n- {}", part));
+                }
+            }
+
+            summary_message = Some(ChatMessage {
+                role: "user".to_string(),
+                content: summary_text,
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+    }
+
     let mut tail: Vec<ChatMessage> = Vec::new();
     let mut used = 0usize;
     for m in non_system.iter().rev() {
@@ -362,6 +429,10 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
     }
 
     let mut result = system;
+    // Insert the conversation summary before the recent messages if we created one
+    if let Some(summary) = summary_message {
+        result.push(summary);
+    }
     result.extend(tail);
     result
 }

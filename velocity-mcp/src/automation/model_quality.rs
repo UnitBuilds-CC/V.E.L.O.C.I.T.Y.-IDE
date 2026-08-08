@@ -246,6 +246,43 @@ impl ModelQualityIndex {
 
         score
     }
+
+    /// Recommend the best model for a given task from the available models.
+    /// Returns None if no models are available.
+    pub fn recommend_model_for_task(
+        kind: AgentTaskKind,
+        provider: AiProvider,
+        models: &[ModelInfo],
+    ) -> Option<ModelCandidate> {
+        Self::rank_models(kind, provider, models)
+            .into_iter()
+            .max_by_key(|c| c.score)
+    }
+
+    /// Suggest whether the current provider is optimal for the task,
+    /// or if switching to another provider would be beneficial.
+    pub fn should_switch_provider(
+        kind: AgentTaskKind,
+        current_provider: AiProvider,
+    ) -> Option<AiProvider> {
+        let requirements = TaskRequirements::for_kind(kind);
+        let caps = Self::provider_capabilities()
+            .into_iter()
+            .find(|c| c.provider == current_provider)?;
+
+        // If task needs reliable tools but current provider doesn't have them
+        if requirements.needs_tools && !caps.native_tools_reliable {
+            // Suggest switching to a provider with reliable tool support
+            return Some(AiProvider::Anthropic); // Best tool reliability
+        }
+
+        // If task needs parallelism but current provider isn't good for it
+        if kind == AgentTaskKind::DesktopAutomation && !caps.good_for_parallelism {
+            return Some(AiProvider::Groq); // Fast, good for parallel tasks
+        }
+
+        None // Current provider is fine
+    }
 }
 
 #[cfg(test)]
