@@ -189,4 +189,66 @@ mod tests {
         d2.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
     }
+
+    #[test]
+    fn funcaptcha_and_arkoselabs_legacy_types() {
+        let fa = ChallengeDescriptor::from_known_provider("funcaptcha", "spin");
+        assert_eq!(fa.to_legacy_type(), CaptchaType::FunCaptcha);
+        let ark = ChallengeDescriptor::from_known_provider("arkoselabs", "game");
+        assert_eq!(ark.to_legacy_type(), CaptchaType::FunCaptcha);
+    }
+
+    #[test]
+    fn cloudflare_maps_to_turnstile() {
+        let cf = ChallengeDescriptor::from_known_provider("cloudflare", "managed");
+        assert_eq!(cf.to_legacy_type(), CaptchaType::Turnstile);
+    }
+
+    #[test]
+    fn text_variant_fallback() {
+        let tc = ChallengeDescriptor::from_known_provider("custom", "text_challenge");
+        assert_eq!(tc.to_legacy_type(), CaptchaType::TextCaptcha);
+    }
+
+    #[test]
+    fn with_features_builder() {
+        let features = ChallengeFeatures {
+            grid: Some((4, 4)),
+            interactive_elements: 16,
+            iframe_depth: 2,
+            round_count: 3,
+            markers: vec!["data-hcaptcha".to_string()],
+        };
+        let desc = ChallengeDescriptor::from_known_provider("hcaptcha", "grid")
+            .with_features(features.clone());
+        assert_eq!(desc.features.grid, Some((4, 4)));
+        assert_eq!(desc.features.interactive_elements, 16);
+        assert_eq!(desc.features.markers.len(), 1);
+    }
+
+    #[test]
+    fn solve_attempt_starts_in_detecting_state() {
+        let attempt = SolveAttempt::new(CaptchaType::HCaptcha);
+        assert_eq!(attempt.state, SolveState::Detecting);
+        assert_eq!(attempt.attempts, 0);
+        assert_eq!(attempt.elapsed_ms, 0);
+        assert!(attempt.position.is_none());
+    }
+
+    #[test]
+    fn from_trait_matches_to_legacy() {
+        let desc = ChallengeDescriptor::from_known_provider("recaptcha", "v3_score");
+        let ct: CaptchaType = (&desc).into();
+        assert_eq!(ct, desc.to_legacy_type());
+    }
+
+    #[test]
+    fn default_features_are_zero() {
+        let f = ChallengeFeatures::default();
+        assert_eq!(f.grid, None);
+        assert_eq!(f.interactive_elements, 0);
+        assert_eq!(f.iframe_depth, 0);
+        assert_eq!(f.round_count, 0);
+        assert!(f.markers.is_empty());
+    }
 }

@@ -400,4 +400,65 @@ mod tests {
         bad_tag[0] ^= 0x01;
         assert!(aead_decrypt(&key, &nonce, aad, &ciphertext, &bad_tag).is_none());
     }
+
+    #[test]
+    fn chacha20_encrypt_decrypt_symmetry() {
+        let key = [0xABu8; 32];
+        let nonce = [0xCDu8; 12];
+        let plaintext = b"Hello, World!";
+        let encrypted = chacha20_encrypt(&key, 0, &nonce, plaintext);
+        assert_ne!(&encrypted, plaintext);
+        let decrypted = chacha20_encrypt(&key, 0, &nonce, &encrypted);
+        assert_eq!(&decrypted, plaintext);
+    }
+
+    #[test]
+    fn chacha20_empty_data_produces_empty_output() {
+        let key = [0u8; 32];
+        let nonce = [0u8; 12];
+        let result = chacha20_encrypt(&key, 0, &nonce, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn chacha20_different_counters_produce_different_output() {
+        let key = [0x55u8; 32];
+        let nonce = [0x66u8; 12];
+        let data = b"same plaintext";
+        let enc0 = chacha20_encrypt(&key, 0, &nonce, data);
+        let enc1 = chacha20_encrypt(&key, 1, &nonce, data);
+        assert_ne!(enc0, enc1);
+    }
+
+    #[test]
+    fn aead_decrypt_with_wrong_aad_fails() {
+        let key = [0x33u8; 32];
+        let nonce = [0x44u8; 12];
+        let aad = b"correct-aad";
+        let plaintext = b"secret data";
+        let (ciphertext, tag) = aead_encrypt(&key, &nonce, aad, plaintext);
+        // Decrypt with wrong AAD
+        assert!(aead_decrypt(&key, &nonce, b"wrong-aad", &ciphertext, &tag).is_none());
+    }
+
+    #[test]
+    fn aead_empty_plaintext_roundtrip() {
+        let key = [0x77u8; 32];
+        let nonce = [0x88u8; 12];
+        let aad = b"additional-data";
+        let (ciphertext, tag) = aead_encrypt(&key, &nonce, aad, &[]);
+        assert!(ciphertext.is_empty());
+        let recovered = aead_decrypt(&key, &nonce, aad, &ciphertext, &tag).unwrap();
+        assert!(recovered.is_empty());
+    }
+
+    #[test]
+    fn aead_multi_block_plaintext() {
+        let key = [0x99u8; 32];
+        let nonce = [0xAAu8; 12];
+        let plaintext = vec![0x42u8; 256]; // 4 ChaCha20 blocks
+        let (ciphertext, tag) = aead_encrypt(&key, &nonce, &[], &plaintext);
+        let recovered = aead_decrypt(&key, &nonce, &[], &ciphertext, &tag).unwrap();
+        assert_eq!(recovered, plaintext);
+    }
 }

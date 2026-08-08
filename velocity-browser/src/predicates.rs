@@ -278,4 +278,78 @@ mod tests {
         }
         assert_eq!(predicate_name(9999), "unknown");
     }
+
+    #[test]
+    fn aom_predicates_in_10_to_39_range() {
+        assert!((10..=39).contains(&AOM_ROLE));
+        assert!((10..=39).contains(&AOM_NAME));
+        assert!((10..=39).contains(&AOM_VALUE));
+        assert!((10..=39).contains(&AOM_ACTIONABILITY));
+        assert!((10..=39).contains(&AOM_FOCUSED));
+        assert!((10..=39).contains(&AOM_EXPANDED));
+        assert!((10..=39).contains(&AOM_SELECTOR));
+        assert!((10..=39).contains(&AOM_DISABLED));
+    }
+
+    #[test]
+    fn canvas_predicates_in_40_to_69_range() {
+        assert!((40..=69).contains(&CANVAS_CONTEXT));
+        assert!((40..=69).contains(&CANVAS_SIZE));
+        assert!((40..=69).contains(&CANVAS_DRAW_CALLS));
+        assert!((40..=69).contains(&CANVAS_TEXT));
+        assert!((40..=69).contains(&CANVAS_SHAPE));
+        assert!((40..=69).contains(&CANVAS_IMAGE));
+        assert!((40..=69).contains(&CANVAS_SUMMARY));
+    }
+
+    #[test]
+    fn layout_predicates_in_70_to_99_range() {
+        assert!((70..=99).contains(&LAYOUT_BOUNDS));
+        assert!((70..=99).contains(&LAYOUT_VISIBILITY));
+        assert!((70..=99).contains(&LAYOUT_DISPLAY));
+        assert!((70..=99).contains(&LAYOUT_IN_VIEWPORT));
+    }
+
+    #[test]
+    fn session_predicates_in_100_to_129_range() {
+        assert!((100..=129).contains(&SESSION_URL));
+        assert!((100..=129).contains(&SESSION_TITLE));
+        assert!((100..=129).contains(&SESSION_COOKIE));
+        assert!((100..=129).contains(&SESSION_STORAGE));
+        assert!((100..=129).contains(&SESSION_CONTENT));
+    }
+
+    #[test]
+    fn network_predicates_in_200_to_249_range() {
+        assert!((200..=249).contains(&NET_METHOD));
+        assert!((200..=249).contains(&NET_STATUS));
+    }
+
+    #[test]
+    fn ocr_predicates_in_250_to_279_range() {
+        assert!((250..=279).contains(&OCR_TEXT));
+        assert!((250..=279).contains(&OCR_OPAQUE_REGION));
+    }
+
+    #[test]
+    fn learned_and_memory_predicates_in_280_to_299_range() {
+        assert!((280..=299).contains(&LEARNED_CONFIDENCE));
+        assert!((280..=299).contains(&LEARNED_OBSERVATIONS));
+        assert!((280..=299).contains(&MEMORY_SESSION));
+        assert!((280..=299).contains(&MEMORY_URL));
+        assert!((280..=299).contains(&OUTCOME_ACTION));
+        assert!((280..=299).contains(&OUTCOME_TIMESTAMP));
+    }
+
+    #[test]
+    fn predicate_name_returns_correct_strings() {
+        assert_eq!(predicate_name(AOM_ROLE), "role");
+        assert_eq!(predicate_name(CANVAS_CONTEXT), "canvas.context");
+        assert_eq!(predicate_name(LAYOUT_BOUNDS), "bounds");
+        assert_eq!(predicate_name(SESSION_URL), "url");
+        assert_eq!(predicate_name(NET_METHOD), "net.method");
+        assert_eq!(predicate_name(OCR_TEXT), "ocr.text");
+        assert_eq!(predicate_name(LEARNED_CONFIDENCE), "learned.confidence");
+        assert_eq!(predicate_name(OUTCOME_ACTION), "outcome.action");
+    }
 }

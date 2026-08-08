@@ -202,4 +202,49 @@ mod tests {
         let b = a.clone();
         assert!(diff(&a, &b).is_empty());
     }
+
+    #[test]
+    fn delta_len_counts_all_changes() {
+        let mut before = NdaDocument::new();
+        before.push_str("n1", AOM_NAME, "old");
+        before.push_str("n2", AOM_NAME, "removed");
+        let mut after = NdaDocument::new();
+        after.push_str("n1", AOM_NAME, "new");
+        after.push_str("n3", AOM_NAME, "added");
+        let delta = diff(&before, &after);
+        // n1 changed, n2 removed, n3 added = 3 total
+        assert_eq!(delta.len(), 3);
+    }
+
+    #[test]
+    fn delta_is_empty_for_no_changes() {
+        let d = NdaDelta::default();
+        assert!(d.is_empty());
+        assert_eq!(d.len(), 0);
+    }
+
+    #[test]
+    fn action_result_carries_status_and_delta() {
+        let mut delta = NdaDelta::default();
+        delta.added.push(("node".to_string(), AOM_NAME, "Click".to_string()));
+        let result = AgentActionResult::new("success", delta.clone());
+        assert_eq!(result.status, "success");
+        assert_eq!(result.delta.added.len(), 1);
+    }
+
+    #[test]
+    fn diff_multiple_changes_same_key() {
+        let mut before = NdaDocument::new();
+        before.push_str("n1", AOM_VALUE, "a");
+        before.push_str("n1", AOM_VALUE, "b");
+        let mut after = NdaDocument::new();
+        after.push_str("n1", AOM_VALUE, "c");
+        after.push_str("n1", AOM_VALUE, "d");
+        let delta = diff(&before, &after);
+        // With multiset semantics, 2 removes and 2 adds for same key
+        // should pair into 2 changes
+        assert_eq!(delta.changed.len(), 2);
+        assert!(delta.added.is_empty());
+        assert!(delta.removed.is_empty());
+    }
 }

@@ -191,4 +191,75 @@ mod tests {
         assert!(summary[0].contains("1 shapes"));
         assert!(summary[0].contains("0 images"));
     }
+
+    #[test]
+    fn new_constructor_sets_fields() {
+        let c = CanvasElement::new("cv1", "webgl", 800, 600);
+        assert_eq!(c.id, "cv1");
+        assert_eq!(c.context_type, "webgl");
+        assert_eq!(c.width, 800);
+        assert_eq!(c.height, 600);
+        assert_eq!(c.draw_call_count, 0);
+        assert!(c.display_list.is_empty());
+    }
+
+    #[test]
+    fn with_display_list_sets_call_count() {
+        let list = vec![
+            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 10.0, h: 10.0, style: "red".to_string() },
+            DrawCommand::Arc { x: 5.0, y: 5.0, radius: 3.0, start_angle: 0.0, end_angle: 1.0 },
+        ];
+        let c = CanvasElement::with_display_list("cv2", 200, 200, list);
+        assert_eq!(c.context_type, "2d");
+        assert_eq!(c.draw_call_count, 2);
+        assert_eq!(c.display_list.len(), 2);
+    }
+
+    #[test]
+    fn empty_canvas_nda_has_three_triples_per_canvas() {
+        let c1 = CanvasElement::new("a", "2d", 100, 100);
+        let c2 = CanvasElement::new("b", "webgl", 200, 200);
+        let triples = CanvasExtractor::extract_canvases_nda(&[c1, c2]);
+        assert_eq!(triples.len(), 6); // 3 per canvas
+    }
+
+    #[test]
+    fn empty_canvas_document_has_summary() {
+        let c = CanvasElement::new("empty", "2d", 50, 50);
+        let doc = CanvasExtractor::extract_canvases_document(&[c]);
+        let summary: Vec<String> = doc.facts.iter()
+            .filter(|f| f.predicate == CANVAS_SUMMARY)
+            .filter_map(|f| doc.object_display(f))
+            .collect();
+        assert_eq!(summary.len(), 1);
+        assert!(summary[0].contains("0 texts"));
+        assert!(summary[0].contains("0 shapes"));
+        assert!(summary[0].contains("0 images"));
+    }
+
+    #[test]
+    fn document_preserves_stroke_text() {
+        let list = vec![
+            DrawCommand::StrokeText { text: "Hello".to_string(), x: 5.0, y: 15.0, font: "14px".to_string(), style: "#000".to_string() },
+        ];
+        let canvas = CanvasElement::with_display_list("st", 100, 100, list);
+        let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
+        let texts: Vec<String> = doc.facts.iter()
+            .filter(|f| f.predicate == CANVAS_TEXT)
+            .filter_map(|f| doc.object_display(f))
+            .collect();
+        assert_eq!(texts, vec!["Hello@5,15".to_string()]);
+    }
+
+    #[test]
+    fn multiple_canvases_in_document() {
+        let c1 = CanvasElement::new("a", "2d", 10, 10);
+        let c2 = CanvasElement::new("b", "2d", 20, 20);
+        let doc = CanvasExtractor::extract_canvases_document(&[c1, c2]);
+        let contexts: Vec<String> = doc.facts.iter()
+            .filter(|f| f.predicate == CANVAS_CONTEXT)
+            .filter_map(|f| doc.object_display(f))
+            .collect();
+        assert_eq!(contexts.len(), 2);
+    }
 }
