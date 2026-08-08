@@ -425,4 +425,89 @@ mod tests {
         assert_eq!(tokens[3].tag_name, "b");
         assert_eq!(tokens[4].text, " foo");
     }
+
+    #[test]
+    fn test_empty_input() {
+        let mut tok = StreamJitTokenizer::new();
+        let tokens = tok.tokenize_stream_chunk(b"");
+        assert!(tokens.is_empty());
+        assert!(!tok.has_buffered());
+    }
+
+    #[test]
+    fn test_text_only_no_tags() {
+        let mut tok = StreamJitTokenizer::new();
+        let tokens = tok.tokenize_stream_chunk(b"just plain text");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_kind, StreamJitTokenKind::Text);
+        assert_eq!(tokens[0].text, "just plain text");
+    }
+
+    #[test]
+    fn test_offset_advances() {
+        let mut tok = StreamJitTokenizer::new();
+        tok.tokenize_stream_chunk(b"<div>hello</div>");
+        assert!(tok.offset() > 0);
+        assert_eq!(tok.offset(), 16); // "<div>hello</div>" = 16 bytes
+    }
+
+    #[test]
+    fn test_self_closing_tag() {
+        let mut tok = StreamJitTokenizer::new();
+        let tokens = tok.tokenize_stream_chunk(b"<br/>");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_kind, StreamJitTokenKind::SelfClosingTag);
+        assert_eq!(tokens[0].tag_name, "br");
+    }
+
+    #[test]
+    fn test_close_tag() {
+        let mut tok = StreamJitTokenizer::new();
+        let tokens = tok.tokenize_stream_chunk(b"</p>");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_kind, StreamJitTokenKind::CloseTag);
+        assert_eq!(tokens[0].tag_name, "p");
+    }
+
+    #[test]
+    fn test_unquoted_attribute_value() {
+        let mut tok = StreamJitTokenizer::new();
+        let tokens = tok.tokenize_stream_chunk(b"<input type=text>");
+        assert_eq!(tokens[0].attributes.len(), 1);
+        assert_eq!(tokens[0].attributes[0], ("type".to_string(), "text".to_string()));
+    }
+
+    #[test]
+    fn test_single_quoted_attribute() {
+        let mut tok = StreamJitTokenizer::new();
+        let tokens = tok.tokenize_stream_chunk(b"<div class='main'>");
+        assert_eq!(tokens[0].attributes.len(), 1);
+        assert_eq!(tokens[0].attributes[0], ("class".to_string(), "main".to_string()));
+    }
+
+    #[test]
+    fn test_chunked_tag_split_at_name() {
+        let mut tok = StreamJitTokenizer::new();
+        // Split right in the middle of the tag name
+        let t1 = tok.tokenize_stream_chunk(b"<sp");
+        assert!(t1.is_empty()); // buffered
+        let t2 = tok.tokenize_stream_chunk(b"an>text");
+        assert_eq!(t2.len(), 2);
+        assert_eq!(t2[0].tag_name, "span");
+        assert_eq!(t2[1].text, "text");
+    }
+
+    #[test]
+    fn test_reset_clears_state() {
+        let mut tok = StreamJitTokenizer::new();
+        tok.tokenize_stream_chunk(b"<div");
+        assert!(tok.has_buffered());
+        assert!(tok.offset() > 0);
+        tok.reset();
+        assert!(!tok.has_buffered());
+        assert_eq!(tok.offset(), 0);
+        // Should work normally after reset
+        let tokens = tok.tokenize_stream_chunk(b"<p>hi</p>");
+        assert_eq!(tokens.len(), 3);
+    }
 }

@@ -282,4 +282,100 @@ mod tests {
         assert!(root.children[0].is_visible);
         assert!(root.children[0].children[0].is_visible);
     }
+
+    #[test]
+    fn test_empty_root_no_crash() {
+        let mut engine = ParallelLayoutEngine::new(4);
+        let mut root = make_box_with_children(0, vec![]);
+        engine.compute_parallel_subtrees(&mut root);
+        assert!(root.is_visible);
+        assert_eq!(engine.last_pass_box_count(), 0);
+    }
+
+    #[test]
+    fn test_children_positioned_with_padding() {
+        let mut engine = ParallelLayoutEngine::new(2);
+        let child = make_box(1, 100.0, 50.0);
+        let mut root = make_box_with_children(0, vec![child]);
+        root.padding = [10.0, 20.0, 10.0, 30.0]; // top right bottom left
+        engine.compute_parallel_subtrees(&mut root);
+        // Child x should account for left padding
+        assert_eq!(root.children[0].x, 30.0);
+        // Child y should account for top padding
+        assert_eq!(root.children[0].y, 10.0);
+    }
+
+    #[test]
+    fn test_children_positioned_with_margins() {
+        let mut engine = ParallelLayoutEngine::new(2);
+        let mut child = make_box(1, 100.0, 50.0);
+        child.margin = [5.0, 10.0, 5.0, 15.0]; // top right bottom left
+        let mut root = make_box_with_children(0, vec![child]);
+        engine.compute_parallel_subtrees(&mut root);
+        assert_eq!(root.children[0].x, 15.0); // left margin
+        assert_eq!(root.children[0].y, 5.0);  // top margin
+    }
+
+    #[test]
+    fn test_root_width_expands_to_children() {
+        let mut engine = ParallelLayoutEngine::new(2);
+        let child = make_box(1, 500.0, 50.0);
+        let mut root = make_box_with_children(0, vec![child]);
+        root.width = 100.0; // smaller than child
+        engine.compute_parallel_subtrees(&mut root);
+        assert!(root.width >= 500.0);
+    }
+
+    #[test]
+    fn test_margin_collapse_single_child() {
+        let mut children = vec![make_box(1, 100.0, 50.0)];
+        children[0].margin[2] = 20.0;
+        // Only one child, nothing to collapse
+        ParallelLayoutEngine::collapse_margins(&mut children);
+        assert_eq!(children[0].margin[2], 20.0); // unchanged
+    }
+
+    #[test]
+    fn test_margin_collapse_three_children() {
+        let mut children = vec![
+            make_box(1, 100.0, 50.0),
+            make_box(2, 100.0, 50.0),
+            make_box(3, 100.0, 50.0),
+        ];
+        children[0].margin[2] = 20.0;
+        children[1].margin[0] = 30.0;
+        children[1].margin[2] = 10.0;
+        children[2].margin[0] = 15.0;
+        ParallelLayoutEngine::collapse_margins(&mut children);
+        assert_eq!(children[0].margin[2], 30.0); // max(20, 30)
+        assert_eq!(children[1].margin[0], 0.0);
+        assert_eq!(children[1].margin[2], 15.0); // max(10, 15)
+        assert_eq!(children[2].margin[0], 0.0);
+    }
+
+    #[test]
+    fn test_work_distribution_single_item() {
+        let engine = ParallelLayoutEngine::new(4);
+        let ranges = engine.distribute_work(1);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0], (0, 1));
+    }
+
+    #[test]
+    fn test_work_distribution_exact_division() {
+        let engine = ParallelLayoutEngine::new(4);
+        let ranges = engine.distribute_work(8);
+        assert_eq!(ranges.len(), 4);
+        for (start, end) in &ranges {
+            assert_eq!(end - start, 2); // 8 / 4 = 2 each
+        }
+    }
+
+    #[test]
+    fn test_new_engine_min_one_worker() {
+        let engine = ParallelLayoutEngine::new(0);
+        assert_eq!(engine.worker_threads, 1);
+        let engine2 = ParallelLayoutEngine::new(1);
+        assert_eq!(engine2.worker_threads, 1);
+    }
 }

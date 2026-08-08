@@ -563,4 +563,74 @@ mod tests {
         assert!(rules[0].selector_text.starts_with("@media"));
         assert_eq!(rules[1].selector_text, "h1");
     }
+
+    #[test]
+    fn test_empty_css() {
+        let rules = FastCssParser::parse_rules_fast("");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_comment_only_css() {
+        let rules = FastCssParser::parse_rules_fast("/* just a comment */");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_important_overrides_normal() {
+        let node = make_node("div", vec![]);
+        let css = "div { color: red; } div { color: blue !important; }";
+        let rules = FastCssParser::parse_rules_fast(css);
+        let cascaded = FastCssParser::cascade_rules_for_node(&node, &rules);
+        assert_eq!(cascaded.get("color").unwrap(), "blue");
+    }
+
+    #[test]
+    fn test_matches_tag_hash_id() {
+        let node = make_node("div", vec![("id", "header")]);
+        let rules = FastCssParser::parse_rules_fast("#header { font-size: 20px; }");
+        assert!(FastCssParser::matches_bitmask(&node, &rules[0]));
+        let wrong_node = make_node("div", vec![("id", "footer")]);
+        assert!(!FastCssParser::matches_bitmask(&wrong_node, &rules[0]));
+    }
+
+    #[test]
+    fn test_declaration_property_lowercased() {
+        let css = "div { Color: Red; Font-Size: 14px; }";
+        let rules = FastCssParser::parse_rules_fast(css);
+        assert_eq!(rules[0].declarations[0].property, "color");
+        assert_eq!(rules[0].declarations[1].property, "font-size");
+    }
+
+    #[test]
+    fn test_multiple_declarations_semicolons() {
+        let css = "p { margin: 0; padding: 5px; border: none; }";
+        let rules = FastCssParser::parse_rules_fast(css);
+        assert_eq!(rules[0].declarations.len(), 3);
+    }
+
+    #[test]
+    fn test_specificity_star_is_zero() {
+        let css = "* { margin: 0; }";
+        let rules = FastCssParser::parse_rules_fast(css);
+        assert_eq!(rules[0].specificity, (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_cascade_no_matching_rules() {
+        let node = make_node("span", vec![]);
+        let css = "div { color: red; }";
+        let rules = FastCssParser::parse_rules_fast(css);
+        let cascaded = FastCssParser::cascade_rules_for_node(&node, &rules);
+        assert!(cascaded.is_empty());
+    }
+
+    #[test]
+    fn test_attribute_presence_selector() {
+        let node = make_node("input", vec![("disabled", "")]);
+        let rules = FastCssParser::parse_rules_fast("[disabled] { opacity: 0.5; }");
+        assert!(FastCssParser::matches_bitmask(&node, &rules[0]));
+        let node2 = make_node("input", vec![]);
+        assert!(!FastCssParser::matches_bitmask(&node2, &rules[0]));
+    }
 }
