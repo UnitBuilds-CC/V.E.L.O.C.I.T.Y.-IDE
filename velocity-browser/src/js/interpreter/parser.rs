@@ -861,3 +861,344 @@ impl Parser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::lexer::lex;
+
+    fn parse(src: &str) -> Result<Vec<Stmt>, String> {
+        let tokens = lex(src).map_err(|e| e.to_string())?;
+        let mut parser = Parser::new(tokens);
+        parser.parse_program()
+    }
+
+    fn parse_one(src: &str) -> Stmt {
+        parse(src).unwrap().into_iter().next().unwrap()
+    }
+
+    fn parse_expr_node(src: &str) -> Expr {
+        match parse_one(src) {
+            Stmt::Expr(e) => e,
+            other => panic!("expected Expr stmt, got {:?}", other),
+        }
+    }
+
+    // ── empty program ──────────────────────────────────────────────────
+
+    #[test]
+    fn empty_program() {
+        let stmts = parse("").unwrap();
+        assert!(stmts.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only() {
+        let stmts = parse("   \n\t  ").unwrap();
+        assert!(stmts.is_empty());
+    }
+
+    // ── number literal ─────────────────────────────────────────────────
+
+    #[test]
+    fn number_literal_expr() {
+        match parse_expr_node("42") {
+            Expr::Number(n) => assert_eq!(n, 42.0),
+            other => panic!("expected Number, got {:?}", other),
+        }
+    }
+
+    // ── string literal ─────────────────────────────────────────────────
+
+    #[test]
+    fn string_literal_expr() {
+        match parse_expr_node("'hello'") {
+            Expr::Str(s) => assert_eq!(s, "hello"),
+            other => panic!("expected Str, got {:?}", other),
+        }
+    }
+
+    // ── boolean literals ───────────────────────────────────────────────
+
+    #[test]
+    fn bool_true() {
+        match parse_expr_node("true") {
+            Expr::Bool(b) => assert!(b),
+            other => panic!("expected Bool, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bool_false() {
+        match parse_expr_node("false") {
+            Expr::Bool(b) => assert!(!b),
+            other => panic!("expected Bool, got {:?}", other),
+        }
+    }
+
+    // ── null and undefined ─────────────────────────────────────────────
+
+    #[test]
+    fn null_literal() {
+        assert!(matches!(parse_expr_node("null"), Expr::Null));
+    }
+
+    #[test]
+    fn undefined_literal() {
+        assert!(matches!(parse_expr_node("undefined"), Expr::Undefined));
+    }
+
+    // ── identifier ─────────────────────────────────────────────────────
+
+    #[test]
+    fn identifier_expr() {
+        match parse_expr_node("foo") {
+            Expr::Ident(s) => assert_eq!(s, "foo"),
+            other => panic!("expected Ident, got {:?}", other),
+        }
+    }
+
+    // ── var declarations ───────────────────────────────────────────────
+
+    #[test]
+    fn var_decl_no_init() {
+        match parse_one("var x;") {
+            Stmt::VarDecl { kind, name, init } => {
+                assert_eq!(kind, VarKind::Var);
+                assert_eq!(name, "x");
+                assert!(init.is_none());
+            }
+            other => panic!("expected VarDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn let_decl_with_init() {
+        match parse_one("let y = 5;") {
+            Stmt::VarDecl { kind, name, init } => {
+                assert_eq!(kind, VarKind::Let);
+                assert_eq!(name, "y");
+                assert!(init.is_some());
+            }
+            other => panic!("expected VarDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn const_decl() {
+        match parse_one("const Z = 10;") {
+            Stmt::VarDecl { kind, name, .. } => {
+                assert_eq!(kind, VarKind::Const);
+                assert_eq!(name, "Z");
+            }
+            other => panic!("expected VarDecl, got {:?}", other),
+        }
+    }
+
+    // ── return statement ───────────────────────────────────────────────
+
+    #[test]
+    fn return_with_value() {
+        match parse_one("return 42;") {
+            Stmt::Return(Some(Expr::Number(n))) => assert_eq!(n, 42.0),
+            other => panic!("expected Return(42), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn return_bare() {
+        match parse_one("return;") {
+            Stmt::Return(None) => {}
+            other => panic!("expected Return(None), got {:?}", other),
+        }
+    }
+
+    // ── break and continue ─────────────────────────────────────────────
+
+    #[test]
+    fn break_stmt() {
+        assert!(matches!(parse_one("break;"), Stmt::Break));
+    }
+
+    #[test]
+    fn continue_stmt() {
+        assert!(matches!(parse_one("continue;"), Stmt::Continue));
+    }
+
+    // ── block statement ────────────────────────────────────────────────
+
+    #[test]
+    fn block_empty() {
+        match parse_one("{}") {
+            Stmt::Block(stmts) => assert!(stmts.is_empty()),
+            other => panic!("expected Block, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn block_with_stmts() {
+        let stmts = parse("{ var x; var y; }").unwrap();
+        assert_eq!(stmts.len(), 1); // one block stmt
+    }
+
+    // ── binary expressions ─────────────────────────────────────────────
+
+    #[test]
+    fn addition() {
+        match parse_expr_node("1 + 2") {
+            Expr::Binary(Token::Plus, _, _) => {}
+            other => panic!("expected Binary(+), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn multiplication() {
+        match parse_expr_node("3 * 4") {
+            Expr::Binary(Token::Star, _, _) => {}
+            other => panic!("expected Binary(*), got {:?}", other),
+        }
+    }
+
+    // ── unary expressions ──────────────────────────────────────────────
+
+    #[test]
+    fn typeof_expr() {
+        match parse_expr_node("typeof x") {
+            Expr::Typeof(_) => {}
+            other => panic!("expected Typeof, got {:?}", other),
+        }
+    }
+
+    // ── array literal ──────────────────────────────────────────────────
+
+    #[test]
+    fn array_literal() {
+        match parse_expr_node("[1, 2, 3]") {
+            Expr::Array(elems) => assert_eq!(elems.len(), 3),
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn array_empty() {
+        match parse_expr_node("[]") {
+            Expr::Array(elems) => assert!(elems.is_empty()),
+            other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    // ── object literal ─────────────────────────────────────────────────
+
+    #[test]
+    fn object_literal() {
+        // Wrap in parens to force expression context (avoids block ambiguity)
+        match parse_expr_node("({a: 1, b: 2})") {
+            Expr::Object(props) => assert_eq!(props.len(), 2),
+            other => panic!("expected Object, got {:?}", other),
+        }
+    }
+
+    // ── function declaration ───────────────────────────────────────────
+
+    #[test]
+    fn function_decl() {
+        match parse_one("function foo(a, b) { return a; }") {
+            Stmt::FunctionDecl { name, params, .. } => {
+                assert_eq!(name, "foo");
+                assert_eq!(params.len(), 2);
+            }
+            other => panic!("expected FunctionDecl, got {:?}", other),
+        }
+    }
+
+    // ── if statement ───────────────────────────────────────────────────
+
+    #[test]
+    fn if_stmt_no_else() {
+        match parse_one("if (true) { }") {
+            Stmt::If { cond, else_branch, .. } => {
+                assert!(matches!(cond, Expr::Bool(true)));
+                assert!(else_branch.is_none());
+            }
+            other => panic!("expected If, got {:?}", other),
+        }
+    }
+
+    // ── while loop ─────────────────────────────────────────────────────
+
+    #[test]
+    fn while_loop() {
+        match parse_one("while (true) { }") {
+            Stmt::While { .. } => {}
+            other => panic!("expected While, got {:?}", other),
+        }
+    }
+
+    // ── throw statement ────────────────────────────────────────────────
+
+    #[test]
+    fn throw_stmt() {
+        match parse_one("throw 42;") {
+            Stmt::Throw(Expr::Number(n)) => assert_eq!(n, 42.0),
+            other => panic!("expected Throw(42), got {:?}", other),
+        }
+    }
+
+    // ── try/catch ──────────────────────────────────────────────────────
+
+    #[test]
+    fn try_catch() {
+        match parse_one("try { } catch (e) { }") {
+            Stmt::TryCatch { catch_var, .. } => {
+                assert_eq!(catch_var, Some("e".to_string()));
+            }
+            other => panic!("expected TryCatch, got {:?}", other),
+        }
+    }
+
+    // ── member access ──────────────────────────────────────────────────
+
+    #[test]
+    fn member_access() {
+        match parse_expr_node("a.b") {
+            Expr::Member(_, prop) => assert_eq!(prop, "b"),
+            other => panic!("expected Member, got {:?}", other),
+        }
+    }
+
+    // ── call expression ────────────────────────────────────────────────
+
+    #[test]
+    fn call_expr() {
+        match parse_expr_node("foo(1, 2)") {
+            Expr::Call(_, args) => assert_eq!(args.len(), 2),
+            other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    // ── new expression ─────────────────────────────────────────────────
+
+    #[test]
+    fn new_expr() {
+        match parse_expr_node("new Foo()") {
+            Expr::New(_, _) => {}
+            other => panic!("expected New, got {:?}", other),
+        }
+    }
+
+    // ── multiple statements ────────────────────────────────────────────
+
+    #[test]
+    fn multiple_statements() {
+        let stmts = parse("var x; var y; var z;").unwrap();
+        assert_eq!(stmts.len(), 3);
+    }
+
+    // ── parse error ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_error_unclosed_brace() {
+        let result = parse("{ ");
+        assert!(result.is_err());
+    }
+}
