@@ -197,6 +197,116 @@ mod tests {
         let nodes = AgenticAomTree::build_aom_nodes(&tree);
         assert_eq!(nodes[0].value, "hello");
     }
+
+    #[test]
+    fn textarea_is_textbox() {
+        let tree = DomTree::new(vec![make_node(0, "textarea", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "textbox");
+        assert_eq!(nodes[0].actionability_score, 90);
+    }
+
+    #[test]
+    fn form_role_and_actionability() {
+        let tree = DomTree::new(vec![make_node(0, "form", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "form");
+        assert_eq!(nodes[0].actionability_score, 75);
+    }
+
+    #[test]
+    fn nav_is_navigation() {
+        let tree = DomTree::new(vec![make_node(0, "nav", &[])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "navigation");
+        assert_eq!(nodes[0].actionability_score, 40);
+    }
+
+    #[test]
+    fn explicit_role_attribute_overrides() {
+        let tree = DomTree::new(vec![make_node(0, "div", &[("role", "tab")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "tab");
+    }
+
+    #[test]
+    fn autofocus_sets_focused() {
+        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "text"), ("autofocus", "")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert!(nodes[0].is_focused);
+    }
+
+    #[test]
+    fn aria_expanded_true() {
+        let tree = DomTree::new(vec![make_node(0, "button", &[("aria-expanded", "true")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert!(nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn aria_expanded_false() {
+        let tree = DomTree::new(vec![make_node(0, "button", &[("aria-expanded", "false")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert!(!nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn empty_tree_no_aom_nodes() {
+        let tree = DomTree::new(vec![]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn input_radio_is_radio_role() {
+        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "radio")])]);
+        let nodes = AgenticAomTree::build_aom_nodes(&tree);
+        assert_eq!(nodes[0].role, "radio");
+    }
+
+    #[test]
+    fn to_nda_triples_with_value() {
+        let nodes = vec![AgenticAomNode {
+            id: "n0".into(),
+            role: "textbox".into(),
+            name: "email".into(),
+            value: "user@test.com".into(),
+            actionability_score: 90,
+            is_focused: false,
+            is_expanded: false,
+        }];
+        let triples = AgenticAomTree::to_nda_triples(&nodes);
+        let val = triples.iter().find(|t| t.predicate_id == AOM_VALUE);
+        assert!(val.is_some(), "Should emit value triple");
+    }
+
+    #[test]
+    fn to_nda_triples_no_name_omits_name_triple() {
+        let nodes = vec![AgenticAomNode {
+            id: "n0".into(),
+            role: "generic".into(),
+            name: String::new(),
+            value: String::new(),
+            actionability_score: 10,
+            is_focused: false,
+            is_expanded: false,
+        }];
+        let triples = AgenticAomTree::to_nda_triples(&nodes);
+        let name_triple = triples.iter().find(|t| t.predicate_id == AOM_NAME);
+        assert!(name_triple.is_none(), "Empty name should not emit AOM_NAME triple");
+    }
+
+    #[test]
+    fn multiple_nodes_in_tree() {
+        let mut nodes_vec = vec![];
+        nodes_vec.push(make_node(0, "button", &[]));
+        nodes_vec.push(make_node(1, "input", &[("type", "text")]));
+        nodes_vec.push(make_node(2, "div", &[]));
+        let tree = DomTree::new(nodes_vec);
+        let aom = AgenticAomTree::build_aom_nodes(&tree);
+        // button + input, div without label is skipped
+        assert_eq!(aom.len(), 2);
+    }
 }
 #[derive(Debug, Clone)]
 pub struct AgenticAomNode {
