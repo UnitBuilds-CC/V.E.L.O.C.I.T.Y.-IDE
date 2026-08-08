@@ -309,7 +309,8 @@ impl VelocityApp {
         files
     }
 
-    #[allow(dead_code)]
+    /// Focus or open the orchestrator tab (prefers focusing existing tab).
+    #[allow(dead_code)] // Available for future command palette binding.
     pub fn focus_orchestrator_tab(&mut self) {
         if let Some(tab) = self
             .tabs
@@ -545,6 +546,8 @@ impl VelocityApp {
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
                     self.agent_ui_state.metrics.state =
                         crate::editor::agent_ui_state::AgentState::Running;
+                    // Record metrics snapshot for the history ring buffer.
+                    self.agent_ui_state.metrics.record_snapshot(0);
                     if self.current_agent_task_id != 0 {
                         self.task_timeline.tool_result(
                             self.current_agent_task_id,

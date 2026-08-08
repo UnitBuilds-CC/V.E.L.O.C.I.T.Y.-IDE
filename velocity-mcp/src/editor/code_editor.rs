@@ -23,7 +23,6 @@ pub struct EditorOptions {
     /// Code fold state reference.
     pub collapsed_lines: Vec<usize>,
     /// Whether word wrap is enabled.
-    #[allow(dead_code)]
     pub word_wrap: bool,
 }
 
@@ -220,7 +219,13 @@ impl CodeEditor {
                 let text_edit = TextEdit::multiline(text)
                     .id(self.id)
                     .code_editor()
-                    .desired_width(f32::INFINITY)
+                    .desired_width(if options.word_wrap {
+                        // When word wrap is on, let the editor fill available width
+                        // so egui can break lines at the container boundary.
+                        ui.available_width()
+                    } else {
+                        f32::INFINITY
+                    })
                     .layouter(&mut layouter);
 
                 ui.add(text_edit)

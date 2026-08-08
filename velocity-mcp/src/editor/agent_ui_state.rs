@@ -308,7 +308,6 @@ impl ApprovalManagerState {
 
 /// Historical metrics entry
 #[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)]
 pub struct MetricsHistoryEntry {
     pub timestamp_ms: u32,
     pub tokens_used: u32,
@@ -322,16 +321,12 @@ pub struct AgentMetricsState {
     pub tokens_used: u32,
     pub tokens_max: u32,
     pub estimated_cost: u32, // In 0.0001 USD units
-    #[allow(dead_code)]
     pub estimated_cost_max: u32,
     pub tool_call_count: u32,
     pub last_tool_duration_ms: u32,
     pub thinking_enabled: bool,
-    #[allow(dead_code)]
     pub history: [MetricsHistoryEntry; METRICS_HISTORY_SIZE],
-    #[allow(dead_code)]
     pub history_count: usize,
-    #[allow(dead_code)]
     pub history_head: usize,
 }
 
@@ -354,7 +349,7 @@ impl Default for AgentMetricsState {
 }
 
 impl AgentMetricsState {
-    #[allow(dead_code)]
+    /// Record a metrics snapshot after a tool call completes.
     pub fn record_snapshot(&mut self, tool_duration_ms: u32) {
         let idx = self.history_head;
         self.history[idx] = MetricsHistoryEntry {
