@@ -218,14 +218,8 @@ pub fn run_agent_reasoning_loop(
             AiProvider::Cerebras => {
                 super::dispatch::execute_cerebras_request(&request_body, ui_tx)
             }
-            _ => {
-                super::dispatch::execute_openrouter_request(
-                    or_accounts,
-                    accounts,
-                    usage_tracker,
-                    &request_body,
-                    ui_tx,
-                ).0
+            AiProvider::Anthropic => {
+                super::dispatch::execute_anthropic_request(&request_body, ui_tx)
             }
         };
 
@@ -249,7 +243,7 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::FireworksAi => !std::env::var("FIREWORKS_API_KEY").unwrap_or_default().trim().is_empty(),
                     AiProvider::Perplexity => !std::env::var("PERPLEXITY_API_KEY").unwrap_or_default().trim().is_empty(),
                     AiProvider::Cerebras => !std::env::var("CEREBRAS_API_KEY").unwrap_or_default().trim().is_empty(),
-                    _ => true,
+                    AiProvider::Anthropic => !std::env::var("ANTHROPIC_API_KEY").unwrap_or_default().trim().is_empty(),
                 };
 
                 if fallback_attempts < 7 && fallback_available {
@@ -301,7 +295,7 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::FireworksAi => "Fireworks AI request failed or FIREWORKS_API_KEY missing.",
                     AiProvider::Perplexity => "Perplexity request failed or PERPLEXITY_API_KEY missing.",
                     AiProvider::Cerebras => "Cerebras request failed or CEREBRAS_API_KEY missing.",
-                    _ => "Selected AI Provider request failed or key missing.",
+                    AiProvider::Anthropic => "Anthropic request failed or ANTHROPIC_API_KEY missing.",
                 };
                 ui_tx
                     .send(AgentToUiMessage::OutputToken(format!(

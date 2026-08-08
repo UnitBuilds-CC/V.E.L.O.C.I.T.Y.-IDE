@@ -206,6 +206,8 @@ pub struct WorkspaceProviderSettings {
     pub alibaba: WorkspaceApiKeySettings,
     #[serde(default)]
     pub bedrock: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub anthropic: WorkspaceApiKeySettings,
 }
 
 impl WorkspaceCloudflareSettings {

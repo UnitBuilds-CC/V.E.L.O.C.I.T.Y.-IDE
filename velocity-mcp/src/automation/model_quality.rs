@@ -78,7 +78,7 @@ pub struct ProviderCapability {
 pub struct ModelQualityIndex;
 
 impl ModelQualityIndex {
-    pub fn provider_capabilities() -> [ProviderCapability; 13] {
+    pub fn provider_capabilities() -> [ProviderCapability; 14] {
         [
             ProviderCapability {
                 provider: AiProvider::CloudflareWorkersAi,
@@ -142,6 +142,11 @@ impl ModelQualityIndex {
             },
             ProviderCapability {
                 provider: AiProvider::AwsBedrock,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::Anthropic,
                 native_tools_reliable: true,
                 good_for_parallelism: true,
             },

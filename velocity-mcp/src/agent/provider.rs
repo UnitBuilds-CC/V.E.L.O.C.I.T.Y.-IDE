@@ -565,6 +565,35 @@ pub fn fetch_cerebras_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     fetch_openai_compatible_models("https://api.cerebras.ai", api_key, "Cerebras")
 }
 
+/// Anthropic Messages API — GET /v1/models with x-api-key auth.
+pub fn fetch_anthropic_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    if api_key.trim().is_empty() {
+        return Err("No API key configured for Anthropic".to_string());
+    }
+    let response = ureq::get("https://api.anthropic.com/v1/models")
+        .timeout(std::time::Duration::from_secs(15))
+        .set("x-api-key", api_key)
+        .set("anthropic-version", "2023-06-01")
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| format!("Anthropic model catalog request failed: {e}"))?;
+    let body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("Anthropic model catalog parse failed: {e}"))?;
+    let models = body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+    Ok(models.iter().filter_map(|m| {
+        let id = m.get("id").and_then(|v| v.as_str())?;
+        let display = m.get("display_name").and_then(|v| v.as_str()).unwrap_or(id);
+        Some(ModelInfo {
+            id: id.to_string(),
+            label: display.to_string(),
+            api_style: ApiStyle::OpenAiTools,
+            supports_tools: id.contains("claude") && !id.contains("haiku"),
+            supports_thinking: id.contains("claude") && (id.contains("sonnet") || id.contains("opus")),
+        })
+    }).collect())
+}
+
 /// AWS Bedrock — uses BEDROCK_PROXY_URL as an OpenAI-compatible gateway.
 pub fn fetch_bedrock_models() -> Result<Vec<ModelInfo>, String> {
     if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {

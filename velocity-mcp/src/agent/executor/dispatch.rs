@@ -497,6 +497,91 @@ pub fn execute_bedrock_request(
     None
 }
 
+/// Anthropic Messages API — converts OpenAI-format request body to Anthropic format.
+/// API docs: https://docs.anthropic.com/en/api/messages
+pub fn execute_anthropic_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    if api_key.trim().is_empty() {
+        ui_tx.send(AgentToUiMessage::StatusUpdate(
+            "Anthropic API key not set. Export ANTHROPIC_API_KEY to use this provider.".to_string()
+        )).ok();
+        return None;
+    }
+    // Convert OpenAI-format messages to Anthropic format:
+    // Extract system message separately, keep user/assistant messages.
+    let messages = request_body.get("messages").and_then(|m| m.as_array());
+    let Some(messages) = messages else {
+        ui_tx.send(AgentToUiMessage::StatusUpdate(
+            "Anthropic request failed: no messages in request body.".to_string()
+        )).ok();
+        return None;
+    };
+    let mut system_text = String::new();
+    let mut anthropic_messages = Vec::new();
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        let content = msg.get("content").cloned().unwrap_or(Value::String(String::new()));
+        match role {
+            "system" => {
+                if let Some(s) = content.as_str() {
+                    system_text.push_str(s);
+                }
+            }
+            "user" | "assistant" => {
+                let mut entry = serde_json::Map::new();
+                entry.insert("role".to_string(), Value::String(role.to_string()));
+                entry.insert("content".to_string(), content);
+                anthropic_messages.push(Value::Object(entry));
+            }
+            _ => {}
+        }
+    }
+    let model = request_body.get("model").and_then(|m| m.as_str()).unwrap_or("claude-sonnet-4-20250514");
+    let max_tokens = request_body.get("max_tokens").and_then(|t| t.as_u64()).unwrap_or(4096);
+    let mut body = serde_json::Map::new();
+    body.insert("model".to_string(), Value::String(model.to_string()));
+    body.insert("max_tokens".to_string(), Value::Number(max_tokens.into()));
+    body.insert("messages".to_string(), Value::Array(anthropic_messages));
+    if !system_text.is_empty() {
+        body.insert("system".to_string(), Value::String(system_text));
+    }
+    // Stream if the original request asked for it
+    if request_body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false) {
+        body.insert("stream".to_string(), Value::Bool(true));
+    }
+    let anthropic_body = Value::Object(body);
+    match ureq::post("https://api.anthropic.com/v1/messages")
+        .timeout(Duration::from_secs(120))
+        .set("x-api-key", &api_key)
+        .set("anthropic-version", "2023-06-01")
+        .set("Content-Type", "application/json")
+        .send_json(&anthropic_body)
+    {
+        Ok(res) => Some(res),
+        Err(ureq::Error::Status(401, _)) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(
+                "Anthropic authentication failed. Check your ANTHROPIC_API_KEY.".to_string()
+            )).ok();
+            None
+        }
+        Err(ureq::Error::Status(429, _)) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(
+                "Anthropic rate limit exceeded (429). Try again shortly.".to_string()
+            )).ok();
+            None
+        }
+        Err(e) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(
+                format!("Anthropic request failed: {e}")
+            )).ok();
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

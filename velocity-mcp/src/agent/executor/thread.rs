@@ -149,7 +149,10 @@ fn fetch_models_for_provider(
             fetch_cerebras_models(&key)
         }
         AiProvider::AwsBedrock => fetch_bedrock_models(),
-        _ => Ok(vec![default_model_info(&default_provider_model(provider))]),
+        AiProvider::Anthropic => {
+            let key = resolve_api_key(workspace_root, "anthropic", "ANTHROPIC_API_KEY");
+            fetch_anthropic_models(&key)
+        }
     }
 }
 

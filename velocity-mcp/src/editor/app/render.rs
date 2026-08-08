@@ -787,6 +787,7 @@ impl<'a> TabViewerImpl<'a> {
                         api_key_provider_row(ui, "Perplexity", &mut self.app.provider_settings.perplexity, "Perplexity API key");
                         api_key_provider_row(ui, "Cerebras", &mut self.app.provider_settings.cerebras, "Cerebras API key");
                         api_key_provider_row(ui, "AWS Bedrock", &mut self.app.provider_settings.bedrock, "Bedrock proxy API key (set BEDROCK_PROXY_URL env var)");
+                        api_key_provider_row(ui, "Anthropic", &mut self.app.provider_settings.anthropic, "Anthropic API key");
 
                         ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {
