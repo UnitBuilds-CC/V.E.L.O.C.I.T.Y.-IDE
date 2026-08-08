@@ -775,3 +775,457 @@ pub(super) fn to_exponential_js(n: f64, frac: Option<usize>) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── call_string_method ─────────────────────────────────────────────
+
+    #[test]
+    fn string_length() {
+        assert_eq!(call_string_method("hello", "length", &[]), JsValue::Number(5.0));
+        assert_eq!(call_string_method("", "length", &[]), JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn string_char_at() {
+        assert_eq!(call_string_method("hello", "charAt", &[JsValue::Number(0.0)]), JsValue::String("h".into()));
+        assert_eq!(call_string_method("hello", "charAt", &[JsValue::Number(4.0)]), JsValue::String("o".into()));
+        assert_eq!(call_string_method("hello", "charAt", &[JsValue::Number(99.0)]), JsValue::String("".into()));
+    }
+
+    #[test]
+    fn string_char_code_at() {
+        assert_eq!(call_string_method("A", "charCodeAt", &[JsValue::Number(0.0)]), JsValue::Number(65.0));
+        assert!(matches!(call_string_method("A", "charCodeAt", &[JsValue::Number(5.0)]), JsValue::Number(n) if n.is_nan()));
+    }
+
+    #[test]
+    fn string_code_point_at() {
+        assert_eq!(call_string_method("A", "codePointAt", &[JsValue::Number(0.0)]), JsValue::Number(65.0));
+        assert_eq!(call_string_method("A", "codePointAt", &[JsValue::Number(5.0)]), JsValue::Undefined);
+    }
+
+    #[test]
+    fn string_at_positive() {
+        assert_eq!(call_string_method("hello", "at", &[JsValue::Number(1.0)]), JsValue::String("e".into()));
+    }
+
+    #[test]
+    fn string_at_negative() {
+        assert_eq!(call_string_method("hello", "at", &[JsValue::Number(-1.0)]), JsValue::String("o".into()));
+    }
+
+    #[test]
+    fn string_at_out_of_bounds() {
+        assert_eq!(call_string_method("hello", "at", &[JsValue::Number(10.0)]), JsValue::Undefined);
+    }
+
+    #[test]
+    fn string_index_of() {
+        assert_eq!(call_string_method("hello world", "indexOf", &[JsValue::String("world".into())]), JsValue::Number(6.0));
+        assert_eq!(call_string_method("hello", "indexOf", &[JsValue::String("z".into())]), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn string_index_of_with_from() {
+        assert_eq!(call_string_method("abcabc", "indexOf", &[JsValue::String("bc".into()), JsValue::Number(2.0)]), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn string_last_index_of() {
+        assert_eq!(call_string_method("abcabc", "lastIndexOf", &[JsValue::String("bc".into())]), JsValue::Number(4.0));
+    }
+
+    #[test]
+    fn string_includes_true() {
+        assert_eq!(call_string_method("hello world", "includes", &[JsValue::String("world".into())]), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn string_includes_false() {
+        assert_eq!(call_string_method("hello", "includes", &[JsValue::String("xyz".into())]), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn string_starts_with() {
+        assert_eq!(call_string_method("hello", "startsWith", &[JsValue::String("hel".into())]), JsValue::Boolean(true));
+        assert_eq!(call_string_method("hello", "startsWith", &[JsValue::String("llo".into())]), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn string_starts_with_position() {
+        assert_eq!(call_string_method("hello", "startsWith", &[JsValue::String("lo".into()), JsValue::Number(3.0)]), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn string_ends_with() {
+        assert_eq!(call_string_method("hello", "endsWith", &[JsValue::String("llo".into())]), JsValue::Boolean(true));
+        assert_eq!(call_string_method("hello", "endsWith", &[JsValue::String("hel".into())]), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn string_slice_basic() {
+        assert_eq!(call_string_method("hello", "slice", &[JsValue::Number(1.0), JsValue::Number(3.0)]), JsValue::String("el".into()));
+    }
+
+    #[test]
+    fn string_slice_negative() {
+        assert_eq!(call_string_method("hello", "slice", &[JsValue::Number(-3.0)]), JsValue::String("llo".into()));
+    }
+
+    #[test]
+    fn string_substring() {
+        assert_eq!(call_string_method("hello", "substring", &[JsValue::Number(1.0), JsValue::Number(3.0)]), JsValue::String("el".into()));
+    }
+
+    #[test]
+    fn string_substring_swapped() {
+        // substring swaps if start > end
+        assert_eq!(call_string_method("hello", "substring", &[JsValue::Number(3.0), JsValue::Number(1.0)]), JsValue::String("el".into()));
+    }
+
+    #[test]
+    fn string_to_lower_case() {
+        assert_eq!(call_string_method("HELLO", "toLowerCase", &[]), JsValue::String("hello".into()));
+    }
+
+    #[test]
+    fn string_to_upper_case() {
+        assert_eq!(call_string_method("hello", "toUpperCase", &[]), JsValue::String("HELLO".into()));
+    }
+
+    #[test]
+    fn string_trim() {
+        assert_eq!(call_string_method("  hello  ", "trim", &[]), JsValue::String("hello".into()));
+    }
+
+    #[test]
+    fn string_trim_start() {
+        assert_eq!(call_string_method("  hello  ", "trimStart", &[]), JsValue::String("hello  ".into()));
+    }
+
+    #[test]
+    fn string_trim_end() {
+        assert_eq!(call_string_method("  hello  ", "trimEnd", &[]), JsValue::String("  hello".into()));
+    }
+
+    #[test]
+    fn string_split_basic() {
+        let r = call_string_method("a,b,c", "split", &[JsValue::String(",".into())]);
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 3);
+        } else { panic!("expected Array"); }
+    }
+
+    #[test]
+    fn string_split_with_limit() {
+        let r = call_string_method("a,b,c", "split", &[JsValue::String(",".into()), JsValue::Number(2.0)]);
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 2);
+        } else { panic!("expected Array"); }
+    }
+
+    #[test]
+    fn string_split_empty_separator() {
+        let r = call_string_method("abc", "split", &[JsValue::String("".into())]);
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 3);
+        } else { panic!("expected Array"); }
+    }
+
+    #[test]
+    fn string_substr() {
+        assert_eq!(call_string_method("hello", "substr", &[JsValue::Number(1.0), JsValue::Number(3.0)]), JsValue::String("ell".into()));
+    }
+
+    #[test]
+    fn string_concat() {
+        assert_eq!(call_string_method("hello", "concat", &[JsValue::String(" world".into())]), JsValue::String("hello world".into()));
+    }
+
+    #[test]
+    fn string_replace() {
+        assert_eq!(call_string_method("hello world", "replace", &[JsValue::String("world".into()), JsValue::String("rust".into())]), JsValue::String("hello rust".into()));
+    }
+
+    #[test]
+    fn string_replace_no_match() {
+        assert_eq!(call_string_method("hello", "replace", &[JsValue::String("xyz".into()), JsValue::String("abc".into())]), JsValue::String("hello".into()));
+    }
+
+    #[test]
+    fn string_replace_all() {
+        assert_eq!(call_string_method("aabaa", "replaceAll", &[JsValue::String("a".into()), JsValue::String("x".into())]), JsValue::String("xxbxx".into()));
+    }
+
+    #[test]
+    fn string_repeat() {
+        assert_eq!(call_string_method("ab", "repeat", &[JsValue::Number(3.0)]), JsValue::String("ababab".into()));
+        assert_eq!(call_string_method("x", "repeat", &[JsValue::Number(0.0)]), JsValue::String("".into()));
+    }
+
+    #[test]
+    fn string_pad_start() {
+        assert_eq!(call_string_method("5", "padStart", &[JsValue::Number(3.0), JsValue::String("0".into())]), JsValue::String("005".into()));
+    }
+
+    #[test]
+    fn string_pad_end() {
+        assert_eq!(call_string_method("5", "padEnd", &[JsValue::Number(3.0), JsValue::String("0".into())]), JsValue::String("500".into()));
+    }
+
+    #[test]
+    fn string_locale_compare() {
+        let r = call_string_method("abc", "localeCompare", &[JsValue::String("abc".into())]);
+        assert_eq!(r, JsValue::Number(0.0));
+        let r2 = call_string_method("abc", "localeCompare", &[JsValue::String("xyz".into())]);
+        assert_eq!(r2, JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn string_is_well_formed() {
+        assert_eq!(call_string_method("hello", "isWellFormed", &[]), JsValue::Boolean(true));
+    }
+
+    #[test]
+    fn string_to_well_formed() {
+        assert_eq!(call_string_method("hello", "toWellFormed", &[]), JsValue::String("hello".into()));
+    }
+
+    #[test]
+    fn string_match_found() {
+        let r = call_string_method("hello world", "match", &[JsValue::String("world".into())]);
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 1);
+            assert_eq!(arr[0], JsValue::String("world".into()));
+        } else { panic!("expected Array"); }
+    }
+
+    #[test]
+    fn string_match_not_found() {
+        assert_eq!(call_string_method("hello", "match", &[JsValue::String("xyz".into())]), JsValue::Null);
+    }
+
+    #[test]
+    fn string_search() {
+        assert_eq!(call_string_method("hello world", "search", &[JsValue::String("world".into())]), JsValue::Number(6.0));
+        assert_eq!(call_string_method("hello", "search", &[JsValue::String("xyz".into())]), JsValue::Number(-1.0));
+    }
+
+    #[test]
+    fn string_to_string() {
+        assert_eq!(call_string_method("hello", "toString", &[]), JsValue::String("hello".into()));
+    }
+
+    #[test]
+    fn string_unknown_method() {
+        assert_eq!(call_string_method("hello", "nope", &[]), JsValue::Undefined);
+    }
+
+    // ── call_number_method ─────────────────────────────────────────────
+
+    #[test]
+    fn number_to_string_default() {
+        assert_eq!(call_number_method(42.0, "toString", &[]), JsValue::String("42".into()));
+    }
+
+    #[test]
+    fn number_to_string_radix() {
+        assert_eq!(call_number_method(255.0, "toString", &[JsValue::Number(16.0)]), JsValue::String("ff".into()));
+    }
+
+    #[test]
+    fn number_to_fixed() {
+        assert_eq!(call_number_method(1.234, "toFixed", &[JsValue::Number(2.0)]), JsValue::String("1.23".into()));
+    }
+
+    #[test]
+    fn number_to_fixed_zero_digits() {
+        assert_eq!(call_number_method(2.72, "toFixed", &[JsValue::Number(0.0)]), JsValue::String("3".into()));
+    }
+
+    #[test]
+    fn number_to_fixed_nan() {
+        assert_eq!(call_number_method(f64::NAN, "toFixed", &[JsValue::Number(2.0)]), JsValue::String("NaN".into()));
+    }
+
+    #[test]
+    fn number_to_exponential() {
+        let r = call_number_method(1000.0, "toExponential", &[JsValue::Number(2.0)]);
+        if let JsValue::String(s) = r {
+            assert!(s.contains("e+"), "expected exponential format, got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn number_value_of() {
+        assert_eq!(call_number_method(42.0, "valueOf", &[]), JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn number_unknown_method() {
+        assert_eq!(call_number_method(42.0, "nope", &[]), JsValue::Undefined);
+    }
+
+    // ── pad_string ─────────────────────────────────────────────────────
+
+    #[test]
+    fn pad_string_start() {
+        assert_eq!(pad_string("5", 3, "0", true), "005");
+    }
+
+    #[test]
+    fn pad_string_end() {
+        assert_eq!(pad_string("5", 3, "0", false), "500");
+    }
+
+    #[test]
+    fn pad_string_no_pad_needed() {
+        assert_eq!(pad_string("hello", 3, "x", true), "hello");
+    }
+
+    #[test]
+    fn pad_string_empty_pad() {
+        assert_eq!(pad_string("hi", 5, "", true), "hi");
+    }
+
+    #[test]
+    fn pad_string_multi_char_pad() {
+        assert_eq!(pad_string("a", 5, "xy", true), "xyxya");
+    }
+
+    // ── number_to_radix ────────────────────────────────────────────────
+
+    #[test]
+    fn radix_hex() {
+        assert_eq!(number_to_radix(255.0, 16), "ff");
+    }
+
+    #[test]
+    fn radix_binary() {
+        assert_eq!(number_to_radix(10.0, 2), "1010");
+    }
+
+    #[test]
+    fn radix_octal() {
+        assert_eq!(number_to_radix(8.0, 8), "10");
+    }
+
+    #[test]
+    fn radix_zero() {
+        assert_eq!(number_to_radix(0.0, 16), "0");
+    }
+
+    #[test]
+    fn radix_negative() {
+        assert_eq!(number_to_radix(-42.0, 10), "-42");
+    }
+
+    #[test]
+    fn radix_nan() {
+        assert_eq!(number_to_radix(f64::NAN, 10), "NaN");
+    }
+
+    #[test]
+    fn radix_infinity() {
+        assert_eq!(number_to_radix(f64::INFINITY, 10), "Infinity");
+    }
+
+    // ── expand_replacement ─────────────────────────────────────────────
+
+    #[test]
+    fn expand_replacement_dollar_dollar() {
+        assert_eq!(expand_replacement("$$", "x", "", ""), "$");
+    }
+
+    #[test]
+    fn expand_replacement_dollar_ampersand() {
+        assert_eq!(expand_replacement("$&", "hello", "before ", " after"), "hello");
+    }
+
+    #[test]
+    fn expand_replacement_dollar_backtick() {
+        assert_eq!(expand_replacement("$`", "world", "hello ", "!"), "hello ");
+    }
+
+    #[test]
+    fn expand_replacement_dollar_quote() {
+        assert_eq!(expand_replacement("$'", "hello", "before ", " world"), " world");
+    }
+
+    #[test]
+    fn expand_replacement_plain_text() {
+        assert_eq!(expand_replacement("abc", "x", "", ""), "abc");
+    }
+
+    // ── to_fixed_js ────────────────────────────────────────────────────
+
+    #[test]
+    fn to_fixed_integer() {
+        assert_eq!(to_fixed_js(42.0, 0), "42");
+    }
+
+    #[test]
+    fn to_fixed_decimal() {
+        assert_eq!(to_fixed_js(1.234, 2), "1.23");
+    }
+
+    #[test]
+    fn to_fixed_negative() {
+        assert_eq!(to_fixed_js(-1.5, 1), "-1.5");
+    }
+
+    #[test]
+    fn to_fixed_zero() {
+        assert_eq!(to_fixed_js(0.0, 3), "0.000");
+    }
+
+    #[test]
+    fn to_fixed_infinity() {
+        assert_eq!(to_fixed_js(f64::INFINITY, 2), "Infinity");
+    }
+
+    // ── to_precision_js ────────────────────────────────────────────────
+
+    #[test]
+    fn to_precision_basic() {
+        let r = to_precision_js(1.234, 3);
+        assert_eq!(r, "1.23");
+    }
+
+    #[test]
+    fn to_precision_nan() {
+        assert_eq!(to_precision_js(f64::NAN, 3), "NaN");
+    }
+
+    #[test]
+    fn to_precision_infinity() {
+        assert_eq!(to_precision_js(f64::INFINITY, 3), "Infinity");
+    }
+
+    // ── to_exponential_js ──────────────────────────────────────────────
+
+    #[test]
+    fn to_exponential_basic() {
+        let r = to_exponential_js(1000.0, Some(2));
+        assert!(r.contains("e+"), "got: {}", r);
+    }
+
+    #[test]
+    fn to_exponential_zero() {
+        assert_eq!(to_exponential_js(0.0, None), "0e+0");
+    }
+
+    #[test]
+    fn to_exponential_nan() {
+        assert_eq!(to_exponential_js(f64::NAN, None), "NaN");
+    }
+
+    #[test]
+    fn to_exponential_negative() {
+        let r = to_exponential_js(-500.0, Some(1));
+        assert!(r.starts_with('-'), "got: {}", r);
+    }
+}
