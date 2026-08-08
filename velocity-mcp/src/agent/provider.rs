@@ -315,6 +315,11 @@ pub fn fallback_provider(current: AiProvider) -> AiProvider {
         AiProvider::OpenAI => AiProvider::CloudflareWorkersAi,
         AiProvider::Anthropic => AiProvider::CloudflareWorkersAi,
         AiProvider::GoogleVertex => AiProvider::CloudflareWorkersAi,
+        AiProvider::Deepseek => AiProvider::OpenRouter,
+        AiProvider::AlibabaQwen => AiProvider::OpenRouter,
+        AiProvider::AwsBedrock => AiProvider::OpenRouter,
+        AiProvider::Groq => AiProvider::OpenRouter,
+        AiProvider::Mistral => AiProvider::OpenRouter,
     }
 }
 
@@ -327,6 +332,11 @@ pub fn default_provider_model(provider: AiProvider) -> String {
         AiProvider::GoogleVertex => "gemini-1.5-pro".to_string(),
         AiProvider::AzureOpenAi => "gpt-4o".to_string(),
         AiProvider::LocalOllama => "llama3.2".to_string(),
+        AiProvider::Deepseek => "deepseek-chat".to_string(),
+        AiProvider::AlibabaQwen => "qwen-plus".to_string(),
+        AiProvider::AwsBedrock => "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
+        AiProvider::Groq => "llama-3.3-70b-versatile".to_string(),
+        AiProvider::Mistral => "mistral-large-latest".to_string(),
     }
 }
 

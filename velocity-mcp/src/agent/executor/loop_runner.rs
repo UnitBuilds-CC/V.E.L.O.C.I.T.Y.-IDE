@@ -185,6 +185,21 @@ pub fn run_agent_reasoning_loop(
             AiProvider::LocalOllama => {
                 super::dispatch::execute_ollama_request(ollama_accounts, &request_body, ui_tx)
             }
+            AiProvider::Deepseek => {
+                super::dispatch::execute_deepseek_request(&request_body, ui_tx)
+            }
+            AiProvider::AlibabaQwen => {
+                super::dispatch::execute_alibaba_qwen_request(&request_body, ui_tx)
+            }
+            AiProvider::AwsBedrock => {
+                super::dispatch::execute_bedrock_request(&request_body, ui_tx)
+            }
+            AiProvider::Groq => {
+                super::dispatch::execute_groq_request(&request_body, ui_tx)
+            }
+            AiProvider::Mistral => {
+                super::dispatch::execute_mistral_request(&request_body, ui_tx)
+            }
             _ => {
                 super::dispatch::execute_openrouter_request(
                     or_accounts,
@@ -205,6 +220,11 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::CloudflareWorkersAi => !accounts.is_empty(),
                     AiProvider::AzureOpenAi => !azure_accounts.is_empty(),
                     AiProvider::LocalOllama => !ollama_accounts.is_empty(),
+                    AiProvider::Deepseek => !std::env::var("DEEPSEEK_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::AlibabaQwen => !std::env::var("DASHSCOPE_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::AwsBedrock => std::env::var("BEDROCK_PROXY_URL").is_ok(),
+                    AiProvider::Groq => !std::env::var("GROQ_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::Mistral => !std::env::var("MISTRAL_API_KEY").unwrap_or_default().trim().is_empty(),
                     _ => true,
                 };
 
@@ -246,6 +266,11 @@ pub fn run_agent_reasoning_loop(
                     }
                     AiProvider::AzureOpenAi => "Azure OpenAI request failed or no accounts configured.",
                     AiProvider::LocalOllama => "Local Ollama server unreachable (http://localhost:11434).",
+                    AiProvider::Deepseek => "Deepseek request failed or DEEPSEEK_API_KEY missing.",
+                    AiProvider::AlibabaQwen => "Alibaba Qwen request failed or DASHSCOPE_API_KEY missing.",
+                    AiProvider::AwsBedrock => "AWS Bedrock request failed or BEDROCK_PROXY_URL not configured.",
+                    AiProvider::Groq => "Groq request failed or GROQ_API_KEY missing.",
+                    AiProvider::Mistral => "Mistral AI request failed or MISTRAL_API_KEY missing.",
                     _ => "Selected AI Provider request failed or key missing.",
                 };
                 ui_tx

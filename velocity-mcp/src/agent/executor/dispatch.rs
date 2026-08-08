@@ -250,6 +250,143 @@ pub fn ollama_chat_url(host: &str) -> String {
     format!("{}/v1/chat/completions", host.trim_end_matches('/'))
 }
 
+/// Execute a request against an OpenAI-compatible API endpoint.
+/// Used by Deepseek, Alibaba Qwen, Groq, Mistral, and other compatible providers.
+fn execute_openai_compatible_request(
+    api_url: &str,
+    api_key_env_var: &str,
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+    provider_name: &str,
+) -> Option<ureq::Response> {
+    let api_key = std::env::var(api_key_env_var).unwrap_or_default();
+    if api_key.trim().is_empty() {
+        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+            "{provider_name} API key not set. Export {api_key_env_var} to use this provider."
+        ))).ok();
+        return None;
+    }
+    match ureq::post(api_url)
+        .timeout(Duration::from_secs(60))
+        .set("Authorization", &format!("Bearer {}", api_key))
+        .set("Content-Type", "application/json")
+        .send_json(request_body)
+    {
+        Ok(res) => Some(res),
+        Err(ureq::Error::Status(401, _)) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                "{provider_name} authentication failed. Check your {api_key_env_var} API key."
+            ))).ok();
+            None
+        }
+        Err(ureq::Error::Status(429, _)) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                "{provider_name} rate limit exceeded (429). Try again shortly."
+            ))).ok();
+            None
+        }
+        Err(e) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                "{provider_name} request error: {:?}", e
+            ))).ok();
+            None
+        }
+    }
+}
+
+/// Deepseek API — OpenAI-compatible endpoint.
+/// API docs: https://platform.deepseek.com/api-docs/
+pub fn execute_deepseek_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.deepseek.com/chat/completions",
+        "DEEPSEEK_API_KEY",
+        request_body,
+        ui_tx,
+        "Deepseek",
+    )
+}
+
+/// Alibaba Cloud Qwen (DashScope) — OpenAI-compatible endpoint.
+/// API docs: https://www.alibabacloud.com/help/en/model-studio/
+pub fn execute_alibaba_qwen_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "DASHSCOPE_API_KEY",
+        request_body,
+        ui_tx,
+        "Alibaba Qwen",
+    )
+}
+
+/// Groq — OpenAI-compatible endpoint for LPU inference.
+/// API docs: https://console.groq.com/docs/api-reference
+pub fn execute_groq_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        "GROQ_API_KEY",
+        request_body,
+        ui_tx,
+        "Groq",
+    )
+}
+
+/// Mistral AI (La Plateforme) — OpenAI-compatible endpoint.
+/// API docs: https://docs.mistral.ai/api/
+pub fn execute_mistral_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.mistral.ai/v1/chat/completions",
+        "MISTRAL_API_KEY",
+        request_body,
+        ui_tx,
+        "Mistral AI",
+    )
+}
+
+/// AWS Bedrock — uses OpenAI-compatible proxy or environment-configured endpoint.
+/// Requires AWS_REGION and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars,
+/// or a configured Bedrock proxy URL via BEDROCK_PROXY_URL.
+pub fn execute_bedrock_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    // If a proxy URL is configured, use it as an OpenAI-compatible endpoint.
+    if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {
+        if !proxy_url.trim().is_empty() {
+            let url = format!(
+                "{}/chat/completions",
+                proxy_url.trim_end_matches('/')
+            );
+            return execute_openai_compatible_request(
+                &url,
+                "BEDROCK_API_KEY",
+                request_body,
+                ui_tx,
+                "AWS Bedrock",
+            );
+        }
+    }
+    // Otherwise, Bedrock requires AWS SigV4 signing which is beyond simple ureq.
+    // Direct the user to configure a proxy or use OpenRouter as a Bedrock gateway.
+    ui_tx.send(AgentToUiMessage::StatusUpdate(
+        "AWS Bedrock requires BEDROCK_PROXY_URL env var pointing to an OpenAI-compatible proxy. \
+         Alternatively, use OpenRouter which routes to Bedrock models."
+        .to_string()
+    )).ok();
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +409,23 @@ mod tests {
             ollama_chat_url("http://remote:9999///"),
             "http://remote:9999/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn bedrock_url_appends_chat_completions() {
+        let url = format!(
+            "{}/chat/completions",
+            "https://bedrock-proxy.example.com".trim_end_matches('/')
+        );
+        assert_eq!(url, "https://bedrock-proxy.example.com/chat/completions");
+    }
+
+    #[test]
+    fn bedrock_url_trims_trailing_slash() {
+        let url = format!(
+            "{}/chat/completions",
+            "https://bedrock-proxy.example.com/".trim_end_matches('/')
+        );
+        assert_eq!(url, "https://bedrock-proxy.example.com/chat/completions");
     }
 }

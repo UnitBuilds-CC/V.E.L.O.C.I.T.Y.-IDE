@@ -140,6 +140,16 @@ pub enum AiProvider {
     OpenAI,
     Anthropic,
     GoogleVertex,
+    /// Deepseek API (OpenAI-compatible endpoint).
+    Deepseek,
+    /// Alibaba Cloud Qwen (DashScope API, OpenAI-compatible).
+    AlibabaQwen,
+    /// AWS Bedrock (via OpenAI-compatible proxy or native API).
+    AwsBedrock,
+    /// Groq (OpenAI-compatible endpoint for LPU inference).
+    Groq,
+    /// Mistral AI (La Plateforme, OpenAI-compatible endpoint).
+    Mistral,
 }
 
 impl AiProvider {
@@ -152,6 +162,11 @@ impl AiProvider {
             AiProvider::OpenAI => "OpenAI Direct",
             AiProvider::Anthropic => "Anthropic Claude",
             AiProvider::GoogleVertex => "Google Vertex AI",
+            AiProvider::Deepseek => "Deepseek",
+            AiProvider::AlibabaQwen => "Alibaba Qwen",
+            AiProvider::AwsBedrock => "AWS Bedrock",
+            AiProvider::Groq => "Groq",
+            AiProvider::Mistral => "Mistral AI",
         }
     }
 
@@ -165,6 +180,11 @@ impl AiProvider {
             AiProvider::OpenAI => "openai",
             AiProvider::Anthropic => "anthropic",
             AiProvider::GoogleVertex => "vertex",
+            AiProvider::Deepseek => "deepseek",
+            AiProvider::AlibabaQwen => "alibaba",
+            AiProvider::AwsBedrock => "bedrock",
+            AiProvider::Groq => "groq",
+            AiProvider::Mistral => "mistral",
         }
     }
 
@@ -180,6 +200,11 @@ impl AiProvider {
             "openai" | "openai_direct" => Some(AiProvider::OpenAI),
             "anthropic" | "claude" => Some(AiProvider::Anthropic),
             "vertex" | "googlevertex" | "google_vertex" | "google" => Some(AiProvider::GoogleVertex),
+            "deepseek" => Some(AiProvider::Deepseek),
+            "alibaba" | "qwen" | "dashscope" | "alibaba_qwen" => Some(AiProvider::AlibabaQwen),
+            "bedrock" | "awsbedrock" | "aws_bedrock" | "aws" => Some(AiProvider::AwsBedrock),
+            "groq" => Some(AiProvider::Groq),
+            "mistral" | "mistralai" | "mistral_ai" | "laplateforme" => Some(AiProvider::Mistral),
             _ => None,
         }
     }
@@ -201,4 +226,53 @@ pub struct ToolCallAccumulator {
     pub id: String,
     pub name: String,
     pub arguments: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_provider_labels() {
+        assert_eq!(AiProvider::Deepseek.label(), "Deepseek");
+        assert_eq!(AiProvider::AlibabaQwen.label(), "Alibaba Qwen");
+        assert_eq!(AiProvider::AwsBedrock.label(), "AWS Bedrock");
+        assert_eq!(AiProvider::Groq.label(), "Groq");
+        assert_eq!(AiProvider::Mistral.label(), "Mistral AI");
+    }
+
+    #[test]
+    fn new_provider_slugs() {
+        assert_eq!(AiProvider::Deepseek.slug(), "deepseek");
+        assert_eq!(AiProvider::AlibabaQwen.slug(), "alibaba");
+        assert_eq!(AiProvider::AwsBedrock.slug(), "bedrock");
+        assert_eq!(AiProvider::Groq.slug(), "groq");
+        assert_eq!(AiProvider::Mistral.slug(), "mistral");
+    }
+
+    #[test]
+    fn new_provider_from_slug_roundtrip() {
+        assert_eq!(AiProvider::from_slug("deepseek"), Some(AiProvider::Deepseek));
+        assert_eq!(AiProvider::from_slug("alibaba"), Some(AiProvider::AlibabaQwen));
+        assert_eq!(AiProvider::from_slug("qwen"), Some(AiProvider::AlibabaQwen));
+        assert_eq!(AiProvider::from_slug("dashscope"), Some(AiProvider::AlibabaQwen));
+        assert_eq!(AiProvider::from_slug("bedrock"), Some(AiProvider::AwsBedrock));
+        assert_eq!(AiProvider::from_slug("aws"), Some(AiProvider::AwsBedrock));
+        assert_eq!(AiProvider::from_slug("groq"), Some(AiProvider::Groq));
+        assert_eq!(AiProvider::from_slug("mistral"), Some(AiProvider::Mistral));
+        assert_eq!(AiProvider::from_slug("mistralai"), Some(AiProvider::Mistral));
+    }
+
+    #[test]
+    fn new_provider_from_slug_case_insensitive() {
+        assert_eq!(AiProvider::from_slug("DEEPSEEK"), Some(AiProvider::Deepseek));
+        assert_eq!(AiProvider::from_slug("Groq"), Some(AiProvider::Groq));
+        assert_eq!(AiProvider::from_slug("MISTRAL"), Some(AiProvider::Mistral));
+    }
+
+    #[test]
+    fn unknown_slug_returns_none() {
+        assert_eq!(AiProvider::from_slug("nonexistent"), None);
+        assert_eq!(AiProvider::from_slug(""), None);
+    }
 }
