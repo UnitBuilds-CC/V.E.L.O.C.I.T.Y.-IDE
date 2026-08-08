@@ -253,4 +253,90 @@ mod tests {
         let placed = GridTrackSolver::auto_place_items(&items, 3);
         assert_eq!(placed[0].2 - placed[0].0, 2); // spans 2 columns
     }
+
+    #[test]
+    fn test_apply_gap_reduces_sizes() {
+        let mut sizes = vec![200.0, 200.0];
+        GridTrackSolver::apply_gap(&mut sizes, 20.0);
+        // Total gap = 20 * 1 = 20, available = 400 - 20 = 380, scale = 380/400 = 0.95
+        assert!((sizes[0] - 190.0).abs() < 0.01);
+        assert!((sizes[1] - 190.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_apply_gap_single_track_no_change() {
+        let mut sizes = vec![400.0];
+        GridTrackSolver::apply_gap(&mut sizes, 20.0);
+        assert_eq!(sizes[0], 400.0, "single track unaffected by gap");
+    }
+
+    #[test]
+    fn test_apply_gap_empty_sizes() {
+        let mut sizes: Vec<f32> = vec![];
+        GridTrackSolver::apply_gap(&mut sizes, 10.0);
+        assert!(sizes.is_empty());
+    }
+
+    #[test]
+    fn test_expand_repeat_zero_track() {
+        let tracks = GridTrackSolver::expand_repeat(300.0, 0.0, 0.0);
+        // Zero-size track falls back to fr(1)
+        assert_eq!(tracks.len(), 1);
+        assert!(tracks[0].flex_fraction > 0.0);
+    }
+
+    #[test]
+    fn test_expand_repeat_single_fit() {
+        let tracks = GridTrackSolver::expand_repeat(150.0, 200.0, 0.0);
+        // Track wider than container still produces at least 1
+        assert_eq!(tracks.len(), 1);
+    }
+
+    #[test]
+    fn test_minmax_with_fr() {
+        let specs = vec![
+            GridTrack { flex_fraction: 1.0, px_size: 0.0, min_size: Some(50.0), max_size: Some(200.0), is_auto: false, span: 1 },
+            GridTrack::fr(1.0),
+        ];
+        let sizes = GridTrackSolver::solve_tracks(600.0, &specs);
+        // First track: 300 * 1 = 300, clamped to max 200
+        assert!(sizes[0] <= 200.0, "minmax clamps to max: {}", sizes[0]);
+        assert!(sizes[0] >= 50.0, "minmax clamps to min: {}", sizes[0]);
+    }
+
+    #[test]
+    fn test_auto_place_wraps_to_next_row() {
+        let items = vec![
+            GridItem { col_start: 0, col_end: 1, row_start: 0, row_end: 1, min_width: 0.0, min_height: 0.0 },
+            GridItem { col_start: 0, col_end: 1, row_start: 0, row_end: 1, min_width: 0.0, min_height: 0.0 },
+            GridItem { col_start: 0, col_end: 1, row_start: 0, row_end: 1, min_width: 0.0, min_height: 0.0 },
+        ];
+        let placed = GridTrackSolver::auto_place_items(&items, 2);
+        // 2 columns: first row has 2 items, third wraps to row 2
+        assert_eq!(placed[0].1, 1, "first item on row 1");
+        assert_eq!(placed[1].1, 1, "second item on row 1");
+        assert_eq!(placed[2].1, 2, "third item wraps to row 2");
+    }
+
+    #[test]
+    fn test_auto_place_empty_items() {
+        let placed = GridTrackSolver::auto_place_items(&[], 3);
+        assert!(placed.is_empty());
+    }
+
+    #[test]
+    fn test_all_px_tracks_no_fr_distribution() {
+        let specs = vec![GridTrack::px(100.0), GridTrack::px(200.0)];
+        let sizes = GridTrackSolver::solve_tracks(500.0, &specs);
+        assert_eq!(sizes[0], 100.0);
+        assert_eq!(sizes[1], 200.0);
+    }
+
+    #[test]
+    fn test_zero_container_width() {
+        let specs = vec![GridTrack::fr(1.0), GridTrack::fr(1.0)];
+        let sizes = GridTrackSolver::solve_tracks(0.0, &specs);
+        assert_eq!(sizes[0], 0.0);
+        assert_eq!(sizes[1], 0.0);
+    }
 }

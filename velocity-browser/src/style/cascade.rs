@@ -1043,4 +1043,78 @@ mod tests {
         let overrides = mgr.tick(500.0);
         assert_eq!(overrides.get(&2).unwrap().get("width").unwrap(), "50.0px");
     }
+
+    #[test]
+    fn specificity_ids_outweigh_classes() {
+        let s_id = Specificity::compute("#main");
+        let s_classes = Specificity::compute(".a.b.c.d.e.f.g.h.i.j");
+        assert!(s_id > s_classes, "#main ({:?}) should beat 10 classes ({:?})", s_id, s_classes);
+    }
+
+    #[test]
+    fn specificity_tags_outweigh_nothing() {
+        let s_tag = Specificity::compute("div");
+        let s_none = Specificity::compute("");
+        assert!(s_tag > s_none);
+    }
+
+    #[test]
+    fn specificity_star_is_minimal() {
+        let s = Specificity::compute("*");
+        // * is treated as a universal selector with minimal specificity
+        assert_eq!(s.ids, 0);
+        assert_eq!(s.classes_attrs_pseudos, 0);
+    }
+
+    #[test]
+    fn interpolate_value_at_boundaries() {
+        assert_eq!(interpolate_value("0", "100", 0.0), "0");
+        assert_eq!(interpolate_value("0", "100", 1.0), "100");
+    }
+
+    #[test]
+    fn interpolate_value_midpoint() {
+        let mid = interpolate_value("10px", "20px", 0.5);
+        assert_eq!(mid, "15.0px");
+    }
+
+    #[test]
+    fn parse_keyframes_invalid_returns_none() {
+        assert!(parse_keyframes("not a keyframes rule").is_none());
+        assert!(parse_keyframes("").is_none());
+    }
+
+    #[test]
+    fn viewport_config_defaults() {
+        let vp = ViewportConfig::default();
+        assert_eq!(vp.width, 1920.0);
+        assert_eq!(vp.height, 1080.0);
+    }
+
+    #[test]
+    fn cascader_no_rules_returns_empty() {
+        let cascader = StyleCascader::new();
+        let computed = cascader.compute_computed_style(|_| true);
+        assert!(computed.is_empty());
+    }
+
+    #[test]
+    fn cascader_later_rule_overrides_earlier() {
+        let mut cascader = StyleCascader::new();
+        let mut d1 = HashMap::new();
+        d1.insert("color".to_string(), "red".to_string());
+        cascader.add_rule("p", d1);
+        let mut d2 = HashMap::new();
+        d2.insert("color".to_string(), "blue".to_string());
+        cascader.add_rule("p", d2);
+        let computed = cascader.compute_computed_style(|s| s == "p");
+        assert_eq!(computed.get("color"), Some(&"blue".to_string()));
+    }
+
+    #[test]
+    fn media_query_no_features_matches_any_viewport() {
+        let mq = MediaQuery { features: vec![], rules: vec![] };
+        let vp = ViewportConfig::default();
+        assert!(mq.matches(&vp));
+    }
 }

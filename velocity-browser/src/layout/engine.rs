@@ -556,4 +556,184 @@ mod tests {
         let div = box_for_tag(&tree, &boxes, "div");
         assert!((div.width - 100.0).abs() < 0.5, "final width ~100px, got {}", div.width);
     }
+
+    #[test]
+    fn visibility_hidden_produces_invisible_box() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("visibility".to_string(), "hidden".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>hidden</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert!(!div.is_visible, "visibility:hidden box should not be visible");
+    }
+
+    #[test]
+    fn per_side_padding_overrides_shorthand() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("padding".to_string(), "10px".to_string());
+        decl.insert("padding-top".to_string(), "20px".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>x</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.padding[0], 20.0, "padding-top overridden");
+        assert_eq!(div.padding[1], 10.0, "padding-right from shorthand");
+        assert_eq!(div.padding[2], 10.0, "padding-bottom from shorthand");
+        assert_eq!(div.padding[3], 10.0, "padding-left from shorthand");
+    }
+
+    #[test]
+    fn per_side_margin_overrides_shorthand() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("margin".to_string(), "5px".to_string());
+        decl.insert("margin-left".to_string(), "15px".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>x</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.margin[3], 15.0, "margin-left overridden");
+        assert_eq!(div.margin[0], 5.0, "margin-top from shorthand");
+    }
+
+    #[test]
+    fn negative_z_index() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("z-index".to_string(), "-3".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>behind</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.z_index, -3);
+    }
+
+    #[test]
+    fn default_z_index_is_zero() {
+        let (tree, boxes) = layout("<div>no z</div>", StyleCascader::new());
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.z_index, 0);
+    }
+
+    #[test]
+    fn inline_boxes_share_same_y() {
+        // Inline spans must share a parent to flow on the same line
+        let (tree, boxes) = layout("<div><span>a</span><span>b</span></div>", StyleCascader::new());
+        let spans: Vec<_> = boxes.iter()
+            .filter(|b| tree.get_node(b.node_id).map(|n| n.tag_name == "span").unwrap_or(false))
+            .collect();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].y, spans[1].y, "inline siblings share a baseline");
+    }
+
+    #[test]
+    fn inline_boxes_pack_horizontally() {
+        let (tree, boxes) = layout("<div><span>aa</span><span>bb</span></div>", StyleCascader::new());
+        let spans: Vec<_> = boxes.iter()
+            .filter(|b| tree.get_node(b.node_id).map(|n| n.tag_name == "span").unwrap_or(false))
+            .collect();
+        assert!(spans[1].x > spans[0].x, "second inline is to the right");
+    }
+
+    #[test]
+    fn display_flex_is_recognized() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("display".to_string(), "flex".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>flex</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        assert_eq!(div.display, DisplayMode::Flex);
+    }
+
+    #[test]
+    fn empty_text_node_produces_no_box() {
+        let (tree, boxes) = layout("<div>  </div>", StyleCascader::new());
+        // Whitespace-only text should be trimmed away
+        let text_boxes: Vec<_> = boxes.iter()
+            .filter(|b| b.display == DisplayMode::Inline && tree.get_node(b.node_id).map(|n| n.node_type == NodeType::Text).unwrap_or(false))
+            .collect();
+        assert!(text_boxes.is_empty(), "whitespace-only text should produce no box");
+    }
+
+    #[test]
+    fn export_layout_nda_emits_three_triples_per_box() {
+        let (_tree, boxes) = layout("<div>a</div><p>b</p>", StyleCascader::new());
+        let engine = LayoutEngine2D::new(StyleCascader::new());
+        let triples = engine.export_layout_nda(&boxes);
+        assert_eq!(triples.len(), boxes.len() * 3);
+    }
+
+    #[test]
+    fn export_layout_nda_predicates_are_correct() {
+        let (_, boxes) = layout("<div>x</div>", StyleCascader::new());
+        let engine = LayoutEngine2D::new(StyleCascader::new());
+        let triples = engine.export_layout_nda(&boxes);
+        // Each box should have predicate_ids 70, 71, 72
+        for chunk in triples.chunks(3) {
+            assert_eq!(chunk[0].predicate_id, 70, "bounds predicate");
+            assert_eq!(chunk[1].predicate_id, 71, "visibility predicate");
+            assert_eq!(chunk[2].predicate_id, 72, "display predicate");
+        }
+    }
+
+    #[test]
+    fn has_active_motion_false_initially() {
+        let engine = LayoutEngine2D::new(StyleCascader::new());
+        assert!(!engine.has_active_motion());
+    }
+
+    #[test]
+    fn intrinsic_size_for_replaced_elements() {
+        // img, input, button, select, textarea have intrinsic 120x20
+        let (tree, boxes) = layout("<img>", StyleCascader::new());
+        let img = box_for_tag(&tree, &boxes, "img");
+        assert_eq!(img.width, 120.0, "img intrinsic width");
+        assert_eq!(img.height, 20.0, "img intrinsic height");
+    }
+
+    #[test]
+    fn hr_has_intrinsic_height() {
+        let (tree, boxes) = layout("<hr>", StyleCascader::new());
+        let hr = box_for_tag(&tree, &boxes, "hr");
+        assert_eq!(hr.height, 2.0, "hr intrinsic height");
+    }
+
+    #[test]
+    fn button_has_intrinsic_size() {
+        let (tree, boxes) = layout("<button>Go</button>", StyleCascader::new());
+        let btn = box_for_tag(&tree, &boxes, "button");
+        assert_eq!(btn.width, 120.0, "button intrinsic width");
+        assert_eq!(btn.height, 20.0, "button intrinsic height");
+    }
+
+    #[test]
+    fn margin_box_height_includes_margins() {
+        let b = LayoutBox {
+            node_id: 0,
+            display: DisplayMode::Block,
+            x: 0.0, y: 0.0,
+            width: 100.0, height: 50.0,
+            padding: [0.0; 4],
+            margin: [10.0, 5.0, 10.0, 5.0],
+            z_index: 0, is_visible: true,
+            children: Vec::new(),
+        };
+        assert_eq!(b.margin_box_height(), 70.0); // 50 + 10 + 10
+        assert_eq!(b.margin_box_width(), 110.0); // 100 + 5 + 5
+    }
+
+    #[test]
+    fn padding_expands_border_box() {
+        let mut cascader = StyleCascader::new();
+        let mut decl = HashMap::new();
+        decl.insert("width".to_string(), "200px".to_string());
+        decl.insert("padding".to_string(), "10px".to_string());
+        cascader.add_rule("div", decl);
+        let (tree, boxes) = layout("<div>x</div>", cascader);
+        let div = box_for_tag(&tree, &boxes, "div");
+        // With explicit width=200 and padding=10 on each side, border box width = 200
+        // (width is the border-box width when explicit)
+        assert_eq!(div.width, 200.0);
+        assert_eq!(div.padding, [10.0; 4]);
+    }
 }
