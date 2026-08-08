@@ -70,6 +70,90 @@ impl DiagnosticsState {
             .collect()
     }
 
+    /// Get diagnostics for a specific line in a file (0-based line number).
+    pub fn diagnostics_at_line(&self, path: &std::path::Path, line: usize) -> Vec<&LspDiagnostic> {
+        self.items.iter()
+            .filter(|d| d.file == path && d.line == line)
+            .collect()
+    }
+
+    /// Render an inline diagnostic popup at the given cursor position.
+    /// Returns true if a popup was rendered.
+    pub fn render_inline_popup_at_line(
+        &self,
+        ui: &mut egui::Ui,
+        path: &std::path::Path,
+        line: usize,
+        cursor_pos: egui::Pos2,
+        palette: &crate::editor::theme::IdePalette,
+    ) -> bool {
+        let diagnostics = self.diagnostics_at_line(path, line);
+        if diagnostics.is_empty() {
+            return false;
+        }
+
+        // Position the popup below the cursor
+        let popup_id = egui::Id::new("inline_diagnostic_popup");
+        let area = egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(cursor_pos.x + 20.0, cursor_pos.y + 20.0));
+
+        area.show(ui.ctx(), |ui| {
+            let frame = egui::Frame::popup(ui.style())
+                .fill(ui.visuals().extreme_bg_color)
+                .stroke(egui::Stroke::new(1.0, palette.error.gamma_multiply(0.6)))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(8));
+
+            frame.show(ui, |ui| {
+                ui.set_max_width(400.0);
+                for diag in &diagnostics {
+                    let (icon, color) = match diag.severity {
+                        DiagnosticSeverity::Error => ("✖", palette.error),
+                        DiagnosticSeverity::Warning => ("⚠", palette.warning),
+                        DiagnosticSeverity::Info => ("ℹ", palette.accent),
+                        DiagnosticSeverity::Hint => ("💡", palette.text_muted),
+                    };
+
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(icon)
+                                .size(12.0)
+                                .strong()
+                                .color(color),
+                        );
+                        ui.label(
+                            egui::RichText::new(&diag.message)
+                                .size(11.0)
+                                .color(palette.text),
+                        );
+                    });
+
+                    if let Some(code) = &diag.code {
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(
+                                egui::RichText::new(format!("[{}]", code))
+                                    .monospace()
+                                    .size(9.0)
+                                    .color(palette.text_muted),
+                            );
+                            if let Some(source) = &diag.source {
+                                ui.label(
+                                    egui::RichText::new(source)
+                                        .size(9.0)
+                                        .color(palette.text_muted.gamma_multiply(0.7)),
+                                );
+                            }
+                        });
+                    }
+                }
+            });
+        });
+
+        true
+    }
+
     /// Render the problems panel.
     pub fn show_panel(&mut self, ui: &mut egui::Ui, palette: &crate::editor::theme::IdePalette) -> Option<DiagnosticAction> {
         let mut action = None;

@@ -253,6 +253,150 @@ impl GitState {
     }
 }
 
+/// Render a timeline view of recent commits and current changes.
+/// This provides a visual history of what changed and when.
+pub fn render_recent_changes_timeline(
+    ui: &mut egui::Ui,
+    state: &GitState,
+    palette: crate::editor::theme::IdePalette,
+) {
+    use eframe::egui;
+
+    ui.label(
+        egui::RichText::new("⏱ Recent Changes Timeline")
+            .size(11.0)
+            .strong()
+            .color(palette.text),
+    );
+    ui.add_space(6.0);
+
+    // Current uncommitted changes section
+    if !state.entries.is_empty() {
+        ui.label(
+            egui::RichText::new("Uncommitted Changes")
+                .size(10.0)
+                .strong()
+                .color(palette.warning),
+        );
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+            for entry in &state.entries {
+                let name = entry.path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| entry.path.to_string_lossy().to_string());
+                let status_color = match entry.status {
+                    GitFileStatus::Modified => palette.warning,
+                    GitFileStatus::Added => palette.success,
+                    GitFileStatus::Deleted => palette.error,
+                    GitFileStatus::Untracked => palette.text_muted,
+                    _ => palette.text_muted,
+                };
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(entry.status.icon())
+                            .monospace()
+                            .size(10.0)
+                            .strong()
+                            .color(status_color),
+                    );
+                    ui.label(
+                        egui::RichText::new(&name)
+                            .size(9.0)
+                            .color(palette.text),
+                    );
+                    if entry.staged {
+                        ui.label(
+                            egui::RichText::new("staged")
+                                .size(8.0)
+                                .color(palette.success.gamma_multiply(0.7)),
+                        );
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
+    }
+
+    // Commit history timeline
+    if state.log.is_empty() {
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            ui.label(
+                egui::RichText::new("No commit history")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
+        });
+    } else {
+        ui.label(
+            egui::RichText::new("Commit History")
+                .size(10.0)
+                .strong()
+                .color(palette.accent),
+        );
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+            for (i, commit) in state.log.iter().enumerate() {
+                // Timeline dot and line
+                ui.horizontal(|ui| {
+                    // Timeline indicator
+                    let dot_color = if i == 0 { palette.accent } else { palette.text_muted };
+                    ui.label(
+                        egui::RichText::new("●")
+                            .size(10.0)
+                            .color(dot_color),
+                    );
+
+                    // Commit info
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(&commit.short_hash)
+                                    .monospace()
+                                    .size(9.0)
+                                    .strong()
+                                    .color(palette.accent),
+                            );
+                            ui.label(
+                                egui::RichText::new(&commit.message)
+                                    .size(9.0)
+                                    .color(palette.text),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(&commit.author)
+                                    .size(8.0)
+                                    .color(palette.text_muted),
+                            );
+                            ui.label(
+                                egui::RichText::new(&commit.date)
+                                    .size(8.0)
+                                    .color(palette.text_muted.gamma_multiply(0.7)),
+                            );
+                        });
+                    });
+                });
+
+                // Connecting line (except for last item)
+                if i < state.log.len() - 1 {
+                    ui.indent("timeline_line", |ui| {
+                        ui.label(
+                            egui::RichText::new("│")
+                                .size(8.0)
+                                .color(palette.text_muted.gamma_multiply(0.4)),
+                        );
+                    });
+                }
+            }
+        });
+    }
+}
+
 /// Run a git command and return stdout on success.
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git")

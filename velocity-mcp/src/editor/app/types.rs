@@ -55,6 +55,7 @@ impl Tab {
             TabKind::Triggers => "Triggers".into(),
             TabKind::Workflows => "Workflows".into(),
             TabKind::Governance => "Governance".into(),
+            TabKind::Changes => "Changes".into(),
             TabKind::NdaDoc { path } => path
                 .as_ref()
                 .and_then(|p| p.file_name())
@@ -115,6 +116,8 @@ pub enum TabKind {
     Workflows,
     // Governance: policy, approvals, secrets, connectors
     Governance,
+    // Recent changes timeline (git log + uncommitted changes)
+    Changes,
     // NDA document editor (portable/sealed NDA1 with in-file history)
     NdaDoc {
         path: Option<PathBuf>,

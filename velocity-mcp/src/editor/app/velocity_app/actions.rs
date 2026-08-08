@@ -525,6 +525,47 @@ impl VelocityApp {
         self.touch_mru(&id);
     }
 
+    /// Split the current editor view: open the same file in a new tab side-by-side.
+    /// This allows viewing different parts of the same file simultaneously.
+    pub fn split_editor(&mut self) {
+        // Get the path of the currently active editor tab.
+        let active_path = self.active_tab.as_ref().and_then(|id| {
+            self.tabs.iter().find(|t| &t.id == id).and_then(|t| t.editor_path().cloned())
+        });
+
+        let Some(path) = active_path else {
+            self.status_message = "No active editor to split".to_string();
+            return;
+        };
+
+        // Create a new editor tab for the same file (bypass deduplication).
+        let id = TabId::next(&mut self.tab_counter);
+        let tab = Tab {
+            id: id.clone(),
+            kind: TabKind::Editor {
+                path: Some(path.clone()),
+                buffer_id: id.clone(),
+            },
+        };
+
+        // Share the same buffer content by copying it.
+        let mut buf = EditorBuffer::default();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            buf.load_text(&content);
+            buf.disk_mtime = Self::file_mtime(&path);
+        }
+        self.buffers.insert(id.clone(), buf);
+        self.tabs.push(tab.clone());
+
+        // Push to dock state to create a split view.
+        if let Some(dock) = self.dock_state.as_mut() {
+            dock.push_to_focused_leaf(tab);
+        }
+        self.active_tab = Some(id.clone());
+        self.touch_mru(&id);
+        self.status_message = "Split editor view".to_string();
+    }
+
     pub fn prompt_open_file(&mut self) {
         // Trigger the native file dialog to let the user pick a file to open.
         // Falls back to opening an empty editor if no dialog system is available.

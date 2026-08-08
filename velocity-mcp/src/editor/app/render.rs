@@ -102,6 +102,21 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                     if self.app.pending_cursor_line.is_some() {
                                         self.app.pending_cursor_line = None;
                                     }
+
+                                    // Show inline diagnostic popup if cursor is on a diagnostic line.
+                                    if let Some(file_path) = path.as_deref() {
+                                        let cursor_line = self.app.current_cursor_line;
+                                        let palette = self.app.appearance.palette();
+                                        // Use the editor's cursor position for popup placement.
+                                        let cursor_pos = ui.cursor().min;
+                                        self.app.diagnostics.render_inline_popup_at_line(
+                                            ui,
+                                            file_path,
+                                            cursor_line,
+                                            cursor_pos,
+                                            &palette,
+                                        );
+                                    }
                                 });
 
                                 // Minimap
@@ -373,6 +388,15 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 ui.label(egui::RichText::new(format!("{}", snapshot.active_workers)).size(11.0).color(palette.accent));
                                 ui.end_row();
                             });
+                        });
+                    }
+                    TabKind::Changes => {
+                        // Recent changes timeline with git log and uncommitted changes.
+                        let mut git_state = crate::editor::git_ui::GitState::from_workspace(&self.app.workspace_root);
+                        git_state.refresh_log(&self.app.workspace_root);
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(8.0);
+                            crate::editor::git_ui::render_recent_changes_timeline(ui, &git_state, palette);
                         });
                     }
                     _ => {

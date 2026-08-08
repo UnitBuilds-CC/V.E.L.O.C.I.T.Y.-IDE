@@ -399,6 +399,11 @@ impl VelocityApp {
                 self.open_goto_line();
             } else if cmd && shift && i.key_pressed(egui::Key::O) {
                 self.open_goto_symbol();
+            } else if cmd && shift && i.key_pressed(egui::Key::W) {
+                // Open workspace switcher (Ctrl+Shift+W).
+                self.workspace_switcher_open = !self.workspace_switcher_open;
+                self.workspace_switcher_selected = 0;
+                self.workspace_switcher_just_opened = true;
             } else if i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft) {
                 self.nav_back();
             } else if i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight) {
@@ -417,6 +422,9 @@ impl VelocityApp {
                 self.run_active();
             } else if cmd && i.key_pressed(egui::Key::W) {
                 self.close_active_tab();
+            } else if cmd && i.key_pressed(egui::Key::Backslash) {
+                // Split editor view (Ctrl+\).
+                self.split_editor();
             } else if cmd && i.key_pressed(egui::Key::J) {
                 self.toggle_panel(TabKind::Chat);
             } else if cmd && i.key_pressed(egui::Key::Backtick) {
@@ -921,6 +929,133 @@ impl VelocityApp {
         let path = self.workspace_root.join(relative);
         self.open_editor(Some(path));
         self.quick_open.open = false;
+    }
+
+    /// Ctrl+Shift+W workspace switcher: quickly switch between known projects.
+    pub fn workspace_switcher_ui(&mut self, ctx: &egui::Context) {
+        if !self.workspace_switcher_open {
+            return;
+        }
+
+        let palette = self.palette();
+        let area = egui::Area::new(egui::Id::new("workspace_switcher_area"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 80.0));
+
+        let mut switcher_open = self.workspace_switcher_open;
+        let project_count = self.projects.len();
+        self.workspace_switcher_selected = self.workspace_switcher_selected.min(project_count.saturating_sub(1));
+
+        area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .fill(ui.visuals().code_bg_color)
+                .stroke(ui.visuals().window_stroke)
+                .inner_margin(egui::Margin::same(10))
+                .corner_radius(egui::CornerRadius::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(480.0);
+                    ui.label(
+                        egui::RichText::new("Switch Workspace")
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(6.0);
+                    ui.separator();
+
+                    if self.projects.is_empty() {
+                        ui.add_space(18.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                egui::RichText::new("No projects configured")
+                                    .color(palette.text_muted),
+                            );
+                            ui.label(
+                                egui::RichText::new("Use the Projects sidebar to add a workspace.")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        });
+                        ui.add_space(18.0);
+                    } else {
+                        let row_height = ui.text_style_height(&egui::TextStyle::Body)
+                            + ui.spacing().item_spacing.y;
+                        let mut scroll = egui::ScrollArea::vertical().max_height(280.0);
+                        if self.workspace_switcher_just_opened {
+                            scroll = scroll.vertical_scroll_offset(0.0);
+                            self.workspace_switcher_just_opened = false;
+                        }
+                        scroll.show_rows(ui, row_height, project_count, |ui, row_range| {
+                            for row in row_range {
+                                let project_path = self.projects[row].clone();
+                                let name = project_path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| project_path.to_string_lossy().to_string());
+                                let is_current = project_path == self.workspace_root;
+                                let selected = row == self.workspace_switcher_selected;
+
+                                ui.horizontal(|ui| {
+                                    let icon = if is_current { "●" } else { "○" };
+                                    ui.label(
+                                        egui::RichText::new(icon)
+                                            .monospace()
+                                            .size(11.0)
+                                            .color(if is_current { palette.success } else { palette.text_muted }),
+                                    );
+                                    let text = egui::RichText::new(&name).color(if selected {
+                                        palette.accent
+                                    } else {
+                                        palette.text
+                                    });
+                                    let resp = ui.selectable_label(selected, text);
+                                    if resp.clicked() {
+                                        // Switch to this project.
+                                        if !is_current {
+                                            self.save_workspace_preferences();
+                                            self.workspace_root = project_path.clone();
+                                            self.restore_workspace_preferences();
+                                            self.status_message = format!("Switched to {}", name);
+                                        }
+                                        switcher_open = false;
+                                    }
+                                });
+                            }
+                        });
+                    }
+
+                    // Keyboard navigation.
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        if project_count > 0 {
+                            let selected = self.workspace_switcher_selected;
+                            let is_current = self.projects.get(selected) == Some(&self.workspace_root);
+                            if !is_current {
+                                if let Some(path) = self.projects.get(selected).cloned() {
+                                    self.save_workspace_preferences();
+                                    self.workspace_root = path;
+                                    self.restore_workspace_preferences();
+                                    self.status_message = "Switched workspace".to_string();
+                                }
+                            }
+                        }
+                        switcher_open = false;
+                    } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                        if project_count > 0 {
+                            self.workspace_switcher_selected = (self.workspace_switcher_selected + 1) % project_count;
+                        }
+                    } else if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                        if project_count > 0 {
+                            self.workspace_switcher_selected = self
+                                .workspace_switcher_selected
+                                .checked_sub(1)
+                                .unwrap_or(project_count - 1);
+                        }
+                    } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        switcher_open = false;
+                    }
+                });
+        });
+
+        self.workspace_switcher_open = switcher_open;
     }
 
     /// Ctrl+G go-to-line dialog: jump the active editor to a line number.
@@ -2380,7 +2515,7 @@ impl eframe::App for VelocityApp {
         } else {
             &self.selected_model
         };
-        crate::editor::status_bar::StatusBar::show(
+        let sb_actions = crate::editor::status_bar::StatusBar::show(
             ui,
             palette,
             branch.as_deref(),
@@ -2395,6 +2530,33 @@ impl eframe::App for VelocityApp {
             self.provider.label(),
             model_name,
         );
+
+        // Handle status bar click actions.
+        if sb_actions.clicked_mode {
+            // Cycle to the next workspace profile.
+            let current = self.appearance.profile;
+            let all = crate::editor::theme::WorkspaceProfile::ALL;
+            let next_idx = all.iter().position(|&p| p == current)
+                .map(|i| (i + 1) % all.len())
+                .unwrap_or(0);
+            self.set_work_mode(all[next_idx]);
+            self.apply_appearance(ui.ctx());
+        }
+        if sb_actions.clicked_build {
+            // Open diagnostics (Problems tab in bottom panel).
+            self.bottom_panel_state.collapsed = false;
+            self.bottom_panel_state.active_tab = 1; // Problems tab
+        }
+        if sb_actions.clicked_position {
+            // Open go-to-line dialog.
+            self.goto_line_open = true;
+            self.goto_line_just_opened = true;
+            self.goto_line_input.clear();
+        }
+        if sb_actions.clicked_provider {
+            // Open settings tab.
+            self.toggle_panel(TabKind::Settings);
+        }
 
         egui::CentralPanel::default().show(ui, |ui| {
             if let Some(mut dock_state) = self.dock_state.take() {
@@ -2518,6 +2680,7 @@ impl eframe::App for VelocityApp {
 
         self.command_palette_ui(&ctx);
         self.quick_open_ui(&ctx);
+        self.workspace_switcher_ui(&ctx);
         self.goto_line_ui(&ctx);
         self.goto_symbol_ui(&ctx);
         self.references_ui(&ctx);
