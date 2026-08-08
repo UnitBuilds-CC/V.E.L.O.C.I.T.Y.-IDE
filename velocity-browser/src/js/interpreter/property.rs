@@ -660,3 +660,312 @@ pub fn enumerable_keys(map: &HashMap<String, JsValue>) -> Vec<String> {
         .map(|(k, _)| k.clone())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_internal_key ────────────────────────────────────────────────
+
+    #[test]
+    fn internal_key_dunder() {
+        assert!(is_internal_key("__type__"));
+        assert!(is_internal_key("__proto__"));
+        assert!(is_internal_key("__entries__"));
+    }
+
+    #[test]
+    fn internal_key_single_underscore_not_internal() {
+        assert!(!is_internal_key("_foo"));
+        assert!(!is_internal_key("__foo"));
+    }
+
+    #[test]
+    fn internal_key_normal_keys() {
+        assert!(!is_internal_key("foo"));
+        assert!(!is_internal_key("length"));
+        assert!(!is_internal_key("ab"));
+    }
+
+    // ── has_property ───────────────────────────────────────────────────
+
+    #[test]
+    fn has_property_object_existing() {
+        let mut m = HashMap::new();
+        m.insert("a".to_string(), JsValue::Number(1.0));
+        assert!(has_property(&JsValue::Object(m), "a"));
+    }
+
+    #[test]
+    fn has_property_object_missing() {
+        let m = HashMap::new();
+        assert!(!has_property(&JsValue::Object(m), "z"));
+    }
+
+    #[test]
+    fn has_property_array_length() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0)]);
+        assert!(has_property(&arr, "length"));
+    }
+
+    #[test]
+    fn has_property_array_index() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
+        assert!(has_property(&arr, "0"));
+        assert!(has_property(&arr, "1"));
+        assert!(!has_property(&arr, "5"));
+    }
+
+    #[test]
+    fn has_property_string_length() {
+        let s = JsValue::String("hello".into());
+        assert!(has_property(&s, "length"));
+    }
+
+    #[test]
+    fn has_property_string_index() {
+        let s = JsValue::String("hello".into());
+        assert!(has_property(&s, "0"));
+        assert!(has_property(&s, "4"));
+        assert!(!has_property(&s, "10"));
+    }
+
+    #[test]
+    fn has_property_proto_chain() {
+        let mut parent = HashMap::new();
+        parent.insert("inherited".to_string(), JsValue::Boolean(true));
+        let mut child = HashMap::new();
+        child.insert("__proto__".to_string(), JsValue::Object(parent));
+        assert!(has_property(&JsValue::Object(child), "inherited"));
+    }
+
+    #[test]
+    fn has_property_non_object() {
+        assert!(!has_property(&JsValue::Number(42.0), "x"));
+        assert!(!has_property(&JsValue::Null, "x"));
+    }
+
+    // ── delete_property ────────────────────────────────────────────────
+
+    #[test]
+    fn delete_property_object() {
+        let mut obj = JsValue::Object({
+            let mut m = HashMap::new();
+            m.insert("a".to_string(), JsValue::Number(1.0));
+            m
+        });
+        assert!(delete_property(&mut obj, "a"));
+        if let JsValue::Object(m) = &obj {
+            assert!(!m.contains_key("a"));
+        }
+    }
+
+    #[test]
+    fn delete_property_array_hole() {
+        let mut obj = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
+        assert!(delete_property(&mut obj, "0"));
+        if let JsValue::Array(arr) = &obj {
+            assert_eq!(arr[0], JsValue::Undefined);
+            assert_eq!(arr[1], JsValue::Number(2.0));
+        }
+    }
+
+    #[test]
+    fn delete_property_returns_true_for_non_object() {
+        let mut v = JsValue::Number(42.0);
+        assert!(delete_property(&mut v, "x"));
+    }
+
+    // ── get_property ───────────────────────────────────────────────────
+
+    #[test]
+    fn get_property_object_existing() {
+        let mut m = HashMap::new();
+        m.insert("x".to_string(), JsValue::Number(10.0));
+        let r = get_property(&JsValue::Object(m), "x");
+        assert_eq!(r, JsValue::Number(10.0));
+    }
+
+    #[test]
+    fn get_property_object_missing() {
+        let m = HashMap::new();
+        let r = get_property(&JsValue::Object(m), "z");
+        assert_eq!(r, JsValue::Undefined);
+    }
+
+    #[test]
+    fn get_property_array_length() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        assert_eq!(get_property(&arr, "length"), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn get_property_array_index() {
+        let arr = JsValue::Array(vec![JsValue::String("a".into()), JsValue::String("b".into())]);
+        assert_eq!(get_property(&arr, "0"), JsValue::String("a".into()));
+        assert_eq!(get_property(&arr, "1"), JsValue::String("b".into()));
+        assert_eq!(get_property(&arr, "5"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn get_property_string_length() {
+        let s = JsValue::String("hello".into());
+        assert_eq!(get_property(&s, "length"), JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn get_property_string_index() {
+        let s = JsValue::String("hello".into());
+        assert_eq!(get_property(&s, "0"), JsValue::String("h".into()));
+        assert_eq!(get_property(&s, "4"), JsValue::String("o".into()));
+        assert_eq!(get_property(&s, "99"), JsValue::Undefined);
+    }
+
+    #[test]
+    fn get_property_proto_chain() {
+        let mut parent = HashMap::new();
+        parent.insert("inherited".to_string(), JsValue::Number(42.0));
+        let mut child = HashMap::new();
+        child.insert("__proto__".to_string(), JsValue::Object(parent));
+        let r = get_property(&JsValue::Object(child), "inherited");
+        assert_eq!(r, JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn get_property_non_object() {
+        assert_eq!(get_property(&JsValue::Number(42.0), "x"), JsValue::Undefined);
+        assert_eq!(get_property(&JsValue::Null, "x"), JsValue::Undefined);
+    }
+
+    // ── set_property ───────────────────────────────────────────────────
+
+    #[test]
+    fn set_property_object() {
+        let mut obj = JsValue::Object(HashMap::new());
+        assert!(set_property(&mut obj, "key", JsValue::Number(99.0)));
+        if let JsValue::Object(m) = &obj {
+            assert_eq!(m.get("key").unwrap(), &JsValue::Number(99.0));
+        }
+    }
+
+    #[test]
+    fn set_property_non_object_returns_false() {
+        let mut v = JsValue::Number(42.0);
+        assert!(!set_property(&mut v, "x", JsValue::Number(1.0)));
+    }
+
+    // ── own_keys_of ────────────────────────────────────────────────────
+
+    #[test]
+    fn own_keys_object_excludes_internal() {
+        let mut m = HashMap::new();
+        m.insert("foo".to_string(), JsValue::Number(1.0));
+        m.insert("__type__".to_string(), JsValue::String("test".into()));
+        let keys = own_keys_of(&JsValue::Object(m));
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0], "foo");
+    }
+
+    #[test]
+    fn own_keys_array() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
+        let keys = own_keys_of(&arr);
+        assert_eq!(keys, vec!["0", "1"]);
+    }
+
+    #[test]
+    fn own_keys_string() {
+        let s = JsValue::String("abc".into());
+        let keys = own_keys_of(&s);
+        assert_eq!(keys, vec!["0", "1", "2"]);
+    }
+
+    #[test]
+    fn own_keys_non_object() {
+        let keys = own_keys_of(&JsValue::Number(42.0));
+        assert!(keys.is_empty());
+    }
+
+    // ── own_property_names ─────────────────────────────────────────────
+
+    #[test]
+    fn own_property_names_excludes_internal() {
+        let mut m = HashMap::new();
+        m.insert("a".to_string(), JsValue::Number(1.0));
+        m.insert("__type__".to_string(), JsValue::String("test".into()));
+        let names = own_property_names(&JsValue::Object(m));
+        assert_eq!(names.len(), 1);
+        assert!(names.contains(&"a".to_string()));
+    }
+
+    #[test]
+    fn own_property_names_array_includes_length() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0)]);
+        let names = own_property_names(&arr);
+        assert!(names.contains(&"0".to_string()));
+        assert!(names.contains(&"length".to_string()));
+    }
+
+    // ── enumerable_keys ────────────────────────────────────────────────
+
+    #[test]
+    fn enumerable_keys_basic() {
+        let mut m = HashMap::new();
+        m.insert("a".to_string(), JsValue::Number(1.0));
+        m.insert("b".to_string(), JsValue::Number(2.0));
+        m.insert("__type__".to_string(), JsValue::String("test".into()));
+        let keys = enumerable_keys(&m);
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"a".to_string()));
+        assert!(keys.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn enumerable_keys_non_enumerable_accessor() {
+        let mut m = HashMap::new();
+        m.insert("a".to_string(), JsValue::Number(1.0));
+        let mut desc = HashMap::new();
+        desc.insert("__accessor__".to_string(), JsValue::Boolean(true));
+        desc.insert("enumerable".to_string(), JsValue::Boolean(false));
+        m.insert("secret".to_string(), JsValue::Object(desc));
+        let keys = enumerable_keys(&m);
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&"a".to_string()));
+    }
+
+    #[test]
+    fn enumerable_keys_enumerable_accessor() {
+        let mut m = HashMap::new();
+        let mut desc = HashMap::new();
+        desc.insert("__accessor__".to_string(), JsValue::Boolean(true));
+        desc.insert("enumerable".to_string(), JsValue::Boolean(true));
+        m.insert("visible".to_string(), JsValue::Object(desc));
+        let keys = enumerable_keys(&m);
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&"visible".to_string()));
+    }
+
+    // ── apply_descriptor ───────────────────────────────────────────────
+
+    #[test]
+    fn apply_data_descriptor() {
+        let mut target = HashMap::new();
+        let mut desc = HashMap::new();
+        desc.insert("value".to_string(), JsValue::Number(42.0));
+        apply_descriptor(&mut target, "x", &desc);
+        assert_eq!(target.get("x").unwrap(), &JsValue::Number(42.0));
+    }
+
+    #[test]
+    fn apply_accessor_descriptor() {
+        let mut target = HashMap::new();
+        let mut desc = HashMap::new();
+        desc.insert("get".to_string(), JsValue::NativeFunction("getter".into()));
+        desc.insert("enumerable".to_string(), JsValue::Boolean(true));
+        apply_descriptor(&mut target, "x", &desc);
+        if let Some(JsValue::Object(accessor)) = target.get("x") {
+            assert_eq!(accessor.get("__accessor__").unwrap(), &JsValue::Boolean(true));
+            assert!(accessor.contains_key("get"));
+        } else { panic!("expected accessor Object"); }
+    }
+}
