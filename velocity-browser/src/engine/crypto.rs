@@ -265,5 +265,63 @@ mod tests {
         let shared2 = WebCryptoEngine::ecdh_derive_shared(priv2, pub1);
         assert_eq!(shared1, shared2);
     }
+
+    #[test]
+    fn encrypt_empty_plaintext() {
+        let key = b"0123456789abcdef0123456789abcdef";
+        let nonce = b"nonce12";
+        let (ct, tag) = WebCryptoEngine::subtle_encrypt(key, nonce, b"");
+        assert!(ct.is_empty());
+        let pt = WebCryptoEngine::subtle_decrypt(key, nonce, &ct, &tag);
+        assert_eq!(pt.unwrap(), b"");
+    }
+
+    #[test]
+    fn encrypt_multi_block_roundtrip() {
+        let key = b"0123456789abcdef0123456789abcdef";
+        let nonce = b"mb_nonce";
+        // > 32 bytes to span multiple HMAC blocks
+        let plaintext = vec![0xABu8; 100];
+        let (ct, tag) = WebCryptoEngine::subtle_encrypt(key, nonce, &plaintext);
+        assert_eq!(ct.len(), 100);
+        let pt = WebCryptoEngine::subtle_decrypt(key, nonce, &ct, &tag).unwrap();
+        assert_eq!(pt, plaintext);
+    }
+
+    #[test]
+    fn hmac_long_key_gets_hashed() {
+        // Key longer than 64 bytes should be hashed first
+        let long_key = vec![0x42u8; 128];
+        let msg = b"test message";
+        let mac1 = WebCryptoEngine::hmac_sha256(&long_key, msg);
+        let mac2 = WebCryptoEngine::hmac_sha256(&long_key, msg);
+        assert_eq!(mac1, mac2); // deterministic
+        assert!(WebCryptoEngine::hmac_sha256_verify(&long_key, msg, &mac1));
+    }
+
+    #[test]
+    fn random_values_are_unique() {
+        let r1 = WebCryptoEngine::get_random_values(32);
+        let r2 = WebCryptoEngine::get_random_values(32);
+        // Two 32-byte random outputs should differ
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn export_crypto_nda_has_two_triples() {
+        let triples = WebCryptoEngine::export_crypto_nda("sess1", "abc123");
+        assert_eq!(triples.len(), 2);
+        assert_eq!(triples[0].predicate_id, 180);
+        assert_eq!(triples[1].predicate_id, 181);
+    }
+
+    #[test]
+    fn private_key_is_clamped() {
+        let (priv_key, _) = WebCryptoEngine::generate_key_pair();
+        // X25519 clamping: low 3 bits of byte 0 cleared, high bit of byte 31 cleared, second-high bit set
+        assert_eq!(priv_key[0] & 7, 0);
+        assert_eq!(priv_key[31] & 128, 0);
+        assert_eq!(priv_key[31] & 64, 64);
+    }
 }
 

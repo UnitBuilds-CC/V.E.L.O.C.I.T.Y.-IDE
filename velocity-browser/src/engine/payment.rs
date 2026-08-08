@@ -291,4 +291,61 @@ mod tests {
         engine.show().ok();
         assert!(!engine.export_payment_nda("s1").is_empty());
     }
+
+    #[test]
+    fn select_nonexistent_shipping_returns_false() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_shipping_option("std", "Standard", 5.0, "USD");
+        assert!(!engine.select_shipping("nonexistent"));
+        // select_shipping deselects all when not found
+        assert!((engine.shipping_cost() - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn validate_empty_currency() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("Bad", 10.0, "");
+        let errors = engine.validate();
+        assert!(errors.errors.iter().any(|(k, _)| k == "Bad"));
+    }
+
+    #[test]
+    fn validate_negative_shipping_cost() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_item("Item", 10.0, "USD");
+        engine.add_shipping_option("bad", "Bad Ship", -5.0, "USD");
+        let errors = engine.validate();
+        assert!(errors.errors.iter().any(|(k, _)| k == "bad"));
+    }
+
+    #[test]
+    fn show_success_message_includes_total() {
+        let mut engine = PaymentRequestEngine::new("MyShop");
+        engine.add_item("A", 10.0, "USD");
+        engine.add_shipping_option("s", "Std", 5.0, "USD");
+        let msg = engine.show().unwrap();
+        assert!(msg.contains("MyShop"));
+        assert!(msg.contains("15.00"));
+        assert!(engine.is_resolved);
+    }
+
+    #[test]
+    fn shipping_cost_zero_when_none_selected() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_shipping_option("a", "A", 10.0, "USD");
+        // Selecting nonexistent deselects all options
+        engine.select_shipping("nonexistent");
+        assert!((engine.shipping_cost() - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn add_method_filter_stores_filters() {
+        let mut engine = PaymentRequestEngine::new("Shop");
+        engine.add_method_filter(
+            vec!["basic-card".into()],
+            vec![PaymentMethodType::BasicCard],
+        );
+        assert_eq!(engine.method_filters.len(), 1);
+        assert_eq!(engine.method_filters[0].supported_methods[0], "basic-card");
+    }
 }

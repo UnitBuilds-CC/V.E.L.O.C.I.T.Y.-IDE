@@ -259,4 +259,37 @@ mod tests {
         assert!(result.confidence <= 1.0);
         assert_eq!(result.kind, InterstitialKind::CloudflareTurnstile);
     }
+
+    #[test]
+    fn classify_waf_challenge() {
+        let result = InterstitialClassifier::classify_page("Error", "Blocked by web application firewall");
+        assert_eq!(result, InterstitialKind::WafChallenge);
+    }
+
+    #[test]
+    fn classify_auth_required() {
+        let result = InterstitialClassifier::classify_page_with_signals("Sign In Required", "Please sign in to continue");
+        assert_eq!(result.kind, InterstitialKind::AuthRequired);
+        assert!(matches!(result.suggested_strategy, BypassStrategy::GiveUp));
+    }
+
+    #[test]
+    fn to_nda_triple_uses_predicate_50() {
+        let triple = InterstitialClassifier::to_nda_triple("https://example.com", InterstitialKind::CloudflareTurnstile);
+        assert_eq!(triple.predicate_id, 50);
+    }
+
+    #[test]
+    fn classify_empty_page_is_none() {
+        let result = InterstitialClassifier::classify_page_with_signals("", "");
+        assert_eq!(result.kind, InterstitialKind::None);
+        assert!((result.confidence - 0.0).abs() < 0.01);
+        assert!(result.signals.is_empty());
+    }
+
+    #[test]
+    fn classify_case_insensitive() {
+        let result = InterstitialClassifier::classify_page("JUST A MOMENT...", "<DIV CLASS='cf-challenge'></DIV>");
+        assert_eq!(result, InterstitialKind::CloudflareTurnstile);
+    }
 }

@@ -221,4 +221,54 @@ mod tests {
         let triples = fm.export_files_nda();
         assert_eq!(triples.len(), 3); // 1 file + 2 download
     }
+
+    #[test]
+    fn progress_zero_total_returns_zero() {
+        let d = DownloadStreamArtifact {
+            guid: "z".into(), url: "u".into(), file_name: "f".into(),
+            total_bytes: 0, received_bytes: 0, save_path: "/f".into(),
+            is_complete: false, started_at_ms: 0,
+        };
+        assert!((d.progress() - 0.0).abs() < 1e-9);
+        assert!(!d.is_in_progress()); // 0 < 0 is false
+    }
+
+    #[test]
+    fn get_download_nonexistent_returns_none() {
+        let fm = FileManager::new();
+        assert!(fm.get_download("nope").is_none());
+    }
+
+    #[test]
+    fn active_downloads_empty_initially() {
+        let fm = FileManager::new();
+        assert!(fm.active_downloads().is_empty());
+    }
+
+    #[test]
+    fn default_file_manager_is_empty() {
+        let fm = FileManager::default();
+        assert!(fm.file_choosers.is_empty());
+        assert!(fm.downloads.is_empty());
+        assert!(fm.attached_files.is_empty());
+    }
+
+    #[test]
+    fn update_nonexistent_guid_is_noop() {
+        let mut fm = FileManager::new();
+        fm.start_download("g1", "http://x.com/f", "f.zip", 1000, "/tmp/f.zip");
+        fm.update_download_progress("nonexistent", 500);
+        // g1 should still be at 0 bytes
+        assert_eq!(fm.get_download("g1").unwrap().received_bytes, 0);
+    }
+
+    #[test]
+    fn download_completes_when_received_exceeds_total() {
+        let mut fm = FileManager::new();
+        fm.start_download("g1", "http://x.com/f", "f.zip", 100, "/tmp/f.zip");
+        fm.update_download_progress("g1", 200);
+        let d = fm.get_download("g1").unwrap();
+        assert!(d.is_complete);
+        assert_eq!(d.received_bytes, 100); // clamped to total
+    }
 }

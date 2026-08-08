@@ -232,4 +232,45 @@ mod tests {
         let d = haversine_distance(90.0, 0.0, -90.0, 0.0);
         assert!(d > 20_000_000.0 && d < 20_020_000.0);
     }
+
+    #[test]
+    fn export_geolocation_nda_has_predicate_241() {
+        let provider = GeolocationProvider::mock_sf();
+        let triples = provider.export_geolocation_nda("sess1");
+        assert_eq!(triples.len(), 1);
+        assert_eq!(triples[0].predicate_id, 241);
+    }
+
+    #[test]
+    fn from_coords_uses_default_accuracy() {
+        let provider = GeolocationProvider::from_coords(35.6762, 139.6503);
+        assert!((provider.current_coords.accuracy_meters - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn haversine_is_symmetric() {
+        let d1 = haversine_distance(37.7749, -122.4194, 34.0522, -118.2437);
+        let d2 = haversine_distance(34.0522, -118.2437, 37.7749, -122.4194);
+        assert!((d1 - d2).abs() < 0.01);
+    }
+
+    #[test]
+    fn permission_grant_deny_grant_lifecycle() {
+        let mut perm = GeoPermissionState::default();
+        perm.grant();
+        assert!(perm.is_granted());
+        perm.deny();
+        assert!(!perm.is_granted());
+        assert!(perm.previously_asked);
+        perm.grant();
+        assert!(perm.is_granted());
+    }
+
+    #[test]
+    fn load_from_workspace_falls_back_to_default() {
+        // Nonexistent workspace path should return default (SF)
+        let config = GeolocationConfig::load_from_workspace(std::path::Path::new("/nonexistent/path"));
+        assert!((config.latitude - 37.7749).abs() < 0.001);
+        assert!((config.longitude - (-122.4194)).abs() < 0.001);
+    }
 }

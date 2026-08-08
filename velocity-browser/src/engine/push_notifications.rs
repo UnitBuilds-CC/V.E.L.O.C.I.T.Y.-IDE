@@ -256,4 +256,46 @@ mod tests {
         let triples = mgr.export_push_nda("session1");
         assert_eq!(triples.len(), 2); // 1 subscription + 1 unread event
     }
+
+    #[test]
+    fn unsubscribe_nonexistent_returns_false() {
+        let mut mgr = PushNotificationManager::new();
+        assert!(!mgr.unsubscribe("https://nope.com"));
+    }
+
+    #[test]
+    fn notification_ids_auto_increment() {
+        let mut mgr = PushNotificationManager::new();
+        let id1 = mgr.show_notification("A", "a", None, None, false);
+        let id2 = mgr.show_notification("B", "b", None, None, false);
+        let id3 = mgr.show_notification("C", "c", None, None, false);
+        assert_eq!(id2, id1 + 1);
+        assert_eq!(id3, id2 + 1);
+    }
+
+    #[test]
+    fn mark_all_read_on_empty_is_noop() {
+        let mut mgr = PushNotificationManager::new();
+        mgr.mark_all_read();
+        assert!(mgr.unread_events().is_empty());
+    }
+
+    #[test]
+    fn default_manager_has_no_permission() {
+        let mgr = PushNotificationManager::default();
+        assert!(!mgr.permission_granted);
+        assert!(mgr.subscriptions.is_empty());
+        assert!(mgr.notifications.is_empty());
+    }
+
+    #[test]
+    fn export_push_nda_excludes_inactive_subscriptions() {
+        let mut mgr = PushNotificationManager::new();
+        mgr.subscribe("https://push.example.com/s1", "k", "a");
+        mgr.subscribe("https://push.example.com/s2", "k2", "a2");
+        mgr.unsubscribe("https://push.example.com/s1");
+        let triples = mgr.export_push_nda("sess");
+        // Only s2 is active
+        assert_eq!(triples.len(), 1);
+    }
 }
