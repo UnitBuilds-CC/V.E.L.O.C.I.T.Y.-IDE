@@ -330,4 +330,107 @@ mod tests {
         let matches = tree.query_by_tag_hash(div_hash);
         assert_eq!(matches.len(), 2);
     }
+
+    #[test]
+    fn test_invalid_slot_returns_defaults() {
+        let tree = SlabDomTree::new(4);
+        assert_eq!(tree.parent(999), u32::MAX);
+        assert_eq!(tree.first_child(999), u32::MAX);
+        assert_eq!(tree.next_sibling(999), u32::MAX);
+        assert_eq!(tree.tag_hash(999), 0);
+        assert_eq!(tree.text_content(999), "");
+        assert_eq!(tree.get_attribute(999, "class"), None);
+    }
+
+    #[test]
+    fn test_is_valid_slot_bounds() {
+        let tree = SlabDomTree::new(4);
+        assert!(tree.is_valid_slot(tree.root_slot));
+        assert!(!tree.is_valid_slot(9999));
+    }
+
+    #[test]
+    fn test_node_count_increments() {
+        let mut tree = SlabDomTree::new(4);
+        assert_eq!(tree.node_count(), 1); // root
+        tree.append_child(tree.root_slot, "div");
+        assert_eq!(tree.node_count(), 2);
+        tree.append_child(tree.root_slot, "span");
+        assert_eq!(tree.node_count(), 3);
+    }
+
+    #[test]
+    fn test_sibling_chain() {
+        let mut tree = SlabDomTree::new(16);
+        let a = tree.append_child(tree.root_slot, "a");
+        let b = tree.append_child(tree.root_slot, "b");
+        let c = tree.append_child(tree.root_slot, "c");
+        // Walk sibling chain from first child
+        assert_eq!(tree.first_child(tree.root_slot), a);
+        assert_eq!(tree.next_sibling(a), b);
+        assert_eq!(tree.next_sibling(b), c);
+        assert_eq!(tree.next_sibling(c), u32::MAX); // last sibling
+    }
+
+    #[test]
+    fn test_dfs_order_is_preorder() {
+        let mut tree = SlabDomTree::new(16);
+        let body = tree.append_child(tree.root_slot, "body");
+        let div = tree.append_child(body, "div");
+        let _p = tree.append_child(div, "p");
+        let _span = tree.append_child(body, "span");
+        let dfs = tree.dfs();
+        // Preorder: root, body, div, p, span
+        assert_eq!(dfs[0], tree.root_slot);
+        assert_eq!(dfs[1], body);
+        assert_eq!(dfs[2], div);
+        assert_eq!(dfs[3], _p);
+        assert_eq!(dfs[4], _span);
+    }
+
+    #[test]
+    fn test_bfs_order_is_level_order() {
+        let mut tree = SlabDomTree::new(16);
+        let body = tree.append_child(tree.root_slot, "body");
+        let head = tree.append_child(tree.root_slot, "head");
+        let div = tree.append_child(body, "div");
+        let _span = tree.append_child(body, "span");
+        let bfs = tree.bfs();
+        // Level order: root, body, head, div, span
+        assert_eq!(bfs[0], tree.root_slot);
+        assert_eq!(bfs[1], body);
+        assert_eq!(bfs[2], head);
+        assert_eq!(bfs[3], div);
+    }
+
+    #[test]
+    fn test_mark_clean_clears_dirty_flag() {
+        let mut tree = SlabDomTree::new(16);
+        let div = tree.append_child(tree.root_slot, "div");
+        // Newly allocated nodes have DIRTY flag
+        assert!(tree.arena.slots[div as usize].flags & SLAB_NODE_DIRTY != 0);
+        tree.arena.mark_clean(div);
+        assert_eq!(tree.arena.slots[div as usize].flags & SLAB_NODE_DIRTY, 0);
+    }
+
+    #[test]
+    fn test_set_attribute_marks_dirty() {
+        let mut tree = SlabDomTree::new(16);
+        let div = tree.append_child(tree.root_slot, "div");
+        tree.arena.mark_clean(div);
+        assert_eq!(tree.arena.slots[div as usize].flags & SLAB_NODE_DIRTY, 0);
+        tree.arena.set_attribute(div, "class", "container");
+        assert!(tree.arena.slots[div as usize].flags & SLAB_NODE_DIRTY != 0);
+    }
+
+    #[test]
+    fn test_collect_all_text_dfs_order() {
+        let mut tree = SlabDomTree::new(16);
+        let p1 = tree.append_child(tree.root_slot, "p");
+        let p2 = tree.append_child(tree.root_slot, "p");
+        tree.set_text_content(p2, "second");
+        tree.set_text_content(p1, "first");
+        let texts = tree.collect_all_text();
+        assert_eq!(texts, vec!["first".to_string(), "second".to_string()]);
+    }
 }

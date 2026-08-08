@@ -276,4 +276,54 @@ mod tests {
         let names = reg.registered_names();
         assert_eq!(names.len(), 2);
     }
+
+    #[test]
+    fn test_define_with_extends() {
+        let mut reg = CustomElementRegistry::new();
+        reg.define("my-button", "MyButton", Some("button")).unwrap();
+        let def = reg.get("my-button").unwrap();
+        assert_eq!(def.extends_tag.as_deref(), Some("button"));
+    }
+
+    #[test]
+    fn test_get_undefined_returns_none() {
+        let reg = CustomElementRegistry::new();
+        assert!(reg.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_is_defined_false_for_unknown() {
+        let reg = CustomElementRegistry::new();
+        assert!(!reg.is_defined("unknown-el"));
+    }
+
+    #[test]
+    fn test_when_defined_already_defined() {
+        let mut reg = CustomElementRegistry::new();
+        reg.define("my-el", "MyEl", None).unwrap();
+        reg.when_defined("my-el", "resolve_1");
+        // Already defined, so when_defined should not store the resolve
+        assert!(!reg.when_defined.contains_key("my-el"));
+    }
+
+    #[test]
+    fn test_when_defined_multiple_resolves() {
+        let mut reg = CustomElementRegistry::new();
+        reg.when_defined("my-el", "resolve_1");
+        reg.when_defined("my-el", "resolve_2");
+        assert_eq!(reg.when_defined.get("my-el").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_drain_callbacks_undefined_element() {
+        let mut reg = CustomElementRegistry::new();
+        let callbacks = reg.drain_callbacks("nonexistent");
+        assert!(callbacks.is_empty());
+    }
+
+    #[test]
+    fn test_upgrade_undefined_element_errors() {
+        let mut reg = CustomElementRegistry::new();
+        assert!(reg.upgrade_element("nonexistent").is_err());
+    }
 }

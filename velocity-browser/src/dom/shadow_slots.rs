@@ -184,4 +184,85 @@ mod tests {
         let all = SlotProjectionEngine::all_assigned_nodes(&projections);
         assert_eq!(all.len(), 3);
     }
+
+    #[test]
+    fn test_empty_host_produces_no_slots() {
+        let nodes = vec![
+            DomNode {
+                id: 0, node_type: NodeType::Element, tag_name: "my-component".to_string(),
+                attributes: HashMap::new(), text_content: String::new(),
+                children: Vec::new(), parent: None,
+            },
+        ];
+        let tree = DomTree::new(nodes);
+        let projections = SlotProjectionEngine::project_slots(&tree, 0);
+        assert!(projections.is_empty());
+    }
+
+    #[test]
+    fn test_detect_changes_removed_slot() {
+        let mut old = HashMap::new();
+        old.insert("header".to_string(), SlotProjection {
+            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
+        });
+        old.insert("footer".to_string(), SlotProjection {
+            slot_name: "footer".to_string(), assigned_nodes: vec![2], fallback_content: None,
+        });
+        let new = HashMap::new(); // all slots removed
+        let changed = SlotProjectionEngine::detect_slot_changes(&old, &new);
+        assert_eq!(changed.len(), 2);
+    }
+
+    #[test]
+    fn test_detect_changes_no_change() {
+        let mut old = HashMap::new();
+        old.insert("header".to_string(), SlotProjection {
+            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
+        });
+        let mut new = HashMap::new();
+        new.insert("header".to_string(), SlotProjection {
+            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
+        });
+        let changed = SlotProjectionEngine::detect_slot_changes(&old, &new);
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn test_all_assigned_nodes_empty_projections() {
+        let projections = HashMap::new();
+        let all = SlotProjectionEngine::all_assigned_nodes(&projections);
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_nodes_same_slot() {
+        let nodes = vec![
+            DomNode {
+                id: 0, node_type: NodeType::Element, tag_name: "host".to_string(),
+                attributes: HashMap::new(), text_content: String::new(),
+                children: vec![1, 2], parent: None,
+            },
+            DomNode {
+                id: 1, node_type: NodeType::Element, tag_name: "span".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("slot".to_string(), "header".to_string()); m },
+                text_content: String::new(), children: Vec::new(), parent: Some(0),
+            },
+            DomNode {
+                id: 2, node_type: NodeType::Element, tag_name: "div".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("slot".to_string(), "header".to_string()); m },
+                text_content: String::new(), children: Vec::new(), parent: Some(0),
+            },
+        ];
+        let tree = DomTree::new(nodes);
+        let projections = SlotProjectionEngine::project_slots(&tree, 0);
+        assert_eq!(projections["header"].assigned_nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_fallback_not_set_for_nonexistent_slot() {
+        let mut projections = HashMap::new();
+        // Setting fallback for a slot that doesn't exist should do nothing
+        SlotProjectionEngine::set_fallback(&mut projections, "nonexistent", "fallback");
+        assert!(!projections.contains_key("nonexistent"));
+    }
 }

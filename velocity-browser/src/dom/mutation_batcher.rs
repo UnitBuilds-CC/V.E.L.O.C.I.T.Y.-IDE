@@ -220,4 +220,62 @@ mod tests {
         let flushed = batcher.flush_batch();
         assert_eq!(flushed[0].old_value.as_deref(), Some("original"));
     }
+
+    #[test]
+    fn test_clear_old_values() {
+        let mut batcher = MutationBatcher::with_old_values();
+        batcher.record_old_attribute_value(1, "class", "original");
+        batcher.record_old_attribute_value(2, "id", "foo");
+        assert_eq!(batcher.stats().tracked_old_values, 2);
+        batcher.clear_old_values();
+        assert_eq!(batcher.stats().tracked_old_values, 0);
+    }
+
+    #[test]
+    fn test_stats_reports_correctly() {
+        let mut batcher = MutationBatcher::new();
+        batcher.push_mutation(attr_mutation(1, "a", None));
+        batcher.push_mutation(attr_mutation(2, "b", None));
+        let stats = batcher.stats();
+        assert_eq!(stats.pending, 2);
+        assert_eq!(stats.total_processed, 0);
+        batcher.flush_batch();
+        let stats = batcher.stats();
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.total_processed, 2);
+    }
+
+    #[test]
+    fn test_different_nodes_not_deduped() {
+        let mut batcher = MutationBatcher::new();
+        batcher.push_mutation(attr_mutation(1, "class", Some("a")));
+        batcher.push_mutation(attr_mutation(2, "class", Some("b")));
+        assert_eq!(batcher.pending_count(), 2); // different nodes, not deduped
+    }
+
+    #[test]
+    fn test_childlist_merge_different_targets_not_merged() {
+        let mut batcher = MutationBatcher::new();
+        batcher.push_mutation(child_mutation(1, vec![2], vec![]));
+        batcher.push_mutation(child_mutation(2, vec![3], vec![])); // different target
+        assert_eq!(batcher.pending_count(), 2); // not merged
+    }
+
+    #[test]
+    fn test_childlist_merge_accumulates_removed() {
+        let mut batcher = MutationBatcher::new();
+        batcher.push_mutation(child_mutation(1, vec![], vec![5]));
+        batcher.push_mutation(child_mutation(1, vec![], vec![6]));
+        assert_eq!(batcher.pending_count(), 1);
+        let flushed = batcher.flush_batch();
+        assert_eq!(flushed[0].removed_nodes, vec![5, 6]);
+    }
+
+    #[test]
+    fn test_default_batcher() {
+        let batcher = MutationBatcher::default();
+        assert_eq!(batcher.max_batch_size, 1000);
+        assert!(!batcher.record_old_values);
+        assert_eq!(batcher.pending_count(), 0);
+    }
 }

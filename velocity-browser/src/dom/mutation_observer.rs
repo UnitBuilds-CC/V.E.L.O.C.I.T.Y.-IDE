@@ -259,4 +259,120 @@ mod tests {
         // After flush, records should be empty
         assert!(observer.records.is_empty());
     }
+
+    #[test]
+    fn observe_and_disconnect_clears_targets() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe(1, MutationObserverInit::default());
+        observer.observe(2, MutationObserverInit { child_list: true, ..Default::default() });
+        assert_eq!(observer.observed_targets.len(), 2);
+        observer.disconnect();
+        assert!(observer.observed_targets.is_empty());
+    }
+
+    #[test]
+    fn character_data_mutation() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_character_data_change(7, Some("old text".to_string()));
+        assert_eq!(observer.records.len(), 1);
+        let js = observer.records[0].to_js_value();
+        if let JsValue::Object(map) = &js {
+            assert_eq!(map.get("type"), Some(&JsValue::String("characterData".to_string())));
+            assert_eq!(map.get("oldValue"), Some(&JsValue::String("old text".to_string())));
+        } else {
+            panic!("Expected Object");
+        }
+    }
+
+    #[test]
+    fn character_data_mutation_no_old_value() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_character_data_change(3, None);
+        let js = observer.records[0].to_js_value();
+        if let JsValue::Object(map) = &js {
+            assert_eq!(map.get("oldValue"), Some(&JsValue::Null));
+        } else {
+            panic!("Expected Object");
+        }
+    }
+
+    #[test]
+    fn attribute_change_with_old_value() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_attribute_change_with_old(5, "class", Some("old-class".to_string()));
+        let js = observer.records[0].to_js_value();
+        if let JsValue::Object(map) = &js {
+            assert_eq!(map.get("oldValue"), Some(&JsValue::String("old-class".to_string())));
+        } else {
+            panic!("Expected Object");
+        }
+    }
+
+    #[test]
+    fn attribute_change_without_old_value() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_attribute_change(5, "class");
+        let js = observer.records[0].to_js_value();
+        if let JsValue::Object(map) = &js {
+            assert_eq!(map.get("oldValue"), Some(&JsValue::Null));
+        } else {
+            panic!("Expected Object");
+        }
+    }
+
+    #[test]
+    fn multiple_targets_multiple_records() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_attribute_change(1, "class");
+        observer.observe_child_list_change(2, vec![10], vec![]);
+        observer.observe_character_data_change(3, None);
+        assert_eq!(observer.records.len(), 3);
+        let taken = observer.take_records();
+        assert_eq!(taken.len(), 3);
+        assert!(observer.records.is_empty());
+    }
+
+    #[test]
+    fn export_mutations_nda_produces_triples() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_attribute_change(1, "class");
+        observer.observe_attribute_change(2, "id");
+        let triples = observer.export_mutations_nda();
+        assert_eq!(triples.len(), 2);
+        assert_eq!(triples[0].predicate_id, 140);
+    }
+
+    #[test]
+    fn export_mutations_nda_empty_when_no_records() {
+        let observer = NativeMutationObserver::new();
+        let triples = observer.export_mutations_nda();
+        assert!(triples.is_empty());
+    }
+
+    #[test]
+    fn child_list_js_has_added_and_removed_nodes() {
+        let mut observer = NativeMutationObserver::new();
+        observer.observe_child_list_change(1, vec![10, 11, 12], vec![5, 6]);
+        let js = observer.records[0].to_js_value();
+        if let JsValue::Object(map) = &js {
+            if let Some(JsValue::Array(added)) = map.get("addedNodes") {
+                assert_eq!(added.len(), 3);
+            } else { panic!("Expected addedNodes"); }
+            if let Some(JsValue::Array(removed)) = map.get("removedNodes") {
+                assert_eq!(removed.len(), 2);
+            } else { panic!("Expected removedNodes"); }
+        } else {
+            panic!("Expected Object");
+        }
+    }
+
+    #[test]
+    fn default_init_has_attributes_only() {
+        let init = MutationObserverInit::default();
+        assert!(init.attributes);
+        assert!(!init.child_list);
+        assert!(!init.character_data);
+        assert!(!init.attribute_old_value);
+        assert!(!init.subtree);
+    }
 }

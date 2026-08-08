@@ -289,4 +289,93 @@ mod tests {
         assert_eq!(inter.width, 50.0);
         assert_eq!(inter.height, 50.0);
     }
+
+    #[test]
+    fn dom_rect_no_overlap() {
+        let a = DomRect::new(0.0, 0.0, 50.0, 50.0);
+        let b = DomRect::new(100.0, 100.0, 50.0, 50.0);
+        let inter = a.intersect(&b);
+        assert_eq!(inter.width, 0.0);
+        assert_eq!(inter.height, 0.0);
+        assert_eq!(inter.area(), 0.0);
+    }
+
+    #[test]
+    fn dom_rect_area_computation() {
+        let r = DomRect::new(0.0, 0.0, 200.0, 150.0);
+        assert_eq!(r.area(), 30000.0);
+    }
+
+    #[test]
+    fn dom_rect_zero_area() {
+        let r = DomRect::new(10.0, 10.0, 0.0, 0.0);
+        assert_eq!(r.area(), 0.0);
+    }
+
+    #[test]
+    fn unobserve_removes_target() {
+        let mut observer = NativeIntersectionObserver::new();
+        observer.observe(1);
+        observer.observe(2);
+        observer.observe(3);
+        assert_eq!(observer.observed_targets.len(), 3);
+        observer.unobserve(2);
+        assert_eq!(observer.observed_targets.len(), 2);
+        assert!(!observer.observed_targets.contains(&2));
+    }
+
+    #[test]
+    fn disconnect_clears_all() {
+        let mut observer = NativeIntersectionObserver::new();
+        observer.observe(1);
+        observer.observe(2);
+        observer.disconnect();
+        assert!(observer.observed_targets.is_empty());
+        assert!(observer.last_entries.is_empty());
+    }
+
+    #[test]
+    fn observe_deduplicates_same_target() {
+        let mut observer = NativeIntersectionObserver::new();
+        observer.observe(1);
+        observer.observe(1);
+        observer.observe(1);
+        assert_eq!(observer.observed_targets.len(), 1);
+    }
+
+    #[test]
+    fn threshold_filtering() {
+        let config = IntersectionObserverInit {
+            thresholds: vec![0.5, 1.0],
+            root_margin: [0.0; 4],
+            root_bounds: DomRect::new(0.0, 0.0, 1920.0, 1080.0),
+        };
+        let mut observer = NativeIntersectionObserver::with_callback(JsValue::Undefined, config);
+        observer.observe(1);
+        // Element only 25% visible — below 0.5 threshold
+        let elem = DomRect::new(1820.0, 0.0, 400.0, 100.0);
+        let entries = observer.check_intersections(&[(1, elem)]);
+        // Ratio is about 25%, which is below 0.5 threshold
+        // But 0.0 is not in thresholds, so not-intersecting won't match either
+        // The element IS intersecting (ratio > 0), but ratio < 0.5
+        assert!(entries.is_empty() || entries[0].intersection_ratio >= 0.5);
+    }
+
+    #[test]
+    fn dom_rect_to_js_value_has_all_fields() {
+        let r = DomRect::new(10.0, 20.0, 100.0, 200.0);
+        let js = r.to_js_value();
+        if let JsValue::Object(map) = js {
+            assert_eq!(map.get("x"), Some(&JsValue::Number(10.0)));
+            assert_eq!(map.get("y"), Some(&JsValue::Number(20.0)));
+            assert_eq!(map.get("width"), Some(&JsValue::Number(100.0)));
+            assert_eq!(map.get("height"), Some(&JsValue::Number(200.0)));
+            assert_eq!(map.get("top"), Some(&JsValue::Number(20.0)));
+            assert_eq!(map.get("left"), Some(&JsValue::Number(10.0)));
+            assert_eq!(map.get("bottom"), Some(&JsValue::Number(220.0)));
+            assert_eq!(map.get("right"), Some(&JsValue::Number(110.0)));
+        } else {
+            panic!("Expected Object");
+        }
+    }
 }
