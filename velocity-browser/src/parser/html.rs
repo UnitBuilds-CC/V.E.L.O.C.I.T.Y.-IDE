@@ -273,4 +273,165 @@ mod tests {
         // The stray </span> must not have popped <div>.
         assert_eq!(p.parent, Some(div.id));
     }
+
+    // ── parse() tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_empty_html_produces_root_only() {
+        let nodes = HtmlParser::parse("");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_type, NodeType::Document);
+    }
+
+    #[test]
+    fn parse_single_element() {
+        let nodes = HtmlParser::parse("<div></div>");
+        assert_eq!(nodes.len(), 2); // root + div
+        assert_eq!(nodes[1].tag_name, "div");
+        assert_eq!(nodes[1].node_type, NodeType::Element);
+        assert_eq!(nodes[1].parent, Some(0));
+    }
+
+    #[test]
+    fn parse_tag_name_is_lowercased() {
+        let nodes = HtmlParser::parse("<DIV></DIV>");
+        let div = nodes.iter().find(|n| n.tag_name == "div").unwrap();
+        assert_eq!(div.tag_name, "div");
+    }
+
+    #[test]
+    fn parse_text_node_content() {
+        let nodes = HtmlParser::parse("<p>hello world</p>");
+        let text = nodes.iter().find(|n| n.node_type == NodeType::Text).unwrap();
+        assert_eq!(text.text_content, "hello world");
+    }
+
+    #[test]
+    fn parse_whitespace_only_text_is_skipped() {
+        let nodes = HtmlParser::parse("<div>   </div>");
+        let text_nodes: Vec<_> = nodes.iter().filter(|n| n.node_type == NodeType::Text).collect();
+        assert!(text_nodes.is_empty(), "whitespace-only text should be skipped");
+    }
+
+    #[test]
+    fn parse_multiple_attributes() {
+        let nodes = HtmlParser::parse(r#"<input type="text" name="email" value="a@b.com">"#);
+        let input = nodes.iter().find(|n| n.tag_name == "input").unwrap();
+        assert_eq!(input.attributes.get("type"), Some(&"text".to_string()));
+        assert_eq!(input.attributes.get("name"), Some(&"email".to_string()));
+        assert_eq!(input.attributes.get("value"), Some(&"a@b.com".to_string()));
+    }
+
+    #[test]
+    fn parse_single_quoted_attributes() {
+        let nodes = HtmlParser::parse("<div class='main'></div>");
+        let div = nodes.iter().find(|n| n.tag_name == "div").unwrap();
+        assert_eq!(div.attributes.get("class"), Some(&"main".to_string()));
+    }
+
+    #[test]
+    fn parse_nested_elements() {
+        let nodes = HtmlParser::parse("<div><ul><li>item</li></ul></div>");
+        let li = nodes.iter().find(|n| n.tag_name == "li").unwrap();
+        let ul = nodes.iter().find(|n| n.tag_name == "ul").unwrap();
+        assert_eq!(li.parent, Some(ul.id));
+    }
+
+    #[test]
+    fn parse_sibling_elements() {
+        let nodes = HtmlParser::parse("<div><a>1</a><b>2</b><c>3</c></div>");
+        let div = nodes.iter().find(|n| n.tag_name == "div").unwrap();
+        assert_eq!(div.children.len(), 3);
+    }
+
+    #[test]
+    fn parse_void_element_br() {
+        let nodes = HtmlParser::parse("<p>line1<br>line2</p>");
+        let br = nodes.iter().find(|n| n.tag_name == "br").unwrap();
+        assert!(br.children.is_empty(), "br should have no children");
+    }
+
+    #[test]
+    fn parse_self_closing_tag() {
+        let nodes = HtmlParser::parse("<div><span/></div>");
+        let span = nodes.iter().find(|n| n.tag_name == "span").unwrap();
+        assert!(span.children.is_empty(), "self-closing span should have no children");
+    }
+
+    // ── parse_html5() additional tests ─────────────────────────────────────
+
+    #[test]
+    fn html5_empty_html() {
+        let nodes = HtmlParser::parse_html5("");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_type, NodeType::Document);
+    }
+
+    #[test]
+    fn html5_preserves_attribute_values() {
+        let nodes = HtmlParser::parse_html5(r#"<a href="/path" id="link">text</a>"#);
+        let a = nodes.iter().find(|n| n.tag_name == "a").unwrap();
+        assert_eq!(a.attributes.get("href"), Some(&"/path".to_string()));
+        assert_eq!(a.attributes.get("id"), Some(&"link".to_string()));
+    }
+
+    #[test]
+    fn html5_multiple_void_elements() {
+        let nodes = HtmlParser::parse_html5("<div><hr><hr><hr></div>");
+        let div = nodes.iter().find(|n| n.tag_name == "div").unwrap();
+        let hrs: Vec<_> = nodes.iter().filter(|n| n.tag_name == "hr").collect();
+        assert_eq!(hrs.len(), 3);
+        for hr in &hrs {
+            assert_eq!(hr.parent, Some(div.id));
+            assert!(hr.children.is_empty());
+        }
+    }
+
+    #[test]
+    fn html5_deeply_nested() {
+        let nodes = HtmlParser::parse_html5("<div><div><div><div><span>deep</span></div></div></div></div>");
+        let span = nodes.iter().find(|n| n.tag_name == "span").unwrap();
+        // Walk up parent chain to verify depth
+        let mut depth = 0;
+        let mut current = span.parent;
+        while let Some(pid) = current {
+            depth += 1;
+            current = nodes[pid].parent;
+        }
+        assert!(depth >= 4, "span should be nested at least 4 deep, got {}", depth);
+    }
+
+    #[test]
+    fn html5_text_content_preserved() {
+        let nodes = HtmlParser::parse_html5("<p>  hello  </p>");
+        let text = nodes.iter().find(|n| n.node_type == NodeType::Text).unwrap();
+        // HTML5 tokenizer preserves data as-is
+        assert!(text.text_content.contains("hello"));
+    }
+
+    #[test]
+    fn html5_comment_nodes_ignored() {
+        let nodes = HtmlParser::parse_html5("<div><!-- comment --><p>text</p></div>");
+        let p = nodes.iter().find(|n| n.tag_name == "p").unwrap();
+        let div = nodes.iter().find(|n| n.tag_name == "div").unwrap();
+        assert_eq!(p.parent, Some(div.id));
+    }
+
+    #[test]
+    fn html5_document_root_has_no_parent() {
+        let nodes = HtmlParser::parse_html5("<div>x</div>");
+        assert_eq!(nodes[0].parent, None);
+        assert_eq!(nodes[0].node_type, NodeType::Document);
+    }
+
+    #[test]
+    fn is_void_element_covers_all_void_tags() {
+        let voids = ["area", "base", "br", "col", "embed", "hr", "img", "input",
+                     "link", "meta", "param", "source", "track", "wbr"];
+        for tag in &voids {
+            assert!(HtmlParser::is_void_element(tag), "{} should be void", tag);
+        }
+        assert!(!HtmlParser::is_void_element("div"));
+        assert!(!HtmlParser::is_void_element("span"));
+    }
 }
