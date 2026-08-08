@@ -492,4 +492,98 @@ mod tests {
         SoftwareRasterizer::copy_within(&mut buf, 0, 0, 4, 4, 1, 1);
         assert_eq!(buf.get_pixel(4, 4), [255, 0, 0, 255]);
     }
+
+    #[test]
+    fn draw_line_diagonal() {
+        let mut buf = PixelBuffer::new(10, 10);
+        buf.draw_line(0, 0, 5, 5, 0, 0, 0, 255);
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(5, 5), [0, 0, 0, 255]);
+        // Some intermediate pixels should be set
+        assert_eq!(buf.get_pixel(2, 2), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn fill_rect_clamped_to_buffer() {
+        let mut buf = PixelBuffer::new(8, 8);
+        buf.fill_rect(5, 5, 100, 100, 255, 0, 0, 255);
+        assert_eq!(buf.get_pixel(5, 5), [255, 0, 0, 255]);
+        assert_eq!(buf.get_pixel(7, 7), [255, 0, 0, 255]);
+        // Outside the buffer is still white
+        assert_eq!(buf.get_pixel(0, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn stroke_ellipse_zero_radius_noop() {
+        let mut buf = PixelBuffer::new(10, 10);
+        SoftwareRasterizer::stroke_ellipse(&mut buf, 5, 5, 0, 0, 0, 0, 0, 255);
+        // Should not panic, and no pixels should be set
+        assert_eq!(buf.get_pixel(5, 5), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn blend_pixel_out_of_bounds_noop() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.clear(0, 0, 0, 255);
+        buf.blend_pixel(100, 100, 255, 255, 255, 128);
+        // No panic, original pixels unchanged
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn crop_beyond_buffer_boundary() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.clear(100, 200, 50, 255);
+        let cropped = buf.crop(2, 2, 10, 10);
+        assert_eq!(cropped.width, 10);
+        assert_eq!(cropped.height, 10);
+        // Pixels within source bounds should be copied
+        assert_eq!(cropped.get_pixel(0, 0), [100, 200, 50, 255]);
+        // Pixels beyond source bounds should be white (default)
+        assert_eq!(cropped.get_pixel(5, 5), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn render_gradient_v_single_row() {
+        let buf = SoftwareRasterizer::render_gradient_v(4, 1, [0, 0, 0, 255], [255, 255, 255, 255]);
+        // Single row should be the top color (t=0)
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn render_gradient_h_single_col() {
+        let buf = SoftwareRasterizer::render_gradient_h(1, 4, [0, 0, 0, 255], [255, 255, 255, 255]);
+        // Single column should be the left color (t=0)
+        assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn compute_hash_deterministic() {
+        let mut buf = PixelBuffer::new(4, 4);
+        buf.set_pixel(0, 0, 1, 2, 3, 4);
+        let h1 = buf.compute_hash();
+        let h2 = buf.compute_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn fill_circle_boundary_pixels() {
+        let mut buf = PixelBuffer::new(20, 20);
+        buf.fill_circle(10, 10, 5, 0, 0, 0, 255);
+        // Center should be filled
+        assert_eq!(buf.get_pixel(10, 10), [0, 0, 0, 255]);
+        // Edge should be filled
+        assert_eq!(buf.get_pixel(15, 10), [0, 0, 0, 255]);
+        // Far outside should not be filled
+        assert_eq!(buf.get_pixel(0, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn stroke_rect_interior_is_empty() {
+        let mut buf = PixelBuffer::new(10, 10);
+        buf.stroke_rect(2, 2, 6, 6, 0, 0, 0, 255);
+        // Interior should be untouched (white)
+        assert_eq!(buf.get_pixel(4, 4), [255, 255, 255, 255]);
+        assert_eq!(buf.get_pixel(5, 5), [255, 255, 255, 255]);
+    }
 }

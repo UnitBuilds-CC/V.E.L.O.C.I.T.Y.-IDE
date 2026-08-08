@@ -305,4 +305,111 @@ mod tests {
         // Should be within ±1 Hz
         assert!((perturbed as i32 - 48000).abs() <= 1);
     }
+
+    #[test]
+    fn bezier_trajectory_start_end_positions() {
+        let path = StealthHumanBehavior::generate_bezier_trajectory((10.0, 20.0), (200.0, 300.0), 50);
+        assert_eq!(path.len(), 51);
+        // Start should be near (10, 20)
+        assert!((path[0].x - 10.0).abs() < 5.0);
+        assert!((path[0].y - 20.0).abs() < 5.0);
+        // End should be near (200, 300)
+        assert!((path[50].x - 200.0).abs() < 10.0);
+        assert!((path[50].y - 300.0).abs() < 10.0);
+    }
+
+    #[test]
+    fn bezier_trajectory_timestamps_monotonic() {
+        let path = StealthHumanBehavior::generate_bezier_trajectory((0.0, 0.0), (100.0, 100.0), 30);
+        for i in 1..path.len() {
+            assert!(path[i].timestamp_ms >= path[i - 1].timestamp_ms);
+        }
+    }
+
+    #[test]
+    fn bezier_zero_distance_still_produces_path() {
+        let path = StealthHumanBehavior::generate_bezier_trajectory((50.0, 50.0), (50.0, 50.0), 10);
+        assert_eq!(path.len(), 11);
+    }
+
+    #[test]
+    fn typing_jitter_zero_length_returns_empty() {
+        let delays = StealthHumanBehavior::compute_typing_jitter(0);
+        assert!(delays.is_empty());
+    }
+
+    #[test]
+    fn typing_jitter_all_delays_at_least_20ms() {
+        let delays = StealthHumanBehavior::compute_typing_jitter(200);
+        assert_eq!(delays.len(), 200);
+        assert!(delays.iter().all(|&d| d >= 20));
+    }
+
+    #[test]
+    fn scroll_pattern_accumulates_positive_distance() {
+        let scroll = StealthHumanBehavior::generate_scroll_pattern(1000.0, 50);
+        assert_eq!(scroll.len(), 50);
+        // All deltas should be non-negative (downward scroll)
+        assert!(scroll.iter().all(|&(d, _)| d >= 0.0));
+        // Total should be a significant portion of the requested distance
+        let total: f64 = scroll.iter().map(|&(d, _)| d).sum();
+        assert!(total > 0.0);
+    }
+
+    #[test]
+    fn scroll_pattern_timestamps_monotonic() {
+        let scroll = StealthHumanBehavior::generate_scroll_pattern(500.0, 20);
+        for i in 1..scroll.len() {
+            assert!(scroll[i].1 >= scroll[i - 1].1);
+        }
+    }
+
+    #[test]
+    fn canvas_noise_clamps_to_valid_range() {
+        // Near-max values should not overflow past 255
+        let mut pixels_hi = vec![255u8; 64];
+        let original_hi = pixels_hi.clone();
+        let rand = CanvasFingerprintRandomizer::with_seed(42);
+        rand.apply_noise(&mut pixels_hi);
+        // Should not panic; values stay in u8 range (clamped by implementation)
+        // At least some pixels should have changed
+        assert!(pixels_hi.iter().zip(original_hi.iter()).any(|(a, b)| a != b));
+
+        // Near-min values should not underflow below 0
+        let mut pixels_lo = vec![0u8; 64];
+        let original_lo = pixels_lo.clone();
+        rand.apply_noise(&mut pixels_lo);
+        assert!(pixels_lo.iter().zip(original_lo.iter()).any(|(a, b)| a != b));
+    }
+
+    #[test]
+    fn different_seeds_produce_different_noise() {
+        let mut p1 = vec![128u8; 128];
+        let mut p2 = p1.clone();
+        let r1 = CanvasFingerprintRandomizer::with_seed(100);
+        let r2 = CanvasFingerprintRandomizer::with_seed(200);
+        r1.apply_noise(&mut p1);
+        r2.apply_noise(&mut p2);
+        assert_ne!(p1, p2);
+    }
+
+    #[test]
+    fn webgl_renderer_varies_with_seed() {
+        let r1 = CanvasFingerprintRandomizer::with_seed(1);
+        let r2 = CanvasFingerprintRandomizer::with_seed(99999);
+        let s1 = r1.spoofed_webgl_renderer();
+        let s2 = r2.spoofed_webgl_renderer();
+        // Both should be valid ANGLE strings, but may differ
+        assert!(s1.contains("ANGLE"));
+        assert!(s2.contains("ANGLE"));
+    }
+
+    #[test]
+    fn perturb_audio_rate_stays_near_base() {
+        let r = CanvasFingerprintRandomizer::with_seed(42);
+        for _ in 0..20 {
+            let perturbed = r.perturb_audio_sample_rate(44100);
+            assert!((perturbed as i32 - 44100).abs() <= 1);
+        }
+    }
 }

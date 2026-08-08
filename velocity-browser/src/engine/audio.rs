@@ -455,4 +455,160 @@ mod tests {
         assert_eq!(output[0], 0.5);
         assert_eq!(output[1], 0.6);
     }
+
+    #[test]
+    fn gain_clamped_to_unit_range() {
+        let mut engine = WebAudioEngine::new(44100);
+        let id = engine.create_gain(2.5);
+        let node = engine.nodes.iter().find(|n| n.node_id == id).unwrap();
+        assert_eq!(node.gain, 1.0);
+        let id2 = engine.create_gain(-0.5);
+        let node2 = engine.nodes.iter().find(|n| n.node_id == id2).unwrap();
+        assert_eq!(node2.gain, 0.0);
+    }
+
+    #[test]
+    fn remove_node_cleans_references() {
+        let mut engine = WebAudioEngine::new(44100);
+        let osc = engine.create_oscillator(440.0);
+        let gain = engine.create_gain(0.5);
+        engine.connect(osc, gain);
+        assert!(engine.nodes.iter().find(|n| n.node_id == osc).unwrap().connected_to.contains(&gain));
+        assert!(engine.remove_node(gain));
+        assert!(!engine.nodes.iter().find(|n| n.node_id == osc).unwrap().connected_to.contains(&gain));
+    }
+
+    #[test]
+    fn remove_nonexistent_node_returns_false() {
+        let mut engine = WebAudioEngine::new(44100);
+        assert!(!engine.remove_node(9999));
+    }
+
+    #[test]
+    fn disconnect_nonexistent_returns_false() {
+        let mut engine = WebAudioEngine::new(44100);
+        assert!(!engine.disconnect(9999));
+    }
+
+    #[test]
+    fn set_frequency_nonexistent_returns_false() {
+        let mut engine = WebAudioEngine::new(44100);
+        assert!(!engine.set_frequency(9999, 880.0));
+    }
+
+    #[test]
+    fn set_gain_nonexistent_returns_false() {
+        let mut engine = WebAudioEngine::new(44100);
+        assert!(!engine.set_gain(9999, 0.5));
+    }
+
+    #[test]
+    fn oscillator_type_as_str_values() {
+        assert_eq!(AudioNodeType::Oscillator.as_str(), "OscillatorNode");
+        assert_eq!(AudioNodeType::Gain.as_str(), "GainNode");
+        assert_eq!(AudioNodeType::Filter.as_str(), "BiquadFilterNode");
+        assert_eq!(AudioNodeType::Delay.as_str(), "DelayNode");
+        assert_eq!(AudioNodeType::Destination.as_str(), "AudioDestinationNode");
+        assert_eq!(AudioNodeType::BufferSource.as_str(), "AudioBufferSourceNode");
+    }
+
+    #[test]
+    fn oscillator_waveform_type_strings() {
+        assert_eq!(OscillatorType::Sine.as_str(), "sine");
+        assert_eq!(OscillatorType::Square.as_str(), "square");
+        assert_eq!(OscillatorType::Sawtooth.as_str(), "sawtooth");
+        assert_eq!(OscillatorType::Triangle.as_str(), "triangle");
+    }
+
+    #[test]
+    fn generate_sine_matches_waveform() {
+        let engine = WebAudioEngine::new(44100);
+        let sine = engine.generate_sine_wave(440.0, 0.01);
+        let waveform = engine.generate_waveform(OscillatorType::Sine, 440.0, 0.01);
+        assert_eq!(sine.len(), waveform.len());
+        for (a, b) in sine.iter().zip(waveform.iter()) {
+            assert!((a - b).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn analyzer_data_returns_correct_sizes() {
+        let mut engine = WebAudioEngine::new(44100);
+        let aid = engine.create_analyzer();
+        let data = engine.get_analyzer_data(aid).unwrap();
+        assert_eq!(data.frequency_data.len(), 512);
+        assert_eq!(data.time_domain_data.len(), 1024);
+    }
+
+    #[test]
+    fn analyzer_data_none_for_wrong_id() {
+        let engine = WebAudioEngine::new(44100);
+        assert!(engine.get_analyzer_data(9999).is_none());
+    }
+
+    #[test]
+    fn process_graph_no_destination_returns_silence() {
+        let mut engine = WebAudioEngine::new(44100);
+        engine.create_oscillator(440.0);
+        let output = engine.process_graph(0.01);
+        assert!(output.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn advance_time_does_nothing_when_stopped() {
+        let mut engine = WebAudioEngine::new(44100);
+        engine.advance_time(5.0);
+        assert_eq!(engine.current_time(), 0.0);
+    }
+
+    #[test]
+    fn connect_nonexistent_from_returns_false() {
+        let mut engine = WebAudioEngine::new(44100);
+        let osc = engine.create_oscillator(440.0);
+        assert!(!engine.connect(99999, osc));
+    }
+
+    #[test]
+    fn connect_duplicate_is_idempotent() {
+        let mut engine = WebAudioEngine::new(44100);
+        let a = engine.create_oscillator(440.0);
+        let b = engine.create_gain(0.5);
+        assert!(engine.connect(a, b));
+        assert!(engine.connect(a, b)); // second connect should not duplicate
+        let node = engine.nodes.iter().find(|n| n.node_id == a).unwrap();
+        assert_eq!(node.connected_to.iter().filter(|&id| *id == b).count(), 1);
+    }
+
+    #[test]
+    fn node_count_tracks_additions_and_removals() {
+        let mut engine = WebAudioEngine::new(44100);
+        assert_eq!(engine.node_count(), 0);
+        let a = engine.create_oscillator(440.0);
+        assert_eq!(engine.node_count(), 1);
+        let _b = engine.create_gain(0.5);
+        assert_eq!(engine.node_count(), 2);
+        engine.remove_node(a);
+        assert_eq!(engine.node_count(), 1);
+    }
+
+    #[test]
+    fn master_gain_affects_output_level() {
+        let build_engine = |mg: f32| -> Vec<f32> {
+            let mut engine = WebAudioEngine::new(44100);
+            engine.master_gain = mg;
+            let osc = engine.create_oscillator(440.0);
+            let dest = engine.create_destination();
+            engine.connect(osc, dest);
+            engine.process_graph(0.01)
+        };
+        let silent = build_engine(0.0);
+        let loud = build_engine(1.0);
+        // Zero gain should produce silence
+        assert!(silent.iter().all(|&s| s == 0.0));
+        // Non-zero gain should produce audible output
+        assert!(loud.iter().any(|&s| s != 0.0));
+        // Higher gain produces larger samples
+        let peak_loud = loud.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(peak_loud > 0.0);
+    }
 }

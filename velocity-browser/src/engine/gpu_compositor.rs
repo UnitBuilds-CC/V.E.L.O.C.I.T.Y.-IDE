@@ -400,4 +400,138 @@ mod tests {
         compositor.composite_frame();
         assert_eq!(compositor.dirty_rects.len(), 0);
     }
+
+    #[test]
+    fn remove_layer_nonexistent() {
+        let mut c = GpuTileCompositor::new();
+        assert!(!c.remove_layer(999));
+    }
+
+    #[test]
+    fn set_opacity_nonexistent_layer() {
+        let mut c = GpuTileCompositor::new();
+        assert!(!c.set_layer_opacity(999, 0.5));
+    }
+
+    #[test]
+    fn set_visible_nonexistent_layer() {
+        let mut c = GpuTileCompositor::new();
+        assert!(!c.set_layer_visible(999, false));
+    }
+
+    #[test]
+    fn set_transform_nonexistent_layer() {
+        let mut c = GpuTileCompositor::new();
+        assert!(!c.set_layer_transform(999, Transform2D::default()));
+    }
+
+    #[test]
+    fn write_pixels_nonexistent_layer() {
+        let mut c = GpuTileCompositor::new();
+        assert!(!c.write_layer_pixels(999, 0, 0, 1, 1, &[0; 4]));
+    }
+
+    #[test]
+    fn tile_count_calculation() {
+        let mut c = GpuTileCompositor::new();
+        c.viewport_width = 512;
+        c.viewport_height = 512;
+        c.tile_size = 256;
+        assert_eq!(c.tile_count(), (2, 2));
+        // Non-even division should ceil
+        c.viewport_width = 300;
+        c.viewport_height = 300;
+        assert_eq!(c.tile_count(), (2, 2));
+    }
+
+    #[test]
+    fn read_pixel_out_of_bounds() {
+        let c = GpuTileCompositor::new();
+        assert_eq!(c.read_pixel(99999, 99999), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn frame_count_increments() {
+        let mut c = GpuTileCompositor::new();
+        c.viewport_width = 32;
+        c.viewport_height = 32;
+        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        assert_eq!(c.frame_count(), 0);
+        c.composite_frame();
+        assert_eq!(c.frame_count(), 1);
+        c.composite_frame();
+        assert_eq!(c.frame_count(), 2);
+    }
+
+    #[test]
+    fn layer_count_tracks_layers() {
+        let mut c = GpuTileCompositor::new();
+        assert_eq!(c.layer_count(), 0);
+        let l1 = c.create_layer(10, 10);
+        assert_eq!(c.layer_count(), 1);
+        c.create_layer(20, 20);
+        assert_eq!(c.layer_count(), 2);
+        c.remove_layer(l1);
+        assert_eq!(c.layer_count(), 1);
+    }
+
+    #[test]
+    fn create_layer_assigns_unique_ids() {
+        let mut c = GpuTileCompositor::new();
+        let l1 = c.create_layer(10, 10);
+        let l2 = c.create_layer(10, 10);
+        let l3 = c.create_layer(10, 10);
+        assert_ne!(l1, l2);
+        assert_ne!(l2, l3);
+    }
+
+    #[test]
+    fn set_layer_opacity_clamps() {
+        let mut c = GpuTileCompositor::new();
+        let l = c.create_layer(10, 10);
+        c.set_layer_opacity(l, 5.0);
+        assert_eq!(c.active_layers[0].opacity, 1.0);
+        c.set_layer_opacity(l, -1.0);
+        assert_eq!(c.active_layers[0].opacity, 0.0);
+    }
+
+    #[test]
+    fn invisible_layer_not_composited() {
+        let mut c = GpuTileCompositor::new();
+        c.viewport_width = 32;
+        c.viewport_height = 32;
+        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        let l = c.create_layer(32, 32);
+        let mut pixels = vec![0u8; 32 * 32 * 4];
+        for p in pixels.chunks_exact_mut(4) { p[0] = 255; p[3] = 255; }
+        c.write_layer_pixels(l, 0, 0, 32, 32, &pixels);
+        c.set_layer_visible(l, false);
+        c.composite_frame();
+        // Pixel should be black (invisible layer not composited)
+        let (r, _g, _b, _a) = c.read_pixel(0, 0);
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn read_tile_returns_data() {
+        let mut c = GpuTileCompositor::new();
+        c.viewport_width = 32;
+        c.viewport_height = 32;
+        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        c.tile_size = 32;
+        let tile = c.read_tile(0, 0);
+        assert_eq!(tile.len(), 32 * 32 * 4);
+    }
+
+    #[test]
+    fn composite_clears_layer_dirty_flags() {
+        let mut c = GpuTileCompositor::new();
+        c.viewport_width = 32;
+        c.viewport_height = 32;
+        c.frame_buffer = vec![0u8; 32 * 32 * 4];
+        let l = c.create_layer(32, 32);
+        assert!(c.active_layers[0].dirty);
+        c.composite_frame();
+        assert!(!c.active_layers.iter().find(|layer| layer.layer_id == l).unwrap().dirty);
+    }
 }
