@@ -4,6 +4,7 @@ use super::super::provider::*;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::utils::build_inline_tool_docs;
 use crate::editor::speculative_precomp::precompute_files;
+use crate::safety::SafeMutex;
 use crate::usage::{
     load_accounts, load_azure_accounts, load_local_ollama_accounts, load_openrouter_accounts,
     UsageTracker,
@@ -90,7 +91,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                         .unwrap()
                         .push(status.clone());
                     if let Some(progress) = &progress_collector {
-                        let mut progress = progress.lock().unwrap();
+                        let mut progress = progress.lock_safe();
                         progress.status_updates.push(status.clone());
                         progress.events.push(HeadlessSubAgentEvent {
                             kind: HeadlessSubAgentEventKind::Status,
@@ -99,9 +100,9 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                     }
                 }
                 AgentToUiMessage::OutputToken(token) | AgentToUiMessage::ThoughtToken(token) => {
-                    transcript_collector.lock().unwrap().push_str(&token);
+                    transcript_collector.lock_safe().push_str(&token);
                     if let Some(progress) = &progress_collector {
-                        let mut progress = progress.lock().unwrap();
+                        let mut progress = progress.lock_safe();
                         progress.transcript.push_str(&token);
                         progress.events.push(HeadlessSubAgentEvent {
                             kind: HeadlessSubAgentEventKind::Transcript,
@@ -112,7 +113,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                 AgentToUiMessage::UpdateFileBuffer { path, .. } => {
                     if let Some(progress) = &progress_collector {
                         let changed_path = path.display().to_string();
-                        let mut progress = progress.lock().unwrap();
+                        let mut progress = progress.lock_safe();
                         if !progress.changed_files.contains(&changed_path) {
                             progress.changed_files.push(changed_path.clone());
                         }
@@ -129,11 +130,10 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                 } => {
                     let status = format!("Auto-approving tool: {tool_name}");
                     status_updates_collector
-                        .lock()
-                        .unwrap()
+                        .lock_safe()
                         .push(status.clone());
                     if let Some(progress) = &progress_collector {
-                        let mut progress = progress.lock().unwrap();
+                        let mut progress = progress.lock_safe();
                         progress.status_updates.push(status.clone());
                         progress.events.push(HeadlessSubAgentEvent {
                             kind: HeadlessSubAgentEventKind::ToolApproval,
@@ -151,7 +151,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     if let Some(progress) = &progress_collector {
-                        progress.lock().unwrap().events.push(HeadlessSubAgentEvent {
+                        progress.lock_safe().events.push(HeadlessSubAgentEvent {
                             kind: HeadlessSubAgentEventKind::ToolStarted,
                             message: tool_name,
                         });
@@ -159,7 +159,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                 }
                 AgentToUiMessage::ToolExecutionFinished { tool_name, result } => {
                     if let Some(progress) = &progress_collector {
-                        progress.lock().unwrap().events.push(HeadlessSubAgentEvent {
+                        progress.lock_safe().events.push(HeadlessSubAgentEvent {
                             kind: HeadlessSubAgentEventKind::ToolFinished,
                             message: format!("{} => {}", tool_name, result),
                         });
@@ -194,8 +194,8 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     drop(agent_event_tx);
     let _ = collector.join();
 
-    let status_updates = status_updates.lock().unwrap().clone();
-    let transcript = transcript.lock().unwrap().clone();
+    let status_updates = status_updates.lock_safe().clone();
+    let transcript = transcript.lock_safe().clone();
     HeadlessSubAgentResult {
         status_updates,
         transcript,

@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::agent::{AiProvider, HeadlessSubAgentEventKind, HeadlessSubAgentProgress};
 use crate::automation::instruction_registry::AgentTaskKind;
 use crate::automation::task_router::RoutedModelRoute;
+use crate::safety::SafeMutex;
 
 use super::super::blueprint::Task;
 use super::super::TaskId;
@@ -138,7 +139,7 @@ impl WorkerHandle for LiveWorkerHandle {
     }
 
     fn snapshot(&self) -> WorkerThreadSnapshot {
-        let progress = self.progress.lock().unwrap();
+        let progress = self.progress.lock_safe();
         WorkerThreadSnapshot {
             events: progress
                 .events

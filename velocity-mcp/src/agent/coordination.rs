@@ -213,13 +213,13 @@ impl CoordinationBus {
 
     /// Get a snapshot of all agent progress reports.
     pub fn all_progress(&self) -> Vec<AgentProgress> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_safe();
         state.progress.values().cloned().collect()
     }
 
     /// Get all currently locked files.
     pub fn locked_files(&self) -> Vec<(PathBuf, String)> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_safe();
         state
             .file_locks
             .iter()
@@ -229,7 +229,7 @@ impl CoordinationBus {
 
     /// Get pending help requests for a specific agent.
     pub fn pending_help_for(&self, agent_id: &str) -> Vec<(String, String)> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_safe();
         state
             .help_requests
             .iter()
@@ -240,7 +240,7 @@ impl CoordinationBus {
 
     /// Clear all locks and progress (session cleanup).
     pub fn reset(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
         state.file_locks.clear();
         state.progress.clear();
         state.help_requests.clear();

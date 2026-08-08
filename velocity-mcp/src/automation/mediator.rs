@@ -1,3 +1,4 @@
+use crate::safety::SafeMutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -110,7 +111,7 @@ impl MediatorArena {
         site_map: &SiteMap,
     ) -> Result<(), Conflict> {
         self.prune_stale_locks(Duration::from_secs(1800));
-        let mut locks_guard = self.locks.lock().unwrap();
+        let mut locks_guard = self.locks.lock_safe();
 
         let requested = EditLock {
             file_path: file_path.clone(),
@@ -191,7 +192,7 @@ impl MediatorArena {
 
     /// Release locks held by an agent on a file.
     pub fn release_lock(&self, file_path: &Path, agent_id: &str) {
-        let mut locks_guard = self.locks.lock().unwrap();
+        let mut locks_guard = self.locks.lock_safe();
         let target_canonical = canonicalize_scope_path(file_path);
         locks_guard.retain(|path, file_locks| {
             if canonicalize_scope_path(path) == target_canonical {
@@ -203,7 +204,7 @@ impl MediatorArena {
 
     /// Release every lock held by a specific agent across all tracked paths.
     pub fn release_locks_for_agent(&self, agent_id: &str) {
-        let mut locks_guard = self.locks.lock().unwrap();
+        let mut locks_guard = self.locks.lock_safe();
         locks_guard.retain(|_, file_locks| {
             file_locks.retain(|lock| lock.agent_id != agent_id);
             !file_locks.is_empty()
@@ -212,7 +213,7 @@ impl MediatorArena {
 
     /// Drop locks older than the provided age threshold.
     pub fn prune_stale_locks(&self, max_age: Duration) {
-        let mut locks_guard = self.locks.lock().unwrap();
+        let mut locks_guard = self.locks.lock_safe();
         let now = Instant::now();
         locks_guard.retain(|_, file_locks| {
             file_locks.retain(|lock| {
@@ -226,14 +227,14 @@ impl MediatorArena {
 
     /// Get active locks for a specific file.
     pub fn get_locks_for_file(&self, file_path: &Path) -> Vec<EditLock> {
-        let locks_guard = self.locks.lock().unwrap();
+        let locks_guard = self.locks.lock_safe();
         locks_guard.get(file_path).cloned().unwrap_or_default()
     }
 
     /// All currently held locks across every file. Test-only diagnostic.
     #[cfg(test)]
     pub fn active_locks(&self) -> Vec<EditLock> {
-        let locks_guard = self.locks.lock().unwrap();
+        let locks_guard = self.locks.lock_safe();
         locks_guard
             .values()
             .flat_map(|locks| locks.iter().cloned())
