@@ -93,25 +93,21 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
     match method {
         // ── Rectangles ──
         "fillRect" | "strokeRect" | "clearRect" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         // ── Path methods ──
         "beginPath" | "closePath" | "moveTo" | "lineTo" | "bezierCurveTo"
         | "quadraticCurveTo" | "arc" | "arcTo" | "ellipse" | "rect"
         | "roundRect" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         "fill" | "stroke" | "clip" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         "isPointInPath" | "isPointInStroke" => JsValue::Boolean(false),
         // ── Text ──
         "fillText" | "strokeText" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         "measureText" => {
             let text = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
@@ -130,13 +126,11 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
         }
         // ── State ──
         "save" | "restore" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         // ── Transforms ──
         "translate" | "rotate" | "scale" | "transform" | "setTransform" | "resetTransform" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         "getTransform" => {
             let mut dom_matrix = HashMap::new();
@@ -163,8 +157,7 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
             make_image_data(w, h)
         }
         "putImageData" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         "createConicGradient" | "createLinearGradient" | "createRadialGradient" => {
             let mut gradient = HashMap::new();
@@ -178,8 +171,7 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
             JsValue::Object(pattern)
         }
         "drawImage" | "drawFocusIfNeeded" => {
-            record_op(map, method, args);
-            JsValue::Undefined
+            JsValue::Object(record_op(map, method, args))
         }
         "getContextAttributes" => {
             let mut attrs = HashMap::new();
@@ -193,11 +185,31 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
     }
 }
 
-fn record_op(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) {
-    // We can't mutate `map` (borrowed), but the caller uses assign_to_target
-    // to write back. We encode the op in the return value path. For now this is
-    // a no-op placeholder — the important thing is the methods exist and don't throw.
-    let _ = (map, method, args);
+fn record_op(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> HashMap<String, JsValue> {
+    // Record the operation in the __ops__ array for agent introspection
+    let mut m = map.clone();
+    if let Some(JsValue::Array(ops)) = m.get_mut("__ops__") {
+        let mut op = HashMap::new();
+        op.insert("method".to_string(), JsValue::String(method.to_string()));
+        // Serialize arguments as strings for introspection
+        let arg_strs: Vec<JsValue> = args.iter().map(|a| {
+            match a {
+                JsValue::Number(n) => JsValue::String(format!("{}", n)),
+                JsValue::String(s) => JsValue::String(format!("\"{}\"", s)),
+                JsValue::Boolean(b) => JsValue::String(format!("{}", b)),
+                _ => JsValue::String("[object]".to_string()),
+            }
+        }).collect();
+        op.insert("args".to_string(), JsValue::Array(arg_strs));
+        op.insert("timestamp".to_string(), JsValue::Number(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64() * 1000.0)
+                .unwrap_or(0.0)
+        ));
+        ops.push(JsValue::Object(op));
+    }
+    m
 }
 
 fn make_image_data(w: u32, h: u32) -> JsValue {

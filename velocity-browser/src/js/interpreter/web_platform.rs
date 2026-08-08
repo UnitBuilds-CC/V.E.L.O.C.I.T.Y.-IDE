@@ -1175,7 +1175,11 @@ pub(super) fn performance_observer_supported_entry_types() -> JsValue {
     ])
 }
 
-// ── IndexedDB (stub) ─────────────────────────────────────────────────────────
+// ── IndexedDB (functional stub with in-memory storage) ────────────────────────
+
+thread_local! {
+    static IDB_DATABASES: RefCell<HashMap<String, HashMap<String, JsValue>>> = RefCell::new(HashMap::new());
+}
 
 pub(super) fn make_indexed_db() -> JsValue {
     let mut map = HashMap::new();
@@ -1185,23 +1189,73 @@ pub(super) fn make_indexed_db() -> JsValue {
 
 pub(super) fn call_indexed_db_method(method: &str, args: &[JsValue]) -> JsValue {
     match method {
-        "open" | "deleteDatabase" => {
+        "open" => {
             let name = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let version = args.get(1).map(crate::js::interpreter::coercion::to_number).unwrap_or(1.0);
+            
+            // Create database if it doesn't exist
+            IDB_DATABASES.with(|dbs| {
+                let mut dbs = dbs.borrow_mut();
+                if !dbs.contains_key(&name) {
+                    dbs.insert(name.clone(), HashMap::new());
+                }
+            });
+            
+            // Create IDBOpenDBRequest with event handlers
             let mut request = HashMap::new();
             request.insert("__type__".to_string(), JsValue::String("IDBOpenDBRequest".to_string()));
-            request.insert("__db_name__".to_string(), JsValue::String(name));
-            request.insert("result".to_string(), JsValue::Null);
+            request.insert("__db_name__".to_string(), JsValue::String(name.clone()));
+            request.insert("__version__".to_string(), JsValue::Number(version));
+            request.insert("readyState".to_string(), JsValue::String("done".to_string()));
             request.insert("error".to_string(), JsValue::Null);
-            request.insert("readyState".to_string(), JsValue::String("pending".to_string()));
+            
+            // Create the database object
+            let mut db = HashMap::new();
+            db.insert("__type__".to_string(), JsValue::String("IDBDatabase".to_string()));
+            db.insert("name".to_string(), JsValue::String(name.clone()));
+            db.insert("version".to_string(), JsValue::Number(version));
+            db.insert("__object_stores__".to_string(), JsValue::Array(Vec::new()));
+            request.insert("result".to_string(), JsValue::Object(db));
+            
+            // Add success event
+            let mut success_event = HashMap::new();
+            success_event.insert("__type__".to_string(), JsValue::String("Event".to_string()));
+            success_event.insert("type".to_string(), JsValue::String("success".to_string()));
+            request.insert("__pending_event__".to_string(), JsValue::Object(success_event));
+            
+            JsValue::Object(request)
+        }
+        "deleteDatabase" => {
+            let name = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            IDB_DATABASES.with(|dbs| {
+                dbs.borrow_mut().remove(&name);
+            });
+            let mut request = HashMap::new();
+            request.insert("__type__".to_string(), JsValue::String("IDBOpenDBRequest".to_string()));
+            request.insert("readyState".to_string(), JsValue::String("done".to_string()));
+            request.insert("result".to_string(), JsValue::Undefined);
+            request.insert("error".to_string(), JsValue::Null);
             JsValue::Object(request)
         }
         "databases" => {
+            let db_list: Vec<JsValue> = IDB_DATABASES.with(|dbs| {
+                dbs.borrow().keys().map(|name| {
+                    let mut info = HashMap::new();
+                    info.insert("name".to_string(), JsValue::String(name.clone()));
+                    info.insert("version".to_string(), JsValue::Number(1.0));
+                    JsValue::Object(info)
+                }).collect()
+            });
             let mut p = HashMap::new();
             p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
-            p.insert("__resolved__".to_string(), JsValue::Array(Vec::new()));
+            p.insert("__resolved__".to_string(), JsValue::Array(db_list));
             JsValue::Object(p)
         }
-        "cmp" => JsValue::Number(0.0),
+        "cmp" => {
+            let a = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let b = args.get(1).map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            JsValue::Number(a.cmp(&b) as i8 as f64)
+        }
         _ => JsValue::Undefined,
     }
 }

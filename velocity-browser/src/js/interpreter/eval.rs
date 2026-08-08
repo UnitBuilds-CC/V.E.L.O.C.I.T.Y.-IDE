@@ -999,14 +999,71 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 Some("OffscreenCanvas") => return Ok(super::canvas::call_offscreen_canvas_method(map, method, &evaluated_args)),
                 Some("ImageBitmap") => { let result = super::canvas::call_image_bitmap_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
                 Some("Animation") => {
-                    // Web Animations API: play/pause/cancel/finish are no-ops, return self.
+                    // Web Animations API with state tracking
                     let result = match method.as_str() {
-                        "play" | "pause" | "cancel" | "finish" | "reverse" | "updatePlaybackRate" => JsValue::Object(map.clone()),
+                        "play" => {
+                            let mut m = map.clone();
+                            m.insert("playState".to_string(), JsValue::String("running".to_string()));
+                            m.insert("startTime".to_string(), JsValue::Number(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs_f64() * 1000.0)
+                                    .unwrap_or(0.0)
+                            ));
+                            JsValue::Object(m)
+                        }
+                        "pause" => {
+                            let mut m = map.clone();
+                            m.insert("playState".to_string(), JsValue::String("paused".to_string()));
+                            JsValue::Object(m)
+                        }
+                        "cancel" => {
+                            let mut m = map.clone();
+                            m.insert("playState".to_string(), JsValue::String("idle".to_string()));
+                            m.insert("startTime".to_string(), JsValue::Null);
+                            m.insert("currentTime".to_string(), JsValue::Null);
+                            JsValue::Object(m)
+                        }
+                        "finish" => {
+                            let mut m = map.clone();
+                            m.insert("playState".to_string(), JsValue::String("finished".to_string()));
+                            // Set currentTime to effect end
+                            if let Some(JsValue::Object(effect)) = map.get("effect") {
+                                if let Some(JsValue::Object(timing)) = effect.get("timing") {
+                                    let duration = timing.get("duration")
+                                        .and_then(|d| if let JsValue::Number(n) = d { Some(*n) } else { None })
+                                        .unwrap_or(0.0);
+                                    m.insert("currentTime".to_string(), JsValue::Number(duration));
+                                }
+                            }
+                            JsValue::Object(m)
+                        }
+                        "reverse" => {
+                            let mut m = map.clone();
+                            // Toggle playbackRate sign
+                            let rate = m.get("playbackRate")
+                                .and_then(|r| if let JsValue::Number(n) = r { Some(*n) } else { None })
+                                .unwrap_or(1.0);
+                            m.insert("playbackRate".to_string(), JsValue::Number(-rate));
+                            JsValue::Object(m)
+                        }
+                        "updatePlaybackRate" => {
+                            let mut m = map.clone();
+                            let new_rate = evaluated_args.first()
+                                .map(crate::js::interpreter::coercion::to_number)
+                                .unwrap_or(1.0);
+                            m.insert("playbackRate".to_string(), JsValue::Number(new_rate));
+                            JsValue::Object(m)
+                        }
                         "finished" | "ready" => {
                             let mut p = HashMap::new();
                             p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
                             p.insert("__resolved__".to_string(), JsValue::Object(map.clone()));
                             JsValue::Object(p)
+                        }
+                        "addEventListener" | "removeEventListener" => {
+                            // Event listener management
+                            JsValue::Undefined
                         }
                         _ => get_property(&obj, method),
                     };
