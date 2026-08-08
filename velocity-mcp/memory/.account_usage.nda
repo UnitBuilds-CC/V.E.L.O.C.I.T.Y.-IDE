@@ -1,12 +1,12 @@
 account-usage version 2
-date 2026-07-29
+date 2026-08-05
 account_count 24
 account	1
 field	1	label	Acc1
 field	1	tier	free
-field	1	requests	1
-field	1	tokens_in	16850
-field	1	tokens_out	433
+field	1	requests	0
+field	1	tokens_in	0
+field	1	tokens_out	0
 field	1	exhausted	false
 field	1	exhausted_at	-
 field	1	daily_limit	50
@@ -16,8 +16,8 @@ field	10	tier	free
 field	10	requests	0
 field	10	tokens_in	0
 field	10	tokens_out	0
-field	10	exhausted	false
-field	10	exhausted_at	-
+field	10	exhausted	true
+field	10	exhausted_at	2026-08-05T19:45:11Z
 field	10	daily_limit	50
 account	11
 field	11	label	Acc11
@@ -40,27 +40,27 @@ field	12	daily_limit	50
 account	13
 field	13	label	Acc13
 field	13	tier	free
-field	13	requests	0
-field	13	tokens_in	0
-field	13	tokens_out	0
+field	13	requests	1
+field	13	tokens_in	21689
+field	13	tokens_out	116
 field	13	exhausted	false
 field	13	exhausted_at	-
 field	13	daily_limit	50
 account	14
 field	14	label	Acc14
 field	14	tier	free
-field	14	requests	0
-field	14	tokens_in	0
-field	14	tokens_out	0
+field	14	requests	1
+field	14	tokens_in	21254
+field	14	tokens_out	161
 field	14	exhausted	false
 field	14	exhausted_at	-
 field	14	daily_limit	50
 account	15
 field	15	label	Acc15
 field	15	tier	free
-field	15	requests	0
-field	15	tokens_in	0
-field	15	tokens_out	0
+field	15	requests	1
+field	15	tokens_in	21689
+field	15	tokens_out	89
 field	15	exhausted	false
 field	15	exhausted_at	-
 field	15	daily_limit	50
@@ -85,9 +85,9 @@ field	17	daily_limit	50
 account	2
 field	2	label	Acc2
 field	2	tier	free
-field	2	requests	0
-field	2	tokens_in	0
-field	2	tokens_out	0
+field	2	requests	1
+field	2	tokens_in	21689
+field	2	tokens_out	194
 field	2	exhausted	false
 field	2	exhausted_at	-
 field	2	daily_limit	50
@@ -115,8 +115,8 @@ field	5	tier	free
 field	5	requests	0
 field	5	tokens_in	0
 field	5	tokens_out	0
-field	5	exhausted	true
-field	5	exhausted_at	2026-07-29T07:19:40Z
+field	5	exhausted	false
+field	5	exhausted_at	-
 field	5	daily_limit	50
 account	6
 field	6	label	Acc6
@@ -124,17 +124,17 @@ field	6	tier	free
 field	6	requests	0
 field	6	tokens_in	0
 field	6	tokens_out	0
-field	6	exhausted	true
-field	6	exhausted_at	2026-07-29T07:19:41Z
+field	6	exhausted	false
+field	6	exhausted_at	-
 field	6	daily_limit	50
 account	7
 field	7	label	Acc7
 field	7	tier	free
-field	7	requests	0
-field	7	tokens_in	0
-field	7	tokens_out	0
-field	7	exhausted	true
-field	7	exhausted_at	2026-07-29T07:19:42Z
+field	7	requests	1
+field	7	tokens_in	21689
+field	7	tokens_out	119
+field	7	exhausted	false
+field	7	exhausted_at	-
 field	7	daily_limit	50
 account	8
 field	8	label	Acc8
@@ -142,15 +142,15 @@ field	8	tier	free
 field	8	requests	0
 field	8	tokens_in	0
 field	8	tokens_out	0
-field	8	exhausted	true
-field	8	exhausted_at	2026-07-29T07:19:43Z
+field	8	exhausted	false
+field	8	exhausted_at	-
 field	8	daily_limit	50
 account	9
 field	9	label	Acc9
 field	9	tier	free
-field	9	requests	2
-field	9	tokens_in	33700
-field	9	tokens_out	347
+field	9	requests	0
+field	9	tokens_in	0
+field	9	tokens_out	0
 field	9	exhausted	false
 field	9	exhausted_at	-
 field	9	daily_limit	50

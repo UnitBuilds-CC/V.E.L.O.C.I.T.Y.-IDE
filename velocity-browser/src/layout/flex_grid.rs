@@ -276,4 +276,57 @@ mod tests {
         FlexLayoutEngine::compute_flex_children(&parent, &mut children, FlexDirection::Row);
         // Should not panic
     }
+
+    #[test]
+    fn test_column_reverse() {
+        let parent = make_box(0, 300.0, 300.0);
+        let mut children = vec![make_box(1, 100.0, 50.0), make_box(2, 100.0, 50.0)];
+        FlexLayoutEngine::compute_flex_children(&parent, &mut children, FlexDirection::ColumnReverse);
+        // In column-reverse, second item should be above first
+        assert!(children[1].y < children[0].y);
+    }
+
+    #[test]
+    fn test_flex_end_alignment() {
+        let parent = make_box(0, 300.0, 100.0);
+        let mut children = vec![make_box(1, 50.0, 30.0)];
+        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::FlexEnd, &FlexWrap::NoWrap, &[]);
+        assert!((children[0].y - 70.0).abs() < 0.01); // 100 - 30
+    }
+
+    #[test]
+    fn test_flex_start_alignment() {
+        let parent = make_box(0, 300.0, 100.0);
+        let mut children = vec![make_box(1, 50.0, 30.0)];
+        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::FlexStart, &FlexWrap::NoWrap, &[]);
+        assert_eq!(children[0].y, 0.0);
+    }
+
+    #[test]
+    fn test_stretch_alignment() {
+        let parent = make_box(0, 300.0, 100.0);
+        let mut children = vec![make_box(1, 50.0, 30.0)];
+        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::Stretch, &FlexWrap::NoWrap, &[]);
+        assert_eq!(children[0].y, 0.0);
+        assert_eq!(children[0].height, 100.0); // stretched to parent height
+    }
+
+    #[test]
+    fn test_single_child_row() {
+        let parent = make_box(0, 300.0, 100.0);
+        let mut children = vec![make_box(1, 80.0, 40.0)];
+        FlexLayoutEngine::compute_flex_children(&parent, &mut children, FlexDirection::Row);
+        assert_eq!(children[0].x, 0.0);
+        assert_eq!(children[0].y, 0.0);
+    }
+
+    #[test]
+    fn test_many_children_row() {
+        let parent = make_box(0, 600.0, 100.0);
+        let mut children: Vec<LayoutBox> = (0..5).map(|i| make_box(i, 100.0, 50.0)).collect();
+        FlexLayoutEngine::compute_flex_children(&parent, &mut children, FlexDirection::Row);
+        for i in 0..5 {
+            assert_eq!(children[i].x, (i as f32) * 100.0);
+        }
+    }
 }
