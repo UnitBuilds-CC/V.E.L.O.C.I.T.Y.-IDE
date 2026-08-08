@@ -50,9 +50,8 @@ pub struct ConnectorConfig {
     pub headers: Vec<(String, String)>,
 }
 
-// Preset constructors (generic/github/slack) are used by tests now and by the
-// Governance/Integrations panel (Pillar 5b); `requires_secret` backs build_request.
-#[allow(dead_code)]
+// Preset constructors (generic/github/slack) are used by the Governance/Integrations panel;
+// `requires_secret` backs build_request.
 impl ConnectorConfig {
     /// A minimal generic REST connector with no auth.
     pub fn generic(id: impl Into<String>, name: impl Into<String>, base_url: impl Into<String>) -> Self {

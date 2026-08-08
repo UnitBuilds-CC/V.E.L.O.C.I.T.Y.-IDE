@@ -29,7 +29,6 @@ pub fn plan(graph: &TaskGraph) -> Plan {
 }
 
 /// Basic breadth-first ordering.
-#[allow(dead_code)]
 pub fn bfs(graph: &TaskGraph) -> Vec<TaskId> {
     plan(graph).phases.into_iter().flatten().collect()
 }

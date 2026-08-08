@@ -50,6 +50,7 @@ impl OrchestratorPanel {
                 // Compact stats row
                 let has_cycle = scheduler::detect_cycle(&self.graph);
                 let plan = if has_cycle { scheduler::Plan::default() } else { scheduler::plan(&self.graph) };
+                let bfs_order = if has_cycle { Vec::new() } else { scheduler::bfs(&self.graph) };
                 let completed_count = self.registry.as_ref().map(|r| r.statuses.values().filter(|s| matches!(s, TaskStatus::Done(_))).count()).unwrap_or(0);
                 let retryable_blocked = self.retryable_blocked_task_count();
 
@@ -57,6 +58,8 @@ impl OrchestratorPanel {
                     ui.label(RichText::new(format!("Tasks: {}", self.graph.tasks.len())).small());
                     ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                     ui.label(RichText::new(format!("Phases: {}", plan.phases.len())).small());
+                    ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
+                    ui.label(RichText::new(format!("BFS order: {}", bfs_order.len())).small());
                     ui.label(RichText::new("·").small().color(palette.text_muted.gamma_multiply(0.6)));
                     ui.label(RichText::new(format!("Done: {}", completed_count)).small().color(palette.success));
                     if retryable_blocked > 0 {

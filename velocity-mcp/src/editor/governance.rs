@@ -27,7 +27,6 @@ pub enum Decision {
 }
 
 impl Decision {
-    #[allow(dead_code)] // label() consumed by tests + future UI badges
     pub fn label(&self) -> &'static str {
         match self {
             Decision::Allow => "allow",
@@ -135,9 +134,7 @@ pub struct ActionContext {
     pub used_cost_cents: u64,
 }
 
-// Builder helpers exercised by tests; the dispatch gate builds the context via
-// a struct literal.
-#[allow(dead_code)]
+// Builder helpers for constructing ActionContext in tests and production code.
 impl ActionContext {
     pub fn tool(name: impl Into<String>) -> Self {
         Self {
@@ -256,13 +253,13 @@ pub fn gate_tool_call(
     arguments: &serde_json::Value,
 ) -> Result<(), String> {
     let engine = PolicyEngine::load(workspace_root);
-    let action = ActionContext {
-        tool: tool.to_string(),
-        path: arg_path(arguments),
-        domain: arg_domain(arguments),
-        used_tokens: 0,
-        used_cost_cents: 0,
-    };
+    let mut action = ActionContext::tool(tool);
+    if let Some(p) = arg_path(arguments) {
+        action = action.with_path(p);
+    }
+    if let Some(d) = arg_domain(arguments) {
+        action = action.with_domain(d);
+    }
     match engine.evaluate(&action) {
         Decision::Allow => Ok(()),
         Decision::Deny => Err(format!("blocked by policy: tool '{tool}' is denied")),
@@ -277,6 +274,23 @@ pub fn gate_tool_call(
     }
 }
 
+/// Evaluate policy for a tool call with usage tracking (tokens/cost).
+/// Returns the decision without enqueuing for approval.
+pub fn evaluate_with_usage(
+    workspace_root: &Path,
+    tool: &str,
+    arguments: &serde_json::Value,
+    used_tokens: u64,
+    used_cost_cents: u64,
+) -> Decision {
+    let engine = PolicyEngine::load(workspace_root);
+    let action = ActionContext::tool(tool)
+        .with_path(arg_path(arguments).unwrap_or_default())
+        .with_domain(arg_domain(arguments).unwrap_or_default())
+        .with_usage(used_tokens, used_cost_cents);
+    engine.evaluate(&action)
+}
+
 /// Status of a queued approval request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApprovalStatus {
@@ -286,7 +300,6 @@ pub enum ApprovalStatus {
 }
 
 impl ApprovalStatus {
-    #[allow(dead_code)] // label() consumed by tests + future UI badges
     pub fn label(&self) -> &'static str {
         match self {
             ApprovalStatus::Pending => "pending",
@@ -313,9 +326,7 @@ pub struct ApprovalQueue {
     pub items: Vec<ApprovalItem>,
 }
 
-// Some management methods are consumed by the Governance panel and the policy
-// gate; not every one has a non-test caller yet.
-#[allow(dead_code)]
+// Management methods for the approval queue, consumed by the Governance panel and policy gate.
 impl ApprovalQueue {
     /// Load from `.velocity/approvals.json`, or an empty queue if absent.
     pub fn load(workspace_root: &Path) -> Self {

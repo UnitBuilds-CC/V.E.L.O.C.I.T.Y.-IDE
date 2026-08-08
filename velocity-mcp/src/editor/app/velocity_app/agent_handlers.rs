@@ -310,7 +310,6 @@ impl VelocityApp {
     }
 
     /// Focus or open the orchestrator tab (prefers focusing existing tab).
-    #[allow(dead_code)] // Available for future command palette binding.
     pub fn focus_orchestrator_tab(&mut self) {
         if let Some(tab) = self
             .tabs

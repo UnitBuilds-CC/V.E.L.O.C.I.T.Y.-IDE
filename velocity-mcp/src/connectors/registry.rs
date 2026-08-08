@@ -21,9 +21,8 @@ pub struct ConnectorRegistry {
     pub connectors: Vec<ConnectorConfig>,
 }
 
-// Management methods (save/add/remove/get_mut/len/is_empty) are consumed by the
-// Governance/Integrations panel (Pillar 5b); `load`/`get` back the connector_call tool.
-#[allow(dead_code)]
+// Management methods consumed by the Governance/Integrations panel;
+// `load`/`get` back the connector_call tool.
 impl ConnectorRegistry {
     /// Load the registry from `.velocity/connectors.json`, or an empty registry
     /// if the file is missing or unreadable.
