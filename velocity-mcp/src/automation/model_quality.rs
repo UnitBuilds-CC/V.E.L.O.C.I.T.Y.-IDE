@@ -78,7 +78,7 @@ pub struct ProviderCapability {
 pub struct ModelQualityIndex;
 
 impl ModelQualityIndex {
-    pub fn provider_capabilities() -> [ProviderCapability; 14] {
+    pub fn provider_capabilities() -> [ProviderCapability; 16] {
         [
             ProviderCapability {
                 provider: AiProvider::CloudflareWorkersAi,
@@ -106,9 +106,24 @@ impl ModelQualityIndex {
                 good_for_parallelism: true,
             },
             ProviderCapability {
+                provider: AiProvider::AzureOpenAi,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::LocalOllama,
+                native_tools_reliable: true,
+                good_for_parallelism: false,
+            },
+            ProviderCapability {
                 provider: AiProvider::Deepseek,
                 native_tools_reliable: true,
                 good_for_parallelism: false,
+            },
+            ProviderCapability {
+                provider: AiProvider::AlibabaQwen,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
             },
             ProviderCapability {
                 provider: AiProvider::Groq,
@@ -142,11 +157,6 @@ impl ModelQualityIndex {
             },
             ProviderCapability {
                 provider: AiProvider::AwsBedrock,
-                native_tools_reliable: true,
-                good_for_parallelism: true,
-            },
-            ProviderCapability {
-                provider: AiProvider::Anthropic,
                 native_tools_reliable: true,
                 good_for_parallelism: true,
             },
