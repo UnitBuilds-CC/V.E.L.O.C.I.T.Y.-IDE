@@ -28,6 +28,7 @@ mod protocol;
 mod registry;
 mod safety;
 mod security;
+mod shutdown;
 mod usage;
 mod wa;
 
@@ -81,6 +82,9 @@ fn hash_str(s: &str) -> u64 {
 }
 
 fn main() {
+    // Install graceful shutdown handlers early
+    let _shutdown_flag = shutdown::install_shutdown_handlers();
+
     let args: Vec<String> = env::args().collect();
     let mut mode = "stdio";
     let mut buffer_path = "nmcp_buffer.bin";
