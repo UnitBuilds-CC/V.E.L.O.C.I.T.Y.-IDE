@@ -488,3 +488,294 @@ pub(super) fn call_locale_method(map: &HashMap<String, JsValue>, method: &str) -
         _ => JsValue::Undefined,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── canonicalize_tag ───────────────────────────────────────────────
+
+    #[test]
+    fn canonicalize_language_only() {
+        assert_eq!(canonicalize_tag("EN"), "en");
+        assert_eq!(canonicalize_tag("fr"), "fr");
+    }
+
+    #[test]
+    fn canonicalize_language_region() {
+        assert_eq!(canonicalize_tag("en-us"), "en-US");
+        assert_eq!(canonicalize_tag("FR-fr"), "fr-FR");
+    }
+
+    #[test]
+    fn canonicalize_language_script_region() {
+        assert_eq!(canonicalize_tag("zh-hant-tw"), "zh-Hant-TW");
+    }
+
+    // ── get_canonical_locales ──────────────────────────────────────────
+
+    #[test]
+    fn canonical_locales_array() {
+        let r = get_canonical_locales(&[JsValue::Array(vec![JsValue::String("en-us".into()), JsValue::String("FR".into())])]).unwrap();
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 2);
+        } else { panic!("expected Array"); }
+    }
+
+    #[test]
+    fn canonical_locales_string() {
+        let r = get_canonical_locales(&[JsValue::String("en-US".into())]).unwrap();
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 1);
+        } else { panic!("expected Array"); }
+    }
+
+    #[test]
+    fn canonical_locales_dedup() {
+        let r = get_canonical_locales(&[JsValue::Array(vec![JsValue::String("en-us".into()), JsValue::String("en-US".into())])]).unwrap();
+        if let JsValue::Array(arr) = r {
+            assert_eq!(arr.len(), 1); // deduplicated after canonicalization
+        } else { panic!("expected Array"); }
+    }
+
+    // ── make_intl_locale ───────────────────────────────────────────────
+
+    #[test]
+    fn locale_language_only() {
+        let r = make_intl_locale(&[JsValue::String("en".into())]);
+        if let JsValue::Object(m) = r {
+            assert_eq!(m.get("language").unwrap(), &JsValue::String("en".into()));
+        } else { panic!("expected Object"); }
+    }
+
+    #[test]
+    fn locale_language_region() {
+        let r = make_intl_locale(&[JsValue::String("en-US".into())]);
+        if let JsValue::Object(m) = r {
+            assert_eq!(m.get("language").unwrap(), &JsValue::String("en".into()));
+            assert_eq!(m.get("region").unwrap(), &JsValue::String("US".into()));
+        } else { panic!("expected Object"); }
+    }
+
+    // ── call_segmenter_method ──────────────────────────────────────────
+
+    #[test]
+    fn segmenter_grapheme() {
+        let mut m = HashMap::new();
+        m.insert("granularity".to_string(), JsValue::String("grapheme".into()));
+        let r = call_segmenter_method(&m, "segment", &[JsValue::String("abc".into())]).unwrap();
+        if let JsValue::Object(result) = r {
+            if let Some(JsValue::Array(segs)) = result.get("__segments__") {
+                assert_eq!(segs.len(), 3); // one per char
+            } else { panic!("expected segments array"); }
+        } else { panic!("expected Object"); }
+    }
+
+    #[test]
+    fn segmenter_word() {
+        let mut m = HashMap::new();
+        m.insert("granularity".to_string(), JsValue::String("word".into()));
+        let r = call_segmenter_method(&m, "segment", &[JsValue::String("hello world".into())]).unwrap();
+        if let JsValue::Object(result) = r {
+            if let Some(JsValue::Array(segs)) = result.get("__segments__") {
+                assert_eq!(segs.len(), 2); // two words
+            } else { panic!("expected segments array"); }
+        } else { panic!("expected Object"); }
+    }
+
+    // ── call_collator_method ───────────────────────────────────────────
+
+    #[test]
+    fn collator_compare_equal() {
+        let m = HashMap::new();
+        let r = call_collator_method(&m, "compare", &[JsValue::String("abc".into()), JsValue::String("abc".into())]).unwrap();
+        assert_eq!(r, JsValue::Number(0.0));
+    }
+
+    #[test]
+    fn collator_compare_less() {
+        let m = HashMap::new();
+        let r = call_collator_method(&m, "compare", &[JsValue::String("a".into()), JsValue::String("b".into())]).unwrap();
+        assert_eq!(r, JsValue::Number(-1.0));
+    }
+
+    // ── call_number_format_method ──────────────────────────────────────
+
+    #[test]
+    fn number_format_decimal() {
+        let m = HashMap::new();
+        let r = call_number_format_method(&m, "format", &[JsValue::Number(1234.5)]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains("1234"), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn number_format_currency() {
+        let mut m = HashMap::new();
+        m.insert("style".to_string(), JsValue::String("currency".into()));
+        m.insert("currency".to_string(), JsValue::String("USD".into()));
+        let r = call_number_format_method(&m, "format", &[JsValue::Number(42.0)]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains('$'), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn number_format_percent() {
+        let mut m = HashMap::new();
+        m.insert("style".to_string(), JsValue::String("percent".into()));
+        let r = call_number_format_method(&m, "format", &[JsValue::Number(0.5)]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains('%'), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    // ── call_plural_rules_method ───────────────────────────────────────
+
+    #[test]
+    fn plural_select_one() {
+        let m = HashMap::new();
+        let r = call_plural_rules_method(&m, "select", &[JsValue::Number(1.0)]).unwrap();
+        assert_eq!(r, JsValue::String("one".into()));
+    }
+
+    #[test]
+    fn plural_select_other() {
+        let m = HashMap::new();
+        let r = call_plural_rules_method(&m, "select", &[JsValue::Number(5.0)]).unwrap();
+        assert_eq!(r, JsValue::String("other".into()));
+    }
+
+    // ── call_list_format_method ────────────────────────────────────────
+
+    #[test]
+    fn list_format_conjunction() {
+        let m = HashMap::new();
+        let list = JsValue::Array(vec![JsValue::String("a".into()), JsValue::String("b".into()), JsValue::String("c".into())]);
+        let r = call_list_format_method(&m, "format", &[list]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains("and"), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn list_format_disjunction() {
+        let mut m = HashMap::new();
+        m.insert("type".to_string(), JsValue::String("disjunction".into()));
+        let list = JsValue::Array(vec![JsValue::String("x".into()), JsValue::String("y".into())]);
+        let r = call_list_format_method(&m, "format", &[list]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains("or"), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn list_format_empty() {
+        let m = HashMap::new();
+        let list = JsValue::Array(vec![]);
+        let r = call_list_format_method(&m, "format", &[list]).unwrap();
+        assert_eq!(r, JsValue::String(String::new()));
+    }
+
+    #[test]
+    fn list_format_single() {
+        let m = HashMap::new();
+        let list = JsValue::Array(vec![JsValue::String("only".into())]);
+        let r = call_list_format_method(&m, "format", &[list]).unwrap();
+        assert_eq!(r, JsValue::String("only".into()));
+    }
+
+    // ── call_display_names_method ──────────────────────────────────────
+
+    #[test]
+    fn display_names_language() {
+        let mut m = HashMap::new();
+        m.insert("type".to_string(), JsValue::String("language".into()));
+        let r = call_display_names_method(&m, "of", &[JsValue::String("en".into())]).unwrap();
+        assert_eq!(r, JsValue::String("English".into()));
+    }
+
+    #[test]
+    fn display_names_region() {
+        let mut m = HashMap::new();
+        m.insert("type".to_string(), JsValue::String("region".into()));
+        let r = call_display_names_method(&m, "of", &[JsValue::String("US".into())]).unwrap();
+        assert_eq!(r, JsValue::String("United States".into()));
+    }
+
+    #[test]
+    fn display_names_currency() {
+        let mut m = HashMap::new();
+        m.insert("type".to_string(), JsValue::String("currency".into()));
+        let r = call_display_names_method(&m, "of", &[JsValue::String("EUR".into())]).unwrap();
+        assert_eq!(r, JsValue::String("Euro".into()));
+    }
+
+    #[test]
+    fn display_names_unknown_code() {
+        let mut m = HashMap::new();
+        m.insert("type".to_string(), JsValue::String("language".into()));
+        let r = call_display_names_method(&m, "of", &[JsValue::String("xx".into())]).unwrap();
+        assert_eq!(r, JsValue::String("xx".into()));
+    }
+
+    // ── call_relative_time_format_method ───────────────────────────────
+
+    #[test]
+    fn relative_time_future() {
+        let m = HashMap::new();
+        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(3.0), JsValue::String("day".into())]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains("from now"), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn relative_time_past() {
+        let m = HashMap::new();
+        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(-2.0), JsValue::String("hour".into())]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains("ago"), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn relative_time_auto_yesterday() {
+        let mut m = HashMap::new();
+        m.insert("numeric".to_string(), JsValue::String("auto".into()));
+        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(-1.0), JsValue::String("day".into())]).unwrap();
+        assert_eq!(r, JsValue::String("yesterday".into()));
+    }
+
+    #[test]
+    fn relative_time_auto_tomorrow() {
+        let mut m = HashMap::new();
+        m.insert("numeric".to_string(), JsValue::String("auto".into()));
+        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(1.0), JsValue::String("day".into())]).unwrap();
+        assert_eq!(r, JsValue::String("tomorrow".into()));
+    }
+
+    // ── call_duration_format_method ────────────────────────────────────
+
+    #[test]
+    fn duration_format_basic() {
+        let m = HashMap::new();
+        let mut dur = HashMap::new();
+        dur.insert("hours".to_string(), JsValue::Number(2.0));
+        dur.insert("minutes".to_string(), JsValue::Number(30.0));
+        let r = call_duration_format_method(&m, "format", &[JsValue::Object(dur)]).unwrap();
+        if let JsValue::String(s) = r {
+            assert!(s.contains("2h"), "got: {}", s);
+            assert!(s.contains("30min"), "got: {}", s);
+        } else { panic!("expected String"); }
+    }
+
+    #[test]
+    fn duration_format_empty() {
+        let m = HashMap::new();
+        let dur = HashMap::new();
+        let r = call_duration_format_method(&m, "format", &[JsValue::Object(dur)]).unwrap();
+        assert_eq!(r, JsValue::String(String::new()));
+    }
+}
