@@ -230,4 +230,102 @@ mod tests {
         reader.reset();
         assert!(reader.has_more());
     }
+
+    #[test]
+    fn exact_byte_count_single_triple() {
+        let mut buf = [0u8; 256];
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        // subject="a"(1), predicate(2), object="b"(1) = 2+1+2+2+1 = 8 bytes
+        writer.write_triple(b"a", 1, b"b").unwrap();
+        assert_eq!(writer.bytes_written(), 8);
+    }
+
+    #[test]
+    fn exact_size_buffer_fits_one() {
+        let mut buf = [0u8; 8]; // exactly fits one "a",1,"b" triple
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        assert!(writer.write_triple(b"a", 1, b"b").is_ok());
+        assert!(writer.write_triple(b"c", 2, b"d").is_err(), "Second triple should overflow");
+    }
+
+    #[test]
+    fn empty_subject_and_object() {
+        let mut buf = [0u8; 256];
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        writer.write_triple(b"", 0, b"").unwrap();
+        let written = writer.bytes_written();
+        let mut reader = ZeroAllocNdaReader::new(&buf[..written]);
+        let (s, p, o) = reader.read_triple().unwrap();
+        assert_eq!(s, b"");
+        assert_eq!(p, 0);
+        assert_eq!(o, b"");
+    }
+
+    #[test]
+    fn reader_has_more_after_partial_read() {
+        let mut buf = [0u8; 1024];
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        writer.write_triple(b"a", 1, b"b").unwrap();
+        writer.write_triple(b"c", 2, b"d").unwrap();
+        let written = writer.bytes_written();
+
+        let mut reader = ZeroAllocNdaReader::new(&buf[..written]);
+        assert!(reader.has_more());
+        reader.read_triple().unwrap();
+        assert!(reader.has_more(), "Should still have more after first triple");
+        reader.read_triple().unwrap();
+        assert!(!reader.has_more(), "Should have no more after all triples");
+    }
+
+    #[test]
+    fn remaining_decreases_with_writes() {
+        let mut buf = [0u8; 256];
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        let r0 = writer.remaining();
+        writer.write_triple(b"a", 1, b"b").unwrap();
+        let r1 = writer.remaining();
+        writer.write_triple(b"cc", 2, b"dd").unwrap();
+        let r2 = writer.remaining();
+        assert!(r0 > r1 && r1 > r2);
+    }
+
+    #[test]
+    fn reset_allows_rewrite() {
+        let mut buf = [0u8; 8]; // tiny buffer
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        writer.write_triple(b"a", 1, b"b").unwrap();
+        assert!(writer.write_triple(b"x", 2, b"y").is_err());
+        writer.reset();
+        assert!(writer.write_triple(b"x", 2, b"y").is_ok(), "After reset, buffer is available again");
+    }
+
+    #[test]
+    fn large_predicate_id() {
+        let mut buf = [0u8; 256];
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        writer.write_triple(b"s", u16::MAX, b"o").unwrap();
+        let written = writer.bytes_written();
+        let mut reader = ZeroAllocNdaReader::new(&buf[..written]);
+        let (_, p, _) = reader.read_triple().unwrap();
+        assert_eq!(p, u16::MAX);
+    }
+
+    #[test]
+    fn reader_truncated_subject() {
+        // Buffer says subject is 100 bytes but only has 2
+        let buf = [100u8, 0, b'a', b'b'];
+        let mut reader = ZeroAllocNdaReader::new(&buf);
+        assert!(reader.read_triple().is_err());
+    }
+
+    #[test]
+    fn reader_truncated_object() {
+        let mut buf = [0u8; 256];
+        let mut writer = ZeroAllocNdaWriter::new(&mut buf);
+        writer.write_triple(b"s", 1, b"object").unwrap();
+        // Truncate the buffer mid-object
+        let truncated = writer.bytes_written() - 2;
+        let mut reader = ZeroAllocNdaReader::new(&buf[..truncated]);
+        assert!(reader.read_triple().is_err());
+    }
 }

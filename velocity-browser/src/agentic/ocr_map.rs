@@ -193,4 +193,83 @@ mod tests {
         // Should detect at least one opaque region (dark area)
         assert!(!regions.is_empty());
     }
+
+    #[test]
+    fn export_ocr_nda_empty_boxes() {
+        let engine = VelocityOcrEngine::new();
+        let triples = engine.export_ocr_nda("session", &[]);
+        assert!(triples.is_empty());
+    }
+
+    #[test]
+    fn export_ocr_nda_object_format() {
+        let engine = VelocityOcrEngine::new();
+        let boxes = vec![OcrTextBoundingBox {
+            text: String::new(),
+            x: 5, y: 10, width: 20, height: 30,
+            confidence: 0.0,
+        }];
+        let triples = engine.export_ocr_nda("sess", &boxes);
+        assert_eq!(triples.len(), 1);
+        // The object should encode "x,y,w,h"
+        assert_eq!(triples[0].predicate_id, OCR_OPAQUE_REGION);
+    }
+
+    #[test]
+    fn all_light_pixels_no_regions() {
+        let engine = VelocityOcrEngine::new();
+        let mut buffer = PixelBuffer::new(50, 50);
+        for y in 0..50 {
+            for x in 0..50 {
+                buffer.set_pixel(x, y, 255, 255, 255, 255);
+            }
+        }
+        let regions = engine.process_pixel_buffer(&buffer);
+        assert!(regions.is_empty(), "All-white buffer should have no opaque regions");
+    }
+
+    #[test]
+    fn all_dark_pixels_produces_region() {
+        let engine = VelocityOcrEngine::new();
+        let mut buffer = PixelBuffer::new(50, 50);
+        // Dark on left half, light on right half so the region closes
+        for y in 0..50 {
+            for x in 0..25 {
+                buffer.set_pixel(x, y, 0, 0, 0, 255);
+            }
+            for x in 25..50 {
+                buffer.set_pixel(x, y, 255, 255, 255, 255);
+            }
+        }
+        let regions = engine.process_pixel_buffer(&buffer);
+        assert!(!regions.is_empty(), "Dark-to-light transition should produce a region");
+    }
+
+    #[test]
+    fn custom_threshold() {
+        let mut engine = VelocityOcrEngine::new();
+        engine.luminance_threshold = 250; // very high: even medium-gray is "dark"
+        let mut buffer = PixelBuffer::new(30, 30);
+        // Medium gray on left, white on right so region closes
+        for y in 0..30 {
+            for x in 0..15 {
+                buffer.set_pixel(x, y, 200, 200, 200, 255);
+            }
+            for x in 15..30 {
+                buffer.set_pixel(x, y, 255, 255, 255, 255);
+            }
+        }
+        let regions = engine.process_pixel_buffer(&buffer);
+        assert!(!regions.is_empty(), "High threshold should detect medium-gray as dark");
+    }
+
+    #[test]
+    fn is_recognized_false_with_empty_text_high_confidence() {
+        let b = OcrTextBoundingBox {
+            text: String::new(),
+            x: 0, y: 0, width: 10, height: 10,
+            confidence: 0.99,
+        };
+        assert!(!b.is_recognized(), "Empty text with high confidence is not recognized");
+    }
 }
