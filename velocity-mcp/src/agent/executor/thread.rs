@@ -148,6 +148,7 @@ fn fetch_models_for_provider(
             let key = resolve_api_key(workspace_root, "cerebras", "CEREBRAS_API_KEY");
             fetch_cerebras_models(&key)
         }
+        AiProvider::AwsBedrock => fetch_bedrock_models(),
         _ => Ok(vec![default_model_info(&default_provider_model(provider))]),
     }
 }

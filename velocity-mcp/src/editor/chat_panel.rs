@@ -792,6 +792,7 @@ fn render_input(
                                 crate::agent::AiProvider::FireworksAi,
                                 crate::agent::AiProvider::Perplexity,
                                 crate::agent::AiProvider::Cerebras,
+                                crate::agent::AiProvider::AwsBedrock,
                             ] {
                                 if ui.selectable_value(&mut state.provider, provider, provider.label()).clicked() {
                                     provider_changed = true;

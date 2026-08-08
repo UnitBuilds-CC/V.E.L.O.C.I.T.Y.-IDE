@@ -718,7 +718,14 @@ pub fn run_agent_reasoning_loop(
         }
 
         if let Some(ref tcs) = final_tool_calls_value {
-            let tool_calls_arr = tcs.as_array().unwrap();
+            let Some(tool_calls_arr) = tcs.as_array() else {
+                ui_tx.send(AgentToUiMessage::StatusUpdate(
+                    "Unexpected tool_calls format from provider, skipping.".to_string(),
+                )).ok();
+                // Fall through to break
+                write_handover_nda(workspace_root, "idle", loop_count, "completed", false);
+                break;
+            };
 
             let mut pending_ids = std::collections::HashSet::new();
             let mut tool_specs = Vec::new();

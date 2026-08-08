@@ -564,3 +564,14 @@ pub fn fetch_perplexity_models(api_key: &str) -> Result<Vec<ModelInfo>, String> 
 pub fn fetch_cerebras_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     fetch_openai_compatible_models("https://api.cerebras.ai", api_key, "Cerebras")
 }
+
+/// AWS Bedrock — uses BEDROCK_PROXY_URL as an OpenAI-compatible gateway.
+pub fn fetch_bedrock_models() -> Result<Vec<ModelInfo>, String> {
+    if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {
+        if !proxy_url.trim().is_empty() {
+            let api_key = std::env::var("BEDROCK_API_KEY").unwrap_or_default();
+            return fetch_openai_compatible_models(proxy_url.trim_end_matches('/'), &api_key, "AWS Bedrock");
+        }
+    }
+    Err("AWS Bedrock requires BEDROCK_PROXY_URL env var pointing to an OpenAI-compatible proxy. Configure in Settings > Provider Settings.".to_string())
+}
