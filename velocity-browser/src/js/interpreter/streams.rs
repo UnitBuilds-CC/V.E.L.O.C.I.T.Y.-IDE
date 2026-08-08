@@ -351,3 +351,193 @@ fn make_resolved_promise(value: JsValue) -> JsValue {
     p.insert("__resolved__".to_string(), value);
     JsValue::Object(p)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── queuing strategies ─────────────────────────────────────────────
+
+    #[test]
+    fn count_queuing_strategy_structure() {
+        let s = make_count_queuing_strategy(5.0);
+        if let JsValue::Object(m) = s {
+            assert_eq!(m.get("__type__").unwrap(), &JsValue::String("CountQueuingStrategy".into()));
+            assert_eq!(m.get("highWaterMark").unwrap(), &JsValue::Number(5.0));
+        } else { panic!("expected Object"); }
+    }
+
+    #[test]
+    fn byte_length_queuing_strategy_structure() {
+        let s = make_byte_length_queuing_strategy(1024.0);
+        if let JsValue::Object(m) = s {
+            assert_eq!(m.get("__type__").unwrap(), &JsValue::String("ByteLengthQueuingStrategy".into()));
+            assert_eq!(m.get("highWaterMark").unwrap(), &JsValue::Number(1024.0));
+        } else { panic!("expected Object"); }
+    }
+
+    #[test]
+    fn count_strategy_size_always_one() {
+        let mut m = HashMap::new();
+        m.insert("__type__".to_string(), JsValue::String("CountQueuingStrategy".into()));
+        let r = call_queuing_strategy_method(&m, "size", &[JsValue::String("anything".into())]);
+        assert_eq!(r, JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn byte_length_strategy_string_size() {
+        let mut m = HashMap::new();
+        m.insert("__type__".to_string(), JsValue::String("ByteLengthQueuingStrategy".into()));
+        let r = call_queuing_strategy_method(&m, "size", &[JsValue::String("hello".into())]);
+        assert_eq!(r, JsValue::Number(5.0));
+    }
+
+    #[test]
+    fn byte_length_strategy_object_byte_length() {
+        let mut m = HashMap::new();
+        m.insert("__type__".to_string(), JsValue::String("ByteLengthQueuingStrategy".into()));
+        let mut chunk = HashMap::new();
+        chunk.insert("byteLength".to_string(), JsValue::Number(42.0));
+        let r = call_queuing_strategy_method(&m, "size", &[JsValue::Object(chunk)]);
+        assert_eq!(r, JsValue::Number(42.0));
+    }
+
+    // ── make_readable_stream ───────────────────────────────────────────
+
+    #[test]
+    fn readable_stream_structure() {
+        let s = make_readable_stream(None);
+        if let JsValue::Object(m) = s {
+            assert_eq!(m.get("__type__").unwrap(), &JsValue::String("ReadableStream".into()));
+            assert_eq!(m.get("locked").unwrap(), &JsValue::Boolean(false));
+            assert!(m.contains_key("__stream_id__"));
+        } else { panic!("expected Object"); }
+    }
+
+    // ── make_writable_stream ───────────────────────────────────────────
+
+    #[test]
+    fn writable_stream_structure() {
+        let s = make_writable_stream(None);
+        if let JsValue::Object(m) = s {
+            assert_eq!(m.get("__type__").unwrap(), &JsValue::String("WritableStream".into()));
+            assert_eq!(m.get("locked").unwrap(), &JsValue::Boolean(false));
+        } else { panic!("expected Object"); }
+    }
+
+    // ── make_transform_stream ──────────────────────────────────────────
+
+    #[test]
+    fn transform_stream_structure() {
+        let s = make_transform_stream(None);
+        if let JsValue::Object(m) = s {
+            assert_eq!(m.get("__type__").unwrap(), &JsValue::String("TransformStream".into()));
+            assert!(m.contains_key("readable"));
+            assert!(m.contains_key("writable"));
+        } else { panic!("expected Object"); }
+    }
+
+    // ── write/read roundtrip ───────────────────────────────────────────
+
+    #[test]
+    fn stream_write_read_roundtrip() {
+        // Create a readable stream
+        let rs = make_readable_stream(None);
+        if let JsValue::Object(rs_map) = rs {
+            let stream_id = rs_map.get("__stream_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as u32) } else { None }).unwrap();
+
+            // Push chunks via the controller
+            let mut ctrl = HashMap::new();
+            ctrl.insert("__stream_id__".to_string(), JsValue::Number(stream_id as f64));
+            let _ = call_readable_controller_method(&ctrl, "enqueue", &[JsValue::String("hello".into())]);
+            let _ = call_readable_controller_method(&ctrl, "enqueue", &[JsValue::String("world".into())]);
+
+            // Read via reader
+            let mut reader = HashMap::new();
+            reader.insert("__stream_id__".to_string(), JsValue::Number(stream_id as f64));
+
+            let r1 = call_reader_method(&reader, "read", &[]);
+            if let JsValue::Object(p) = r1 {
+                if let Some(JsValue::Object(result)) = p.get("__resolved__") {
+                    assert_eq!(result.get("done").unwrap(), &JsValue::Boolean(false));
+                    assert_eq!(result.get("value").unwrap(), &JsValue::String("hello".into()));
+                }
+            }
+
+            let r2 = call_reader_method(&reader, "read", &[]);
+            if let JsValue::Object(p) = r2 {
+                if let Some(JsValue::Object(result)) = p.get("__resolved__") {
+                    assert_eq!(result.get("value").unwrap(), &JsValue::String("world".into()));
+                }
+            }
+
+            // Third read should be done
+            let r3 = call_reader_method(&reader, "read", &[]);
+            if let JsValue::Object(p) = r3 {
+                if let Some(JsValue::Object(result)) = p.get("__resolved__") {
+                    assert_eq!(result.get("done").unwrap(), &JsValue::Boolean(true));
+                }
+            }
+        } else { panic!("expected Object"); }
+    }
+
+    // ── readable stream methods ────────────────────────────────────────
+
+    #[test]
+    fn readable_stream_get_reader() {
+        let rs = make_readable_stream(None);
+        if let JsValue::Object(m) = rs {
+            let r = call_readable_stream_method(&m, "getReader", &[]);
+            if let JsValue::Object(reader) = r {
+                assert_eq!(reader.get("__type__").unwrap(), &JsValue::String("ReadableStreamDefaultReader".into()));
+            } else { panic!("expected Object"); }
+        }
+    }
+
+    // ── writable stream methods ────────────────────────────────────────
+
+    #[test]
+    fn writable_stream_get_writer() {
+        let ws = make_writable_stream(None);
+        if let JsValue::Object(m) = ws {
+            let r = call_writable_stream_method(&m, "getWriter", &[]);
+            if let JsValue::Object(writer) = r {
+                assert_eq!(writer.get("__type__").unwrap(), &JsValue::String("WritableStreamDefaultWriter".into()));
+                assert_eq!(writer.get("desiredSize").unwrap(), &JsValue::Number(1.0));
+            } else { panic!("expected Object"); }
+        }
+    }
+
+    // ── writer methods ─────────────────────────────────────────────────
+
+    #[test]
+    fn writer_release_lock() {
+        let mut writer = HashMap::new();
+        writer.insert("__stream_id__".to_string(), JsValue::Number(999.0));
+        let r = call_writer_method(&writer, "releaseLock", &[]);
+        assert_eq!(r, JsValue::Undefined);
+    }
+
+    // ── unknown methods ────────────────────────────────────────────────
+
+    #[test]
+    fn unknown_readable_method() {
+        let m = HashMap::new();
+        let r = call_readable_stream_method(&m, "nope", &[]);
+        assert_eq!(r, JsValue::Undefined);
+    }
+
+    #[test]
+    fn unknown_writable_method() {
+        let m = HashMap::new();
+        let r = call_writable_stream_method(&m, "nope", &[]);
+        assert_eq!(r, JsValue::Undefined);
+    }
+
+    #[test]
+    fn unknown_queuing_strategy_method() {
+        let m = HashMap::new();
+        let r = call_queuing_strategy_method(&m, "nope", &[]);
+        assert_eq!(r, JsValue::Undefined);
+    }
+}
