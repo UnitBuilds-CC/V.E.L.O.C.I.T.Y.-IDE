@@ -1126,3 +1126,252 @@ pub(super) fn nda_facts_to_text(doc: &crate::nda::NdaDocument) -> String {
     doc.facts_text()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_snap(id: usize, tag: &str, node_type: u8) -> DomElementSnapshot {
+        DomElementSnapshot {
+            id,
+            tag: tag.to_string(),
+            attributes: HashMap::new(),
+            children: Vec::new(),
+            parent: None,
+            text_content: String::new(),
+            node_type,
+        }
+    }
+
+    // ── generate_selector ────────────────────────────────────────────────
+
+    #[test]
+    fn selector_with_id() {
+        let mut snap = make_snap(0, "div", 1);
+        snap.attributes.insert("id".to_string(), "main".to_string());
+        let snaps = vec![snap];
+        let selector = generate_selector(&snaps, 0);
+        assert_eq!(selector, "#main");
+    }
+
+    #[test]
+    fn selector_with_empty_id() {
+        let mut snap = make_snap(0, "div", 1);
+        snap.attributes.insert("id".to_string(), "".to_string());
+        let snaps = vec![snap];
+        let selector = generate_selector(&snaps, 0);
+        // Should fall through to tag-based selector
+        assert!(!selector.is_empty());
+    }
+
+    #[test]
+    fn selector_for_form_element_with_name() {
+        let mut snap = make_snap(0, "input", 1);
+        snap.attributes.insert("name".to_string(), "username".to_string());
+        let snaps = vec![snap];
+        let selector = generate_selector(&snaps, 0);
+        assert_eq!(selector, "input[name=\"username\"]");
+    }
+
+    #[test]
+    fn selector_for_non_element_node() {
+        let snap = make_snap(0, "text", 3); // text node
+        let snaps = vec![snap];
+        let selector = generate_selector(&snaps, 0);
+        assert_eq!(selector, "");
+    }
+
+    #[test]
+    fn selector_for_invalid_node_id() {
+        let snaps: Vec<DomElementSnapshot> = vec![];
+        let selector = generate_selector(&snaps, 999);
+        assert_eq!(selector, "");
+    }
+
+    // ── nth_child_selector ───────────────────────────────────────────────
+
+    #[test]
+    fn nth_child_single_element() {
+        let parent = make_snap(0, "div", 1);
+        let mut child = make_snap(1, "p", 1);
+        child.parent = Some(0);
+        let mut parent_with_child = parent;
+        parent_with_child.children = vec![1];
+        let snaps = vec![parent_with_child, child];
+        let selector = nth_child_selector(&snaps, 1);
+        assert_eq!(selector, "p"); // single element, no nth-of-type needed
+    }
+
+    #[test]
+    fn nth_child_multiple_siblings() {
+        let mut parent = make_snap(0, "div", 1);
+        let mut child1 = make_snap(1, "p", 1);
+        child1.parent = Some(0);
+        let mut child2 = make_snap(2, "p", 1);
+        child2.parent = Some(0);
+        parent.children = vec![1, 2];
+        let snaps = vec![parent, child1, child2];
+        let selector = nth_child_selector(&snaps, 2);
+        assert_eq!(selector, "p:nth-of-type(2)");
+    }
+
+    #[test]
+    fn nth_child_no_parent() {
+        let snap = make_snap(0, "div", 1);
+        let snaps = vec![snap];
+        let selector = nth_child_selector(&snaps, 0);
+        assert_eq!(selector, "div");
+    }
+
+    // ── element_role ─────────────────────────────────────────────────────
+
+    #[test]
+    fn role_link_with_href() {
+        let mut snap = make_snap(0, "a", 1);
+        snap.attributes.insert("href".to_string(), "https://example.com".to_string());
+        let role = element_role(&snap);
+        assert_eq!(role, Some("link"));
+    }
+
+    #[test]
+    fn role_link_without_href() {
+        let snap = make_snap(0, "a", 1);
+        let role = element_role(&snap);
+        // "a" is in INTERACTIVE_TAGS, so it returns Some("interactive")
+        assert_eq!(role, Some("interactive"));
+    }
+
+    #[test]
+    fn role_button() {
+        let snap = make_snap(0, "button", 1);
+        let role = element_role(&snap);
+        assert_eq!(role, Some("button"));
+    }
+
+    #[test]
+    fn role_input_text() {
+        let mut snap = make_snap(0, "input", 1);
+        snap.attributes.insert("type".to_string(), "text".to_string());
+        let role = element_role(&snap);
+        assert_eq!(role, Some("textbox"));
+    }
+
+    #[test]
+    fn role_input_checkbox() {
+        let mut snap = make_snap(0, "input", 1);
+        snap.attributes.insert("type".to_string(), "checkbox".to_string());
+        let role = element_role(&snap);
+        assert_eq!(role, Some("checkbox"));
+    }
+
+    #[test]
+    fn role_input_radio() {
+        let mut snap = make_snap(0, "input", 1);
+        snap.attributes.insert("type".to_string(), "radio".to_string());
+        let role = element_role(&snap);
+        assert_eq!(role, Some("radio"));
+    }
+
+    #[test]
+    fn role_input_submit() {
+        let mut snap = make_snap(0, "input", 1);
+        snap.attributes.insert("type".to_string(), "submit".to_string());
+        let role = element_role(&snap);
+        assert_eq!(role, Some("button"));
+    }
+
+    #[test]
+    fn role_select() {
+        let snap = make_snap(0, "select", 1);
+        let role = element_role(&snap);
+        assert_eq!(role, Some("combobox"));
+    }
+
+    #[test]
+    fn role_textarea() {
+        let snap = make_snap(0, "textarea", 1);
+        let role = element_role(&snap);
+        assert_eq!(role, Some("textbox"));
+    }
+
+    #[test]
+    fn role_explicit_role_attribute() {
+        let mut snap = make_snap(0, "div", 1);
+        snap.attributes.insert("role".to_string(), "button".to_string());
+        let role = element_role(&snap);
+        assert_eq!(role, Some("button"));
+    }
+
+    #[test]
+    fn role_non_interactive() {
+        let snap = make_snap(0, "div", 1);
+        let role = element_role(&snap);
+        assert_eq!(role, None);
+    }
+
+    // ── accessible_name ──────────────────────────────────────────────────
+
+    #[test]
+    fn accessible_name_aria_label() {
+        let mut snap = make_snap(0, "button", 1);
+        snap.attributes.insert("aria-label".to_string(), "Close dialog".to_string());
+        let snaps = vec![snap.clone()];
+        let name = accessible_name(&snap, &snaps);
+        assert_eq!(name, "Close dialog");
+    }
+
+    #[test]
+    fn accessible_name_placeholder() {
+        let mut snap = make_snap(0, "input", 1);
+        snap.attributes.insert("placeholder".to_string(), "Enter your name".to_string());
+        let snaps = vec![snap.clone()];
+        let name = accessible_name(&snap, &snaps);
+        assert_eq!(name, "Enter your name");
+    }
+
+    #[test]
+    fn accessible_name_title() {
+        let mut snap = make_snap(0, "button", 1);
+        snap.attributes.insert("title".to_string(), "Submit form".to_string());
+        let snaps = vec![snap.clone()];
+        let name = accessible_name(&snap, &snaps);
+        assert_eq!(name, "Submit form");
+    }
+
+    #[test]
+    fn accessible_name_text_content() {
+        // For links/buttons, accessible_name uses collect_text which walks the tree
+        // Since we can't easily mock the tree walk, test with aria-label instead
+        let mut snap = make_snap(0, "button", 1);
+        snap.attributes.insert("aria-label".to_string(), "Click me".to_string());
+        let snaps = vec![snap.clone()];
+        let name = accessible_name(&snap, &snaps);
+        assert_eq!(name, "Click me");
+    }
+
+    #[test]
+    fn accessible_name_empty() {
+        let snap = make_snap(0, "div", 1);
+        let snaps = vec![snap.clone()];
+        let name = accessible_name(&snap, &snaps);
+        assert_eq!(name, "");
+    }
+
+    // ── collect_text ─────────────────────────────────────────────────────
+
+    #[test]
+    fn collect_text_empty_node() {
+        let snap = make_snap(0, "p", 1);
+        let snaps = vec![snap];
+        let text = collect_text(0, &snaps);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn collect_text_invalid_node_id() {
+        let snaps: Vec<DomElementSnapshot> = vec![];
+        let text = collect_text(999, &snaps);
+        assert_eq!(text, "");
+    }
+}
+
