@@ -300,4 +300,48 @@ mod tests {
         let out = pool.drain_main_messages(&b);
         assert!(out[0].payload_json.contains("from_a"));
     }
+
+    #[test]
+    fn spawn_unique_ids() {
+        let mut pool = WebWorkerPool::new();
+        let id1 = pool.spawn_worker("w1.js");
+        let id2 = pool.spawn_worker("w2.js");
+        assert_ne!(id1, id2);
+        assert_eq!(pool.active_worker_count(), 2);
+    }
+
+    #[test]
+    fn post_message_nonexistent_worker() {
+        let mut pool = WebWorkerPool::new();
+        assert!(!pool.post_message("nonexistent", "test"));
+    }
+
+    #[test]
+    fn worker_state_nonexistent() {
+        let pool = WebWorkerPool::new();
+        assert!(pool.worker_state("nonexistent").is_none());
+    }
+
+    #[test]
+    fn default_pool_is_empty() {
+        let pool = WebWorkerPool::default();
+        assert_eq!(pool.active_worker_count(), 0);
+    }
+
+    #[test]
+    fn process_messages_nonexistent_returns_zero() {
+        let mut pool = WebWorkerPool::new();
+        assert_eq!(pool.process_messages("nonexistent"), 0);
+    }
+
+    #[test]
+    fn channel_to_wrong_worker() {
+        let mut pool = WebWorkerPool::new();
+        let a = pool.spawn_worker("a.js");
+        let b = pool.spawn_worker("b.js");
+        let c = pool.spawn_worker("c.js");
+        let ch = pool.create_channel(&a, &b).unwrap();
+        // Worker C is not part of this channel
+        assert!(!pool.send_channel_message(&ch, &c, "test"));
+    }
 }

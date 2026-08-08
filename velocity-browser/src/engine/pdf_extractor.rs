@@ -395,4 +395,65 @@ mod tests {
         let triples = PdfMediaExtractor::export_pdf_nda("sess1", &doc);
         assert!(triples.len() >= 3); // 2 text lines + 1 title
     }
+
+    #[test]
+    fn read_bit_basic() {
+        assert_eq!(read_bit(&[0b10110100], 0, 0), 0); // bit 0 of 0xB4
+        assert_eq!(read_bit(&[0b10110100], 0, 2), 1); // bit 2
+        assert_eq!(read_bit(&[0b10110100], 0, 4), 1); // bit 4
+        assert_eq!(read_bit(&[0b10110100], 0, 7), 1); // bit 7
+    }
+
+    #[test]
+    fn read_bit_out_of_bounds() {
+        assert_eq!(read_bit(&[0xFF], 5, 0), 0); // byte_pos beyond slice
+    }
+
+    #[test]
+    fn extract_text_from_operator_tj() {
+        assert_eq!(
+            extract_text_from_operator("(Hello World) Tj"),
+            Some("Hello World".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_text_from_operator_hex_tj() {
+        let result = extract_text_from_operator("[48656C6C6F] TJ");
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn extract_text_from_operator_none() {
+        assert_eq!(extract_text_from_operator("BT ET"), None);
+    }
+
+    #[test]
+    fn extract_metadata_value_found() {
+        assert_eq!(
+            extract_metadata_value("/Title (My Document)"),
+            Some("My Document".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_metadata_value_none() {
+        assert_eq!(extract_metadata_value("/Title"), None);
+    }
+
+    #[test]
+    fn parse_empty_pdf() {
+        let doc = PdfMediaExtractor::parse_pdf_document(b"%PDF-1.4\n");
+        // No pages or at most one empty page
+        assert!(doc.page_count <= 1);
+        assert!(!doc.encrypted);
+        assert!(doc.title.is_none());
+    }
+
+    #[test]
+    fn find_bytes_no_match() {
+        let data = b"hello world";
+        assert_eq!(find_bytes(data, 0, b"xyz"), None);
+    }
 }
