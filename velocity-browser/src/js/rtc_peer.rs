@@ -303,4 +303,111 @@ mod tests {
         assert_eq!(pc.signaling_state(), Some("have-local-offer"));
         pc.close();
     }
+
+    #[test]
+    fn add_ice_candidate_doesnt_panic() {
+        let pc = JsRtcPeerConnection::new();
+        pc.add_ice_candidate("candidate:1 UDP 1 ice.example.com 12345 typ host");
+        // No panic = success; the candidate is silently consumed.
+        pc.close();
+    }
+
+    #[test]
+    fn multiple_data_channels_coexist() {
+        let pc = JsRtcPeerConnection::new();
+        assert_eq!(pc.create_data_channel("chat").as_deref(), Some("chat"));
+        assert_eq!(pc.create_data_channel("files").as_deref(), Some("files"));
+        assert_eq!(pc.data_channel_state("chat"), Some("connecting"));
+        assert_eq!(pc.data_channel_state("files"), Some("connecting"));
+        pc.open_data_channel("chat");
+        assert_eq!(pc.data_channel_state("chat"), Some("open"));
+        assert_eq!(pc.data_channel_state("files"), Some("connecting"));
+        pc.close();
+    }
+
+    #[test]
+    fn send_to_nonexistent_channel_returns_error() {
+        let pc = JsRtcPeerConnection::new();
+        let err = pc.send("nonexistent", b"data").unwrap_err();
+        assert!(err.contains("no such channel") || err.contains("peer not found"));
+        pc.close();
+    }
+
+    #[test]
+    fn open_nonexistent_channel_returns_false() {
+        let pc = JsRtcPeerConnection::new();
+        assert!(!pc.open_data_channel("ghost"));
+        pc.close();
+    }
+
+    #[test]
+    fn data_channel_state_unknown_label_returns_none() {
+        let pc = JsRtcPeerConnection::new();
+        assert_eq!(pc.data_channel_state("nope"), None);
+        pc.close();
+    }
+
+    #[test]
+    fn set_remote_description_with_answer_type() {
+        let pc = JsRtcPeerConnection::new();
+        // First set a local offer to get to have-local-offer
+        let mut offer = HashMap::new();
+        offer.insert("type".to_string(), "offer".to_string());
+        offer.insert("sdp".to_string(), "v=0".to_string());
+        pc.set_local_description(offer).unwrap();
+        // Now set remote offer (simulating glare) — should work
+        let mut remote = HashMap::new();
+        remote.insert("type".to_string(), "offer".to_string());
+        remote.insert("sdp".to_string(), "v=0\r\n".to_string());
+        pc.set_remote_description(remote).unwrap();
+        assert_eq!(pc.signaling_state(), Some("have-remote-offer"));
+        pc.close();
+    }
+
+    #[test]
+    fn clear_peers_removes_all_registered_peers() {
+        let pc1 = JsRtcPeerConnection::new();
+        let pc2 = JsRtcPeerConnection::new();
+        // Both peers should be functional
+        assert!(pc1.create_offer().is_some());
+        assert!(pc2.create_offer().is_some());
+        // Clear all peers from the global registry
+        clear_peers();
+        // Now operations should return None (peer not found)
+        assert!(pc1.create_offer().is_none());
+        assert!(pc2.create_offer().is_none());
+    }
+
+    #[test]
+    fn default_creates_valid_peer_connection() {
+        let pc = JsRtcPeerConnection::default();
+        assert_eq!(pc.signaling_state(), Some("stable"));
+        assert_eq!(pc.connection_state(), Some("new"));
+        pc.close();
+    }
+
+    #[test]
+    fn create_offer_contains_sdp_field() {
+        let pc = JsRtcPeerConnection::new();
+        let offer = pc.create_offer().expect("offer");
+        assert!(offer.contains_key("type"));
+        assert!(offer.contains_key("sdp"));
+        assert!(!offer["sdp"].is_empty());
+        pc.close();
+    }
+
+    #[test]
+    fn set_local_description_pranswer_type() {
+        let pc = JsRtcPeerConnection::new();
+        // Must be in have-local-offer to set answer/pranswer
+        let offer = pc.create_offer().expect("offer");
+        assert_eq!(pc.signaling_state(), Some("have-local-offer"));
+        // Now set local pranswer (treated same as answer in this impl)
+        let mut desc = HashMap::new();
+        desc.insert("type".to_string(), "pranswer".to_string());
+        desc.insert("sdp".to_string(), offer["sdp"].clone());
+        pc.set_local_description(desc).unwrap();
+        assert_eq!(pc.signaling_state(), Some("stable"));
+        pc.close();
+    }
 }

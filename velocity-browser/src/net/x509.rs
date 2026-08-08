@@ -569,4 +569,129 @@ mod tests {
         assert!(parse_certificate(&[0x30, 0x82, 0xff]).is_err());
         assert!(parse_certificate(&[0x02, 0x01, 0x00]).is_err());
     }
+
+    #[test]
+    fn verify_before_validity_window() {
+        let der = build_cert("250101000000", "260101000000", "example.com", &["example.com"]);
+        let cert = parse_certificate(&der).unwrap();
+        // now = 2024-06-01, which is before notBefore (2025-01-01)
+        let now = civil_to_unix(2024, 6, 1, 0, 0, 0);
+        let v = verify(&cert, "example.com", now);
+        assert!(!v.time_valid);
+        assert!(v.reason.contains("validity window"));
+    }
+
+    #[test]
+    fn verify_cn_fallback_when_no_san() {
+        let der = build_cert("240101000000", "260101000000", "example.com", &[]);
+        let cert = parse_certificate(&der).unwrap();
+        assert!(cert.san_dns.is_empty());
+        let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
+        let v = verify(&cert, "example.com", now);
+        assert!(v.hostname_matched); // CN fallback used
+    }
+
+    #[test]
+    fn verify_cn_fallback_rejects_wrong_host() {
+        let der = build_cert("240101000000", "260101000000", "example.com", &[]);
+        let cert = parse_certificate(&der).unwrap();
+        let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
+        let v = verify(&cert, "evil.com", now);
+        assert!(!v.hostname_matched);
+    }
+
+    #[test]
+    fn wildcard_san_matches_subdomain() {
+        let der = build_cert("240101000000", "260101000000", "CA", &["*.example.com"]);
+        let cert = parse_certificate(&der).unwrap();
+        let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
+        let v = verify(&cert, "www.example.com", now);
+        assert!(v.hostname_matched);
+    }
+
+    #[test]
+    fn wildcard_san_rejects_bare_domain() {
+        let der = build_cert("240101000000", "260101000000", "CA", &["*.example.com"]);
+        let cert = parse_certificate(&der).unwrap();
+        let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
+        let v = verify(&cert, "example.com", now);
+        assert!(!v.hostname_matched);
+    }
+
+    #[test]
+    fn verify_at_exact_boundaries() {
+        let der = build_cert("240101000000", "260101000000", "example.com", &["example.com"]);
+        let cert = parse_certificate(&der).unwrap();
+        // At notBefore exactly
+        let v = verify(&cert, "example.com", cert.not_before);
+        assert!(v.time_valid);
+        // At notAfter exactly
+        let v = verify(&cert, "example.com", cert.not_after);
+        assert!(v.time_valid);
+    }
+
+    #[test]
+    fn civil_to_unix_known_epoch() {
+        // 1970-01-01 00:00:00 UTC = Unix epoch = 0
+        assert_eq!(civil_to_unix(1970, 1, 1, 0, 0, 0), 0);
+    }
+
+    #[test]
+    fn civil_to_unix_known_date() {
+        // 2000-01-01 00:00:00 UTC = 946684800
+        assert_eq!(civil_to_unix(2000, 1, 1, 0, 0, 0), 946684800);
+    }
+
+    #[test]
+    fn parse_time_utc_year_pivot() {
+        // YY=99 → 1999, YY=00 → 2000, YY=49 → 2049
+        let t99 = parse_time(TAG_UTC_TIME, b"990101000000Z").unwrap();
+        let t00 = parse_time(TAG_UTC_TIME, b"000101000000Z").unwrap();
+        let t49 = parse_time(TAG_UTC_TIME, b"490101000000Z").unwrap();
+        assert_eq!(civil_to_unix(1999, 1, 1, 0, 0, 0), t99);
+        assert_eq!(civil_to_unix(2000, 1, 1, 0, 0, 0), t00);
+        assert_eq!(civil_to_unix(2049, 1, 1, 0, 0, 0), t49);
+    }
+
+    #[test]
+    fn parse_time_generalized_time() {
+        let t = parse_time(TAG_GEN_TIME, b"20250601120000Z").unwrap();
+        assert_eq!(t, civil_to_unix(2025, 6, 1, 12, 0, 0));
+    }
+
+    #[test]
+    fn parse_time_rejects_no_z_suffix() {
+        let result = parse_time(TAG_UTC_TIME, b"240101000000");
+        assert_eq!(result, Err(X509Error::BadTime));
+    }
+
+    #[test]
+    fn parse_time_rejects_invalid_month() {
+        let result = parse_time(TAG_UTC_TIME, b"241301000000Z");
+        assert_eq!(result, Err(X509Error::BadTime));
+    }
+
+    #[test]
+    fn parse_time_rejects_invalid_day() {
+        let result = parse_time(TAG_UTC_TIME, b"240132000000Z");
+        assert_eq!(result, Err(X509Error::BadTime));
+    }
+
+    #[test]
+    fn host_matches_exact_and_wildcard() {
+        assert!(host_matches("example.com", "example.com"));
+        assert!(!host_matches("example.com", "other.com"));
+        assert!(host_matches("*.example.com", "sub.example.com"));
+        assert!(!host_matches("*.com", "example.com")); // single-label rest rejected
+    }
+
+    #[test]
+    fn trailing_dot_stripped_from_hostname() {
+        // Trailing FQDN dots should be stripped
+        let der = build_cert("240101000000", "260101000000", "CA", &["example.com"]);
+        let cert = parse_certificate(&der).unwrap();
+        let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
+        let v = verify(&cert, "example.com.", now);
+        assert!(v.hostname_matched);
+    }
 }

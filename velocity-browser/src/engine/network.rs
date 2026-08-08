@@ -303,4 +303,129 @@ mod tests {
         tracker.record_request("https://b.com", "GET", 200, "document");
         assert_eq!(tracker.requests.len(), 1);
     }
+
+    #[test]
+    fn record_full_request_stores_all_fields() {
+        let mut tracker = NetworkTracker::new();
+        let mut req_h = HashMap::new();
+        req_h.insert("Accept".into(), "text/html".into());
+        let mut resp_h = HashMap::new();
+        resp_h.insert("Content-Type".into(), "text/html".into());
+        tracker.record_full_request(
+            "https://example.com/page", "GET", 200, "document",
+            req_h.clone(), resp_h.clone(), 4096, 123.45,
+        );
+        let req = &tracker.requests[0];
+        assert_eq!(req.url, "https://example.com/page");
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.status, 200);
+        assert_eq!(req.resource_type, "document");
+        assert_eq!(req.request_headers.get("Accept").map(|s| s.as_str()), Some("text/html"));
+        assert_eq!(req.response_headers.get("Content-Type").map(|s| s.as_str()), Some("text/html"));
+        assert_eq!(req.body_size, 4096);
+        assert!((req.duration_ms - 123.45).abs() < 0.01);
+    }
+
+    #[test]
+    fn record_full_request_respects_recording_flag() {
+        let mut tracker = NetworkTracker::new();
+        tracker.set_recording(false);
+        tracker.record_full_request(
+            "https://x.com", "POST", 201, "xhr",
+            HashMap::new(), HashMap::new(), 0, 0.0,
+        );
+        assert!(tracker.requests.is_empty());
+    }
+
+    #[test]
+    fn export_triples_nda_contains_method_and_status() {
+        let mut tracker = NetworkTracker::new();
+        tracker.record_request("https://api.com/data", "POST", 201, "xhr");
+        let triples = tracker.export_triples_nda();
+        assert_eq!(triples.len(), 2); // one for method (200), one for status (201)
+        // Predicate 200 = method, 201 = status
+        assert_eq!(triples[0].predicate_id, 200);
+        assert_eq!(triples[1].predicate_id, 201);
+    }
+
+    #[test]
+    fn stats_by_resource_type_breakdown() {
+        let mut tracker = NetworkTracker::new();
+        tracker.record_request("https://a.com/1", "GET", 200, "document");
+        tracker.record_request("https://a.com/2", "GET", 200, "document");
+        tracker.record_request("https://a.com/s.css", "GET", 200, "stylesheet");
+        tracker.record_request("https://a.com/a.js", "GET", 200, "script");
+        let stats = tracker.stats();
+        assert_eq!(stats.by_resource_type.get("document"), Some(&2));
+        assert_eq!(stats.by_resource_type.get("stylesheet"), Some(&1));
+        assert_eq!(stats.by_resource_type.get("script"), Some(&1));
+    }
+
+    #[test]
+    fn stats_blocked_count_reflects_field() {
+        let mut tracker = NetworkTracker::new();
+        tracker.blocked_count = 5;
+        tracker.record_request("https://a.com", "GET", 200, "document");
+        let stats = tracker.stats();
+        assert_eq!(stats.blocked_requests, 5);
+    }
+
+    #[test]
+    fn stats_redirect_count_is_half_redirects_len() {
+        let mut tracker = NetworkTracker::new();
+        tracker.record_redirect("https://old.com", "https://new.com");
+        tracker.record_redirect("https://old2.com", "https://new2.com");
+        let stats = tracker.stats();
+        assert_eq!(stats.redirect_count, 2); // 4 entries / 2
+    }
+
+    #[test]
+    fn intercept_redirect_action() {
+        let mut tracker = NetworkTracker::new();
+        tracker.add_intercept_rule("old.example.com", vec![], InterceptAction::Redirect("https://new.example.com".into()));
+        match tracker.check_intercept("https://old.example.com/page", "document") {
+            InterceptAction::Redirect(url) => assert_eq!(url, "https://new.example.com"),
+            _ => panic!("Expected Redirect"),
+        }
+    }
+
+    #[test]
+    fn intercept_modify_headers_action() {
+        let mut tracker = NetworkTracker::new();
+        let mut headers = HashMap::new();
+        headers.insert("X-Custom".into(), "value".into());
+        tracker.add_intercept_rule("api.example.com", vec!["xhr"], InterceptAction::ModifyHeaders(headers));
+        // Should match for xhr
+        match tracker.check_intercept("https://api.example.com/data", "xhr") {
+            InterceptAction::ModifyHeaders(h) => assert_eq!(h.get("X-Custom").map(|s| s.as_str()), Some("value")),
+            _ => panic!("Expected ModifyHeaders"),
+        }
+        // Should NOT match for document (resource type filter)
+        match tracker.check_intercept("https://api.example.com/page", "document") {
+            InterceptAction::Allow => {}
+            _ => panic!("Expected Allow for non-matching resource type"),
+        }
+    }
+
+    #[test]
+    fn clear_resets_all_state() {
+        let mut tracker = NetworkTracker::new();
+        tracker.record_request("https://a.com", "GET", 200, "document");
+        tracker.record_redirect("https://a.com", "https://b.com");
+        tracker.downloads.push("file.zip".into());
+        tracker.blocked_count = 3;
+        tracker.clear();
+        assert!(tracker.requests.is_empty());
+        assert!(tracker.redirects.is_empty());
+        assert!(tracker.downloads.is_empty());
+        assert_eq!(tracker.blocked_count, 0);
+    }
+
+    #[test]
+    fn default_tracker_is_recording() {
+        let tracker = NetworkTracker::default();
+        assert!(tracker.recording);
+        assert!(tracker.requests.is_empty());
+        assert!(tracker.resource_filter.is_none());
+    }
 }
