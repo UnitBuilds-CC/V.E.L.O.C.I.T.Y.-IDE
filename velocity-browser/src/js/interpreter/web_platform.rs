@@ -1205,3 +1205,310 @@ pub(super) fn call_indexed_db_method(method: &str, args: &[JsValue]) -> JsValue 
         _ => JsValue::Undefined,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_obj(v: &JsValue) -> &HashMap<String, JsValue> {
+        match v {
+            JsValue::Object(m) => m,
+            _ => panic!("expected Object"),
+        }
+    }
+
+    fn get_str(v: &JsValue) -> &str {
+        match v {
+            JsValue::String(s) => s.as_str(),
+            _ => panic!("expected String"),
+        }
+    }
+
+    // ── make_performance ─────────────────────────────────────────────────
+
+    #[test]
+    fn performance_structure() {
+        let perf = make_performance();
+        let m = get_obj(&perf);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "Performance");
+        assert!(m.get("timeOrigin").is_some());
+    }
+
+    // ── call_performance_method ──────────────────────────────────────────
+
+    #[test]
+    fn performance_now() {
+        let result = call_performance_method("now", &[]);
+        // Should return a non-negative number
+        assert!(matches!(result, JsValue::Number(n) if n >= 0.0));
+    }
+
+    #[test]
+    fn performance_mark() {
+        let result = call_performance_method("mark", &[JsValue::String("test-mark".into())]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn performance_measure() {
+        call_performance_method("mark", &[JsValue::String("start".into())]);
+        let result = call_performance_method("measure", &[
+            JsValue::String("test-measure".into()),
+            JsValue::String("start".into()),
+        ]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn performance_get_entries() {
+        call_performance_method("mark", &[JsValue::String("entry-test".into())]);
+        let result = call_performance_method("getEntries", &[]);
+        if let JsValue::Array(entries) = result {
+            assert!(!entries.is_empty());
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn performance_get_entries_by_name() {
+        call_performance_method("mark", &[JsValue::String("named-mark".into())]);
+        let result = call_performance_method("getEntriesByName", &[JsValue::String("named-mark".into())]);
+        if let JsValue::Array(entries) = result {
+            assert!(!entries.is_empty());
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn performance_get_entries_by_type() {
+        call_performance_method("mark", &[JsValue::String("type-test".into())]);
+        let result = call_performance_method("getEntriesByType", &[JsValue::String("mark".into())]);
+        if let JsValue::Array(entries) = result {
+            assert!(!entries.is_empty());
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn performance_clear_marks() {
+        call_performance_method("mark", &[JsValue::String("to-clear".into())]);
+        let result = call_performance_method("clearMarks", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn performance_clear_measures() {
+        call_performance_method("mark", &[JsValue::String("measure-start".into())]);
+        call_performance_method("measure", &[
+            JsValue::String("test".into()),
+            JsValue::String("measure-start".into()),
+        ]);
+        let result = call_performance_method("clearMeasures", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn performance_to_json() {
+        let result = call_performance_method("toJSON", &[]);
+        let m = get_obj(&result);
+        assert!(m.get("timeOrigin").is_some());
+        assert!(m.get("entries").is_some());
+    }
+
+    #[test]
+    fn performance_unknown_method() {
+        let result = call_performance_method("unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── make_history ─────────────────────────────────────────────────────
+
+    #[test]
+    fn history_structure() {
+        let hist = make_history();
+        let m = get_obj(&hist);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "History");
+        assert!(m.get("length").is_some());
+        assert!(m.get("state").is_some());
+    }
+
+    // ── call_history_method ──────────────────────────────────────────────
+
+    #[test]
+    fn history_push_state() {
+        let result = call_history_method("pushState", &[
+            JsValue::String("test-state".into()),
+            JsValue::String("".into()),
+            JsValue::String("/test".into()),
+        ]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn history_replace_state() {
+        let result = call_history_method("replaceState", &[
+            JsValue::String("replaced-state".into()),
+            JsValue::String("".into()),
+            JsValue::String("/replaced".into()),
+        ]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn history_back() {
+        call_history_method("pushState", &[JsValue::Number(1.0), JsValue::String("".into()), JsValue::String("/1".into())]);
+        call_history_method("pushState", &[JsValue::Number(2.0), JsValue::String("".into()), JsValue::String("/2".into())]);
+        let result = call_history_method("back", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn history_forward() {
+        call_history_method("pushState", &[JsValue::Number(1.0), JsValue::String("".into()), JsValue::String("/1".into())]);
+        call_history_method("back", &[]);
+        let result = call_history_method("forward", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn history_go() {
+        call_history_method("pushState", &[JsValue::Number(1.0), JsValue::String("".into()), JsValue::String("/1".into())]);
+        call_history_method("pushState", &[JsValue::Number(2.0), JsValue::String("".into()), JsValue::String("/2".into())]);
+        let result = call_history_method("go", &[JsValue::Number(-1.0)]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn history_unknown_method() {
+        let result = call_history_method("unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── make_intersection_observer ───────────────────────────────────────
+
+    #[test]
+    fn intersection_observer_structure() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_intersection_observer(callback, None);
+        let m = get_obj(&observer);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "IntersectionObserver");
+        assert!(m.get("__callback__").is_some());
+        if let JsValue::Array(targets) = m.get("__targets__").unwrap() {
+            assert_eq!(targets.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    // ── call_intersection_observer_method ────────────────────────────────
+
+    #[test]
+    fn intersection_observer_observe() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_intersection_observer(callback, None);
+        let m = get_obj(&observer);
+        let target = JsValue::String("target-element".into());
+        let result = call_intersection_observer_method(m, "observe", &[target]);
+        let updated = get_obj(&result);
+        if let JsValue::Array(targets) = updated.get("__targets__").unwrap() {
+            assert_eq!(targets.len(), 1);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn intersection_observer_disconnect() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_intersection_observer(callback, None);
+        let m = get_obj(&observer);
+        let result = call_intersection_observer_method(m, "disconnect", &[]);
+        let updated = get_obj(&result);
+        if let JsValue::Array(targets) = updated.get("__targets__").unwrap() {
+            assert_eq!(targets.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn intersection_observer_take_records() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_intersection_observer(callback, None);
+        let m = get_obj(&observer);
+        let result = call_intersection_observer_method(m, "takeRecords", &[]);
+        if let JsValue::Array(records) = result {
+            assert_eq!(records.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn intersection_observer_unknown_method() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_intersection_observer(callback, None);
+        let m = get_obj(&observer);
+        let result = call_intersection_observer_method(m, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── make_resize_observer ─────────────────────────────────────────────
+
+    #[test]
+    fn resize_observer_structure() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_resize_observer(callback);
+        let m = get_obj(&observer);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "ResizeObserver");
+        assert!(m.get("__callback__").is_some());
+        if let JsValue::Array(targets) = m.get("__targets__").unwrap() {
+            assert_eq!(targets.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    // ── call_resize_observer_method ──────────────────────────────────────
+
+    #[test]
+    fn resize_observer_observe() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_resize_observer(callback);
+        let m = get_obj(&observer);
+        let target = JsValue::String("target-element".into());
+        let result = call_resize_observer_method(m, "observe", &[target]);
+        let updated = get_obj(&result);
+        if let JsValue::Array(targets) = updated.get("__targets__").unwrap() {
+            assert_eq!(targets.len(), 1);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn resize_observer_disconnect() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_resize_observer(callback);
+        let m = get_obj(&observer);
+        let result = call_resize_observer_method(m, "disconnect", &[]);
+        let updated = get_obj(&result);
+        if let JsValue::Array(targets) = updated.get("__targets__").unwrap() {
+            assert_eq!(targets.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn resize_observer_unknown_method() {
+        let callback = JsValue::NativeFunction("test-callback".into());
+        let observer = make_resize_observer(callback);
+        let m = get_obj(&observer);
+        let result = call_resize_observer_method(m, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+}
