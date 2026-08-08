@@ -321,4 +321,61 @@ mod tests {
         let overrides = mgr.tick(1000.0);
         assert_eq!(overrides.get(&9).unwrap().get("opacity").unwrap(), "0.5");
     }
+
+    #[test]
+    fn transition_before_delay_starts() {
+        let mut mgr = TransitionManager::new();
+        mgr.set_transition_specs(1, TransitionSpec::parse_many("opacity 1s linear 1s"));
+        mgr.set_property(1, "opacity", "0", 0.0);
+        mgr.set_property(1, "opacity", "1", 0.0);
+        // At t=0 the delay hasn't elapsed, origin value held
+        let overrides = mgr.tick(0.0);
+        assert_eq!(overrides.get(&1).unwrap().get("opacity").unwrap(), "0");
+    }
+
+    #[test]
+    fn multiple_transitions_on_same_node() {
+        let mut mgr = TransitionManager::new();
+        mgr.set_transition_specs(1, TransitionSpec::parse_many("opacity 1s linear, width 1s linear"));
+        mgr.set_property(1, "opacity", "0", 0.0);
+        mgr.set_property(1, "width", "0px", 0.0);
+        mgr.set_property(1, "opacity", "1", 0.0);
+        mgr.set_property(1, "width", "100px", 0.0);
+
+        let overrides = mgr.tick(500.0);
+        let node_ov = overrides.get(&1).unwrap();
+        assert_eq!(node_ov.get("opacity").unwrap(), "0.5");
+        assert_eq!(node_ov.get("width").unwrap(), "50.0px"); // halfway through 1s transition
+    }
+
+    #[test]
+    fn parse_empty_transition_returns_default() {
+        let spec = TransitionSpec::parse("");
+        assert_eq!(spec.property, "all");
+    }
+
+    #[test]
+    fn parse_none_transition() {
+        let spec = TransitionSpec::parse("none");
+        assert_eq!(spec.property, "none");
+    }
+
+    #[test]
+    fn active_node_count_tracks_nodes() {
+        let mut mgr = TransitionManager::new();
+        mgr.set_transition_specs(1, TransitionSpec::parse_many("opacity 1s linear"));
+        mgr.set_transition_specs(2, TransitionSpec::parse_many("width 1s linear"));
+        mgr.set_property(1, "opacity", "0", 0.0);
+        mgr.set_property(1, "opacity", "1", 0.0);
+        mgr.set_property(2, "width", "0px", 0.0);
+        mgr.set_property(2, "width", "100px", 0.0);
+        assert_eq!(mgr.active_node_count(), 2);
+    }
+
+    #[test]
+    fn tick_with_no_active_returns_empty() {
+        let mut mgr = TransitionManager::new();
+        let overrides = mgr.tick(100.0);
+        assert!(overrides.is_empty());
+    }
 }

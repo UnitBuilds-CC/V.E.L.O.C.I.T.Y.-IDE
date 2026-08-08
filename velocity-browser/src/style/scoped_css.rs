@@ -245,4 +245,63 @@ mod tests {
         let kind = ScopedCssMatcher::parse_scoped_selector("p.intro");
         assert!(matches!(kind, ScopedSelectorKind::Normal(_)));
     }
+
+    #[test]
+    fn test_host_non_host_node_fails() {
+        let node = make_node("div", vec![]);
+        assert!(!ScopedCssMatcher::matches_host_selector(&node, ":host"));
+    }
+
+    #[test]
+    fn test_host_shadow_host_attr() {
+        let node = make_node("div", vec![("shadow-host", "true")]);
+        assert!(ScopedCssMatcher::matches_host_selector(&node, ":host"));
+    }
+
+    #[test]
+    fn test_defined_unregistered_custom_element() {
+        let node = make_node("x-foo", vec![]);
+        assert!(!ScopedCssMatcher::matches_defined(&node, &[]));
+    }
+
+    #[test]
+    fn test_deep_combinator_deep_syntax() {
+        let host = make_node("div", vec![]);
+        let inner = make_node("p", vec![("class", "target")]);
+        let nodes = vec![host.clone(), inner.clone()];
+        assert!(ScopedCssMatcher::matches_deep_combinator(&host, "div /deep/ .target", &nodes));
+    }
+
+    #[test]
+    fn test_deep_combinator_no_match() {
+        let host = make_node("div", vec![]);
+        let inner = make_node("span", vec![]);
+        let nodes = vec![host.clone(), inner.clone()];
+        assert!(!ScopedCssMatcher::matches_deep_combinator(&host, "div >>> .missing", &nodes));
+    }
+
+    #[test]
+    fn test_simple_selector_star_matches_any() {
+        let _node = make_node("anything", vec![]);
+        // Use host functional selector to test inner simple selector matching
+        let node2 = make_node("div", vec![("shadowroot", "open")]);
+        assert!(ScopedCssMatcher::matches_host_selector(&node2, ":host(*)"));
+    }
+
+    #[test]
+    fn test_simple_selector_attribute_presence() {
+        let _node = make_node("input", vec![("disabled", "")]);
+        let kind = ScopedCssMatcher::parse_scoped_selector("::slotted([disabled])");
+        if let ScopedSelectorKind::Slotted(ref inner) = kind {
+            assert_eq!(inner, "[disabled]");
+        } else {
+            panic!("expected Slotted");
+        }
+    }
+
+    #[test]
+    fn test_parse_whitespace_trimmed() {
+        let kind = ScopedCssMatcher::parse_scoped_selector("  :host  ");
+        assert_eq!(kind, ScopedSelectorKind::Host);
+    }
 }
