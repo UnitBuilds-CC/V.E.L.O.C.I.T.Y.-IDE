@@ -72,3 +72,7 @@ pub mod test_generator;
 pub mod triggers;
 pub mod voice_commands;
 pub mod workflow;
+pub mod workflow_ai;
+pub mod workflow_canvas;
+pub mod workflow_templates;
+pub mod workflow_version;
