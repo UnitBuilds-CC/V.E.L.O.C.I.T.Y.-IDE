@@ -84,6 +84,46 @@ fn fetch_models_for_provider(
         AiProvider::OpenRouter => fetch_openrouter_models(or_accounts, usage_tracker),
         AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
         AiProvider::LocalOllama => fetch_local_ollama_models(ollama_accounts),
+        AiProvider::OpenAI => {
+            let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            fetch_openai_models(&key)
+        }
+        AiProvider::Groq => {
+            let key = std::env::var("GROQ_API_KEY").unwrap_or_default();
+            fetch_groq_models(&key)
+        }
+        AiProvider::Mistral => {
+            let key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
+            fetch_mistral_models(&key)
+        }
+        AiProvider::Deepseek => {
+            let key = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default();
+            fetch_deepseek_models(&key)
+        }
+        AiProvider::AlibabaQwen => {
+            let key = std::env::var("DASHSCOPE_API_KEY").unwrap_or_default();
+            fetch_alibaba_models(&key)
+        }
+        AiProvider::GoogleVertex => {
+            let key = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
+            fetch_google_models(&key)
+        }
+        AiProvider::TogetherAi => {
+            let key = std::env::var("TOGETHER_API_KEY").unwrap_or_default();
+            fetch_together_models(&key)
+        }
+        AiProvider::FireworksAi => {
+            let key = std::env::var("FIREWORKS_API_KEY").unwrap_or_default();
+            fetch_fireworks_models(&key)
+        }
+        AiProvider::Perplexity => {
+            let key = std::env::var("PERPLEXITY_API_KEY").unwrap_or_default();
+            fetch_perplexity_models(&key)
+        }
+        AiProvider::Cerebras => {
+            let key = std::env::var("CEREBRAS_API_KEY").unwrap_or_default();
+            fetch_cerebras_models(&key)
+        }
         _ => Ok(vec![default_model_info(&default_provider_model(provider))]),
     }
 }

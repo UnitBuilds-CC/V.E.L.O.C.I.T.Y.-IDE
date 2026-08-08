@@ -320,6 +320,10 @@ pub fn fallback_provider(current: AiProvider) -> AiProvider {
         AiProvider::AwsBedrock => AiProvider::OpenRouter,
         AiProvider::Groq => AiProvider::OpenRouter,
         AiProvider::Mistral => AiProvider::OpenRouter,
+        AiProvider::TogetherAi => AiProvider::OpenRouter,
+        AiProvider::FireworksAi => AiProvider::OpenRouter,
+        AiProvider::Perplexity => AiProvider::OpenRouter,
+        AiProvider::Cerebras => AiProvider::OpenRouter,
     }
 }
 
@@ -337,6 +341,10 @@ pub fn default_provider_model(provider: AiProvider) -> String {
         AiProvider::AwsBedrock => "anthropic.claude-3-sonnet-20240229-v1:0".to_string(),
         AiProvider::Groq => "llama-3.3-70b-versatile".to_string(),
         AiProvider::Mistral => "mistral-large-latest".to_string(),
+        AiProvider::TogetherAi => "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo".to_string(),
+        AiProvider::FireworksAi => "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
+        AiProvider::Perplexity => "sonar-pro".to_string(),
+        AiProvider::Cerebras => "llama-3.3-70b".to_string(),
     }
 }
 
@@ -408,4 +416,151 @@ pub fn fetch_azure_models(
         });
     }
     Ok(catalog)
+}
+
+/// Generic fetcher for any OpenAI-compatible `/v1/models` endpoint.
+/// Used by OpenAI, Groq, Mistral, Deepseek, AlibabaQwen, Together, Fireworks, Perplexity, Cerebras.
+fn fetch_openai_compatible_models(
+    base_url: &str,
+    api_key: &str,
+    provider_label: &str,
+) -> Result<Vec<ModelInfo>, String> {
+    if api_key.trim().is_empty() {
+        return Err(format!("No API key configured for {provider_label}"));
+    }
+    let url = format!("{base_url}/v1/models");
+    let response = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(15))
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| format!("{provider_label} model catalog request failed: {e}"))?;
+    let body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("{provider_label} model catalog response invalid: {e}"))?;
+    let mut models: Vec<ModelInfo> = body["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = item["id"].as_str()?.to_string();
+            let lower = id.to_lowercase();
+            // Filter out embedding/non-chat models
+            if lower.contains("embed") || lower.contains("whisper") || lower.contains("tts") || lower.contains("image") {
+                return None;
+            }
+            let supports_thinking = lower.contains("thinking")
+                || lower.contains("reasoning")
+                || lower.contains("deepseek-r1")
+                || lower.contains("qwq")
+                || lower.contains("o1")
+                || lower.contains("o3");
+            let supports_tools = lower.contains("function")
+                || lower.contains("tool")
+                || lower.contains("llama-3")
+                || lower.contains("llama-4")
+                || lower.contains("qwen")
+                || lower.contains("gpt-4")
+                || lower.contains("gpt-3.5")
+                || lower.contains("mistral")
+                || lower.contains("mixtral")
+                || lower.contains("deepseek")
+                || lower.contains("claude")
+                || lower.contains("gemini")
+                || lower.contains("sonar")
+                || lower.contains("meta-llama");
+            Some(ModelInfo {
+                label: id.rsplit('/').last().unwrap_or(&id).to_string(),
+                id: id.clone(),
+                api_style: if supports_tools { ApiStyle::OpenAiTools } else { ApiStyle::OpenAiChat },
+                supports_tools,
+                supports_thinking,
+            })
+        })
+        .collect();
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.dedup_by(|a, b| a.id == b.id);
+    if models.is_empty() {
+        return Err(format!("No models returned by {provider_label}"));
+    }
+    Ok(models)
+}
+
+pub fn fetch_openai_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.openai.com", api_key, "OpenAI")
+}
+
+pub fn fetch_groq_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.groq.com", api_key, "Groq")
+}
+
+pub fn fetch_mistral_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.mistral.ai", api_key, "Mistral")
+}
+
+pub fn fetch_deepseek_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.deepseek.com", api_key, "Deepseek")
+}
+
+pub fn fetch_alibaba_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://dashscope.aliyuncs.com/compatible-mode", api_key, "Alibaba Qwen")
+}
+
+pub fn fetch_google_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    // Google Gemini API uses a different endpoint format
+    if api_key.trim().is_empty() {
+        return Err("No API key configured for Google Vertex AI".to_string());
+    }
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={api_key}");
+    let response = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(15))
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| format!("Google Vertex model catalog request failed: {e}"))?;
+    let body: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("Google Vertex model catalog response invalid: {e}"))?;
+    let mut models: Vec<ModelInfo> = body["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let name = item["name"].as_str().unwrap_or("").to_string();
+            let id = name.strip_prefix("models/").unwrap_or(&name).to_string();
+            let lower = id.to_lowercase();
+            if lower.contains("embed") || lower.contains("image") || lower.contains("tts") {
+                return None;
+            }
+            let supports_thinking = lower.contains("thinking") || lower.contains("reasoning") || lower.contains("flash");
+            let supports_tools = lower.contains("gemini") || lower.contains("flash") || lower.contains("pro");
+            Some(ModelInfo {
+                label: id.replace('-', " ").replace("gemini ", "Gemini "),
+                id: id.clone(),
+                api_style: if supports_tools { ApiStyle::OpenAiTools } else { ApiStyle::OpenAiChat },
+                supports_tools,
+                supports_thinking,
+            })
+        })
+        .collect();
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    if models.is_empty() {
+        return Err("No models returned by Google Vertex AI".into());
+    }
+    Ok(models)
+}
+
+pub fn fetch_together_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.together.xyz", api_key, "Together AI")
+}
+
+pub fn fetch_fireworks_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.fireworks.ai/inference", api_key, "Fireworks AI")
+}
+
+pub fn fetch_perplexity_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.perplexity.ai", api_key, "Perplexity")
+}
+
+pub fn fetch_cerebras_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
+    fetch_openai_compatible_models("https://api.cerebras.ai", api_key, "Cerebras")
 }

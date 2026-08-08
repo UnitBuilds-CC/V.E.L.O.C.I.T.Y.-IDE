@@ -200,6 +200,24 @@ pub fn run_agent_reasoning_loop(
             AiProvider::Mistral => {
                 super::dispatch::execute_mistral_request(&request_body, ui_tx)
             }
+            AiProvider::OpenAI => {
+                super::dispatch::execute_openai_request(&request_body, ui_tx)
+            }
+            AiProvider::GoogleVertex => {
+                super::dispatch::execute_google_request(&request_body, ui_tx)
+            }
+            AiProvider::TogetherAi => {
+                super::dispatch::execute_together_request(&request_body, ui_tx)
+            }
+            AiProvider::FireworksAi => {
+                super::dispatch::execute_fireworks_request(&request_body, ui_tx)
+            }
+            AiProvider::Perplexity => {
+                super::dispatch::execute_perplexity_request(&request_body, ui_tx)
+            }
+            AiProvider::Cerebras => {
+                super::dispatch::execute_cerebras_request(&request_body, ui_tx)
+            }
             _ => {
                 super::dispatch::execute_openrouter_request(
                     or_accounts,
@@ -225,6 +243,12 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::AwsBedrock => std::env::var("BEDROCK_PROXY_URL").is_ok(),
                     AiProvider::Groq => !std::env::var("GROQ_API_KEY").unwrap_or_default().trim().is_empty(),
                     AiProvider::Mistral => !std::env::var("MISTRAL_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::OpenAI => !std::env::var("OPENAI_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::GoogleVertex => !std::env::var("GOOGLE_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::TogetherAi => !std::env::var("TOGETHER_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::FireworksAi => !std::env::var("FIREWORKS_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::Perplexity => !std::env::var("PERPLEXITY_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::Cerebras => !std::env::var("CEREBRAS_API_KEY").unwrap_or_default().trim().is_empty(),
                     _ => true,
                 };
 
@@ -271,6 +295,12 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::AwsBedrock => "AWS Bedrock request failed or BEDROCK_PROXY_URL not configured.",
                     AiProvider::Groq => "Groq request failed or GROQ_API_KEY missing.",
                     AiProvider::Mistral => "Mistral AI request failed or MISTRAL_API_KEY missing.",
+                    AiProvider::OpenAI => "OpenAI request failed or OPENAI_API_KEY missing.",
+                    AiProvider::GoogleVertex => "Google Vertex request failed or GOOGLE_API_KEY missing.",
+                    AiProvider::TogetherAi => "Together AI request failed or TOGETHER_API_KEY missing.",
+                    AiProvider::FireworksAi => "Fireworks AI request failed or FIREWORKS_API_KEY missing.",
+                    AiProvider::Perplexity => "Perplexity request failed or PERPLEXITY_API_KEY missing.",
+                    AiProvider::Cerebras => "Cerebras request failed or CEREBRAS_API_KEY missing.",
                     _ => "Selected AI Provider request failed or key missing.",
                 };
                 ui_tx

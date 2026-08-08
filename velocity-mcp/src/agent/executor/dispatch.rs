@@ -354,6 +354,116 @@ pub fn execute_mistral_request(
     )
 }
 
+/// OpenAI Direct — standard API endpoint.
+/// API docs: https://platform.openai.com/docs/api-reference
+pub fn execute_openai_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.openai.com/v1/chat/completions",
+        "OPENAI_API_KEY",
+        request_body,
+        ui_tx,
+        "OpenAI",
+    )
+}
+
+/// Google Vertex AI (Gemini) — OpenAI-compatible endpoint.
+/// API docs: https://ai.google.dev/gemini-api/docs/openai
+pub fn execute_google_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    let api_key = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
+    if api_key.trim().is_empty() {
+        ui_tx.send(AgentToUiMessage::StatusUpdate(
+            "Google API key not set. Export GOOGLE_API_KEY to use this provider.".to_string()
+        )).ok();
+        return None;
+    }
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={api_key}");
+    match ureq::post(&url)
+        .timeout(Duration::from_secs(60))
+        .set("Content-Type", "application/json")
+        .send_json(request_body)
+    {
+        Ok(res) => Some(res),
+        Err(ureq::Error::Status(401, _)) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(
+                "Google authentication failed. Check your GOOGLE_API_KEY.".to_string()
+            )).ok();
+            None
+        }
+        Err(e) => {
+            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                "Google request error: {:?}", e
+            ))).ok();
+            None
+        }
+    }
+}
+
+/// Together AI — OpenAI-compatible endpoint.
+/// API docs: https://docs.together.ai/reference/chat-completions
+pub fn execute_together_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.together.xyz/v1/chat/completions",
+        "TOGETHER_API_KEY",
+        request_body,
+        ui_tx,
+        "Together AI",
+    )
+}
+
+/// Fireworks AI — OpenAI-compatible endpoint.
+/// API docs: https://docs.fireworks.ai/api-reference/
+pub fn execute_fireworks_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.fireworks.ai/inference/v1/chat/completions",
+        "FIREWORKS_API_KEY",
+        request_body,
+        ui_tx,
+        "Fireworks AI",
+    )
+}
+
+/// Perplexity — OpenAI-compatible endpoint for sonar models.
+/// API docs: https://docs.perplexity.ai/api-reference/chat-completions
+pub fn execute_perplexity_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.perplexity.ai/chat/completions",
+        "PERPLEXITY_API_KEY",
+        request_body,
+        ui_tx,
+        "Perplexity",
+    )
+}
+
+/// Cerebras — OpenAI-compatible endpoint for wafer-scale inference.
+/// API docs: https://inference-docs.cerebras.ai/api-reference/chat-completions
+pub fn execute_cerebras_request(
+    request_body: &Value,
+    ui_tx: &Sender<AgentToUiMessage>,
+) -> Option<ureq::Response> {
+    execute_openai_compatible_request(
+        "https://api.cerebras.ai/v1/chat/completions",
+        "CEREBRAS_API_KEY",
+        request_body,
+        ui_tx,
+        "Cerebras",
+    )
+}
+
 /// AWS Bedrock — uses OpenAI-compatible proxy or environment-configured endpoint.
 /// Requires AWS_REGION and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars,
 /// or a configured Bedrock proxy URL via BEDROCK_PROXY_URL.

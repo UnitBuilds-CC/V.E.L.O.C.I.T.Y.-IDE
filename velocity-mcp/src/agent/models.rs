@@ -150,6 +150,14 @@ pub enum AiProvider {
     Groq,
     /// Mistral AI (La Plateforme, OpenAI-compatible endpoint).
     Mistral,
+    /// Together AI (OpenAI-compatible endpoint).
+    TogetherAi,
+    /// Fireworks AI (OpenAI-compatible endpoint).
+    FireworksAi,
+    /// Perplexity API (OpenAI-compatible endpoint).
+    Perplexity,
+    /// Cerebras (OpenAI-compatible endpoint for wafer-scale inference).
+    Cerebras,
 }
 
 impl AiProvider {
@@ -167,6 +175,10 @@ impl AiProvider {
             AiProvider::AwsBedrock => "AWS Bedrock",
             AiProvider::Groq => "Groq",
             AiProvider::Mistral => "Mistral AI",
+            AiProvider::TogetherAi => "Together AI",
+            AiProvider::FireworksAi => "Fireworks AI",
+            AiProvider::Perplexity => "Perplexity",
+            AiProvider::Cerebras => "Cerebras",
         }
     }
 
@@ -185,6 +197,10 @@ impl AiProvider {
             AiProvider::AwsBedrock => "bedrock",
             AiProvider::Groq => "groq",
             AiProvider::Mistral => "mistral",
+            AiProvider::TogetherAi => "together",
+            AiProvider::FireworksAi => "fireworks",
+            AiProvider::Perplexity => "perplexity",
+            AiProvider::Cerebras => "cerebras",
         }
     }
 
@@ -205,6 +221,10 @@ impl AiProvider {
             "bedrock" | "awsbedrock" | "aws_bedrock" | "aws" => Some(AiProvider::AwsBedrock),
             "groq" => Some(AiProvider::Groq),
             "mistral" | "mistralai" | "mistral_ai" | "laplateforme" => Some(AiProvider::Mistral),
+            "together" | "togetherai" | "together_ai" => Some(AiProvider::TogetherAi),
+            "fireworks" | "fireworksai" | "fireworks_ai" => Some(AiProvider::FireworksAi),
+            "perplexity" | "pplx" => Some(AiProvider::Perplexity),
+            "cerebras" => Some(AiProvider::Cerebras),
             _ => None,
         }
     }

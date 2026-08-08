@@ -752,6 +752,14 @@ fn render_input(
                                 crate::agent::AiProvider::GoogleVertex,
                                 crate::agent::AiProvider::AzureOpenAi,
                                 crate::agent::AiProvider::LocalOllama,
+                                crate::agent::AiProvider::Deepseek,
+                                crate::agent::AiProvider::AlibabaQwen,
+                                crate::agent::AiProvider::Groq,
+                                crate::agent::AiProvider::Mistral,
+                                crate::agent::AiProvider::TogetherAi,
+                                crate::agent::AiProvider::FireworksAi,
+                                crate::agent::AiProvider::Perplexity,
+                                crate::agent::AiProvider::Cerebras,
                             ] {
                                 if ui.selectable_value(&mut state.provider, provider, provider.label()).clicked() {
                                     provider_changed = true;
