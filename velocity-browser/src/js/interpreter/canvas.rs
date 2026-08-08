@@ -317,3 +317,417 @@ pub(super) fn call_image_bitmap_method(map: &HashMap<String, JsValue>, method: &
         _ => JsValue::Undefined,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_obj(v: &JsValue) -> &HashMap<String, JsValue> {
+        match v {
+            JsValue::Object(m) => m,
+            _ => panic!("expected Object"),
+        }
+    }
+
+    fn get_str(v: &JsValue) -> &str {
+        match v {
+            JsValue::String(s) => s.as_str(),
+            _ => panic!("expected String"),
+        }
+    }
+
+    fn get_num(v: &JsValue) -> f64 {
+        match v {
+            JsValue::Number(n) => *n,
+            _ => panic!("expected Number"),
+        }
+    }
+
+    // ── make_canvas_element ──────────────────────────────────────────────
+
+    #[test]
+    fn canvas_element_structure() {
+        let c = make_canvas_element(800, 600);
+        let m = get_obj(&c);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "HTMLCanvasElement");
+        assert_eq!(get_num(m.get("width").unwrap()), 800.0);
+        assert_eq!(get_num(m.get("height").unwrap()), 600.0);
+        assert_eq!(get_str(m.get("tagName").unwrap()), "CANVAS");
+        assert_eq!(get_num(m.get("nodeType").unwrap()), 1.0);
+    }
+
+    #[test]
+    fn canvas_element_zero_size() {
+        let c = make_canvas_element(0, 0);
+        let m = get_obj(&c);
+        assert_eq!(get_num(m.get("width").unwrap()), 0.0);
+        assert_eq!(get_num(m.get("height").unwrap()), 0.0);
+    }
+
+    // ── call_canvas_method ───────────────────────────────────────────────
+
+    #[test]
+    fn canvas_get_context_2d() {
+        let c = make_canvas_element(300, 150);
+        let m = get_obj(&c);
+        let ctx = call_canvas_method(m, "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        assert_eq!(get_str(ctx_map.get("__type__").unwrap()), "CanvasRenderingContext2D");
+        assert_eq!(get_str(ctx_map.get("fillStyle").unwrap()), "#000000");
+        assert_eq!(get_num(ctx_map.get("lineWidth").unwrap()), 1.0);
+    }
+
+    #[test]
+    fn canvas_get_context_webgl_returns_null() {
+        let c = make_canvas_element(300, 150);
+        let m = get_obj(&c);
+        let ctx = call_canvas_method(m, "getContext", &[JsValue::String("webgl".into())]);
+        assert!(matches!(ctx, JsValue::Null));
+    }
+
+    #[test]
+    fn canvas_to_data_url() {
+        let c = make_canvas_element(300, 150);
+        let m = get_obj(&c);
+        let url = call_canvas_method(m, "toDataURL", &[]);
+        let s = get_str(&url);
+        assert!(s.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn canvas_to_data_url_custom_mime() {
+        let c = make_canvas_element(300, 150);
+        let m = get_obj(&c);
+        let url = call_canvas_method(m, "toDataURL", &[JsValue::String("image/jpeg".into())]);
+        let s = get_str(&url);
+        assert!(s.starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[test]
+    fn canvas_to_blob() {
+        let c = make_canvas_element(300, 150);
+        let m = get_obj(&c);
+        let blob = call_canvas_method(m, "toBlob", &[]);
+        let b = get_obj(&blob);
+        assert_eq!(get_str(b.get("__type__").unwrap()), "Blob");
+        assert_eq!(get_str(b.get("type").unwrap()), "image/png");
+        assert_eq!(get_num(b.get("size").unwrap()), 68.0);
+    }
+
+    #[test]
+    fn canvas_transfer_control_to_offscreen() {
+        let c = make_canvas_element(400, 200);
+        let m = get_obj(&c);
+        let offscreen = call_canvas_method(m, "transferControlToOffscreen", &[]);
+        let o = get_obj(&offscreen);
+        assert_eq!(get_str(o.get("__type__").unwrap()), "OffscreenCanvas");
+        assert_eq!(get_num(o.get("width").unwrap()), 400.0);
+        assert_eq!(get_num(o.get("height").unwrap()), 200.0);
+    }
+
+    #[test]
+    fn canvas_unknown_method() {
+        let c = make_canvas_element(300, 150);
+        let m = get_obj(&c);
+        let result = call_canvas_method(m, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_context_2d_method ───────────────────────────────────────────
+
+    #[test]
+    fn context_2d_fill_rect() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let result = call_context_2d_method(ctx_map, "fillRect", &[JsValue::Number(10.0), JsValue::Number(20.0), JsValue::Number(100.0), JsValue::Number(50.0)]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn context_2d_measure_text() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let metrics = call_context_2d_method(ctx_map, "measureText", &[JsValue::String("hello".into())]);
+        let m = get_obj(&metrics);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "TextMetrics");
+        assert_eq!(get_num(m.get("width").unwrap()), 35.0); // 5 chars * 7px
+        assert_eq!(get_num(m.get("actualBoundingBoxAscent").unwrap()), 10.0);
+    }
+
+    #[test]
+    fn context_2d_measure_text_empty() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let metrics = call_context_2d_method(ctx_map, "measureText", &[JsValue::String("".into())]);
+        let m = get_obj(&metrics);
+        assert_eq!(get_num(m.get("width").unwrap()), 0.0);
+    }
+
+    #[test]
+    fn context_2d_get_transform() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let transform = call_context_2d_method(ctx_map, "getTransform", &[]);
+        let t = get_obj(&transform);
+        assert_eq!(get_str(t.get("__type__").unwrap()), "DOMMatrix");
+        assert_eq!(get_num(t.get("a").unwrap()), 1.0);
+        assert_eq!(get_num(t.get("d").unwrap()), 1.0);
+        assert_eq!(get_num(t.get("e").unwrap()), 0.0);
+        assert_eq!(get_num(t.get("f").unwrap()), 0.0);
+        assert!(matches!(t.get("isIdentity").unwrap(), JsValue::Boolean(true)));
+    }
+
+    #[test]
+    fn context_2d_create_image_data() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let img = call_context_2d_method(ctx_map, "createImageData", &[JsValue::Number(10.0), JsValue::Number(5.0)]);
+        let i = get_obj(&img);
+        assert_eq!(get_str(i.get("__type__").unwrap()), "ImageData");
+        assert_eq!(get_num(i.get("width").unwrap()), 10.0);
+        assert_eq!(get_num(i.get("height").unwrap()), 5.0);
+        assert_eq!(get_str(i.get("colorSpace").unwrap()), "srgb");
+        if let JsValue::Array(data) = i.get("data").unwrap() {
+            assert_eq!(data.len(), 200); // 10 * 5 * 4
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn context_2d_create_linear_gradient() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let gradient = call_context_2d_method(ctx_map, "createLinearGradient", &[JsValue::Number(0.0), JsValue::Number(0.0), JsValue::Number(100.0), JsValue::Number(0.0)]);
+        let g = get_obj(&gradient);
+        assert_eq!(get_str(g.get("__type__").unwrap()), "CanvasGradient");
+        if let JsValue::Array(stops) = g.get("__stops__").unwrap() {
+            assert_eq!(stops.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn context_2d_is_point_in_path() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let result = call_context_2d_method(ctx_map, "isPointInPath", &[JsValue::Number(10.0), JsValue::Number(20.0)]);
+        assert!(matches!(result, JsValue::Boolean(false)));
+    }
+
+    #[test]
+    fn context_2d_get_context_attributes() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let attrs = call_context_2d_method(ctx_map, "getContextAttributes", &[]);
+        let a = get_obj(&attrs);
+        assert!(matches!(a.get("alpha").unwrap(), JsValue::Boolean(true)));
+        assert_eq!(get_str(a.get("colorSpace").unwrap()), "srgb");
+    }
+
+    #[test]
+    fn context_2d_unknown_method() {
+        let c = make_canvas_element(300, 150);
+        let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        let result = call_context_2d_method(ctx_map, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_canvas_gradient_method ──────────────────────────────────────
+
+    #[test]
+    fn gradient_add_color_stop() {
+        let mut gradient = HashMap::new();
+        gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".into()));
+        gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
+        
+        let result = call_canvas_gradient_method(&gradient, "addColorStop", &[JsValue::Number(0.0), JsValue::String("red".into())]);
+        let g = get_obj(&result);
+        if let JsValue::Array(stops) = g.get("__stops__").unwrap() {
+            assert_eq!(stops.len(), 1);
+            if let JsValue::Object(stop) = &stops[0] {
+                assert_eq!(get_num(stop.get("offset").unwrap()), 0.0);
+                assert_eq!(get_str(stop.get("color").unwrap()), "red");
+            } else {
+                panic!("expected Object");
+            }
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn gradient_add_multiple_color_stops() {
+        let mut gradient = HashMap::new();
+        gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".into()));
+        gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
+        
+        let g1 = call_canvas_gradient_method(&gradient, "addColorStop", &[JsValue::Number(0.0), JsValue::String("red".into())]);
+        let g2 = call_canvas_gradient_method(get_obj(&g1), "addColorStop", &[JsValue::Number(1.0), JsValue::String("blue".into())]);
+        let g = get_obj(&g2);
+        if let JsValue::Array(stops) = g.get("__stops__").unwrap() {
+            assert_eq!(stops.len(), 2);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn gradient_unknown_method() {
+        let mut gradient = HashMap::new();
+        gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".into()));
+        gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
+        
+        let result = call_canvas_gradient_method(&gradient, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── make_path_2d and call_path_2d_method ─────────────────────────────
+
+    #[test]
+    fn path_2d_structure() {
+        let p = make_path_2d();
+        let m = get_obj(&p);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "Path2D");
+        if let JsValue::Array(cmds) = m.get("__commands__").unwrap() {
+            assert_eq!(cmds.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn path_2d_move_to() {
+        let p = make_path_2d();
+        let result = call_path_2d_method(get_obj(&p), "moveTo", &[JsValue::Number(10.0), JsValue::Number(20.0)]);
+        let m = get_obj(&result);
+        if let JsValue::Array(cmds) = m.get("__commands__").unwrap() {
+            assert_eq!(cmds.len(), 1);
+            assert_eq!(get_str(&cmds[0]), "moveTo(2)");
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn path_2d_multiple_commands() {
+        let p = make_path_2d();
+        let p1 = call_path_2d_method(get_obj(&p), "moveTo", &[JsValue::Number(10.0), JsValue::Number(20.0)]);
+        let p2 = call_path_2d_method(get_obj(&p1), "lineTo", &[JsValue::Number(100.0), JsValue::Number(100.0)]);
+        let p3 = call_path_2d_method(get_obj(&p2), "closePath", &[]);
+        let m = get_obj(&p3);
+        if let JsValue::Array(cmds) = m.get("__commands__").unwrap() {
+            assert_eq!(cmds.len(), 3);
+            assert_eq!(get_str(&cmds[0]), "moveTo(2)");
+            assert_eq!(get_str(&cmds[1]), "lineTo(2)");
+            assert_eq!(get_str(&cmds[2]), "closePath(0)");
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn path_2d_unknown_method() {
+        let p = make_path_2d();
+        let result = call_path_2d_method(get_obj(&p), "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── make_offscreen_canvas and call_offscreen_canvas_method ───────────
+
+    #[test]
+    fn offscreen_canvas_structure() {
+        let c = make_offscreen_canvas(500, 400);
+        let m = get_obj(&c);
+        assert_eq!(get_str(m.get("__type__").unwrap()), "OffscreenCanvas");
+        assert_eq!(get_num(m.get("width").unwrap()), 500.0);
+        assert_eq!(get_num(m.get("height").unwrap()), 400.0);
+    }
+
+    #[test]
+    fn offscreen_canvas_get_context_2d() {
+        let c = make_offscreen_canvas(500, 400);
+        let m = get_obj(&c);
+        let ctx = call_offscreen_canvas_method(m, "getContext", &[JsValue::String("2d".into())]);
+        let ctx_map = get_obj(&ctx);
+        assert_eq!(get_str(ctx_map.get("__type__").unwrap()), "CanvasRenderingContext2D");
+    }
+
+    #[test]
+    fn offscreen_canvas_get_context_webgl_returns_null() {
+        let c = make_offscreen_canvas(500, 400);
+        let m = get_obj(&c);
+        let ctx = call_offscreen_canvas_method(m, "getContext", &[JsValue::String("webgl".into())]);
+        assert!(matches!(ctx, JsValue::Null));
+    }
+
+    #[test]
+    fn offscreen_canvas_convert_to_blob() {
+        let c = make_offscreen_canvas(500, 400);
+        let m = get_obj(&c);
+        let blob = call_offscreen_canvas_method(m, "convertToBlob", &[]);
+        let b = get_obj(&blob);
+        assert_eq!(get_str(b.get("__type__").unwrap()), "Promise");
+        if let JsValue::Object(resolved) = b.get("__resolved__").unwrap() {
+            assert_eq!(get_str(resolved.get("__type__").unwrap()), "Blob");
+            assert_eq!(get_str(resolved.get("type").unwrap()), "image/png");
+        } else {
+            panic!("expected Object");
+        }
+    }
+
+    #[test]
+    fn offscreen_canvas_transfer_to_image_bitmap() {
+        let c = make_offscreen_canvas(500, 400);
+        let m = get_obj(&c);
+        let bitmap = call_offscreen_canvas_method(m, "transferToImageBitmap", &[]);
+        let b = get_obj(&bitmap);
+        assert_eq!(get_str(b.get("__type__").unwrap()), "ImageBitmap");
+        assert_eq!(get_num(b.get("width").unwrap()), 500.0);
+        assert_eq!(get_num(b.get("height").unwrap()), 400.0);
+    }
+
+    #[test]
+    fn offscreen_canvas_unknown_method() {
+        let c = make_offscreen_canvas(500, 400);
+        let m = get_obj(&c);
+        let result = call_offscreen_canvas_method(m, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_image_bitmap_method ─────────────────────────────────────────
+
+    #[test]
+    fn image_bitmap_close() {
+        let mut bitmap = HashMap::new();
+        bitmap.insert("__type__".to_string(), JsValue::String("ImageBitmap".into()));
+        bitmap.insert("width".to_string(), JsValue::Number(100.0));
+        bitmap.insert("height".to_string(), JsValue::Number(50.0));
+        
+        let result = call_image_bitmap_method(&bitmap, "close", &[]);
+        let m = get_obj(&result);
+        assert_eq!(get_num(m.get("width").unwrap()), 0.0);
+        assert_eq!(get_num(m.get("height").unwrap()), 0.0);
+    }
+
+    #[test]
+    fn image_bitmap_unknown_method() {
+        let mut bitmap = HashMap::new();
+        bitmap.insert("__type__".to_string(), JsValue::String("ImageBitmap".into()));
+        bitmap.insert("width".to_string(), JsValue::Number(100.0));
+        bitmap.insert("height".to_string(), JsValue::Number(50.0));
+        
+        let result = call_image_bitmap_method(&bitmap, "unknownMethod", &[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+}

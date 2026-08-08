@@ -267,3 +267,530 @@ pub(super) fn call_regexp_method(map: &HashMap<String, JsValue>, method: &str, a
         _ => JsValue::Undefined,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_obj(v: &JsValue) -> &HashMap<String, JsValue> {
+        match v {
+            JsValue::Object(m) => m,
+            _ => panic!("expected Object"),
+        }
+    }
+
+    fn get_str(v: &JsValue) -> &str {
+        match v {
+            JsValue::String(s) => s.as_str(),
+            _ => panic!("expected String"),
+        }
+    }
+
+    fn get_num(v: &JsValue) -> f64 {
+        match v {
+            JsValue::Number(n) => *n,
+            _ => panic!("expected Number"),
+        }
+    }
+
+    fn get_bool(v: &JsValue) -> bool {
+        match v {
+            JsValue::Boolean(b) => *b,
+            _ => panic!("expected Boolean"),
+        }
+    }
+
+    fn unwrap(v: EvalResult) -> JsValue {
+        v.expect("expected Ok")
+    }
+
+    // ── call_abort_controller_method ─────────────────────────────────────
+
+    #[test]
+    fn abort_controller_abort() {
+        let mut controller = HashMap::new();
+        let mut signal = HashMap::new();
+        signal.insert("aborted".to_string(), JsValue::Boolean(false));
+        controller.insert("signal".to_string(), JsValue::Object(signal));
+        
+        let result = unwrap(call_abort_controller_method(&controller, "abort", &[]));
+        let m = get_obj(&result);
+        if let JsValue::Object(sig) = m.get("signal").unwrap() {
+            assert!(get_bool(sig.get("aborted").unwrap()));
+        } else {
+            panic!("expected Object");
+        }
+    }
+
+    #[test]
+    fn abort_controller_unknown_method() {
+        let mut controller = HashMap::new();
+        let signal = HashMap::new();
+        controller.insert("signal".to_string(), JsValue::Object(signal));
+        
+        let result = unwrap(call_abort_controller_method(&controller, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_abort_signal_method ─────────────────────────────────────────
+
+    #[test]
+    fn abort_signal_not_aborted() {
+        let mut signal = HashMap::new();
+        signal.insert("aborted".to_string(), JsValue::Boolean(false));
+        
+        let result = unwrap(call_abort_signal_method(&signal, "aborted", &[]));
+        assert!(!get_bool(&result));
+    }
+
+    #[test]
+    fn abort_signal_is_aborted() {
+        let mut signal = HashMap::new();
+        signal.insert("aborted".to_string(), JsValue::Boolean(true));
+        
+        let result = unwrap(call_abort_signal_method(&signal, "aborted", &[]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn abort_signal_throw_if_aborted_false() {
+        let mut signal = HashMap::new();
+        signal.insert("aborted".to_string(), JsValue::Boolean(false));
+        
+        let result = unwrap(call_abort_signal_method(&signal, "throwIfAborted", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    #[test]
+    fn abort_signal_throw_if_aborted_true() {
+        let mut signal = HashMap::new();
+        signal.insert("aborted".to_string(), JsValue::Boolean(true));
+        
+        let result = call_abort_signal_method(&signal, "throwIfAborted", &[]);
+        match result {
+            Err(Signal::Throw(JsValue::String(s))) => assert_eq!(s, "AbortError"),
+            _ => panic!("expected Throw signal"),
+        }
+    }
+
+    #[test]
+    fn abort_signal_unknown_method() {
+        let signal = HashMap::new();
+        let result = unwrap(call_abort_signal_method(&signal, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_text_encoder_method ─────────────────────────────────────────
+
+    #[test]
+    fn text_encoder_encode() {
+        let encoder = HashMap::new();
+        let result = unwrap(call_text_encoder_method(&encoder, "encode", &[JsValue::String("hello".into())]));
+        if let JsValue::Array(bytes) = result {
+            assert_eq!(bytes.len(), 5);
+            assert_eq!(get_num(&bytes[0]), 104.0); // 'h'
+            assert_eq!(get_num(&bytes[1]), 101.0); // 'e'
+            assert_eq!(get_num(&bytes[2]), 108.0); // 'l'
+            assert_eq!(get_num(&bytes[3]), 108.0); // 'l'
+            assert_eq!(get_num(&bytes[4]), 111.0); // 'o'
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn text_encoder_encode_empty() {
+        let encoder = HashMap::new();
+        let result = unwrap(call_text_encoder_method(&encoder, "encode", &[JsValue::String("".into())]));
+        if let JsValue::Array(bytes) = result {
+            assert_eq!(bytes.len(), 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn text_encoder_encoding() {
+        let encoder = HashMap::new();
+        let result = unwrap(call_text_encoder_method(&encoder, "encoding", &[]));
+        assert_eq!(get_str(&result), "utf-8");
+    }
+
+    #[test]
+    fn text_encoder_unknown_method() {
+        let encoder = HashMap::new();
+        let result = unwrap(call_text_encoder_method(&encoder, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_text_decoder_method ─────────────────────────────────────────
+
+    #[test]
+    fn text_decoder_decode() {
+        let decoder = HashMap::new();
+        let bytes = JsValue::Array(vec![
+            JsValue::Number(104.0),
+            JsValue::Number(101.0),
+            JsValue::Number(108.0),
+            JsValue::Number(108.0),
+            JsValue::Number(111.0),
+        ]);
+        let result = unwrap(call_text_decoder_method(&decoder, "decode", &[bytes]));
+        assert_eq!(get_str(&result), "hello");
+    }
+
+    #[test]
+    fn text_decoder_decode_empty() {
+        let decoder = HashMap::new();
+        let bytes = JsValue::Array(vec![]);
+        let result = unwrap(call_text_decoder_method(&decoder, "decode", &[bytes]));
+        assert_eq!(get_str(&result), "");
+    }
+
+    #[test]
+    fn text_decoder_encoding() {
+        let decoder = HashMap::new();
+        let result = unwrap(call_text_decoder_method(&decoder, "encoding", &[]));
+        assert_eq!(get_str(&result), "utf-8");
+    }
+
+    #[test]
+    fn text_decoder_unknown_method() {
+        let decoder = HashMap::new();
+        let result = unwrap(call_text_decoder_method(&decoder, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_response_method ─────────────────────────────────────────────
+
+    #[test]
+    fn response_ok_true() {
+        let mut response = HashMap::new();
+        response.insert("status".to_string(), JsValue::Number(200.0));
+        
+        let result = unwrap(call_response_method(&response, "ok", &[]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn response_ok_false_404() {
+        let mut response = HashMap::new();
+        response.insert("status".to_string(), JsValue::Number(404.0));
+        
+        let result = unwrap(call_response_method(&response, "ok", &[]));
+        assert!(!get_bool(&result));
+    }
+
+    #[test]
+    fn response_status() {
+        let mut response = HashMap::new();
+        response.insert("status".to_string(), JsValue::Number(201.0));
+        
+        let result = unwrap(call_response_method(&response, "status", &[]));
+        assert_eq!(get_num(&result), 201.0);
+    }
+
+    #[test]
+    fn response_status_default() {
+        let response = HashMap::new();
+        let result = unwrap(call_response_method(&response, "status", &[]));
+        assert_eq!(get_num(&result), 200.0);
+    }
+
+    #[test]
+    fn response_status_text() {
+        let mut response = HashMap::new();
+        response.insert("statusText".to_string(), JsValue::String("Created".into()));
+        
+        let result = unwrap(call_response_method(&response, "statusText", &[]));
+        assert_eq!(get_str(&result), "Created");
+    }
+
+    #[test]
+    fn response_text() {
+        let mut response = HashMap::new();
+        response.insert("__body__".to_string(), JsValue::String("hello world".into()));
+        
+        let result = unwrap(call_response_method(&response, "text", &[]));
+        assert_eq!(get_str(&result), "hello world");
+    }
+
+    #[test]
+    fn response_clone() {
+        let mut response = HashMap::new();
+        response.insert("status".to_string(), JsValue::Number(200.0));
+        response.insert("__body__".to_string(), JsValue::String("test".into()));
+        
+        let result = unwrap(call_response_method(&response, "clone", &[]));
+        let cloned = get_obj(&result);
+        assert_eq!(get_num(cloned.get("status").unwrap()), 200.0);
+    }
+
+    #[test]
+    fn response_unknown_method() {
+        let response = HashMap::new();
+        let result = unwrap(call_response_method(&response, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_blob_method ─────────────────────────────────────────────────
+
+    #[test]
+    fn blob_size_string() {
+        let mut blob = HashMap::new();
+        blob.insert("__data__".to_string(), JsValue::String("hello".into()));
+        
+        let result = unwrap(call_blob_method(&blob, "size", &[]));
+        assert_eq!(get_num(&result), 5.0);
+    }
+
+    #[test]
+    fn blob_size_array() {
+        let mut blob = HashMap::new();
+        blob.insert("__data__".to_string(), JsValue::Array(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]));
+        
+        let result = unwrap(call_blob_method(&blob, "size", &[]));
+        assert_eq!(get_num(&result), 3.0);
+    }
+
+    #[test]
+    fn blob_type() {
+        let mut blob = HashMap::new();
+        blob.insert("__mime__".to_string(), JsValue::String("text/plain".into()));
+        
+        let result = unwrap(call_blob_method(&blob, "type", &[]));
+        assert_eq!(get_str(&result), "text/plain");
+    }
+
+    #[test]
+    fn blob_text_string() {
+        let mut blob = HashMap::new();
+        blob.insert("__data__".to_string(), JsValue::String("hello".into()));
+        
+        let result = unwrap(call_blob_method(&blob, "text", &[]));
+        assert_eq!(get_str(&result), "hello");
+    }
+
+    #[test]
+    fn blob_text_array() {
+        let mut blob = HashMap::new();
+        blob.insert("__data__".to_string(), JsValue::Array(vec![
+            JsValue::Number(104.0),
+            JsValue::Number(101.0),
+            JsValue::Number(108.0),
+            JsValue::Number(108.0),
+            JsValue::Number(111.0),
+        ]));
+        
+        let result = unwrap(call_blob_method(&blob, "text", &[]));
+        assert_eq!(get_str(&result), "hello");
+    }
+
+    #[test]
+    fn blob_unknown_method() {
+        let blob = HashMap::new();
+        let result = unwrap(call_blob_method(&blob, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_typed_array_method ──────────────────────────────────────────
+
+    #[test]
+    fn typed_array_length() {
+        let mut arr = HashMap::new();
+        arr.insert("__data__".to_string(), JsValue::Array(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]));
+        
+        let result = unwrap(call_typed_array_method(&arr, "length", &[]));
+        assert_eq!(get_num(&result), 3.0);
+    }
+
+    #[test]
+    fn typed_array_byte_length() {
+        let mut arr = HashMap::new();
+        arr.insert("__data__".to_string(), JsValue::Array(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+        ]));
+        
+        let result = unwrap(call_typed_array_method(&arr, "byteLength", &[]));
+        assert_eq!(get_num(&result), 2.0);
+    }
+
+    #[test]
+    fn typed_array_byte_offset() {
+        let mut arr = HashMap::new();
+        arr.insert("__offset__".to_string(), JsValue::Number(8.0));
+        
+        let result = unwrap(call_typed_array_method(&arr, "byteOffset", &[]));
+        assert_eq!(get_num(&result), 8.0);
+    }
+
+    #[test]
+    fn typed_array_unknown_method() {
+        let arr = HashMap::new();
+        let result = unwrap(call_typed_array_method(&arr, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_dataview_method ─────────────────────────────────────────────
+
+    #[test]
+    fn dataview_byte_length() {
+        let mut view = HashMap::new();
+        view.insert("__byteLength__".to_string(), JsValue::Number(16.0));
+        
+        let result = unwrap(call_dataview_method(&view, "byteLength", &[]));
+        assert_eq!(get_num(&result), 16.0);
+    }
+
+    #[test]
+    fn dataview_byte_offset() {
+        let mut view = HashMap::new();
+        view.insert("__byteOffset__".to_string(), JsValue::Number(4.0));
+        
+        let result = unwrap(call_dataview_method(&view, "byteOffset", &[]));
+        assert_eq!(get_num(&result), 4.0);
+    }
+
+    #[test]
+    fn dataview_unknown_method() {
+        let view = HashMap::new();
+        let result = unwrap(call_dataview_method(&view, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_regexp_method ───────────────────────────────────────────────
+
+    #[test]
+    fn regexp_test_match() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("hello".into()));
+        regexp.insert("flags".to_string(), JsValue::String("".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "test", &[JsValue::String("hello world".into())]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn regexp_test_no_match() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("xyz".into()));
+        regexp.insert("flags".to_string(), JsValue::String("".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "test", &[JsValue::String("hello world".into())]));
+        assert!(!get_bool(&result));
+    }
+
+    #[test]
+    fn regexp_test_case_insensitive() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("hello".into()));
+        regexp.insert("flags".to_string(), JsValue::String("i".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "test", &[JsValue::String("HELLO world".into())]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn regexp_exec_match() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("hello".into()));
+        regexp.insert("flags".to_string(), JsValue::String("".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "exec", &[JsValue::String("hello world".into())]));
+        if let JsValue::Array(arr) = result {
+            assert_eq!(get_str(&arr[0]), "hello");
+            assert_eq!(get_num(&arr[1]), 0.0); // start index
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn regexp_exec_no_match() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("xyz".into()));
+        regexp.insert("flags".to_string(), JsValue::String("".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "exec", &[JsValue::String("hello world".into())]));
+        assert!(matches!(result, JsValue::Null));
+    }
+
+    #[test]
+    fn regexp_to_string() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("hello".into()));
+        regexp.insert("flags".to_string(), JsValue::String("gi".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "toString", &[]));
+        assert_eq!(get_str(&result), "/hello/gi");
+    }
+
+    #[test]
+    fn regexp_source() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("test".into()));
+        regexp.insert("flags".to_string(), JsValue::String("".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "source", &[]));
+        assert_eq!(get_str(&result), "test");
+    }
+
+    #[test]
+    fn regexp_flags() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("test".into()));
+        regexp.insert("flags".to_string(), JsValue::String("gim".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "flags", &[]));
+        assert_eq!(get_str(&result), "gim");
+    }
+
+    #[test]
+    fn regexp_global() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("test".into()));
+        regexp.insert("flags".to_string(), JsValue::String("g".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "global", &[]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn regexp_ignore_case() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("test".into()));
+        regexp.insert("flags".to_string(), JsValue::String("i".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "ignoreCase", &[]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn regexp_multiline() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("test".into()));
+        regexp.insert("flags".to_string(), JsValue::String("m".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "multiline", &[]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn regexp_unknown_method() {
+        let mut regexp = HashMap::new();
+        regexp.insert("source".to_string(), JsValue::String("test".into()));
+        regexp.insert("flags".to_string(), JsValue::String("".into()));
+        
+        let result = unwrap(call_regexp_method(&regexp, "unknownMethod", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+}
