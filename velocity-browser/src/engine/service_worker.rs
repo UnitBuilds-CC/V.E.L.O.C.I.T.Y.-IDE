@@ -357,4 +357,101 @@ mod tests {
         assert_eq!(drained[0].title, "New message");
         assert!(sw.push_queue.is_empty());
     }
+
+    #[test]
+    fn cache_put_with_headers() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put_with_headers("v1", "/api", 200, vec![("Content-Type".into(), "application/json".into())], "{\"ok\":true}");
+        let resp = cache.match_url("v1", "/api").unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.headers[0].0, "Content-Type");
+    }
+
+    #[test]
+    fn cache_keys_lists_urls() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put("v1", "/a", 200, "a");
+        cache.put("v1", "/b", 200, "b");
+        let keys = cache.keys("v1");
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"/a".to_string()));
+    }
+
+    #[test]
+    fn cache_keys_nonexistent_returns_empty() {
+        let cache = CacheStorageEngine::new();
+        assert!(cache.keys("nope").is_empty());
+    }
+
+    #[test]
+    fn delete_cache_removes_entire_cache() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put("v1", "/a", 200, "a");
+        cache.put("v1", "/b", 200, "b");
+        assert!(cache.delete_cache("v1"));
+        assert!(cache.keys("v1").is_empty());
+        assert!(!cache.delete_cache("v1")); // already gone
+    }
+
+    #[test]
+    fn delete_nonexistent_entry_returns_false() {
+        let mut cache = CacheStorageEngine::new();
+        cache.put("v1", "/a", 200, "a");
+        assert!(!cache.delete("v1", "/nonexistent"));
+        assert!(!cache.delete("nonexistent", "/a"));
+    }
+
+    #[test]
+    fn lifecycle_parsing_to_installed() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.state = ServiceWorkerState::Parsing;
+        sw.advance_lifecycle();
+        assert_eq!(sw.state, ServiceWorkerState::Installed);
+    }
+
+    #[test]
+    fn mark_redundant_from_any_state() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.mark_redundant();
+        assert_eq!(sw.state, ServiceWorkerState::Redundant);
+    }
+
+    #[test]
+    fn unregister_clears_rules_and_sync() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.add_fetch_rule("/api", "cache", CacheStrategy::CacheFirst);
+        sw.register_sync("tag1", 1000);
+        sw.unregister();
+        assert_eq!(sw.state, ServiceWorkerState::Redundant);
+        assert!(sw.fetch_intercept_rules.is_empty());
+        assert!(sw.sync_registrations.is_empty());
+    }
+
+    #[test]
+    fn register_sync_deduplicates_tags() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.register_sync("sync-messages", 5000);
+        sw.register_sync("sync-messages", 10000); // duplicate
+        assert_eq!(sw.sync_registrations.len(), 1);
+    }
+
+    #[test]
+    fn intercept_fetch_network_first_always_passes_through() {
+        let mut sw = ServiceWorkerManager::register("/sw.js");
+        sw.cache_storage.put("assets", "/data.json", 200, "{\"cached\":true}");
+        sw.add_fetch_rule("/data.json", "assets", CacheStrategy::NetworkFirst);
+        match sw.intercept_fetch("/data.json") {
+            FetchInterceptResult::NetworkPassthrough => {}
+            _ => panic!("Expected NetworkPassthrough for NetworkFirst"),
+        }
+    }
+
+    #[test]
+    fn intercept_fetch_no_matching_rule_returns_passthrough() {
+        let sw = ServiceWorkerManager::register("/sw.js");
+        match sw.intercept_fetch("/anything") {
+            FetchInterceptResult::NetworkPassthrough => {}
+            _ => panic!("Expected NetworkPassthrough with no rules"),
+        }
+    }
 }

@@ -397,4 +397,42 @@ mod tests {
     fn rejects_non_gzip() {
         assert!(gunzip(b"not a gzip stream at all").is_err());
     }
+
+    #[test]
+    fn gunzip_too_short() {
+        assert!(gunzip(b"short").is_err());
+    }
+
+    #[test]
+    fn gunzip_wrong_magic() {
+        let mut data = vec![0u8; 20];
+        data[0] = 0xFF; // wrong magic byte
+        data[1] = 0xFF;
+        data[2] = 8;
+        assert!(gunzip(&data).is_err());
+    }
+
+    #[test]
+    fn zlib_decompress_too_short() {
+        assert!(zlib_decompress(b"").is_err());
+        assert!(zlib_decompress(b"\x08").is_err());
+    }
+
+    #[test]
+    fn zlib_wrong_method_rejected() {
+        let data = [0x07, 0x00]; // method != 8
+        assert!(zlib_decompress(&data).is_err());
+    }
+
+    #[test]
+    fn content_encoding_unsupported_rejected() {
+        assert!(decode_content_encoding("br", b"data").is_err());
+    }
+
+    #[test]
+    fn inflate_empty_stored_block() {
+        // BFINAL=1, BTYPE=00, LEN=0, NLEN=0xFFFF
+        let data = [0x01, 0x00, 0x00, 0xFF, 0xFF];
+        assert_eq!(inflate(&data).unwrap(), b"");
+    }
 }

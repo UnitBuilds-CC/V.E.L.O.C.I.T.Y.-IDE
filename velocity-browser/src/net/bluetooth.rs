@@ -182,4 +182,50 @@ mod tests {
         let mut bt = WebBluetoothTransport::new();
         assert!(bt.connect("nonexistent").is_err());
     }
+
+    #[test]
+    fn default_transport_is_empty() {
+        let bt = WebBluetoothTransport::default();
+        assert!(bt.discovered_devices.is_empty());
+        assert!(bt.active_connection.is_none());
+    }
+
+    #[test]
+    fn request_device_assigns_unique_ids() {
+        let mut bt = WebBluetoothTransport::new();
+        let d1 = bt.request_device("A").unwrap();
+        let d2 = bt.request_device("B").unwrap();
+        assert_ne!(d1.id, d2.id);
+        assert_eq!(bt.discovered_devices.len(), 2);
+    }
+
+    #[test]
+    fn read_before_connect_fails() {
+        let mut bt = WebBluetoothTransport::new();
+        let dev = bt.request_device("Dev").unwrap();
+        let result = bt.read_characteristic(&dev.id, "svc", "ch");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_nonexistent_device_fails() {
+        let bt = WebBluetoothTransport::new();
+        assert!(bt.read_characteristic("nope", "svc", "ch").is_err());
+    }
+
+    #[test]
+    fn disconnect_without_connection_succeeds() {
+        let mut bt = WebBluetoothTransport::new();
+        assert!(bt.disconnect().is_ok());
+    }
+
+    #[test]
+    fn write_to_nonexistent_characteristic_fails() {
+        let mut bt = WebBluetoothTransport::new();
+        let dev = bt.request_device("Dev").unwrap();
+        let dev_id = dev.id.clone();
+        bt.connect(&dev_id).unwrap();
+        let result = bt.write_characteristic(&dev_id, "svc", "nonexistent_ch", &[0x01]);
+        assert!(result.is_err());
+    }
 }
