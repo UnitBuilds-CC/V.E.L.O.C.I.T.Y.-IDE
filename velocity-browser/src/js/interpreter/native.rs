@@ -754,3 +754,139 @@ pub fn decode_uri_component(s: &str) -> String {
     }
     String::from_utf8_lossy(&out).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── json_parse ─────────────────────────────────────────────────────
+
+    #[test]
+    fn json_parse_null() {
+        assert_eq!(json_parse("null"), JsValue::Null);
+    }
+
+    #[test]
+    fn json_parse_booleans() {
+        assert_eq!(json_parse("true"), JsValue::Boolean(true));
+        assert_eq!(json_parse("false"), JsValue::Boolean(false));
+    }
+
+    #[test]
+    fn json_parse_number() {
+        assert_eq!(json_parse("42"), JsValue::Number(42.0));
+        assert_eq!(json_parse("2.72"), JsValue::Number(2.72));
+    }
+
+    #[test]
+    fn json_parse_string() {
+        assert_eq!(json_parse(r#""hello""#), JsValue::String("hello".into()));
+    }
+
+    #[test]
+    fn json_parse_array() {
+        let result = json_parse("[1,2,3]");
+        if let JsValue::Array(arr) = result {
+            assert_eq!(arr.len(), 3);
+            assert_eq!(arr[0], JsValue::Number(1.0));
+        } else {
+            panic!("expected array");
+        }
+    }
+
+    #[test]
+    fn json_parse_object() {
+        let result = json_parse(r#"{"a":1}"#);
+        if let JsValue::Object(map) = result {
+            assert_eq!(map.get("a"), Some(&JsValue::Number(1.0)));
+        } else {
+            panic!("expected object");
+        }
+    }
+
+    #[test]
+    fn json_parse_invalid_returns_undefined() {
+        assert!(matches!(json_parse("not valid json"), JsValue::Undefined));
+    }
+
+    // ── json_stringify ─────────────────────────────────────────────────
+
+    #[test]
+    fn json_stringify_primitives() {
+        assert_eq!(json_stringify(&JsValue::Null, None), "null");
+        assert_eq!(json_stringify(&JsValue::Boolean(true), None), "true");
+        assert_eq!(json_stringify(&JsValue::Number(42.0), None), "42");
+        assert_eq!(json_stringify(&JsValue::String("hi".into()), None), r#""hi""#);
+    }
+
+    #[test]
+    fn json_stringify_undefined() {
+        assert_eq!(json_stringify(&JsValue::Undefined, None), "undefined");
+    }
+
+    #[test]
+    fn json_stringify_non_finite_number_is_null() {
+        assert_eq!(json_stringify(&JsValue::Number(f64::NAN), None), "null");
+        assert_eq!(json_stringify(&JsValue::Number(f64::INFINITY), None), "null");
+    }
+
+    #[test]
+    fn json_stringify_array() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Null]);
+        assert_eq!(json_stringify(&arr, None), "[1,null]");
+    }
+
+    #[test]
+    fn json_stringify_array_skips_undefined_and_functions() {
+        let arr = JsValue::Array(vec![
+            JsValue::Number(1.0),
+            JsValue::Undefined,
+            JsValue::Number(3.0),
+        ]);
+        assert_eq!(json_stringify(&arr, None), "[1,null,3]");
+    }
+
+    #[test]
+    fn json_stringify_object_skips_undefined_and_functions() {
+        let mut map = HashMap::new();
+        map.insert("a".to_string(), JsValue::Number(1.0));
+        map.insert("b".to_string(), JsValue::Undefined);
+        let s = json_stringify(&JsValue::Object(map), None);
+        assert!(s.contains("\"a\":1"));
+        assert!(!s.contains("\"b\""));
+    }
+
+    // ── encode_uri_component / decode_uri_component ────────────────────
+
+    #[test]
+    fn encode_uri_component_alphanumeric_passthrough() {
+        assert_eq!(encode_uri_component("hello"), "hello");
+        assert_eq!(encode_uri_component("abc123"), "abc123");
+    }
+
+    #[test]
+    fn encode_uri_component_special_chars() {
+        assert_eq!(encode_uri_component("a b"), "a%20b");
+        assert_eq!(encode_uri_component("a&b"), "a%26b");
+        assert_eq!(encode_uri_component("a=b"), "a%3Db");
+    }
+
+    #[test]
+    fn decode_uri_component_percent_encoding() {
+        assert_eq!(decode_uri_component("a%20b"), "a b");
+        assert_eq!(decode_uri_component("a%26b"), "a&b");
+    }
+
+    #[test]
+    fn decode_uri_component_plus_as_space() {
+        assert_eq!(decode_uri_component("a+b"), "a b");
+    }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let original = "hello world & foo=bar";
+        let encoded = encode_uri_component(original);
+        let decoded = decode_uri_component(&encoded);
+        assert_eq!(decoded, original);
+    }
+}

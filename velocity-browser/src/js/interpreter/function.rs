@@ -201,3 +201,98 @@ pub fn parse_float_js(input: &str) -> f64 {
     if !seen_digit { return f64::NAN; }
     chars[..i].iter().collect::<String>().parse::<f64>().unwrap_or(f64::NAN)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_int_js ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_int_decimal() {
+        assert_eq!(parse_int_js("42", 10.0), 42.0);
+        assert_eq!(parse_int_js("  123  ", 10.0), 123.0);
+    }
+
+    #[test]
+    fn parse_int_negative() {
+        assert_eq!(parse_int_js("-7", 10.0), -7.0);
+        assert_eq!(parse_int_js("+5", 10.0), 5.0);
+    }
+
+    #[test]
+    fn parse_int_hex_auto_detect() {
+        assert_eq!(parse_int_js("0xff", 0.0), 255.0);
+        assert_eq!(parse_int_js("0X10", 0.0), 16.0);
+    }
+
+    #[test]
+    fn parse_int_hex_explicit_radix() {
+        assert_eq!(parse_int_js("ff", 16.0), 255.0);
+        assert_eq!(parse_int_js("10", 16.0), 16.0);
+    }
+
+    #[test]
+    fn parse_int_binary_radix() {
+        assert_eq!(parse_int_js("1010", 2.0), 10.0);
+    }
+
+    #[test]
+    fn parse_int_octal_radix() {
+        assert_eq!(parse_int_js("17", 8.0), 15.0);
+    }
+
+    #[test]
+    fn parse_int_invalid_radix_returns_nan() {
+        assert!(parse_int_js("42", 1.0).is_nan());
+        assert!(parse_int_js("42", 37.0).is_nan());
+    }
+
+    #[test]
+    fn parse_int_no_digits_returns_nan() {
+        assert!(parse_int_js("abc", 10.0).is_nan());
+        assert!(parse_int_js("", 10.0).is_nan());
+    }
+
+    #[test]
+    fn parse_int_stops_at_first_invalid() {
+        assert_eq!(parse_int_js("123abc", 10.0), 123.0);
+    }
+
+    // ── parse_float_js ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_float_decimal() {
+        assert_eq!(parse_float_js("2.72"), 2.72);
+        assert_eq!(parse_float_js("  1.5  "), 1.5);
+    }
+
+    #[test]
+    fn parse_float_integer() {
+        assert_eq!(parse_float_js("42"), 42.0);
+    }
+
+    #[test]
+    fn parse_float_infinity() {
+        assert_eq!(parse_float_js("Infinity"), f64::INFINITY);
+        assert_eq!(parse_float_js("-Infinity"), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn parse_float_nan_for_non_numeric() {
+        assert!(parse_float_js("abc").is_nan());
+        assert!(parse_float_js("").is_nan());
+    }
+
+    #[test]
+    fn parse_float_exponent() {
+        assert_eq!(parse_float_js("1e3"), 1000.0);
+        assert_eq!(parse_float_js("2.5e-2"), 0.025);
+    }
+
+    #[test]
+    fn parse_float_signed() {
+        assert_eq!(parse_float_js("-5.5"), -5.5);
+        assert_eq!(parse_float_js("+3.0"), 3.0);
+    }
+}
