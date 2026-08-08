@@ -470,7 +470,7 @@ fn fetch_openai_compatible_models(
                 || lower.contains("sonar")
                 || lower.contains("meta-llama");
             Some(ModelInfo {
-                label: id.rsplit('/').last().unwrap_or(&id).to_string(),
+                label: id.rsplit('/').next().unwrap_or(&id).to_string(),
                 id: id.clone(),
                 api_style: if supports_tools { ApiStyle::OpenAiTools } else { ApiStyle::OpenAiChat },
                 supports_tools,

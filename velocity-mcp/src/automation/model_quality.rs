@@ -78,7 +78,7 @@ pub struct ProviderCapability {
 pub struct ModelQualityIndex;
 
 impl ModelQualityIndex {
-    pub fn provider_capabilities() -> [ProviderCapability; 2] {
+    pub fn provider_capabilities() -> [ProviderCapability; 12] {
         [
             ProviderCapability {
                 provider: AiProvider::CloudflareWorkersAi,
@@ -88,6 +88,56 @@ impl ModelQualityIndex {
             ProviderCapability {
                 provider: AiProvider::OpenRouter,
                 native_tools_reliable: false,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::OpenAI,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::Anthropic,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::GoogleVertex,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::Deepseek,
+                native_tools_reliable: true,
+                good_for_parallelism: false,
+            },
+            ProviderCapability {
+                provider: AiProvider::Groq,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::Mistral,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::TogetherAi,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::FireworksAi,
+                native_tools_reliable: true,
+                good_for_parallelism: true,
+            },
+            ProviderCapability {
+                provider: AiProvider::Perplexity,
+                native_tools_reliable: false,
+                good_for_parallelism: false,
+            },
+            ProviderCapability {
+                provider: AiProvider::Cerebras,
+                native_tools_reliable: true,
                 good_for_parallelism: true,
             },
         ]
