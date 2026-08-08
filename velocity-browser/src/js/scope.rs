@@ -218,4 +218,102 @@ mod tests {
             Some(JsValue::Number(5.0))
         );
     }
+
+    #[test]
+    fn assign_returns_false_for_nonexistent() {
+        let global = Scope::new_global();
+        let child = Scope::new_child(&global);
+        assert!(!Scope::assign(&child, "nope", JsValue::Number(1.0)));
+    }
+
+    #[test]
+    fn declare_var_hoists_to_function_scope() {
+        let global = Scope::new_global();
+        let block = Scope::new_child(&global); // not a function scope
+        Scope::declare_var(&block, "x", JsValue::Number(99.0));
+        // x should be hoisted to global (the nearest function scope)
+        assert_eq!(Scope::resolve(&global, "x"), Some(JsValue::Number(99.0)));
+    }
+
+    #[test]
+    fn declare_var_stays_in_function_scope() {
+        let global = Scope::new_global();
+        let fn_scope = Scope::new_function_scope(&global);
+        let block = Scope::new_child(&fn_scope);
+        Scope::declare_var(&block, "y", JsValue::String("hi".into()));
+        // y should be in fn_scope, not global
+        assert_eq!(Scope::resolve(&fn_scope, "y"), Some(JsValue::String("hi".into())));
+        assert_eq!(Scope::resolve(&global, "y"), None);
+    }
+
+    #[test]
+    fn declare_const_and_is_const() {
+        let global = Scope::new_global();
+        Scope::declare_const(&global, "PI", JsValue::Number(3.0));
+        assert!(Scope::is_const(&global, "PI"));
+        assert!(!Scope::is_const(&global, "not_const"));
+    }
+
+    #[test]
+    fn is_const_propagates_to_child() {
+        let global = Scope::new_global();
+        Scope::declare_const(&global, "X", JsValue::Number(1.0));
+        let child = Scope::new_child(&global);
+        assert!(Scope::is_const(&child, "X"));
+    }
+
+    #[test]
+    fn snapshot_collects_all_bindings() {
+        let global = Scope::new_global();
+        Scope::declare(&global, "a", JsValue::Number(1.0));
+        let child = Scope::new_child(&global);
+        Scope::declare(&child, "b", JsValue::Number(2.0));
+        let snap = Scope::snapshot(&child);
+        assert_eq!(snap.get("a"), Some(&JsValue::Number(1.0)));
+        assert_eq!(snap.get("b"), Some(&JsValue::Number(2.0)));
+    }
+
+    #[test]
+    fn snapshot_inner_shadows_outer() {
+        let global = Scope::new_global();
+        Scope::declare(&global, "x", JsValue::Number(1.0));
+        let child = Scope::new_child(&global);
+        Scope::declare(&child, "x", JsValue::Number(2.0));
+        let snap = Scope::snapshot(&child);
+        assert_eq!(snap.get("x"), Some(&JsValue::Number(2.0)));
+    }
+
+    #[test]
+    fn local_keys_only_current_scope() {
+        let global = Scope::new_global();
+        Scope::declare(&global, "a", JsValue::Number(1.0));
+        Scope::declare(&global, "b", JsValue::Number(2.0));
+        let child = Scope::new_child(&global);
+        Scope::declare(&child, "c", JsValue::Number(3.0));
+        let keys = Scope::local_keys(&child);
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&"c".to_string()));
+    }
+
+    #[test]
+    fn disposables_lifo_order() {
+        let global = Scope::new_global();
+        Scope::add_disposable(&global, JsValue::Number(1.0));
+        Scope::add_disposable(&global, JsValue::Number(2.0));
+        Scope::add_disposable(&global, JsValue::Number(3.0));
+        let items = Scope::take_disposables(&global);
+        // LIFO: last added comes first
+        assert_eq!(items[0], JsValue::Number(3.0));
+        assert_eq!(items[1], JsValue::Number(2.0));
+        assert_eq!(items[2], JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn take_disposables_clears_list() {
+        let global = Scope::new_global();
+        Scope::add_disposable(&global, JsValue::Number(1.0));
+        let _ = Scope::take_disposables(&global);
+        let items2 = Scope::take_disposables(&global);
+        assert!(items2.is_empty());
+    }
 }

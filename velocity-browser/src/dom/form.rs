@@ -360,4 +360,111 @@ mod tests {
         let state = FormDataSerializer::validate_control(&node);
         assert!(state.is_valid); // disabled controls pass validation
     }
+
+    #[test]
+    fn test_validate_url_type() {
+        let node = DomNode { id: 0, node_type: NodeType::Element, tag_name: "input".to_string(),
+            attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "url".to_string()); m.insert("value".to_string(), "not-a-url".to_string()); m },
+            text_content: String::new(), children: Vec::new(), parent: None };
+        let state = FormDataSerializer::validate_control(&node);
+        assert!(!state.is_valid);
+        assert!(state.type_mismatch);
+    }
+
+    #[test]
+    fn test_validate_url_valid() {
+        let node = DomNode { id: 0, node_type: NodeType::Element, tag_name: "input".to_string(),
+            attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "url".to_string()); m.insert("value".to_string(), "https://example.com".to_string()); m },
+            text_content: String::new(), children: Vec::new(), parent: None };
+        let state = FormDataSerializer::validate_control(&node);
+        assert!(state.is_valid);
+    }
+
+    #[test]
+    fn test_validate_email_valid() {
+        let node = DomNode { id: 0, node_type: NodeType::Element, tag_name: "input".to_string(),
+            attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "email".to_string()); m.insert("value".to_string(), "user@example.com".to_string()); m },
+            text_content: String::new(), children: Vec::new(), parent: None };
+        let state = FormDataSerializer::validate_control(&node);
+        assert!(state.is_valid);
+    }
+
+    #[test]
+    fn test_validate_number_range_underflow() {
+        let node = DomNode { id: 0, node_type: NodeType::Element, tag_name: "input".to_string(),
+            attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "number".to_string()); m.insert("value".to_string(), "3".to_string()); m.insert("min".to_string(), "5".to_string()); m },
+            text_content: String::new(), children: Vec::new(), parent: None };
+        let state = FormDataSerializer::validate_control(&node);
+        assert!(!state.is_valid);
+        assert!(state.range_underflow);
+    }
+
+    #[test]
+    fn test_validate_minlength() {
+        let node = DomNode { id: 0, node_type: NodeType::Element, tag_name: "input".to_string(),
+            attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "text".to_string()); m.insert("value".to_string(), "ab".to_string()); m.insert("minlength".to_string(), "5".to_string()); m },
+            text_content: String::new(), children: Vec::new(), parent: None };
+        let state = FormDataSerializer::validate_control(&node);
+        assert!(!state.is_valid);
+        assert!(state.too_short);
+    }
+
+    #[test]
+    fn test_validate_pattern_mismatch() {
+        let node = DomNode { id: 0, node_type: NodeType::Element, tag_name: "input".to_string(),
+            attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "text".to_string()); m.insert("value".to_string(), "ABC".to_string()); m.insert("pattern".to_string(), "...".to_string()); m },
+            text_content: String::new(), children: Vec::new(), parent: None };
+        let state = FormDataSerializer::validate_control(&node);
+        // Pattern "..." has length 3, value "ABC" has length 3, dots match any char
+        assert!(state.is_valid); // dots match any alphanumeric
+    }
+
+    #[test]
+    fn test_checkbox_unchecked_not_serialized() {
+        let nodes = vec![
+            DomNode { id: 0, node_type: NodeType::Document, tag_name: "#document".to_string(),
+                attributes: HashMap::new(), text_content: String::new(), children: vec![1], parent: None },
+            DomNode { id: 1, node_type: NodeType::Element, tag_name: "form".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("id".to_string(), "f1".to_string()); m },
+                text_content: String::new(), children: vec![2], parent: Some(0) },
+            DomNode { id: 2, node_type: NodeType::Element, tag_name: "input".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("type".to_string(), "checkbox".to_string()); m.insert("name".to_string(), "agree".to_string()); m.insert("value".to_string(), "yes".to_string()); m },
+                text_content: String::new(), children: Vec::new(), parent: Some(1) },
+        ];
+        let tree = DomTree::new(nodes);
+        let data = FormDataSerializer::serialize_form(&tree, "f1");
+        assert!(!data.contains_key("agree")); // unchecked checkbox skipped
+    }
+
+    #[test]
+    fn test_select_defaults_to_first_option() {
+        let nodes = vec![
+            DomNode { id: 0, node_type: NodeType::Document, tag_name: "#document".to_string(),
+                attributes: HashMap::new(), text_content: String::new(), children: vec![1], parent: None },
+            DomNode { id: 1, node_type: NodeType::Element, tag_name: "form".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("id".to_string(), "f1".to_string()); m },
+                text_content: String::new(), children: vec![2], parent: Some(0) },
+            DomNode { id: 2, node_type: NodeType::Element, tag_name: "select".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("name".to_string(), "color".to_string()); m },
+                text_content: String::new(), children: vec![3, 4], parent: Some(1) },
+            DomNode { id: 3, node_type: NodeType::Element, tag_name: "option".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("value".to_string(), "red".to_string()); m },
+                text_content: "Red".to_string(), children: Vec::new(), parent: Some(2) },
+            DomNode { id: 4, node_type: NodeType::Element, tag_name: "option".to_string(),
+                attributes: { let mut m = HashMap::new(); m.insert("value".to_string(), "blue".to_string()); m },
+                text_content: "Blue".to_string(), children: Vec::new(), parent: Some(2) },
+        ];
+        let tree = DomTree::new(nodes);
+        let data = FormDataSerializer::serialize_form(&tree, "f1");
+        assert_eq!(data.get("color").unwrap(), "red"); // first option selected by default
+    }
+
+    #[test]
+    fn test_url_encode_special_chars() {
+        let mut data = HashMap::new();
+        data.insert("q".to_string(), "a+b&c=d".to_string());
+        let encoded = FormDataSerializer::to_url_encoded(&data);
+        assert!(encoded.contains("q="));
+        assert!(!encoded.contains(" ")); // no raw spaces
+    }
 }
