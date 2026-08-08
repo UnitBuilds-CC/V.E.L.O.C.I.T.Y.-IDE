@@ -311,15 +311,67 @@ pub fn run_agent_reasoning_loop(
             .map(|m| estimate_tokens(&m.content))
             .sum::<u64>();
 
-        let mut reader = std::io::BufReader::new(response.into_reader());
-        let mut line_buf = String::new();
-
         let mut assistant_content = String::new();
         let mut reasoning_content = String::new();
         let mut accumulated_tools: Vec<ToolCallAccumulator> = Vec::new();
-
         let mut streamed_len: usize = 0;
         let mut suppressing = false;
+
+        // Anthropic returns a non-streaming JSON response in a different
+        // format than the OpenAI SSE events the stream parser expects.
+        // Handle it here, then skip the stream-reading loop.
+        let inner: Box<dyn std::io::Read> = if current_provider == AiProvider::Anthropic {
+            let body_str = response.into_string().unwrap_or_default();
+            if let Ok(parsed) = serde_json::from_str::<Value>(&body_str) {
+                if let Some(content_blocks) = parsed["content"].as_array() {
+                    for block in content_blocks {
+                        match block["type"].as_str() {
+                            Some("text") => {
+                                if let Some(text) = block["text"].as_str() {
+                                    assistant_content.push_str(text);
+                                    ui_tx.send(AgentToUiMessage::OutputToken(
+                                        sanitize_chat_token(text),
+                                    )).ok();
+                                }
+                            }
+                            Some("thinking") => {
+                                if let Some(text) = block["thinking"].as_str() {
+                                    reasoning_content.push_str(text);
+                                    ui_tx.send(AgentToUiMessage::ThoughtToken(
+                                        text.to_string(),
+                                    )).ok();
+                                }
+                            }
+                            Some("tool_use") => {
+                                let name = block["name"].as_str().unwrap_or("").to_string();
+                                let id = block["id"].as_str().unwrap_or("").to_string();
+                                let input = block["input"].clone();
+                                let arguments = serde_json::to_string(&input)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                                accumulated_tools.push(ToolCallAccumulator {
+                                    id,
+                                    name,
+                                    arguments,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(err) = parsed["error"]["message"].as_str() {
+                    ui_tx.send(AgentToUiMessage::OutputToken(
+                        format!("\n\nAnthropic error: {err}")
+                    )).ok();
+                }
+            }
+            streamed_len = assistant_content.len();
+            Box::new(std::io::empty())
+        } else {
+            Box::new(response.into_reader())
+        };
+
+        let mut reader = std::io::BufReader::new(inner);
+        let mut line_buf = String::new();
 
         loop {
             if apply_headless_control_messages(cancel_rx, message_history, ui_tx, progress) {

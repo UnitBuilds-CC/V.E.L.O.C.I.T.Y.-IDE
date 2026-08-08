@@ -1,78 +1,8 @@
 {
   "date": "2026-08-08",
   "accounts": {
-    "or_5": {
-      "label": "OR-Acc5",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "8": {
-      "label": "Acc8",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "or_6": {
-      "label": "OR-Acc6",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "4": {
-      "label": "Acc4",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "or_1": {
-      "label": "OR-Acc1",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "14": {
-      "label": "Acc14",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "or_7": {
-      "label": "OR-Acc7",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "13": {
-      "label": "Acc13",
+    "15": {
+      "label": "Acc15",
       "tier": "free",
       "requests": 0,
       "tokens_in": 0,
@@ -91,112 +21,12 @@
       "exhausted_at": null,
       "daily_limit": 50
     },
-    "12": {
-      "label": "Acc12",
+    "4": {
+      "label": "Acc4",
       "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "6": {
-      "label": "Acc6",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "10": {
-      "label": "Acc10",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "11": {
-      "label": "Acc11",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "9": {
-      "label": "Acc9",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "15": {
-      "label": "Acc15",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "3": {
-      "label": "Acc3",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": true,
-      "exhausted_at": "2026-08-08T18:38:27Z",
-      "daily_limit": 50
-    },
-    "1": {
-      "label": "Acc1",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "16": {
-      "label": "Acc16",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "5": {
-      "label": "Acc5",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
-      "exhausted": false,
-      "exhausted_at": null,
-      "daily_limit": 50
-    },
-    "17": {
-      "label": "Acc17",
-      "tier": "free",
-      "requests": 0,
-      "tokens_in": 0,
-      "tokens_out": 0,
+      "requests": 1,
+      "tokens_in": 21689,
+      "tokens_out": 295,
       "exhausted": false,
       "exhausted_at": null,
       "daily_limit": 50
@@ -221,6 +51,146 @@
       "exhausted_at": null,
       "daily_limit": 50
     },
+    "or_6": {
+      "label": "OR-Acc6",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "3": {
+      "label": "Acc3",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": true,
+      "exhausted_at": "2026-08-08T18:38:27Z",
+      "daily_limit": 50
+    },
+    "11": {
+      "label": "Acc11",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "or_1": {
+      "label": "OR-Acc1",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "8": {
+      "label": "Acc8",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "or_5": {
+      "label": "OR-Acc5",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "6": {
+      "label": "Acc6",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "14": {
+      "label": "Acc14",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "17": {
+      "label": "Acc17",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "16": {
+      "label": "Acc16",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "1": {
+      "label": "Acc1",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "10": {
+      "label": "Acc10",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "12": {
+      "label": "Acc12",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "9": {
+      "label": "Acc9",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
     "or_3": {
       "label": "OR-Acc3",
       "tier": "free",
@@ -231,8 +201,38 @@
       "exhausted_at": null,
       "daily_limit": 50
     },
+    "or_7": {
+      "label": "OR-Acc7",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
     "or_4": {
       "label": "OR-Acc4",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "13": {
+      "label": "Acc13",
+      "tier": "free",
+      "requests": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "exhausted": false,
+      "exhausted_at": null,
+      "daily_limit": 50
+    },
+    "5": {
+      "label": "Acc5",
       "tier": "free",
       "requests": 0,
       "tokens_in": 0,

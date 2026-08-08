@@ -2,7 +2,7 @@ use super::super::models::*;
 use super::utils::send_usage_update;
 use crate::usage::{AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker};
 use crossbeam_channel::Sender;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Duration;
 
 pub fn execute_openrouter_request<'a>(
@@ -530,14 +530,85 @@ pub fn execute_anthropic_request(
                     system_text.push_str(s);
                 }
             }
-            "user" | "assistant" => {
+            "user" => {
                 let mut entry = serde_json::Map::new();
-                entry.insert("role".to_string(), Value::String(role.to_string()));
+                entry.insert("role".to_string(), Value::String("user".to_string()));
                 entry.insert("content".to_string(), content);
+                anthropic_messages.push(Value::Object(entry));
+            }
+            "assistant" => {
+                // If the assistant message has tool_calls, convert them to
+                // Anthropic tool_use content blocks.
+                let mut entry = serde_json::Map::new();
+                entry.insert("role".to_string(), Value::String("assistant".to_string()));
+                if let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                    let mut blocks = Vec::new();
+                    // Include text content if present
+                    if let Some(text) = content.as_str() {
+                        if !text.is_empty() {
+                            let mut text_block = serde_json::Map::new();
+                            text_block.insert("type".to_string(), Value::String("text".to_string()));
+                            text_block.insert("text".to_string(), Value::String(text.to_string()));
+                            blocks.push(Value::Object(text_block));
+                        }
+                    }
+                    for tc in tool_calls {
+                        let func = match tc.get("function").and_then(|f| f.as_object()) {
+                            Some(f) => f,
+                            None => continue,
+                        };
+                        let mut tool_block = serde_json::Map::new();
+                        tool_block.insert("type".to_string(), Value::String("tool_use".to_string()));
+                        if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                            tool_block.insert("id".to_string(), Value::String(id.to_string()));
+                        }
+                        if let Some(name) = func.get("name").and_then(|n| n.as_str()) {
+                            tool_block.insert("name".to_string(), Value::String(name.to_string()));
+                        }
+                        let input: Value = func.get("arguments")
+                            .and_then(|a| a.as_str())
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or_else(|| json!({}));
+                        tool_block.insert("input".to_string(), input);
+                        blocks.push(Value::Object(tool_block));
+                    }
+                    entry.insert("content".to_string(), Value::Array(blocks));
+                } else {
+                    entry.insert("content".to_string(), content);
+                }
+                anthropic_messages.push(Value::Object(entry));
+            }
+            "tool" => {
+                // OpenAI tool results → Anthropic user message with tool_result block
+                let tool_call_id = msg.get("tool_call_id")
+                    .and_then(|id| id.as_str())
+                    .unwrap_or("unknown");
+                let result_text = content.as_str().unwrap_or("").to_string();
+                let mut result_block = serde_json::Map::new();
+                result_block.insert("type".to_string(), Value::String("tool_result".to_string()));
+                result_block.insert("tool_use_id".to_string(), Value::String(tool_call_id.to_string()));
+                result_block.insert("content".to_string(), Value::String(result_text));
+                let mut entry = serde_json::Map::new();
+                entry.insert("role".to_string(), Value::String("user".to_string()));
+                entry.insert("content".to_string(), Value::Array(vec![Value::Object(result_block)]));
                 anthropic_messages.push(Value::Object(entry));
             }
             _ => {}
         }
+    }
+    // Anthropic requires at least one user message.  If the conversation
+    // contains only system messages, promote the system text as a user
+    // message so the API accepts the request.
+    if anthropic_messages.is_empty() {
+        let fallback_content = if !system_text.is_empty() {
+            system_text.clone()
+        } else {
+            "Continue".to_string()
+        };
+        let mut entry = serde_json::Map::new();
+        entry.insert("role".to_string(), Value::String("user".to_string()));
+        entry.insert("content".to_string(), Value::String(fallback_content));
+        anthropic_messages.push(Value::Object(entry));
     }
     let model = request_body.get("model").and_then(|m| m.as_str()).unwrap_or("claude-sonnet-4-20250514");
     let max_tokens = request_body.get("max_tokens").and_then(|t| t.as_u64()).unwrap_or(4096);
@@ -548,10 +619,33 @@ pub fn execute_anthropic_request(
     if !system_text.is_empty() {
         body.insert("system".to_string(), Value::String(system_text));
     }
-    // Stream if the original request asked for it
-    if request_body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false) {
-        body.insert("stream".to_string(), Value::Bool(true));
+    // Convert OpenAI-format tools to Anthropic format.
+    // OpenAI: {"type":"function","function":{"name","description","parameters"}}
+    // Anthropic: {"name","description","input_schema"}
+    if let Some(tools) = request_body.get("tools").and_then(|t| t.as_array()) {
+        let anthropic_tools: Vec<Value> = tools.iter().filter_map(|tool| {
+            let func = tool.get("function")?;
+            let name = func.get("name")?.as_str()?;
+            let mut entry = serde_json::Map::new();
+            entry.insert("name".to_string(), Value::String(name.to_string()));
+            if let Some(desc) = func.get("description").and_then(|d| d.as_str()) {
+                entry.insert("description".to_string(), Value::String(desc.to_string()));
+            }
+            let schema = func.get("parameters")
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+            entry.insert("input_schema".to_string(), schema);
+            Some(Value::Object(entry))
+        }).collect();
+        if !anthropic_tools.is_empty() {
+            body.insert("tools".to_string(), Value::Array(anthropic_tools));
+        }
     }
+    // Force non-streaming: the loop runner's SSE parser only understands
+    // OpenAI-format events.  Anthropic uses a different wire format, so we
+    // receive the full response at once and let the loop runner parse it
+    // via the provider-specific branch.
+    body.insert("stream".to_string(), Value::Bool(false));
     let anthropic_body = Value::Object(body);
     match ureq::post("https://api.anthropic.com/v1/messages")
         .timeout(Duration::from_secs(120))

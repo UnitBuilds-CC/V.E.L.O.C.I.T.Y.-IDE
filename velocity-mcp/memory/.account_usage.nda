@@ -103,9 +103,9 @@ field	3	daily_limit	50
 account	4
 field	4	label	Acc4
 field	4	tier	free
-field	4	requests	0
-field	4	tokens_in	0
-field	4	tokens_out	0
+field	4	requests	1
+field	4	tokens_in	21689
+field	4	tokens_out	295
 field	4	exhausted	false
 field	4	exhausted_at	-
 field	4	daily_limit	50
