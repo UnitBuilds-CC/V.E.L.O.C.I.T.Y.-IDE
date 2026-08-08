@@ -158,6 +158,22 @@ pub struct WorkspaceOllamaSettings {
     pub label: String,
 }
 
+/// Simple API-key provider settings — used by Deepseek, Groq, Mistral, OpenAI,
+/// Google, Together AI, Fireworks AI, Perplexity, Cerebras, Alibaba Qwen.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkspaceApiKeySettings {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+impl WorkspaceApiKeySettings {
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.trim().is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceProviderSettings {
     #[serde(default)]
@@ -168,6 +184,26 @@ pub struct WorkspaceProviderSettings {
     pub azure_openai: WorkspaceAzureOpenAiSettings,
     #[serde(default)]
     pub ollama: WorkspaceOllamaSettings,
+    #[serde(default)]
+    pub deepseek: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub groq: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub mistral: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub openai: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub google: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub together: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub fireworks: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub perplexity: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub cerebras: WorkspaceApiKeySettings,
+    #[serde(default)]
+    pub alibaba: WorkspaceApiKeySettings,
 }
 
 impl WorkspaceCloudflareSettings {

@@ -453,7 +453,13 @@ mod tests {
         let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
         let result = call_context_2d_method(ctx_map, "fillRect", &[JsValue::Number(10.0), JsValue::Number(20.0), JsValue::Number(100.0), JsValue::Number(50.0)]);
-        assert!(matches!(result, JsValue::Undefined));
+        // fillRect now returns an Object with recorded operations
+        let result_map = get_obj(&result);
+        assert_eq!(get_str(result_map.get("__type__").unwrap()), "CanvasRenderingContext2D");
+        // Verify the operation was recorded
+        if let Some(JsValue::Array(ops)) = result_map.get("__ops__") {
+            assert!(!ops.is_empty(), "fillRect should be recorded in __ops__");
+        }
     }
 
     #[test]

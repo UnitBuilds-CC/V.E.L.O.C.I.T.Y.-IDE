@@ -1214,6 +1214,19 @@ impl eframe::App for VelocityApp {
                                     if ui.small_button("Stage").clicked() { self.stage_active_file(); }
                                     if ui.small_button("Diff").clicked() { self.show_full_diff = true; }
                                 });
+                                // Show a short diff preview inline
+                                if !change_preview.preview.is_empty() {
+                                    ui.add_space(4.0);
+                                    egui::Frame::new()
+                                        .fill(palette.bg_secondary)
+                                        .corner_radius(egui::CornerRadius::same(3))
+                                        .inner_margin(egui::Margin::symmetric(6, 4))
+                                        .show(ui, |ui| {
+                                            egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                                                ui.label(egui::RichText::new(change_preview.preview.as_str()).monospace().size(10.0).color(palette.text_muted));
+                                            });
+                                        });
+                                }
                             });
                         }
                         ui.separator();

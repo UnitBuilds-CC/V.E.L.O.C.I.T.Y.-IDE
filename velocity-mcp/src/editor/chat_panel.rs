@@ -339,6 +339,7 @@ fn sanitize_display_text(s: &str) -> String {
 fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
     let mut in_code_block = false;
     let mut code_accumulator = String::new();
+    let mut code_language = String::new();
     let mut current_list_number = 0;
 
     for line in text.lines() {
@@ -346,6 +347,7 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
             current_list_number = 0;
             if in_code_block {
                 let mut code = code_accumulator.trim_end().to_string();
+                let line_count = code.lines().count();
                 egui::Frame::new()
                     .fill(palette.bg_secondary)
                     .stroke(egui::Stroke::new(1.0, palette.border))
@@ -353,20 +355,50 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut code)
-                                    .font(egui::FontId::monospace(12.5))
-                                    .code_editor()
-                                    .desired_width(f32::INFINITY)
-                                    .text_color(palette.text)
-                                    .interactive(false),
-                            );
+                        // Header row: language label + copy button
+                        ui.horizontal(|ui| {
+                            if !code_language.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(&code_language)
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format!("{} lines", line_count))
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                            }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("📋 Copy").clicked() {
+                                    ui.ctx().copy_text(code.clone());
+                                }
+                            });
                         });
+                        ui.add_space(4.0);
+                        // Use syntax-highlighted code editor for blocks with 3+ lines
+                        if line_count >= 3 {
+                            crate::editor::code_editor::code_block_with_gutter(ui, &mut code);
+                        } else {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut code)
+                                        .font(egui::FontId::monospace(12.5))
+                                        .code_editor()
+                                        .desired_width(f32::INFINITY)
+                                        .text_color(palette.text)
+                                        .interactive(false),
+                                );
+                            });
+                        }
                     });
                 code_accumulator.clear();
+                code_language.clear();
                 in_code_block = false;
             } else {
+                // Extract language from opening fence (e.g. ```rust)
+                code_language = line.trim_start_matches('`').trim().to_string();
                 in_code_block = true;
             }
             continue;

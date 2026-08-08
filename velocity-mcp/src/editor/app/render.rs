@@ -469,6 +469,22 @@ impl<'a> TabViewerImpl<'a> {
                 );
             });
         };
+        let api_key_provider_row = |ui: &mut egui::Ui,
+                                    name: &str,
+                                    settings: &mut crate::usage::WorkspaceApiKeySettings,
+                                    hint: &str| {
+            egui::CollapsingHeader::new(
+                provider_header(name, settings.is_configured()),
+            )
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        provider_badge(ui, settings.is_configured());
+                    });
+                    text_row(ui, "API key", &mut settings.api_key, hint, true);
+                    text_row(ui, "Label", &mut settings.label, &format!("{}-Default", name), false);
+                });
+        };
 
         egui::Frame::new()
             .inner_margin(egui::Margin::same(12))
@@ -758,6 +774,18 @@ impl<'a> TabViewerImpl<'a> {
                                 text_row(ui, "Default model", &mut self.app.provider_settings.ollama.default_model, "llama3.2", false);
                                 text_row(ui, "Label", &mut self.app.provider_settings.ollama.label, "Local-Ollama", false);
                             });
+
+                        // ── API-key providers ──
+                        api_key_provider_row(ui, "OpenAI", &mut self.app.provider_settings.openai, "OpenAI API key");
+                        api_key_provider_row(ui, "Google Vertex / Gemini", &mut self.app.provider_settings.google, "Google API key");
+                        api_key_provider_row(ui, "Deepseek", &mut self.app.provider_settings.deepseek, "Deepseek API key");
+                        api_key_provider_row(ui, "Groq", &mut self.app.provider_settings.groq, "Groq API key");
+                        api_key_provider_row(ui, "Mistral AI", &mut self.app.provider_settings.mistral, "Mistral API key");
+                        api_key_provider_row(ui, "Alibaba Qwen", &mut self.app.provider_settings.alibaba, "DashScope API key");
+                        api_key_provider_row(ui, "Together AI", &mut self.app.provider_settings.together, "Together API key");
+                        api_key_provider_row(ui, "Fireworks AI", &mut self.app.provider_settings.fireworks, "Fireworks API key");
+                        api_key_provider_row(ui, "Perplexity", &mut self.app.provider_settings.perplexity, "Perplexity API key");
+                        api_key_provider_row(ui, "Cerebras", &mut self.app.provider_settings.cerebras, "Cerebras API key");
 
                         ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {

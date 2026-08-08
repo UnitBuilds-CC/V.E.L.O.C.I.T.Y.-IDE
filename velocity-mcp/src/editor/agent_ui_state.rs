@@ -396,7 +396,6 @@ pub enum WarningLevel {
 }
 
 /// Complete agentic UI state container (all ring buffers, zero allocation)
-#[allow(dead_code)]
 #[derive(Default)]
 pub struct AgentUiState {
     pub thinking: ThinkingPanelState,

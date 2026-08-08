@@ -27,6 +27,29 @@ fn load_runtime_accounts(
     )
 }
 
+/// Resolve an API key by checking workspace settings first, then falling back
+/// to the environment variable. This lets users configure keys in the IDE
+/// settings UI without needing to set env vars.
+fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, env_var: &str) -> String {
+    // Try workspace settings first
+    let settings_path = workspace_root.join(".velocity").join("workspace-preferences.json");
+    if let Ok(contents) = std::fs::read_to_string(&settings_path) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(key) = json.get("provider_settings")
+                .and_then(|ps| ps.get(settings_field))
+                .and_then(|s| s.get("api_key"))
+                .and_then(|k| k.as_str())
+            {
+                if !key.trim().is_empty() {
+                    return key.to_string();
+                }
+            }
+        }
+    }
+    // Fall back to env var
+    std::env::var(env_var).unwrap_or_default()
+}
+
 fn initial_provider_from_env() -> AiProvider {
     match std::env::var("LLM_PROVIDER")
         .unwrap_or_default()
@@ -73,6 +96,7 @@ fn initial_selected_profile(provider: AiProvider, model: &str) -> ModelInfo {
 
 fn fetch_models_for_provider(
     provider: AiProvider,
+    workspace_root: &PathBuf,
     accounts: &[CloudflareAccount],
     or_accounts: &[OpenRouterAccount],
     azure_accounts: &[AzureOpenAiAccount],
@@ -85,43 +109,43 @@ fn fetch_models_for_provider(
         AiProvider::AzureOpenAi => fetch_azure_models(azure_accounts),
         AiProvider::LocalOllama => fetch_local_ollama_models(ollama_accounts),
         AiProvider::OpenAI => {
-            let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "openai", "OPENAI_API_KEY");
             fetch_openai_models(&key)
         }
         AiProvider::Groq => {
-            let key = std::env::var("GROQ_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "groq", "GROQ_API_KEY");
             fetch_groq_models(&key)
         }
         AiProvider::Mistral => {
-            let key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "mistral", "MISTRAL_API_KEY");
             fetch_mistral_models(&key)
         }
         AiProvider::Deepseek => {
-            let key = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "deepseek", "DEEPSEEK_API_KEY");
             fetch_deepseek_models(&key)
         }
         AiProvider::AlibabaQwen => {
-            let key = std::env::var("DASHSCOPE_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "alibaba", "DASHSCOPE_API_KEY");
             fetch_alibaba_models(&key)
         }
         AiProvider::GoogleVertex => {
-            let key = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "google", "GOOGLE_API_KEY");
             fetch_google_models(&key)
         }
         AiProvider::TogetherAi => {
-            let key = std::env::var("TOGETHER_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "together", "TOGETHER_API_KEY");
             fetch_together_models(&key)
         }
         AiProvider::FireworksAi => {
-            let key = std::env::var("FIREWORKS_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "fireworks", "FIREWORKS_API_KEY");
             fetch_fireworks_models(&key)
         }
         AiProvider::Perplexity => {
-            let key = std::env::var("PERPLEXITY_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "perplexity", "PERPLEXITY_API_KEY");
             fetch_perplexity_models(&key)
         }
         AiProvider::Cerebras => {
-            let key = std::env::var("CEREBRAS_API_KEY").unwrap_or_default();
+            let key = resolve_api_key(workspace_root, "cerebras", "CEREBRAS_API_KEY");
             fetch_cerebras_models(&key)
         }
         _ => Ok(vec![default_model_info(&default_provider_model(provider))]),
@@ -326,6 +350,7 @@ fn process_ui_message(
         UiToAgentMessage::RefreshModels => {
             match fetch_models_for_provider(
                 *provider,
+                workspace_root,
                 accounts,
                 or_accounts,
                 azure_accounts,
@@ -416,6 +441,7 @@ fn process_ui_message(
 
             match fetch_models_for_provider(
                 *provider,
+                workspace_root,
                 accounts,
                 or_accounts,
                 azure_accounts,
@@ -458,6 +484,7 @@ fn process_ui_message(
 
             match fetch_models_for_provider(
                 *provider,
+                workspace_root,
                 accounts,
                 or_accounts,
                 azure_accounts,

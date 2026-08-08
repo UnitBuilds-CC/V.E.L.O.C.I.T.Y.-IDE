@@ -179,7 +179,6 @@ pub struct NavLocation {
     pub line: Option<usize>,
 }
 
-#[allow(dead_code)]
 pub struct ActiveChangePreview {
     pub file_label: String,
     pub added_lines: usize,
@@ -188,7 +187,6 @@ pub struct ActiveChangePreview {
     pub full_diff: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopAutomationEvidenceState {
     LiveEvidence,
@@ -220,7 +218,7 @@ impl DesktopAutomationEvidenceState {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Constructed by wa.rs for future desktop automation panel
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationMissionSummary {
     pub task_count: usize,
@@ -230,7 +228,7 @@ pub struct DesktopAutomationMissionSummary {
     pub state_labels: Vec<String>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Constructed by wa.rs for future desktop automation panel
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationSelectedTaskStatus {
     pub state_label: &'static str,
@@ -242,7 +240,7 @@ pub struct DesktopAutomationSelectedTaskStatus {
     pub has_operator_notes: bool,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Fields used by DesktopAutomationSelectedTaskCues display
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopAutomationSelectedTaskCues {
     pub artifact_lines: Vec<String>,
