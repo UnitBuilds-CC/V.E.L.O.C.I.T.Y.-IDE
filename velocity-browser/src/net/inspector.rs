@@ -267,4 +267,116 @@ mod tests {
         assert_eq!(InspectorServer::status_text(404), "Not Found");
         assert_eq!(InspectorServer::status_text(999), "Unknown");
     }
+
+    #[test]
+    fn test_capture_request_increments_id() {
+        let mut inspector = InspectorServer::new(9222);
+        let id1 = inspector.capture_request("https://a.com", "GET", 200, ResourceType::Document);
+        let id2 = inspector.capture_request("https://b.com", "POST", 201, ResourceType::Xhr);
+        assert_eq!(id1, "req_1");
+        assert_eq!(id2, "req_2");
+        assert_eq!(inspector.captured_requests.len(), 2);
+    }
+
+    #[test]
+    fn test_get_all_requests() {
+        let mut inspector = InspectorServer::new(9222);
+        inspector.capture_request("https://a.com", "GET", 200, ResourceType::Document);
+        inspector.capture_request("https://b.com/style.css", "GET", 200, ResourceType::Stylesheet);
+        let all = inspector.get_all_requests();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_type_empty() {
+        let mut inspector = InspectorServer::new(9222);
+        inspector.capture_request("https://a.com", "GET", 200, ResourceType::Document);
+        let fonts = inspector.filter_by_type(&ResourceType::Font);
+        assert!(fonts.is_empty());
+    }
+
+    #[test]
+    fn test_recording_off_skips_storage() {
+        let mut inspector = InspectorServer::new(9222);
+        inspector.capture_request("https://a.com", "GET", 200, ResourceType::Document);
+        assert_eq!(inspector.captured_requests.len(), 1);
+        inspector.set_recording(false);
+        inspector.capture_request("https://b.com", "GET", 200, ResourceType::Document);
+        // Still 1 — second request was not recorded
+        assert_eq!(inspector.captured_requests.len(), 1);
+    }
+
+    #[test]
+    fn test_recording_resume() {
+        let mut inspector = InspectorServer::new(9222);
+        inspector.set_recording(false);
+        inspector.capture_request("https://a.com", "GET", 200, ResourceType::Document);
+        assert!(inspector.captured_requests.is_empty());
+        inspector.set_recording(true);
+        inspector.capture_request("https://b.com", "GET", 200, ResourceType::Document);
+        assert_eq!(inspector.captured_requests.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_resource_type_font() {
+        assert_eq!(InspectorServer::detect_resource_type("font.woff2", None), ResourceType::Font);
+        assert_eq!(InspectorServer::detect_resource_type("font.ttf", None), ResourceType::Font);
+    }
+
+    #[test]
+    fn test_detect_resource_type_media() {
+        assert_eq!(InspectorServer::detect_resource_type("song", Some("audio/mpeg")), ResourceType::Media);
+        assert_eq!(InspectorServer::detect_resource_type("clip", Some("video/mp4")), ResourceType::Media);
+    }
+
+    #[test]
+    fn test_detect_resource_type_other() {
+        assert_eq!(InspectorServer::detect_resource_type("data.bin", None), ResourceType::Other);
+        assert_eq!(InspectorServer::detect_resource_type("api", None), ResourceType::Other);
+    }
+
+    #[test]
+    fn test_export_har_format() {
+        let mut inspector = InspectorServer::new(9222);
+        inspector.capture_request("https://example.com/page", "GET", 200, ResourceType::Document);
+        let har = inspector.export_har();
+        assert!(har.starts_with("{\"log\""));
+        assert!(har.contains("\"version\":\"1.2\""));
+        assert!(har.contains("\"method\":\"GET\""));
+        assert!(har.contains("\"status\":200"));
+        assert!(har.contains("\"statusText\":\"OK\""));
+    }
+
+    #[test]
+    fn test_status_text_coverage() {
+        assert_eq!(InspectorServer::status_text(201), "Created");
+        assert_eq!(InspectorServer::status_text(301), "Moved Permanently");
+        assert_eq!(InspectorServer::status_text(401), "Unauthorized");
+        assert_eq!(InspectorServer::status_text(403), "Forbidden");
+        assert_eq!(InspectorServer::status_text(500), "Internal Server Error");
+        assert_eq!(InspectorServer::status_text(503), "Service Unavailable");
+    }
+
+    #[test]
+    fn test_record_request_direct() {
+        let mut inspector = InspectorServer::new(9222);
+        let req = InspectedRequest {
+            request_id: "custom_1".into(),
+            url: "https://x.com".into(),
+            method: "PUT".into(),
+            status_code: 204,
+            status_text: "No Content".into(),
+            request_headers: HashMap::new(),
+            response_headers: HashMap::new(),
+            request_body_size: 100,
+            response_body_size: 0,
+            timing: RequestTiming::default(),
+            resource_type: ResourceType::Fetch,
+            is_cached: false,
+        };
+        let id = inspector.record_request(req);
+        assert_eq!(id, "custom_1");
+        assert_eq!(inspector.captured_requests["custom_1"].method, "PUT");
+        assert_eq!(inspector.captured_requests["custom_1"].status_code, 204);
+    }
 }

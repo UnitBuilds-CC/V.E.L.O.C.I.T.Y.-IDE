@@ -379,4 +379,160 @@ mod tests {
         assert!(header.contains("default-src"));
         assert!(header.contains("script-src"));
     }
+
+    #[test]
+    fn test_check_wasm_allowed() {
+        let caps = SandboxCapabilities::strict_isolation(); // allow_wasm_execution = true
+        let mut sb = TabSandbox::new("w1", caps);
+        assert!(sb.check_wasm_execution("module.wasm").is_ok());
+        assert!(sb.is_clean());
+    }
+
+    #[test]
+    fn test_check_wasm_blocked() {
+        let caps = SandboxCapabilities::permissive().without_scripts(); // disables wasm too
+        let mut sb = TabSandbox::new("w2", caps);
+        assert!(sb.check_wasm_execution("evil.wasm").is_err());
+        assert_eq!(sb.violation_count(), 1);
+        let wasm_viols = sb.violations_by_category(&ViolationCategory::Wasm);
+        assert_eq!(wasm_viols.len(), 1);
+        assert!(wasm_viols[0].detail.contains("evil.wasm"));
+    }
+
+    #[test]
+    fn test_check_storage_allowed() {
+        let caps = SandboxCapabilities::permissive();
+        let mut sb = TabSandbox::new("s1", caps);
+        assert!(sb.check_storage_access("localStorage").is_ok());
+    }
+
+    #[test]
+    fn test_check_storage_blocked() {
+        let mut caps = SandboxCapabilities::permissive();
+        caps.allow_storage_access = false;
+        let mut sb = TabSandbox::new("s2", caps);
+        assert!(sb.check_storage_access("cookie").is_err());
+        assert_eq!(sb.violations_by_category(&ViolationCategory::Storage).len(), 1);
+    }
+
+    #[test]
+    fn test_check_popup_blocked() {
+        let mut caps = SandboxCapabilities::strict_isolation();
+        caps.allow_popups = false;
+        let mut sb = TabSandbox::new("p1", caps);
+        let err = sb.check_popup("https://ads.example.com").unwrap_err();
+        assert!(err.contains("Popup"));
+        assert_eq!(sb.violations_by_category(&ViolationCategory::Popup).len(), 1);
+    }
+
+    #[test]
+    fn test_check_top_navigation_blocked() {
+        let caps = SandboxCapabilities::strict_isolation();
+        let mut sb = TabSandbox::new("nav1", caps);
+        assert!(sb.check_top_navigation("https://phishing.com").is_err());
+        let nav_viols = sb.violations_by_category(&ViolationCategory::Navigation);
+        assert_eq!(nav_viols.len(), 1);
+        assert!(nav_viols[0].detail.contains("phishing.com"));
+    }
+
+    #[test]
+    fn test_reset_violations() {
+        let caps = SandboxCapabilities::strict_isolation();
+        let mut sb = TabSandbox::new("r1", caps);
+        let _ = sb.check_file_access("/a");
+        let _ = sb.check_file_access("/b");
+        let _ = sb.check_popup("https://x.com");
+        assert_eq!(sb.violation_count(), 3);
+        assert!(!sb.is_clean());
+        sb.reset_violations();
+        assert_eq!(sb.violation_count(), 0);
+        assert!(sb.is_clean());
+        assert!(sb.violations.is_empty());
+    }
+
+    #[test]
+    fn test_update_capabilities() {
+        let caps = SandboxCapabilities::strict_isolation();
+        let mut sb = TabSandbox::new("u1", caps);
+        assert!(sb.check_file_access("/x").is_err());
+        // Now upgrade to permissive
+        sb.update_capabilities(SandboxCapabilities::permissive());
+        assert!(sb.check_file_access("/x").is_ok());
+    }
+
+    #[test]
+    fn test_export_sandbox_nda() {
+        let caps = SandboxCapabilities::strict_isolation();
+        let mut sb = TabSandbox::new("tab_nda", caps);
+        let _ = sb.check_file_access("/secret");
+        let _ = sb.check_popup("https://popup.com");
+        let triples = sb.export_sandbox_nda();
+        assert_eq!(triples.len(), 2);
+        // All triples use predicate 220
+        for t in &triples {
+            assert_eq!(t.predicate_id, 220);
+        }
+        // subject_hash is hash of "tab_nda", not zero
+        assert_eq!(triples[0].subject_hash, crate::nda::hash_str("tab_nda"));
+    }
+
+    #[test]
+    fn test_csp_parse_report_uri() {
+        let csp = ContentSecurityPolicy::parse(
+            "default-src 'self'; report-uri https://report.example.com/csp",
+            false,
+        );
+        assert_eq!(csp.report_uri, Some("https://report.example.com/csp".to_string()));
+    }
+
+    #[test]
+    fn test_csp_report_only_flag() {
+        let csp = ContentSecurityPolicy::parse("default-src 'self'", true);
+        assert!(csp.report_only);
+    }
+
+    #[test]
+    fn test_csp_allows_style() {
+        let csp = ContentSecurityPolicy::parse("style-src https://cdn.styles.com", false);
+        assert!(csp.allows_style("https://cdn.styles.com/main.css"));
+        assert!(!csp.allows_style("https://evil.com/inject.css"));
+    }
+
+    #[test]
+    fn test_csp_allows_connect_fallback() {
+        let csp = ContentSecurityPolicy::parse("default-src https://api.trusted.com", false);
+        // No connect-src set, falls back to default-src
+        assert!(csp.allows_connect("https://api.trusted.com/data"));
+        assert!(!csp.allows_connect("https://evil.com/steal"));
+    }
+
+    #[test]
+    fn test_csp_to_header_includes_report_uri() {
+        let csp = ContentSecurityPolicy::parse(
+            "default-src 'self'; script-src https://cdn.com; report-uri https://r.com/csp",
+            false,
+        );
+        let header = csp.to_header_string();
+        assert!(header.contains("report-uri https://r.com/csp"));
+        assert!(header.contains("default-src 'self'"));
+        assert!(header.contains("script-src https://cdn.com"));
+    }
+
+    #[test]
+    fn test_with_network_allowlist_builder() {
+        let caps = SandboxCapabilities::strict_isolation()
+            .with_network_allowlist(vec!["a.com".into(), "b.com".into()]);
+        assert_eq!(caps.allow_network_hosts.len(), 2);
+        let mut sb = TabSandbox::new("net1", caps);
+        assert!(sb.check_network_access("a.com").is_ok());
+        assert!(sb.check_network_access("b.com").is_ok());
+        assert!(sb.check_network_access("c.com").is_err());
+    }
+
+    #[test]
+    fn test_without_scripts_disables_wasm() {
+        let caps = SandboxCapabilities::permissive().without_scripts();
+        assert!(!caps.allow_scripts);
+        assert!(!caps.allow_wasm_execution);
+    }
 }

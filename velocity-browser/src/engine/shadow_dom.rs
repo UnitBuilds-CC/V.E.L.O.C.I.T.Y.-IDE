@@ -255,4 +255,91 @@ mod tests {
         assert_eq!(extract_attribute_value("<div src='single.html'>", "src"), Some("single.html".into()));
         assert_eq!(extract_attribute_value("<div class='x'>", "src"), None);
     }
+
+    #[test]
+    fn test_extract_attribute_value_no_quotes() {
+        // Attribute without matching value returns None
+        assert_eq!(extract_attribute_value("<div src=noquotes>", "src"), None);
+    }
+
+    #[test]
+    fn test_find_frames_security_origin() {
+        let html = r#"<iframe src="https://cdn.example.com/embed"></iframe>"#;
+        let frames = ShadowFrameExtractor::find_frames(html, "https://mysite.com");
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].security_origin, "https://cdn.example.com");
+    }
+
+    #[test]
+    fn test_find_frames_relative_url_origin() {
+        let html = r#"<iframe src="/embed/video"></iframe>"#;
+        let frames = ShadowFrameExtractor::find_frames(html, "https://mysite.com");
+        assert_eq!(frames.len(), 1);
+        // Relative URL -> security_origin = base_url
+        assert_eq!(frames[0].security_origin, "https://mysite.com");
+    }
+
+    #[test]
+    fn test_find_frames_sandbox_flags() {
+        let html = r#"<iframe src="x.html" sandbox="allow-scripts allow-forms"></iframe>"#;
+        let frames = ShadowFrameExtractor::find_frames(html, "https://mysite.com");
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].is_sandboxed);
+        assert_eq!(frames[0].sandbox_flags.len(), 2);
+        assert!(frames[0].sandbox_flags.contains(&"allow-scripts".to_string()));
+        assert!(frames[0].sandbox_flags.contains(&"allow-forms".to_string()));
+    }
+
+    #[test]
+    fn test_find_shadow_hosts_none() {
+        let html = r#"<div id="normal">no shadow here</div>"#;
+        let hosts = ShadowFrameExtractor::find_shadow_hosts(html);
+        assert!(hosts.is_empty());
+    }
+
+    #[test]
+    fn test_extract_node_nda_recursive() {
+        let hosts = vec![ShadowHost {
+            host_id: "h1".into(),
+            mode: "open".into(),
+            shadow_root_id: "sr1".into(),
+            children: vec![ShadowNode {
+                node_id: "parent".into(),
+                tag: "div".into(),
+                slot: None,
+                attributes: vec![],
+                text_content: None,
+                children: vec![ShadowNode {
+                    node_id: "child".into(),
+                    tag: "span".into(),
+                    slot: Some("main".into()),
+                    attributes: vec![("id".into(), "inner".into())],
+                    text_content: Some("text".into()),
+                    children: vec![],
+                }],
+            }],
+            slot_assignments: vec![],
+        }];
+        let triples = ShadowFrameExtractor::extract_shadow_hosts_nda(&hosts);
+        // Should include: host mode, shadow root, parent tag, parent parent, child tag, child parent, child slot, child text, child attr
+        assert!(triples.len() >= 8);
+        // Check that the child's slot is captured
+        let slot_triple = triples.iter().find(|t| t.predicate_id == 25);
+        assert!(slot_triple.is_some());
+    }
+
+    #[test]
+    fn test_extract_frames_nda_no_parent() {
+        let frames = vec![FrameTarget {
+            frame_id: "f0".into(),
+            parent_id: None,
+            url: "https://example.com".into(),
+            security_origin: "https://example.com".into(),
+            sandbox_flags: vec![],
+            is_sandboxed: false,
+        }];
+        let triples = ShadowFrameExtractor::extract_frames_nda(&frames);
+        // url + origin, no parent, no sandbox
+        assert_eq!(triples.len(), 2);
+    }
 }

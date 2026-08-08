@@ -143,4 +143,57 @@ mod tests {
         let bad_aad = [0x17, 0x03, 0x03, 0x00, 0x2b]; // one byte differs
         assert!(open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 1, &bad_aad, &sealed).is_none());
     }
+
+    #[test]
+    fn too_short_ciphertext_returns_none() {
+        let key = [0x42u8; 32];
+        let iv = [0x24u8; 12];
+        let aad = [0x17, 0x03, 0x03, 0x00, 0x05];
+        // Less than 16 bytes (tag size) — should return None without panicking
+        assert!(open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 0, &aad, &[0u8; 15]).is_none());
+    }
+
+    #[test]
+    fn empty_plaintext_round_trips() {
+        let key = [0x55u8; 32];
+        let iv = [0xAAu8; 12];
+        let aad = [0x17, 0x03, 0x03, 0x00, 0x00];
+        let sealed = seal_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 0, &aad, b"");
+        // Sealed output should be exactly the 16-byte tag
+        assert_eq!(sealed.len(), 16);
+        let opened = open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 0, &aad, &sealed).unwrap();
+        assert!(opened.is_empty());
+    }
+
+    #[test]
+    fn different_sequence_numbers_produce_different_nonces() {
+        let iv = [0xFFu8; 12];
+        let n1 = per_record_nonce(&iv, 0);
+        let n2 = per_record_nonce(&iv, 1);
+        let n3 = per_record_nonce(&iv, 256);
+        assert_ne!(n1, n2);
+        assert_ne!(n2, n3);
+        assert_ne!(n1, n3);
+    }
+
+    #[test]
+    fn wrong_key_fails_to_open() {
+        let key1 = [0x11u8; 32];
+        let key2 = [0x22u8; 32];
+        let iv = [0x33u8; 12];
+        let aad = [0x17, 0x03, 0x03, 0x00, 0x10];
+        let sealed = seal_record(AeadAlg::ChaCha20Poly1305, &key1, &iv, 0, &aad, b"data");
+        assert!(open_record(AeadAlg::ChaCha20Poly1305, &key2, &iv, 0, &aad, &sealed).is_none());
+    }
+
+    #[test]
+    fn large_sequence_number_round_trips() {
+        let key = [0x77u8; 32];
+        let iv = [0x88u8; 12];
+        let aad = [0x17, 0x03, 0x03, 0x00, 0x01];
+        let seq = u64::MAX - 1;
+        let sealed = seal_record(AeadAlg::ChaCha20Poly1305, &key, &iv, seq, &aad, b"late-record");
+        let opened = open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, seq, &aad, &sealed).unwrap();
+        assert_eq!(opened, b"late-record");
+    }
 }

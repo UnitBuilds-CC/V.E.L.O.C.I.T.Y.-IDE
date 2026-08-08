@@ -301,5 +301,93 @@ mod tests {
         assert_eq!(stats.audio_packets_encoded, 1);
         assert_eq!(stats.packets_encoded, 2);
     }
+
+    #[test]
+    fn test_codec_from_name_variants() {
+        assert_eq!(CodecKind::from_name("av1"), CodecKind::AV1);
+        assert_eq!(CodecKind::from_name("HEVC"), CodecKind::H265);
+        assert_eq!(CodecKind::from_name("h264"), CodecKind::H264);
+        assert_eq!(CodecKind::from_name("avc1"), CodecKind::H264);
+        assert_eq!(CodecKind::from_name("vp9"), CodecKind::VP9);
+        assert_eq!(CodecKind::from_name("vp8"), CodecKind::VP8);
+        assert_eq!(CodecKind::from_name("opus"), CodecKind::Opus);
+        assert_eq!(CodecKind::from_name("aac"), CodecKind::AAC);
+        assert_eq!(CodecKind::from_name("unknown_codec"), CodecKind::Unknown);
+    }
+
+    #[test]
+    fn test_codec_is_video() {
+        assert!(CodecKind::H264.is_video());
+        assert!(CodecKind::H265.is_video());
+        assert!(CodecKind::VP8.is_video());
+        assert!(CodecKind::VP9.is_video());
+        assert!(CodecKind::AV1.is_video());
+        assert!(!CodecKind::Opus.is_video());
+        assert!(!CodecKind::AAC.is_video());
+    }
+
+    #[test]
+    fn test_codec_is_audio() {
+        assert!(CodecKind::Opus.is_audio());
+        assert!(CodecKind::AAC.is_audio());
+        assert!(!CodecKind::H264.is_audio());
+        assert!(!CodecKind::VP9.is_audio());
+    }
+
+    #[test]
+    fn test_ring_buffer_eviction() {
+        let mut buf = VelocityFrameRingBuffer::new(3);
+        for i in 0..5 {
+            buf.push_frame(VideoFrame {
+                frame_index: i,
+                width: 640,
+                height: 480,
+                timestamp_us: i as u64 * 16666,
+                is_keyframe: i == 0,
+                codec: CodecKind::H264,
+            });
+        }
+        // Only last 3 frames remain
+        assert_eq!(buf.frames.len(), 3);
+        assert_eq!(buf.frames[0].frame_index, 2);
+    }
+
+    #[test]
+    fn test_frames_since_keyframe() {
+        let mut buf = VelocityFrameRingBuffer::new(10);
+        buf.push_frame(VideoFrame {
+            frame_index: 0, width: 640, height: 480, timestamp_us: 0,
+            is_keyframe: true, codec: CodecKind::H264,
+        });
+        buf.push_frame(VideoFrame {
+            frame_index: 1, width: 640, height: 480, timestamp_us: 16666,
+            is_keyframe: false, codec: CodecKind::H264,
+        });
+        buf.push_frame(VideoFrame {
+            frame_index: 2, width: 640, height: 480, timestamp_us: 33332,
+            is_keyframe: false, codec: CodecKind::H264,
+        });
+        assert_eq!(buf.frames_since_keyframe(), 2);
+    }
+
+    #[test]
+    fn test_frames_since_keyframe_no_keyframe() {
+        let mut buf = VelocityFrameRingBuffer::new(10);
+        buf.push_frame(VideoFrame {
+            frame_index: 0, width: 640, height: 480, timestamp_us: 0,
+            is_keyframe: false, codec: CodecKind::H264,
+        });
+        assert_eq!(buf.frames_since_keyframe(), 1); // all frames since no keyframe
+    }
+
+    #[test]
+    fn test_export_codecs_nda() {
+        let mut engine = VelocityCodecsEngine::new("vp9");
+        engine.decode_stream_packet(&[0x00]);
+        let triples = engine.export_codecs_nda("sess1");
+        assert_eq!(triples.len(), 1);
+        assert_eq!(triples[0].predicate_id, 253);
+        assert!(triples[0].object_hash != 0);
+    }
 }
 

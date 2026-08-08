@@ -581,4 +581,80 @@ mod tests {
         assert!(resp.set_cookies.is_empty());
         assert!(!client.cookie_jar.contains_key("token"));
     }
+
+    #[test]
+    fn parse_url_custom_port() {
+        let (s, h, p, pa) = parse_url("http://localhost:3000/api/v1").unwrap();
+        assert_eq!(s, "http");
+        assert_eq!(h, "localhost");
+        assert_eq!(p, 3000);
+        assert_eq!(pa, "/api/v1");
+    }
+
+    #[test]
+    fn is_redirect_variants() {
+        assert!(is_redirect(301));
+        assert!(is_redirect(302));
+        assert!(is_redirect(303));
+        assert!(is_redirect(307));
+        assert!(is_redirect(308));
+        assert!(!is_redirect(200));
+        assert!(!is_redirect(404));
+        assert!(!is_redirect(500));
+    }
+
+    #[test]
+    fn dechunk_with_extension() {
+        // Chunk with extension parameter (should be ignored per spec)
+        let data = b"5;ext=val\r\nHello\r\n0\r\n\r\n";
+        assert_eq!(dechunk(data).unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn parse_set_cookie_samesite_none() {
+        let parsed = parse_set_cookie_full("id=x; SameSite=None", "example.com");
+        assert_eq!(parsed.same_site, SameSitePolicy::None);
+    }
+
+    #[test]
+    fn parse_set_cookie_samesite_lax() {
+        let parsed = parse_set_cookie_full("id=x; SameSite=Lax", "example.com");
+        assert_eq!(parsed.same_site, SameSitePolicy::Lax);
+    }
+
+    #[test]
+    fn split_head_body_no_separator() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Type: text/html";
+        assert!(split_head_body(raw).is_none());
+    }
+
+    #[test]
+    fn parse_status_and_headers_malformed_status() {
+        let head = b"GARBAGE LINE\r\nContent-Type: text/html";
+        let (status, headers, _) = parse_status_and_headers(head);
+        assert_eq!(status, 0); // unparseable status
+        assert_eq!(headers.get("content-type").map(|s| s.as_str()), Some("text/html"));
+    }
+
+    #[test]
+    fn resolve_redirect_relative_same_dir() {
+        let url = resolve_redirect("http", "a.com", 80, "/dir/page.html", "other.html");
+        assert_eq!(url, "http://a.com/dir/other.html");
+    }
+
+    #[test]
+    fn http_client_default() {
+        let client = HttpClient::default();
+        assert!(client.cookie_jar.is_empty());
+        assert!(matches!(client.proxy.proxy_type, crate::net::tls::ProxyType::Direct));
+    }
+
+    #[test]
+    fn build_response_content_length_truncation() {
+        let mut client = HttpClient::new();
+        // Content-Length says 5 bytes, but body is longer
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHelloExtraData";
+        let resp = client.build_response(raw, "http", "localhost").unwrap();
+        assert_eq!(resp.body, "Hello");
+    }
 }
