@@ -716,5 +716,120 @@ mod tests {
         assert_eq!(fmt, TextureFormat::Rgba8Unorm);
         assert_eq!(data_len, 256 * 256 * 4);
     }
+
+    #[test]
+    fn vertex_format_byte_sizes() {
+        assert_eq!(VertexFormat::Float32.byte_size(), 4);
+        assert_eq!(VertexFormat::Float32x2.byte_size(), 8);
+        assert_eq!(VertexFormat::Float32x3.byte_size(), 12);
+        assert_eq!(VertexFormat::Float32x4.byte_size(), 16);
+        assert_eq!(VertexFormat::Uint8x4.byte_size(), 4);
+    }
+
+    #[test]
+    fn texture_format_bytes_per_pixel() {
+        assert_eq!(TextureFormat::Rgba8Unorm.bytes_per_pixel(), 4);
+        assert_eq!(TextureFormat::Bgra8Unorm.bytes_per_pixel(), 4);
+        assert_eq!(TextureFormat::R8Unorm.bytes_per_pixel(), 1);
+        assert_eq!(TextureFormat::Depth24Plus.bytes_per_pixel(), 4);
+        assert_eq!(TextureFormat::Depth24PlusStencil8.bytes_per_pixel(), 4);
+    }
+
+    #[test]
+    fn texture_usage_contains() {
+        let u = TextureUsage::new(TextureUsage::COPY_SRC | TextureUsage::COPY_DST);
+        assert!(u.contains(TextureUsage::COPY_SRC));
+        assert!(u.contains(TextureUsage::COPY_DST));
+        assert!(!u.contains(TextureUsage::TEXTURE_BINDING));
+    }
+
+    #[test]
+    fn write_buffer_nonexistent() {
+        let mut engine = WebGpuComputeEngine::new();
+        assert!(!engine.write_buffer(999, &[1, 2, 3]));
+    }
+
+    #[test]
+    fn read_buffer_nonexistent() {
+        let engine = WebGpuComputeEngine::new();
+        assert!(engine.read_buffer(999).is_none());
+    }
+
+    #[test]
+    fn remove_buffer_nonexistent() {
+        let mut engine = WebGpuComputeEngine::new();
+        assert!(!engine.remove_buffer(999));
+    }
+
+    #[test]
+    fn remove_buffer_cleans_pipeline_bindings() {
+        let mut engine = WebGpuComputeEngine::new();
+        let buf = engine.create_buffer(8);
+        let pipe = engine.create_pipeline("shader", (1, 1, 1));
+        engine.bind_buffer(pipe, buf);
+        assert_eq!(engine.pipelines[0].buffer_bindings.len(), 1);
+        engine.remove_buffer(buf);
+        assert!(engine.pipelines[0].buffer_bindings.is_empty());
+    }
+
+    #[test]
+    fn total_memory_and_buffer_count() {
+        let mut engine = WebGpuComputeEngine::new();
+        engine.create_buffer(100);
+        engine.create_buffer(200);
+        assert_eq!(engine.buffer_count(), 2);
+        assert_eq!(engine.total_memory_bytes(), 300);
+    }
+
+    #[test]
+    fn dispatch_compute_zero_workgroup() {
+        let engine = WebGpuComputeEngine::new();
+        assert!(!engine.dispatch_compute("shader", (0, 1, 1)));
+        assert!(!engine.dispatch_compute("shader", (1, 0, 1)));
+        assert!(!engine.dispatch_compute("shader", (1, 1, 0)));
+    }
+
+    #[test]
+    fn dispatch_pipeline_nonexistent() {
+        let engine = WebGpuComputeEngine::new();
+        assert!(!engine.dispatch_pipeline(999, (1, 1, 1)));
+    }
+
+    #[test]
+    fn bind_buffer_duplicate_ignored() {
+        let mut engine = WebGpuComputeEngine::new();
+        let buf = engine.create_buffer(8);
+        let pipe = engine.create_pipeline("s", (1, 1, 1));
+        assert!(engine.bind_buffer(pipe, buf));
+        assert!(engine.bind_buffer(pipe, buf)); // duplicate
+        assert_eq!(engine.pipelines[0].buffer_bindings.len(), 1);
+    }
+
+    #[test]
+    fn query_buffer_summary_nonexistent() {
+        let engine = WebGpuComputeEngine::new();
+        assert!(engine.query_buffer_summary(999).is_none());
+    }
+
+    #[test]
+    fn query_texture_summary_nonexistent() {
+        let engine = WebGpuComputeEngine::new();
+        assert!(engine.query_texture_summary(999).is_none());
+    }
+
+    #[test]
+    fn timestamp_query_valid_encoder() {
+        let mut engine = WebGpuComputeEngine::new();
+        let enc = engine.create_command_encoder();
+        assert!(engine.begin_timestamp_query(enc));
+        assert!(engine.end_timestamp_query(enc));
+    }
+
+    #[test]
+    fn timestamp_query_invalid_encoder() {
+        let mut engine = WebGpuComputeEngine::new();
+        assert!(!engine.begin_timestamp_query(999));
+        assert!(!engine.end_timestamp_query(999));
+    }
 }
 

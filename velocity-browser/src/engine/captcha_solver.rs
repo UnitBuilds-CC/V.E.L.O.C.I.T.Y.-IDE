@@ -307,4 +307,77 @@ mod tests {
         assert_eq!(attempt.state, SolveState::Detecting);
         assert_eq!(attempt.attempts, 0);
     }
+
+    #[test]
+    fn detect_recaptcha_v3() {
+        let node = make_node("script", &[("src", "https://www.google.com/recaptcha/enterprise.js")]);
+        let tree = DomTree::new(vec![node]);
+        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::ReCaptchaV3));
+    }
+
+    #[test]
+    fn detect_turnstile() {
+        let node = make_node("script", &[("src", "https://challenges.cloudflare.com/turnstile/v0/api.js")]);
+        let tree = DomTree::new(vec![node]);
+        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::Turnstile));
+    }
+
+    #[test]
+    fn detect_funcaptcha() {
+        let node = make_node("script", &[("src", "https://api.funcaptcha.com/fc.js")]);
+        let tree = DomTree::new(vec![node]);
+        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::FunCaptcha));
+    }
+
+    #[test]
+    fn detect_text_captcha_by_alt() {
+        let node = make_node("img", &[("alt", "Enter the captcha text")]);
+        let tree = DomTree::new(vec![node]);
+        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::TextCaptcha));
+    }
+
+    #[test]
+    fn detect_recaptcha_by_data_attrs() {
+        let node = make_node("div", &[("data-sitekey", "abc123"), ("data-callback", "onSubmit")]);
+        let tree = DomTree::new(vec![node]);
+        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::ReCaptchaV2));
+    }
+
+    #[test]
+    fn update_solve_success() {
+        let mut attempt = CaptchaSolverEngine::start_solve(&CaptchaType::HCaptcha);
+        CaptchaSolverEngine::update_solve_state(&mut attempt, true);
+        assert_eq!(attempt.state, SolveState::Solved);
+        assert_eq!(attempt.attempts, 1);
+    }
+
+    #[test]
+    fn update_solve_failure_after_three() {
+        let mut attempt = CaptchaSolverEngine::start_solve(&CaptchaType::ReCaptchaV2);
+        CaptchaSolverEngine::update_solve_state(&mut attempt, false);
+        assert_eq!(attempt.state, SolveState::WaitingForSolution);
+        CaptchaSolverEngine::update_solve_state(&mut attempt, false);
+        assert_eq!(attempt.state, SolveState::WaitingForSolution);
+        CaptchaSolverEngine::update_solve_state(&mut attempt, false);
+        // Third failure triggers Failed state
+        match &attempt.state {
+            SolveState::Failed { reason } => assert!(reason.contains("3")),
+            _ => panic!("Expected Failed state"),
+        }
+    }
+
+    #[test]
+    fn solve_challenge_nda_recaptcha_v3() {
+        let triples = CaptchaSolverEngine::solve_challenge_nda("sess", &CaptchaType::ReCaptchaV3);
+        // detection + strategy + action + solving
+        assert!(triples.len() >= 3);
+        assert_eq!(triples[0].predicate_id, 250);
+    }
+
+    #[test]
+    fn solve_challenge_nda_unknown() {
+        let triples = CaptchaSolverEngine::solve_challenge_nda("sess", &CaptchaType::Unknown);
+        // detection + unknown strategy + solving
+        assert_eq!(triples.len(), 3);
+    }
 }

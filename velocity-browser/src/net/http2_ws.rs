@@ -232,4 +232,53 @@ mod tests {
         assert_eq!(frame.text(), None);
         assert!(!frame.is_close());
     }
+
+    #[test]
+    fn ws_frame_continuation_not_close() {
+        let frame = WsFrame {
+            fin: false,
+            opcode: OPCODE_CONTINUATION,
+            payload: vec![1, 2, 3],
+        };
+        assert!(!frame.is_close());
+        assert_eq!(frame.text(), None);
+    }
+
+    #[test]
+    fn ws_frame_ping_not_close() {
+        let frame = WsFrame {
+            fin: true,
+            opcode: OPCODE_PING,
+            payload: vec![],
+        };
+        assert!(!frame.is_close());
+    }
+
+    #[test]
+    fn ws_frame_pong_not_close() {
+        let frame = WsFrame {
+            fin: true,
+            opcode: OPCODE_PONG,
+            payload: vec![],
+        };
+        assert!(!frame.is_close());
+    }
+
+    #[test]
+    fn base64_ws_key_is_deterministic() {
+        let k1 = base64_ws_key();
+        let k2 = base64_ws_key();
+        assert_eq!(k1, k2);
+        assert!(!k1.is_empty());
+    }
+
+    #[test]
+    fn ws_frame_empty_text() {
+        let frame = WsFrame {
+            fin: true,
+            opcode: OPCODE_TEXT,
+            payload: vec![],
+        };
+        assert_eq!(frame.text(), Some(String::new()));
+    }
 }
