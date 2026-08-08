@@ -121,3 +121,213 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
     tokens.push(Token::Eof);
     Ok(tokens)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_input_returns_eof() {
+        let tokens = lex("").unwrap();
+        assert_eq!(tokens, vec![Token::Eof]);
+    }
+
+    #[test]
+    fn whitespace_only_returns_eof() {
+        let tokens = lex("   \t\n\r  ").unwrap();
+        assert_eq!(tokens, vec![Token::Eof]);
+    }
+
+    #[test]
+    fn arithmetic_operators() {
+        let tokens = lex("+ - * / % **").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Plus, Token::Minus, Token::Star, Token::Slash,
+            Token::Percent, Token::StarStar, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn compound_assignment_operators() {
+        let tokens = lex("+= -= *= /=").unwrap();
+        assert_eq!(tokens, vec![
+            Token::PlusEq, Token::MinusEq, Token::StarEq, Token::SlashEq, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn increment_decrement() {
+        let tokens = lex("++ --").unwrap();
+        assert_eq!(tokens, vec![Token::PlusPlus, Token::MinusMinus, Token::Eof]);
+    }
+
+    #[test]
+    fn comparison_operators() {
+        let tokens = lex("< > <= >= == != === !==").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Lt, Token::Gt, Token::LtEq, Token::GtEq,
+            Token::EqEq, Token::BangEq, Token::EqEqEq, Token::BangEqEq,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn logical_and_bitwise_operators() {
+        let tokens = lex("&& || ! & | ^ ~").unwrap();
+        assert_eq!(tokens, vec![
+            Token::AmpAmp, Token::PipePipe, Token::Bang,
+            Token::Amp, Token::Pipe, Token::Caret, Token::Tilde,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn shift_operators() {
+        let tokens = lex("<< >> >>>").unwrap();
+        assert_eq!(tokens, vec![Token::LtLt, Token::GtGt, Token::GtGtGt, Token::Eof]);
+    }
+
+    #[test]
+    fn punctuation_tokens() {
+        let tokens = lex("( ) { } [ ] , : ; . ... ?").unwrap();
+        assert_eq!(tokens, vec![
+            Token::LParen, Token::RParen, Token::LBrace, Token::RBrace,
+            Token::LBracket, Token::RBracket, Token::Comma, Token::Colon,
+            Token::Semi, Token::Dot, Token::DotDotDot, Token::Question,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn arrow_and_nullish() {
+        let tokens = lex("=> ?? ??= ?.").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Arrow, Token::QuestionQuestion, Token::QuestionQuestionEq,
+            Token::QuestionDot, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn string_literal_double_quote() {
+        let tokens = lex(r#""hello""#).unwrap();
+        assert_eq!(tokens, vec![Token::Str("hello".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn string_literal_single_quote_with_escapes() {
+        let tokens = lex(r#"'a\nb\tc'"#).unwrap();
+        assert_eq!(tokens, vec![Token::Str("a\nb\tc".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn template_literal() {
+        let tokens = lex("`hello world`").unwrap();
+        assert_eq!(tokens, vec![Token::Template("hello world".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn decimal_number() {
+        let tokens = lex("42 2.72").unwrap();
+        assert_eq!(tokens, vec![Token::Number(42.0), Token::Number(2.72), Token::Eof]);
+    }
+
+    #[test]
+    fn hex_number() {
+        let tokens = lex("0xff 0X10").unwrap();
+        assert_eq!(tokens, vec![Token::Number(255.0), Token::Number(16.0), Token::Eof]);
+    }
+
+    #[test]
+    fn scientific_notation() {
+        let tokens = lex("1e3 2.5e-2").unwrap();
+        assert_eq!(tokens, vec![Token::Number(1000.0), Token::Number(0.025), Token::Eof]);
+    }
+
+    #[test]
+    fn dot_followed_by_digit() {
+        // `.5` is lexed as the number 0.5
+        let tokens = lex(".5").unwrap();
+        assert_eq!(tokens, vec![Token::Number(0.5), Token::Eof]);
+    }
+
+    #[test]
+    fn keywords() {
+        let tokens = lex("var let const function return if else while for do break continue").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Var, Token::Let, Token::Const, Token::Function,
+            Token::Return, Token::If, Token::Else, Token::While,
+            Token::For, Token::Do, Token::Break, Token::Continue,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn more_keywords() {
+        let tokens = lex("throw try catch finally new typeof instanceof in of").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Throw, Token::Try, Token::Catch, Token::Finally,
+            Token::New, Token::Typeof, Token::Instanceof, Token::In, Token::Of,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn literal_keywords() {
+        let tokens = lex("true false null undefined this void delete").unwrap();
+        assert_eq!(tokens, vec![
+            Token::True, Token::False, Token::Null, Token::Undefined,
+            Token::This, Token::Void, Token::Delete, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn class_and_module_keywords() {
+        let tokens = lex("class extends super static async await import export from default as yield switch case").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Class, Token::Extends, Token::Super, Token::Static,
+            Token::Async, Token::Await, Token::Import, Token::Export,
+            Token::From, Token::Default, Token::As, Token::Yield,
+            Token::Switch, Token::Case, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn identifier() {
+        let tokens = lex("foo bar_baz $el _private").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Ident("foo".into()),
+            Token::Ident("bar_baz".into()),
+            Token::Ident("$el".into()),
+            Token::Ident("_private".into()),
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn single_line_comment() {
+        let tokens = lex("x // comment\ny").unwrap();
+        assert_eq!(tokens, vec![Token::Ident("x".into()), Token::Ident("y".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn multi_line_comment() {
+        let tokens = lex("a /* skip\nthis */ b").unwrap();
+        assert_eq!(tokens, vec![Token::Ident("a".into()), Token::Ident("b".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn unexpected_character_returns_err() {
+        assert!(lex("@").is_err());
+        assert!(lex("#").is_err());
+    }
+
+    #[test]
+    fn full_expression_lex() {
+        let tokens = lex("var x = 1 + 2;").unwrap();
+        assert_eq!(tokens, vec![
+            Token::Var, Token::Ident("x".into()), Token::Eq,
+            Token::Number(1.0), Token::Plus, Token::Number(2.0),
+            Token::Semi, Token::Eof,
+        ]);
+    }
+}

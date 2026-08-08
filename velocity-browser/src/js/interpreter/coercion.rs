@@ -157,3 +157,235 @@ pub(super) fn strict_eq(l: &JsValue, r: &JsValue) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // ── to_number ──────────────────────────────────────────────────────
+
+    #[test]
+    fn to_number_passthrough() {
+        assert_eq!(to_number(&JsValue::Number(42.0)), 42.0);
+        assert!(to_number(&JsValue::Number(f64::NAN)).is_nan());
+    }
+
+    #[test]
+    fn to_number_boolean() {
+        assert_eq!(to_number(&JsValue::Boolean(true)), 1.0);
+        assert_eq!(to_number(&JsValue::Boolean(false)), 0.0);
+    }
+
+    #[test]
+    fn to_number_string_decimal() {
+        assert_eq!(to_number(&JsValue::String("42".into())), 42.0);
+        assert_eq!(to_number(&JsValue::String("2.72".into())), 2.72);
+        assert_eq!(to_number(&JsValue::String("  10  ".into())), 10.0);
+    }
+
+    #[test]
+    fn to_number_string_hex_bin_oct() {
+        assert_eq!(to_number(&JsValue::String("0xff".into())), 255.0);
+        assert_eq!(to_number(&JsValue::String("0X10".into())), 16.0);
+        assert_eq!(to_number(&JsValue::String("0b1010".into())), 10.0);
+        assert_eq!(to_number(&JsValue::String("0o17".into())), 15.0);
+    }
+
+    #[test]
+    fn to_number_string_special() {
+        assert_eq!(to_number(&JsValue::String("".into())), 0.0);
+        assert_eq!(to_number(&JsValue::String("Infinity".into())), f64::INFINITY);
+        assert_eq!(to_number(&JsValue::String("-Infinity".into())), f64::NEG_INFINITY);
+        assert!(to_number(&JsValue::String("abc".into())).is_nan());
+    }
+
+    #[test]
+    fn to_number_null_undefined() {
+        assert_eq!(to_number(&JsValue::Null), 0.0);
+        assert!(to_number(&JsValue::Undefined).is_nan());
+    }
+
+    // ── to_boolean ─────────────────────────────────────────────────────
+
+    #[test]
+    fn to_boolean_falsy_values() {
+        assert!(!to_boolean(&JsValue::Boolean(false)));
+        assert!(!to_boolean(&JsValue::Number(0.0)));
+        assert!(!to_boolean(&JsValue::Number(f64::NAN)));
+        assert!(!to_boolean(&JsValue::String(String::new())));
+        assert!(!to_boolean(&JsValue::Null));
+        assert!(!to_boolean(&JsValue::Undefined));
+    }
+
+    #[test]
+    fn to_boolean_truthy_values() {
+        assert!(to_boolean(&JsValue::Boolean(true)));
+        assert!(to_boolean(&JsValue::Number(1.0)));
+        assert!(to_boolean(&JsValue::Number(-1.0)));
+        assert!(to_boolean(&JsValue::String("hi".into())));
+        assert!(to_boolean(&JsValue::Array(vec![])));
+        assert!(to_boolean(&JsValue::Object(HashMap::new())));
+    }
+
+    // ── to_string ──────────────────────────────────────────────────────
+
+    #[test]
+    fn to_string_primitives() {
+        assert_eq!(to_string(&JsValue::String("hello".into())), "hello");
+        assert_eq!(to_string(&JsValue::Number(42.0)), "42");
+        assert_eq!(to_string(&JsValue::Boolean(true)), "true");
+        assert_eq!(to_string(&JsValue::Null), "null");
+        assert_eq!(to_string(&JsValue::Undefined), "undefined");
+    }
+
+    #[test]
+    fn to_string_number_edge_cases() {
+        assert_eq!(to_string(&JsValue::Number(f64::NAN)), "NaN");
+        assert_eq!(to_string(&JsValue::Number(f64::INFINITY)), "Infinity");
+        assert_eq!(to_string(&JsValue::Number(f64::NEG_INFINITY)), "-Infinity");
+        assert_eq!(to_string(&JsValue::Number(0.0)), "0");
+    }
+
+    #[test]
+    fn to_string_array_joins_with_comma() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        assert_eq!(to_string(&arr), "1,2,3");
+    }
+
+    #[test]
+    fn to_string_object() {
+        assert_eq!(to_string(&JsValue::Object(HashMap::new())), "[object Object]");
+    }
+
+    // ── typeof_str ─────────────────────────────────────────────────────
+
+    #[test]
+    fn typeof_str_all_types() {
+        assert_eq!(typeof_str(&JsValue::Undefined), "undefined");
+        assert_eq!(typeof_str(&JsValue::Null), "object"); // JS quirk
+        assert_eq!(typeof_str(&JsValue::Boolean(true)), "boolean");
+        assert_eq!(typeof_str(&JsValue::Number(1.0)), "number");
+        assert_eq!(typeof_str(&JsValue::String("x".into())), "string");
+        assert_eq!(typeof_str(&JsValue::Array(vec![])), "object");
+        assert_eq!(typeof_str(&JsValue::Object(HashMap::new())), "object");
+    }
+
+    #[test]
+    fn typeof_str_functions() {
+        let func = JsValue::Function {
+            name: Some("foo".into()),
+            params: vec![],
+            body: crate::js::interpreter::Stmt::Block(vec![]),
+            closure: crate::js::scope::Scope::new_global(),
+        };
+        assert_eq!(typeof_str(&func), "function");
+        assert_eq!(typeof_str(&JsValue::NativeFunction("parseInt".into())), "function");
+    }
+
+    // ── strict_eq ──────────────────────────────────────────────────────
+
+    #[test]
+    fn strict_eq_same_types() {
+        assert!(strict_eq(&JsValue::Number(1.0), &JsValue::Number(1.0)));
+        assert!(!strict_eq(&JsValue::Number(1.0), &JsValue::Number(2.0)));
+        assert!(strict_eq(&JsValue::String("a".into()), &JsValue::String("a".into())));
+        assert!(strict_eq(&JsValue::Null, &JsValue::Null));
+        assert!(strict_eq(&JsValue::Undefined, &JsValue::Undefined));
+    }
+
+    #[test]
+    fn strict_eq_different_types() {
+        assert!(!strict_eq(&JsValue::Number(1.0), &JsValue::String("1".into())));
+        assert!(!strict_eq(&JsValue::Null, &JsValue::Undefined));
+        assert!(!strict_eq(&JsValue::Boolean(true), &JsValue::Number(1.0)));
+    }
+
+    // ── loose_eq ───────────────────────────────────────────────────────
+
+    #[test]
+    fn loose_eq_null_undefined() {
+        assert!(loose_eq(&JsValue::Null, &JsValue::Undefined));
+        assert!(loose_eq(&JsValue::Undefined, &JsValue::Null));
+        assert!(loose_eq(&JsValue::Null, &JsValue::Null));
+    }
+
+    #[test]
+    fn loose_eq_null_not_loose_equal_to_zero() {
+        assert!(!loose_eq(&JsValue::Null, &JsValue::Number(0.0)));
+        assert!(!loose_eq(&JsValue::Undefined, &JsValue::Number(0.0)));
+    }
+
+    #[test]
+    fn loose_eq_coerces_number_string() {
+        assert!(loose_eq(&JsValue::Number(1.0), &JsValue::String("1".into())));
+        assert!(loose_eq(&JsValue::Boolean(true), &JsValue::Number(1.0)));
+    }
+
+    // ── format_number ──────────────────────────────────────────────────
+
+    #[test]
+    fn format_number_special() {
+        assert_eq!(format_number(f64::NAN), "NaN");
+        assert_eq!(format_number(f64::INFINITY), "Infinity");
+        assert_eq!(format_number(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(format_number(0.0), "0");
+    }
+
+    #[test]
+    fn format_number_integers_and_decimals() {
+        assert_eq!(format_number(1.0), "1");
+        assert_eq!(format_number(42.0), "42");
+        assert_eq!(format_number(-7.0), "-7");
+    }
+
+    // ── to_primitive ───────────────────────────────────────────────────
+
+    #[test]
+    fn to_primitive_array_joins() {
+        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
+        assert_eq!(to_primitive(&arr), JsValue::String("1,2".into()));
+    }
+
+    #[test]
+    fn to_primitive_array_null_becomes_empty() {
+        let arr = JsValue::Array(vec![JsValue::Null, JsValue::Number(1.0), JsValue::Undefined]);
+        assert_eq!(to_primitive(&arr), JsValue::String(",1,".into()));
+    }
+
+    #[test]
+    fn to_primitive_object() {
+        assert_eq!(to_primitive(&JsValue::Object(HashMap::new())), JsValue::String("[object Object]".into()));
+    }
+
+    #[test]
+    fn to_primitive_passthrough_for_primitives() {
+        assert_eq!(to_primitive(&JsValue::Number(5.0)), JsValue::Number(5.0));
+        assert_eq!(to_primitive(&JsValue::String("hi".into())), JsValue::String("hi".into()));
+    }
+
+    // ── relational_cmp ─────────────────────────────────────────────────
+
+    #[test]
+    fn relational_cmp_strings_lexicographic() {
+        let a = JsValue::String("abc".into());
+        let b = JsValue::String("xyz".into());
+        assert_eq!(relational_cmp(&a, &b), Some(std::cmp::Ordering::Less));
+        assert_eq!(relational_cmp(&b, &a), Some(std::cmp::Ordering::Greater));
+        assert_eq!(relational_cmp(&a, &a), Some(std::cmp::Ordering::Equal));
+    }
+
+    #[test]
+    fn relational_cmp_numbers() {
+        let a = JsValue::Number(10.0);
+        let b = JsValue::Number(20.0);
+        assert_eq!(relational_cmp(&a, &b), Some(std::cmp::Ordering::Less));
+    }
+
+    #[test]
+    fn relational_cmp_nan_is_none() {
+        let nan = JsValue::Number(f64::NAN);
+        let one = JsValue::Number(1.0);
+        assert_eq!(relational_cmp(&nan, &one), None);
+    }
+}

@@ -218,3 +218,119 @@ pub fn capture_stack_trace(error_name: &str, message: &str) -> String {
         format!("{}: {}", error_name, message)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── capture_stack_trace ────────────────────────────────────────────
+
+    #[test]
+    fn capture_stack_trace_with_message() {
+        assert_eq!(capture_stack_trace("TypeError", "x is not a function"), "TypeError: x is not a function");
+    }
+
+    #[test]
+    fn capture_stack_trace_empty_message() {
+        assert_eq!(capture_stack_trace("Error", ""), "Error");
+    }
+
+    // ── console_table_text ─────────────────────────────────────────────
+
+    #[test]
+    fn console_table_primitives() {
+        let val = JsValue::Array(vec![JsValue::Number(1.0), JsValue::String("hi".into())]);
+        let table = console_table_text(&val);
+        assert!(table.contains("(index)"));
+        assert!(table.contains("Values"));
+        assert!(table.contains("1"));
+        assert!(table.contains("hi"));
+    }
+
+    #[test]
+    fn console_table_array_of_arrays() {
+        let val = JsValue::Array(vec![
+            JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]),
+            JsValue::Array(vec![JsValue::Number(3.0), JsValue::Number(4.0)]),
+        ]);
+        let table = console_table_text(&val);
+        assert!(table.contains("0"));
+        assert!(table.contains("1"));
+        assert!(table.contains("2"));
+        assert!(table.contains("3"));
+        assert!(table.contains("4"));
+    }
+
+    #[test]
+    fn console_table_object() {
+        let mut map = HashMap::new();
+        map.insert("name".to_string(), JsValue::String("Alice".into()));
+        map.insert("age".to_string(), JsValue::Number(30.0));
+        let table = console_table_text(&JsValue::Object(map));
+        assert!(table.contains("name"));
+        assert!(table.contains("Alice"));
+        assert!(table.contains("age"));
+        assert!(table.contains("30"));
+    }
+
+    #[test]
+    fn console_table_non_array_object_falls_back() {
+        // A non-object, non-array value falls back to cell()
+        let val = JsValue::Number(42.0);
+        let table = console_table_text(&val);
+        assert_eq!(table, "42");
+    }
+
+    // ── console count and time ─────────────────────────────────────────
+
+    #[test]
+    fn console_count_increments_and_reset() {
+        let c1 = console_count("test_label");
+        let c2 = console_count("test_label");
+        assert_eq!(c1, 1);
+        assert_eq!(c2, 2);
+        console_count_reset("test_label");
+        let c3 = console_count("test_label");
+        assert_eq!(c3, 1);
+    }
+
+    #[test]
+    fn console_time_and_time_end() {
+        console_time("timer_a");
+        let elapsed = console_time_end("timer_a");
+        assert!(elapsed.is_some());
+        assert!(elapsed.unwrap() >= 0.0);
+        // Second call returns None (already removed)
+        assert!(console_time_end("timer_a").is_none());
+    }
+
+    // ── push_console / get / clear ─────────────────────────────────────
+
+    #[test]
+    fn push_and_clear_console() {
+        clear_console_output();
+        push_console("log", vec![JsValue::String("hello".into())]);
+        let records = get_console_output();
+        assert!(!records.is_empty());
+        assert_eq!(records.last().unwrap().level, "log");
+        clear_console_output();
+        assert!(get_console_output().is_empty());
+    }
+
+    #[test]
+    fn console_output_text_format() {
+        clear_console_output();
+        push_console("warn", vec![JsValue::String("careful".into())]);
+        let text = console_output_text();
+        assert!(text.contains("warn: careful"));
+        clear_console_output();
+    }
+
+    // ── perf_now ───────────────────────────────────────────────────────
+
+    #[test]
+    fn perf_now_returns_positive() {
+        let t = perf_now();
+        assert!(t > 0.0, "perf_now should return a positive epoch millis value");
+    }
+}

@@ -181,3 +181,89 @@ pub(super) fn flatten_array(a: &[JsValue], depth: usize) -> Vec<JsValue> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── flatten_array ──────────────────────────────────────────────────
+
+    #[test]
+    fn flatten_flat_passthrough() {
+        let arr = vec![JsValue::Number(1.0), JsValue::Number(2.0)];
+        let flat = flatten_array(&arr, 1);
+        assert_eq!(flat, vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
+    }
+
+    #[test]
+    fn flatten_one_level() {
+        let arr = vec![
+            JsValue::Number(1.0),
+            JsValue::Array(vec![JsValue::Number(2.0), JsValue::Number(3.0)]),
+        ];
+        let flat = flatten_array(&arr, 1);
+        assert_eq!(flat.len(), 3);
+        assert_eq!(flat[0], JsValue::Number(1.0));
+        assert_eq!(flat[1], JsValue::Number(2.0));
+        assert_eq!(flat[2], JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn flatten_zero_depth_does_not_recurse() {
+        let arr = vec![
+            JsValue::Array(vec![JsValue::Number(1.0)]),
+        ];
+        let flat = flatten_array(&arr, 0);
+        assert_eq!(flat.len(), 1);
+        assert!(matches!(flat[0], JsValue::Array(_)));
+    }
+
+    #[test]
+    fn flatten_deep_nested() {
+        let arr = vec![
+            JsValue::Array(vec![
+                JsValue::Array(vec![JsValue::Number(1.0)]),
+            ]),
+        ];
+        let flat = flatten_array(&arr, 3);
+        assert_eq!(flat, vec![JsValue::Number(1.0)]);
+    }
+
+    #[test]
+    fn flatten_empty_array() {
+        let arr: Vec<JsValue> = vec![];
+        let flat = flatten_array(&arr, 5);
+        assert!(flat.is_empty());
+    }
+
+    // ── builtin_namespace_constant ─────────────────────────────────────
+
+    #[test]
+    fn math_constants() {
+        let pi = builtin_namespace_constant("Math", "PI");
+        assert!(pi.is_some());
+        if let Some(JsValue::Number(n)) = pi {
+            assert!((n - std::f64::consts::PI).abs() < 1e-10);
+        }
+        let e = builtin_namespace_constant("Math", "E");
+        assert!(e.is_some());
+    }
+
+    #[test]
+    fn number_constants() {
+        let max_safe = builtin_namespace_constant("Number", "MAX_SAFE_INTEGER");
+        assert!(max_safe.is_some());
+        if let Some(JsValue::Number(n)) = max_safe {
+            assert_eq!(n, 9007199254740991.0);
+        }
+        let epsilon = builtin_namespace_constant("Number", "EPSILON");
+        assert!(epsilon.is_some());
+    }
+
+    #[test]
+    fn unknown_namespace_returns_none() {
+        assert!(builtin_namespace_constant("Math", "NONEXISTENT").is_none());
+        assert!(builtin_namespace_constant("JSON", "parse").is_none());
+        assert!(builtin_namespace_constant("Number", "toString").is_none());
+    }
+}
