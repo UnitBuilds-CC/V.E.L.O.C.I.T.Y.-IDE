@@ -385,3 +385,284 @@ pub(super) fn call_finalization_registry_method(method: &str) -> EvalResult {
         _ => Ok(JsValue::Undefined),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_obj(v: &JsValue) -> &HashMap<String, JsValue> {
+        match v {
+            JsValue::Object(m) => m,
+            _ => panic!("expected Object"),
+        }
+    }
+
+    fn get_str(v: &JsValue) -> &str {
+        match v {
+            JsValue::String(s) => s.as_str(),
+            _ => panic!("expected String"),
+        }
+    }
+
+    fn get_bool(v: &JsValue) -> bool {
+        match v {
+            JsValue::Boolean(b) => *b,
+            _ => panic!("expected Boolean"),
+        }
+    }
+
+    fn unwrap(v: EvalResult) -> JsValue {
+        v.expect("expected Ok")
+    }
+
+    // ── make_error ───────────────────────────────────────────────────────
+
+    #[test]
+    fn make_error_structure() {
+        let err = make_error("TypeError", "something went wrong");
+        let m = get_obj(&err);
+        assert_eq!(get_str(m.get("name").unwrap()), "TypeError");
+        assert_eq!(get_str(m.get("message").unwrap()), "something went wrong");
+    }
+
+    #[test]
+    fn make_error_empty_message() {
+        let err = make_error("Error", "");
+        let m = get_obj(&err);
+        assert_eq!(get_str(m.get("message").unwrap()), "");
+    }
+
+    // ── random_uuid ──────────────────────────────────────────────────────
+
+    #[test]
+    fn random_uuid_format() {
+        let uuid = random_uuid();
+        // UUID v4 format: 8-4-4-4-12 hex chars
+        assert_eq!(uuid.len(), 36);
+        let parts: Vec<&str> = uuid.split('-').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 4);
+        assert_eq!(parts[2].len(), 4);
+        assert_eq!(parts[3].len(), 4);
+        assert_eq!(parts[4].len(), 12);
+        // Version 4: parts[2] starts with '4'
+        assert!(parts[2].starts_with('4'));
+    }
+
+    #[test]
+    fn random_uuid_unique() {
+        let uuid1 = random_uuid();
+        let uuid2 = random_uuid();
+        assert_ne!(uuid1, uuid2);
+    }
+
+    // ── btoa_impl / atob_impl ────────────────────────────────────────────
+
+    #[test]
+    fn btoa_simple() {
+        let result = unwrap(btoa_impl("hello"));
+        assert_eq!(get_str(&result), "aGVsbG8=");
+    }
+
+    #[test]
+    fn btoa_empty() {
+        let result = unwrap(btoa_impl(""));
+        assert_eq!(get_str(&result), "");
+    }
+
+    #[test]
+    fn btoa_padding_one() {
+        let result = unwrap(btoa_impl("a"));
+        assert_eq!(get_str(&result), "YQ==");
+    }
+
+    #[test]
+    fn btoa_padding_two() {
+        let result = unwrap(btoa_impl("ab"));
+        assert_eq!(get_str(&result), "YWI=");
+    }
+
+    #[test]
+    fn btoa_no_padding() {
+        let result = unwrap(btoa_impl("abc"));
+        assert_eq!(get_str(&result), "YWJj");
+    }
+
+    #[test]
+    fn btoa_invalid_character() {
+        let result = btoa_impl("hello\u{1F600}");
+        match result {
+            Err(Signal::Throw(err)) => {
+                let m = get_obj(&err);
+                assert_eq!(get_str(m.get("name").unwrap()), "InvalidCharacterError");
+            }
+            _ => panic!("expected Throw signal"),
+        }
+    }
+
+    #[test]
+    fn atob_simple() {
+        let result = unwrap(atob_impl("aGVsbG8="));
+        assert_eq!(get_str(&result), "hello");
+    }
+
+    #[test]
+    fn atob_empty() {
+        let result = unwrap(atob_impl(""));
+        assert_eq!(get_str(&result), "");
+    }
+
+    #[test]
+    fn atob_no_padding() {
+        let result = unwrap(atob_impl("YWJj"));
+        assert_eq!(get_str(&result), "abc");
+    }
+
+    #[test]
+    fn atob_with_whitespace() {
+        let result = unwrap(atob_impl("aGVs bG8="));
+        assert_eq!(get_str(&result), "hello");
+    }
+
+    #[test]
+    fn atob_invalid_character() {
+        let result = atob_impl("invalid!base64");
+        match result {
+            Err(Signal::Throw(err)) => {
+                let m = get_obj(&err);
+                assert_eq!(get_str(m.get("name").unwrap()), "InvalidCharacterError");
+            }
+            _ => panic!("expected Throw signal"),
+        }
+    }
+
+    #[test]
+    fn btoa_atob_roundtrip() {
+        let original = "hello world";
+        let encoded = unwrap(btoa_impl(original));
+        let decoded = unwrap(atob_impl(get_str(&encoded)));
+        assert_eq!(get_str(&decoded), original);
+    }
+
+    // ── url_can_parse ────────────────────────────────────────────────────
+
+    #[test]
+    fn url_can_parse_http() {
+        assert!(url_can_parse("http://example.com"));
+    }
+
+    #[test]
+    fn url_can_parse_https() {
+        assert!(url_can_parse("https://example.com"));
+    }
+
+    #[test]
+    fn url_can_parse_ftp() {
+        assert!(url_can_parse("ftp://files.example.com"));
+    }
+
+    #[test]
+    fn url_can_parse_data() {
+        assert!(url_can_parse("data:text/html,<h1>test</h1>"));
+    }
+
+    #[test]
+    fn url_can_parse_invalid_no_scheme() {
+        assert!(!url_can_parse("://example.com"));
+    }
+
+    #[test]
+    fn url_can_parse_invalid_no_host() {
+        assert!(!url_can_parse("http://"));
+    }
+
+    #[test]
+    fn url_can_parse_invalid_no_separator() {
+        assert!(!url_can_parse("httpexample.com"));
+    }
+
+    #[test]
+    fn url_can_parse_with_path() {
+        assert!(url_can_parse("https://example.com/path/to/page"));
+    }
+
+    #[test]
+    fn url_can_parse_with_port() {
+        assert!(url_can_parse("http://localhost:8080"));
+    }
+
+    // ── crypto_get_random_values ─────────────────────────────────────────
+
+    #[test]
+    fn crypto_get_random_values_array() {
+        let arr = JsValue::Array(vec![JsValue::Number(0.0); 10]);
+        let result = crypto_get_random_values(&[arr]);
+        if let JsValue::Array(filled) = result {
+            assert_eq!(filled.len(), 10);
+            // Check that at least some values are non-zero (probabilistic)
+            let non_zero = filled.iter().filter(|v| {
+                if let JsValue::Number(n) = v { *n != 0.0 } else { false }
+            }).count();
+            assert!(non_zero > 0);
+        } else {
+            panic!("expected Array");
+        }
+    }
+
+    #[test]
+    fn crypto_get_random_values_object() {
+        let mut obj = HashMap::new();
+        obj.insert("__data__".to_string(), JsValue::Array(vec![JsValue::Number(0.0); 5]));
+        let result = crypto_get_random_values(&[JsValue::Object(obj)]);
+        if let JsValue::Object(m) = result {
+            if let JsValue::Array(data) = m.get("__data__").unwrap() {
+                assert_eq!(data.len(), 5);
+            } else {
+                panic!("expected Array");
+            }
+        } else {
+            panic!("expected Object");
+        }
+    }
+
+    #[test]
+    fn crypto_get_random_values_none() {
+        let result = crypto_get_random_values(&[]);
+        assert!(matches!(result, JsValue::Undefined));
+    }
+
+    // ── call_native_extended ─────────────────────────────────────────────
+
+    #[test]
+    fn call_native_extended_crypto_uuid() {
+        let result = unwrap(call_native_extended("crypto.randomUUID", &[]));
+        let uuid = get_str(&result);
+        assert_eq!(uuid.len(), 36);
+        assert!(uuid.contains('-'));
+    }
+
+    #[test]
+    fn call_native_extended_atob() {
+        let result = unwrap(call_native_extended("atob", &[JsValue::String("aGVsbG8=".into())]));
+        assert_eq!(get_str(&result), "hello");
+    }
+
+    #[test]
+    fn call_native_extended_btoa() {
+        let result = unwrap(call_native_extended("btoa", &[JsValue::String("hello".into())]));
+        assert_eq!(get_str(&result), "aGVsbG8=");
+    }
+
+    #[test]
+    fn call_native_extended_url_can_parse() {
+        let result = unwrap(call_native_extended("URL.canParse", &[JsValue::String("https://example.com".into())]));
+        assert!(get_bool(&result));
+    }
+
+    #[test]
+    fn call_native_extended_unknown() {
+        let result = unwrap(call_native_extended("unknownFunction", &[]));
+        assert!(matches!(result, JsValue::Undefined));
+    }
+}
