@@ -26,6 +26,7 @@ mod ipc;
 mod orchestrator;
 mod protocol;
 mod registry;
+mod safety;
 mod security;
 mod usage;
 mod wa;

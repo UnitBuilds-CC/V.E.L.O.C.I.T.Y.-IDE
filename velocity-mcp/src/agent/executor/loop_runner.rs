@@ -10,6 +10,7 @@ use super::utils::{
     build_request, compress_history, estimate_tokens, sanitize_chat_token, send_usage_update,
 };
 use crate::registry;
+use crate::safety::SafeMutex;
 use crate::usage::{
     AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker,
 };
@@ -901,7 +902,7 @@ pub fn run_agent_reasoning_loop(
                             // and build diagnostics still report errors referencing it,
                             // block the write to force the agent to fix errors first.
                             if let Some(ref lock_path) = file_to_lock {
-                                if lsp_written.lock().unwrap().contains(lock_path) {
+                                if lsp_written.lock_safe().contains(lock_path) {
                                     let diag = crate::automation::read_latest_diagnostics(&workspace_root_clone);
                                     if !diag.success {
                                         let file_str = lock_path.display().to_string();
@@ -963,7 +964,7 @@ pub fn run_agent_reasoning_loop(
                                 bus.release_file("primary", lock_path);
                                 // T2b: Track written files for LSP gating
                                 if matches!(tool_name.as_str(), "write_file" | "apply_diff") {
-                                    lsp_written.lock().unwrap().insert(lock_path.clone());
+                                    lsp_written.lock_safe().insert(lock_path.clone());
                                 }
                             }
 

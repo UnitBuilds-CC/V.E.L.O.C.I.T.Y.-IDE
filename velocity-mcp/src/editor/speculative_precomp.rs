@@ -1,7 +1,8 @@
 #![allow(dead_code)]
-//! Speculative Pre-computation: pre-indexes scoped files before agent workers
+//! Speculative pre-computation: pre-indexes scoped files before agent workers
 //! spawn, providing warm context caches that accelerate agent execution.
 
+use crate::safety::SafeMutex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -67,17 +68,17 @@ impl PrecomputationCache {
 
     /// Store a pre-computation result keyed by task ID.
     pub fn store(&self, task_id: u64, result: PrecomputationResult) {
-        self.inner.lock().unwrap().insert(task_id, result);
+        self.inner.lock_safe().insert(task_id, result);
     }
 
     /// Retrieve pre-computation for a task (consuming it).
     pub fn take(&self, task_id: u64) -> Option<PrecomputationResult> {
-        self.inner.lock().unwrap().remove(&task_id)
+        self.inner.lock_safe().remove(&task_id)
     }
 
     /// Peek without consuming.
     pub fn peek(&self, task_id: u64) -> Option<PrecomputationResult> {
-        self.inner.lock().unwrap().get(&task_id).cloned()
+        self.inner.lock_safe().get(&task_id).cloned()
     }
 }
 

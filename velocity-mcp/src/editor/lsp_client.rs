@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::editor::completion::{CompletionItem, CompletionKind};
+use crate::safety::SafeMutex;
 
 /// Configuration for a language server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,7 +182,7 @@ impl LspServer {
         // Take stdout and spawn reader thread
         if let Some(stdout) = child.stdout.take() {
             let inbox = self.inbox.clone();
-            inbox.lock().unwrap().reader_alive = true;
+            inbox.lock_safe().reader_alive = true;
             thread::spawn(move || {
                 lsp_stdout_reader(stdout, inbox);
             });

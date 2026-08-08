@@ -12,6 +12,7 @@
 //! runtime and is intentionally retained ahead of that integration.
 #![allow(dead_code)] // reserved multi-agent delegation API (see module docs)
 
+use crate::safety::SafeMutex;
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -121,7 +122,7 @@ impl CoordinationBus {
     /// Returns `true` if the claim succeeded, `false` if another agent holds it.
     pub fn claim_file(&self, agent_id: &str, path: &Path) -> bool {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
 
         if let Some(lock) = state.file_locks.get(&canonical) {
             if lock.agent_id != agent_id {
@@ -148,7 +149,7 @@ impl CoordinationBus {
     /// Release a previously claimed file.
     pub fn release_file(&self, agent_id: &str, path: &Path) {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock_safe();
 
         if let Some(lock) = state.file_locks.get(&canonical) {
             if lock.agent_id == agent_id {
@@ -165,7 +166,7 @@ impl CoordinationBus {
     /// Check if a file is currently locked by another agent.
     pub fn is_locked_by_other(&self, agent_id: &str, path: &Path) -> bool {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock_safe();
         match state.file_locks.get(&canonical) {
             Some(lock) => lock.agent_id != agent_id,
             None => false,
@@ -175,7 +176,7 @@ impl CoordinationBus {
     /// Request help from another agent.
     pub fn request_help(&self, from: &str, to: &str, task: &str) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_safe();
             state.help_requests.push((
                 from.to_string(),
                 to.to_string(),
@@ -192,7 +193,7 @@ impl CoordinationBus {
     /// Report progress for an agent.
     pub fn report_progress(&self, agent_id: &str, percent: f32, status: &str) {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock_safe();
             state.progress.insert(
                 agent_id.to_string(),
                 AgentProgress {

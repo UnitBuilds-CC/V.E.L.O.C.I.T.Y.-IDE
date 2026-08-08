@@ -6,6 +6,7 @@ use super::loop_runner::run_agent_reasoning_loop;
 use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update};
 use crate::editor::expert_team::{load_expert_teams, ExpertTeam};
+use crate::safety::SafeMutex;
 use crate::usage::*;
 use crossbeam_channel::{Receiver, Sender};
 use std::path::PathBuf;
@@ -844,7 +845,7 @@ pub fn apply_headless_control_messages(
                     tool_calls: None,
                 });
                 if let Some(progress) = progress {
-                    let mut guard = progress.lock().unwrap();
+                    let mut guard = progress.lock_safe();
                     guard.operator_notes.push(note.to_string());
                     guard
                         .status_updates

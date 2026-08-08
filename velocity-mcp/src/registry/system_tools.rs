@@ -1,3 +1,4 @@
+use crate::safety::SafeMutex;
 use serde_json::{json, Value};
 use std::error::Error;
 use std::fs;
@@ -869,7 +870,7 @@ fn execute_csharp_mcp_tool(
         return execute_rust_fallback_tool(tool_name, arguments);
     }
 
-    let mut daemon_guard = SIDECAR_DAEMON.lock().unwrap();
+    let mut daemon_guard = SIDECAR_DAEMON.lock_safe();
 
     if daemon_guard.is_none() {
         let child = Command::new(exe_path)

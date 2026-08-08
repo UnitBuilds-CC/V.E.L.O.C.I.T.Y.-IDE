@@ -1,8 +1,9 @@
 #![allow(dead_code)]
-//! Inline Agent Suggestions: ghost text displayed semi-transparently in the
+//! Inline agent suggestions: ghost text displayed semi-transparently in the
 //! editor at the cursor position. Powered by AI completion requests that run
 //! in the background and produce predictive next-edits.
 
+use crate::safety::SafeMutex;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -96,22 +97,22 @@ impl SharedSuggestion {
 
     /// Set a new suggestion (called from background thread).
     pub fn set(&self, suggestion: InlineSuggestion) {
-        *self.inner.lock().unwrap() = Some(suggestion);
+        *self.inner.lock_safe() = Some(suggestion);
     }
 
     /// Take the current suggestion (consuming it).
     pub fn take(&self) -> Option<InlineSuggestion> {
-        self.inner.lock().unwrap().take()
+        self.inner.lock_safe().take()
     }
 
     /// Peek at the current suggestion.
     pub fn peek(&self) -> Option<InlineSuggestion> {
-        self.inner.lock().unwrap().clone()
+        self.inner.lock_safe().clone()
     }
 
     /// Clear any pending suggestion.
     pub fn clear(&self) {
-        *self.inner.lock().unwrap() = None;
+        *self.inner.lock_safe() = None;
     }
 }
 

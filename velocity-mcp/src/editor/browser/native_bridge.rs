@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::safety::SafeMutex;
 use velocity_browser::{
     AgentActionResult, AgenticAomTree, BrowserSession, NdaTriple, SwarmSessionOrchestrator,
 };
@@ -67,7 +68,7 @@ static NATIVE_BRIDGES: LazyLock<Arc<Mutex<HashMap<String, Arc<Mutex<NativeBrowse
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub fn get_or_create_native_bridge(session_id: &str) -> Arc<Mutex<NativeBrowserBridge>> {
-    let mut map = NATIVE_BRIDGES.lock().unwrap();
+    let mut map = NATIVE_BRIDGES.lock_safe();
     map.entry(session_id.to_string())
         .or_insert_with(|| Arc::new(Mutex::new(NativeBrowserBridge::new(session_id))))
         .clone()
