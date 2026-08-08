@@ -87,8 +87,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
             match msg {
                 AgentToUiMessage::StatusUpdate(status) => {
                     status_updates_collector
-                        .lock()
-                        .unwrap()
+                        .lock_safe()
                         .push(status.clone());
                     if let Some(progress) = &progress_collector {
                         let mut progress = progress.lock_safe();
