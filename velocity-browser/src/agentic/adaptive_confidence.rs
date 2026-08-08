@@ -368,4 +368,130 @@ mod tests {
             ac.export_nda().to_binary_stream()
         );
     }
+
+    // ── ConfidenceKey ─────────────────────────────────────────────────
+
+    #[test]
+    fn confidence_key_new_fields() {
+        let k = ConfidenceKey::new("button", "click", "example.com");
+        assert_eq!(k.role, "button");
+        assert_eq!(k.action, "click");
+        assert_eq!(k.domain, "example.com");
+    }
+
+    #[test]
+    fn confidence_key_generic_uses_star() {
+        let k = ConfidenceKey::generic("link", "click");
+        assert_eq!(k.domain, "*");
+        assert_eq!(k.role, "link");
+    }
+
+    #[test]
+    fn confidence_key_equality() {
+        let a = ConfidenceKey::new("button", "click", "x.com");
+        let b = ConfidenceKey::new("button", "click", "x.com");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn confidence_key_inequality() {
+        let a = ConfidenceKey::new("button", "click", "x.com");
+        let b = ConfidenceKey::new("button", "click", "y.com");
+        assert_ne!(a, b);
+    }
+
+    // ── is_high_confidence_text / is_medium_confidence_text ───────────
+
+    #[test]
+    fn high_confidence_text_matches() {
+        assert!(is_high_confidence_text("submit"));
+        assert!(is_high_confidence_text("login"));
+        assert!(is_high_confidence_text("accept"));
+        assert!(is_high_confidence_text("buy now"));
+        assert!(is_high_confidence_text("checkout"));
+    }
+
+    #[test]
+    fn high_confidence_text_rejects_unknown() {
+        assert!(!is_high_confidence_text("random text"));
+        assert!(!is_high_confidence_text(""));
+        assert!(!is_high_confidence_text("help"));
+    }
+
+    #[test]
+    fn medium_confidence_text_contains_patterns() {
+        assert!(is_medium_confidence_text("please submit your form"));
+        assert!(is_medium_confidence_text("accept terms"));
+        assert!(is_medium_confidence_text("continue shopping"));
+    }
+
+    #[test]
+    fn medium_confidence_text_rejects_unrelated() {
+        assert!(!is_medium_confidence_text("hello world"));
+        assert!(!is_medium_confidence_text(""));
+    }
+
+    // ── predict_with_text_hint ────────────────────────────────────────
+
+    #[test]
+    fn text_hint_no_boost_for_unknown_text() {
+        let ac = AdaptiveConfidence::new();
+        let base = ac.predict("button", "click", "site.com");
+        let hinted = ac.predict_with_text_hint("button", "click", "site.com", "random words");
+        assert_eq!(base, hinted, "Unknown text should not boost");
+    }
+
+    #[test]
+    fn text_hint_medium_boost() {
+        let ac = AdaptiveConfidence::new();
+        let base = ac.predict("button", "click", "site.com");
+        let hinted = ac.predict_with_text_hint("button", "click", "site.com", "please submit now");
+        assert!(hinted > base, "Medium text should give small boost");
+        assert!((hinted - base - 0.05).abs() < 1e-9, "Medium boost should be 0.05");
+    }
+
+    #[test]
+    fn text_hint_capped_at_one() {
+        let mut ac = AdaptiveConfidence::new();
+        for _ in 0..10 {
+            ac.record("button", "click", "site.com", 0.98);
+        }
+        let hinted = ac.predict_with_text_hint("button", "click", "site.com", "Submit");
+        assert!(hinted <= 1.0, "Confidence must not exceed 1.0, got {}", hinted);
+    }
+
+    // ── domain_report ─────────────────────────────────────────────────
+
+    #[test]
+    fn domain_report_sorted_descending() {
+        let mut ac = AdaptiveConfidence::new();
+        ac.record("button", "click", "example.com", 0.3);
+        ac.record("link", "click", "example.com", 0.9);
+        ac.record("textbox", "fill", "example.com", 0.6);
+        let report = ac.domain_report("example.com");
+        assert_eq!(report.len(), 3);
+        assert!(report[0].2 >= report[1].2);
+        assert!(report[1].2 >= report[2].2);
+    }
+
+    #[test]
+    fn domain_report_empty_for_unknown() {
+        let ac = AdaptiveConfidence::new();
+        assert!(ac.domain_report("nonexistent.com").is_empty());
+    }
+
+    // ── pattern_count ─────────────────────────────────────────────────
+
+    #[test]
+    fn pattern_count_tracks_site_specific() {
+        let mut ac = AdaptiveConfidence::new();
+        assert_eq!(ac.pattern_count(), 0);
+        ac.record("button", "click", "a.com", 0.5);
+        assert_eq!(ac.pattern_count(), 1);
+        ac.record("link", "click", "b.com", 0.5);
+        assert_eq!(ac.pattern_count(), 2);
+        // Same key again doesn't increase count
+        ac.record("button", "click", "a.com", 0.6);
+        assert_eq!(ac.pattern_count(), 2);
+    }
 }

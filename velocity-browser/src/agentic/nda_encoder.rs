@@ -1,5 +1,6 @@
 use crate::nda::NdaTriple;
 
+#[derive(Debug)]
 pub struct NdaEncoder {
     pub triples: Vec<NdaTriple>,
 }
@@ -58,5 +59,83 @@ impl NdaEncoder {
         }
 
         Ok(Self { triples })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_encoder_is_empty() {
+        let enc = NdaEncoder::new();
+        assert!(enc.triples.is_empty());
+    }
+
+    #[test]
+    fn default_equals_new() {
+        let enc = NdaEncoder::default();
+        assert!(enc.triples.is_empty());
+    }
+
+    #[test]
+    fn with_capacity_preallocates() {
+        let enc = NdaEncoder::with_capacity(100);
+        assert!(enc.triples.capacity() >= 100);
+        assert!(enc.triples.is_empty());
+    }
+
+    #[test]
+    fn encode_fact_appends_triple() {
+        let mut enc = NdaEncoder::new();
+        enc.encode_fact("subject", 42, "object");
+        assert_eq!(enc.triples.len(), 1);
+        assert_eq!(enc.triples[0].predicate_id, 42);
+    }
+
+    #[test]
+    fn encode_fact_raw_appends_triple() {
+        let mut enc = NdaEncoder::new();
+        enc.encode_fact_raw(123, 7, 456);
+        assert_eq!(enc.triples.len(), 1);
+        assert_eq!(enc.triples[0].subject_hash, 123);
+        assert_eq!(enc.triples[0].predicate_id, 7);
+        assert_eq!(enc.triples[0].object_hash, 456);
+    }
+
+    #[test]
+    fn binary_stream_roundtrip() {
+        let mut enc = NdaEncoder::new();
+        enc.encode_fact("hello", 1, "world");
+        enc.encode_fact("foo", 2, "bar");
+        let bytes = enc.to_binary_stream();
+        assert_eq!(bytes.len(), 36); // 2 triples * 18 bytes
+        let dec = NdaEncoder::from_binary_stream(&bytes).unwrap();
+        assert_eq!(dec.triples.len(), 2);
+    }
+
+    #[test]
+    fn binary_stream_empty() {
+        let enc = NdaEncoder::new();
+        let bytes = enc.to_binary_stream();
+        assert!(bytes.is_empty());
+        let dec = NdaEncoder::from_binary_stream(&bytes).unwrap();
+        assert!(dec.triples.is_empty());
+    }
+
+    #[test]
+    fn from_binary_stream_rejects_invalid_length() {
+        let result = NdaEncoder::from_binary_stream(&[0u8; 10]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("multiple of 18"));
+    }
+
+    #[test]
+    fn multiple_facts_accumulate() {
+        let mut enc = NdaEncoder::new();
+        for i in 0..5 {
+            enc.encode_fact("s", i, "o");
+        }
+        assert_eq!(enc.triples.len(), 5);
     }
 }

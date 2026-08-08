@@ -608,10 +608,294 @@ mod tests {
     #[test]
     fn import_skips_incomplete_outcomes() {
         let mut doc = crate::nda::NdaDocument::new();
-        // Missing url — must be skipped, not half-restored.
+        // Missing url — must be skipped, not halfrestored.
         doc.push_str("o0", crate::predicates::OUTCOME_ACTION, "click");
         let mut scorer = OutcomeScorer::new();
         assert_eq!(scorer.import_nda(&doc), 0);
         assert!(scorer.history.is_empty());
+    }
+
+    // ── ActionKind::from_str ──────────────────────────────────────────
+
+    #[test]
+    fn action_kind_from_str_all_variants() {
+        assert_eq!(ActionKind::from_str("click"), ActionKind::Click);
+        assert_eq!(ActionKind::from_str("fill"), ActionKind::Fill);
+        assert_eq!(ActionKind::from_str("type"), ActionKind::Fill);
+        assert_eq!(ActionKind::from_str("input"), ActionKind::Fill);
+        assert_eq!(ActionKind::from_str("navigate"), ActionKind::Navigate);
+        assert_eq!(ActionKind::from_str("goto"), ActionKind::Navigate);
+        assert_eq!(ActionKind::from_str("submit"), ActionKind::Submit);
+        assert_eq!(ActionKind::from_str("scroll"), ActionKind::Scroll);
+        assert_eq!(ActionKind::from_str("select"), ActionKind::Select);
+        assert_eq!(ActionKind::from_str("extract"), ActionKind::Extract);
+        assert_eq!(ActionKind::from_str("read"), ActionKind::Extract);
+    }
+
+    #[test]
+    fn action_kind_from_str_case_insensitive() {
+        assert_eq!(ActionKind::from_str("CLICK"), ActionKind::Click);
+        assert_eq!(ActionKind::from_str("Fill"), ActionKind::Fill);
+        assert_eq!(ActionKind::from_str("NAVIGATE"), ActionKind::Navigate);
+        assert_eq!(ActionKind::from_str("Submit"), ActionKind::Submit);
+    }
+
+    #[test]
+    fn action_kind_from_str_unknown_becomes_custom() {
+        let kind = ActionKind::from_str("hover");
+        assert_eq!(kind, ActionKind::Custom("hover".to_string()));
+    }
+
+    // ── ActionKind::label ─────────────────────────────────────────────
+
+    #[test]
+    fn action_kind_label_roundtrip() {
+        let cases = [
+            ("click", "click"), ("fill", "fill"), ("navigate", "navigate"),
+            ("submit", "submit"), ("scroll", "scroll"), ("select", "select"),
+            ("extract", "extract"),
+        ];
+        for (input, expected_label) in cases {
+            assert_eq!(ActionKind::from_str(input).label(), expected_label);
+        }
+    }
+
+    #[test]
+    fn action_kind_custom_label() {
+        let kind = ActionKind::Custom("drag".to_string());
+        assert_eq!(kind.label(), "drag");
+    }
+
+    // ── OutcomeSignals::default ───────────────────────────────────────
+
+    #[test]
+    fn outcome_signals_default_all_false() {
+        let s = OutcomeSignals::default();
+        assert!(!s.dom_changed);
+        assert!(!s.url_changed);
+        assert!(!s.error_thrown);
+        assert!(!s.target_removed);
+        assert!(!s.content_added);
+        assert!(!s.network_request_fired);
+        assert!(!s.completed_in_time);
+        assert_eq!(s.agent_confidence, 0.0);
+    }
+
+    // ── signals_to_bits / signals_from_bits ───────────────────────────
+
+    #[test]
+    fn signals_bits_roundtrip_all_false() {
+        let s = OutcomeSignals::default();
+        let bits = signals_to_bits(&s);
+        assert_eq!(bits, 0);
+        let back = signals_from_bits(bits, 0.0);
+        assert!(!back.dom_changed && !back.url_changed && !back.error_thrown);
+    }
+
+    #[test]
+    fn signals_bits_roundtrip_all_true() {
+        let s = OutcomeSignals {
+            dom_changed: true, url_changed: true, error_thrown: true,
+            target_removed: true, content_added: true,
+            network_request_fired: true, completed_in_time: true,
+            agent_confidence: 0.0,
+        };
+        let bits = signals_to_bits(&s);
+        assert_eq!(bits, 0b1111111);
+        let back = signals_from_bits(bits, 0.0);
+        assert!(back.dom_changed && back.url_changed && back.error_thrown);
+        assert!(back.target_removed && back.content_added);
+        assert!(back.network_request_fired && back.completed_in_time);
+    }
+
+    #[test]
+    fn signals_bits_individual_flags() {
+        for (i, field) in ["dom", "url", "err", "tgt", "cnt", "net", "done"].iter().enumerate() {
+            let mut s = OutcomeSignals::default();
+            match i {
+                0 => s.dom_changed = true,
+                1 => s.url_changed = true,
+                2 => s.error_thrown = true,
+                3 => s.target_removed = true,
+                4 => s.content_added = true,
+                5 => s.network_request_fired = true,
+                6 => s.completed_in_time = true,
+                _ => unreachable!(),
+            }
+            let bits = signals_to_bits(&s);
+            assert_eq!(bits, 1 << i, "flag {} should be bit {}", field, i);
+        }
+    }
+
+    #[test]
+    fn signals_from_bits_preserves_confidence() {
+        let back = signals_from_bits(0, 0.85);
+        assert!((back.agent_confidence - 0.85).abs() < 1e-9);
+    }
+
+    // ── extract_domain ────────────────────────────────────────────────
+
+    #[test]
+    fn extract_domain_https_with_port() {
+        assert_eq!(extract_domain("https://example.com:443/path"), "example.com");
+    }
+
+    #[test]
+    fn extract_domain_no_scheme() {
+        assert_eq!(extract_domain("example.com/path"), "example.com/path");
+    }
+
+    #[test]
+    fn extract_domain_data_url() {
+        assert_eq!(extract_domain("data:text/html,<h1>Hi</h1>"), "data:text/html,<h1>Hi</h1>");
+    }
+
+    #[test]
+    fn extract_domain_javascript_url() {
+        assert_eq!(extract_domain("javascript:void(0)"), "javascript:void(0)");
+    }
+
+    #[test]
+    fn extract_domain_http_root() {
+        assert_eq!(extract_domain("http://localhost/"), "localhost");
+    }
+
+    // ── score() ───────────────────────────────────────────────────────
+
+    #[test]
+    fn score_fill_values_dom_change() {
+        let scorer = OutcomeScorer::new();
+        let s = OutcomeSignals {
+            dom_changed: true, completed_in_time: true, ..Default::default()
+        };
+        let score = scorer.score(&ActionKind::Fill, &s);
+        // Fill weights: dom_changed=0.40, completed_in_time=0.50
+        assert!(score > 0.8, "Fill with dom+time should be high, got {}", score);
+    }
+
+    #[test]
+    fn score_submit_values_network() {
+        let scorer = OutcomeScorer::new();
+        let s = OutcomeSignals {
+            network_request_fired: true, url_changed: true, completed_in_time: true,
+            ..Default::default()
+        };
+        let score = scorer.score(&ActionKind::Submit, &s);
+        // Submit: url=0.25, network=0.30, time=0.10
+        assert!(score > 0.5, "Submit with net+url should be high, got {}", score);
+    }
+
+    #[test]
+    fn score_extract_only_cares_about_time() {
+        let scorer = OutcomeScorer::new();
+        let s_time = OutcomeSignals { completed_in_time: true, ..Default::default() };
+        let s_no_time = OutcomeSignals { dom_changed: true, content_added: true, ..Default::default() };
+        let with = scorer.score(&ActionKind::Extract, &s_time);
+        let without = scorer.score(&ActionKind::Extract, &s_no_time);
+        assert!(with > without, "Extract should value time over DOM changes");
+    }
+
+    #[test]
+    fn score_agent_confidence_blends() {
+        let scorer = OutcomeScorer::new();
+        let s = OutcomeSignals { completed_in_time: true, agent_confidence: 0.9, ..Default::default() };
+        let blended = scorer.score(&ActionKind::Click, &s);
+        let no_blend = OutcomeSignals { completed_in_time: true, ..Default::default() };
+        let raw = scorer.score(&ActionKind::Click, &no_blend);
+        assert!(blended > raw, "Agent confidence should boost score");
+    }
+
+    #[test]
+    fn score_clamped_to_zero_one() {
+        let scorer = OutcomeScorer::new();
+        let worst = OutcomeSignals { error_thrown: true, ..Default::default() };
+        let s = scorer.score(&ActionKind::Navigate, &worst);
+        assert!((0.0..=1.0).contains(&s), "Score must be in [0,1], got {}", s);
+    }
+
+    // ── top_targets ───────────────────────────────────────────────────
+
+    #[test]
+    fn top_targets_returns_sorted_and_limited() {
+        let mut scorer = OutcomeScorer::new();
+        for i in 0..5 {
+            scorer.record(ActionOutcome {
+                action_kind: ActionKind::Click,
+                target_selector: format!("node_{}", i),
+                target_role: format!("role_{}", i),
+                page_url: "https://example.com".to_string(),
+                score: (i as f64) * 0.2,
+                signals: OutcomeSignals::default(),
+                timestamp_ms: i as u64,
+            });
+        }
+        let top = scorer.top_targets("example.com", 2);
+        assert_eq!(top.len(), 2);
+        assert!(top[0].1 >= top[1].1, "Should be sorted descending");
+    }
+
+    #[test]
+    fn top_targets_empty_store() {
+        let scorer = OutcomeScorer::new();
+        assert!(scorer.top_targets("example.com", 5).is_empty());
+    }
+
+    // ── recent_context ────────────────────────────────────────────────
+
+    #[test]
+    fn recent_context_empty() {
+        let scorer = OutcomeScorer::new();
+        assert!(scorer.recent_context(5).is_empty());
+    }
+
+    #[test]
+    fn recent_context_returns_last_n() {
+        let mut scorer = OutcomeScorer::new();
+        for i in 0..10 {
+            scorer.record(ActionOutcome {
+                action_kind: ActionKind::Click,
+                target_selector: format!("n_{}", i),
+                target_role: "btn".to_string(),
+                page_url: "https://x.com".to_string(),
+                score: 0.5,
+                signals: OutcomeSignals::default(),
+                timestamp_ms: i,
+            });
+        }
+        let ctx = scorer.recent_context(3);
+        assert_eq!(ctx.len(), 3);
+        assert_eq!(ctx[0].target_selector, "n_7");
+    }
+
+    // ── format_for_context ────────────────────────────────────────────
+
+    #[test]
+    fn format_for_context_empty() {
+        let scorer = OutcomeScorer::new();
+        assert!(scorer.format_for_context(5).is_empty());
+    }
+
+    #[test]
+    fn format_for_context_shows_error_annotation() {
+        let mut scorer = OutcomeScorer::new();
+        scorer.record(ActionOutcome {
+            action_kind: ActionKind::Click,
+            target_selector: "node_1".to_string(),
+            target_role: "button".to_string(),
+            page_url: "https://x.com".to_string(),
+            score: 0.1,
+            signals: OutcomeSignals { error_thrown: true, ..Default::default() },
+            timestamp_ms: 1,
+        });
+        let ctx = scorer.format_for_context(5);
+        assert!(ctx.contains("[ERROR]"), "Should annotate error outcomes");
+    }
+
+    // ── success_rate ──────────────────────────────────────────────────
+
+    #[test]
+    fn success_rate_returns_none_for_unknown() {
+        let scorer = OutcomeScorer::new();
+        assert!(scorer.success_rate("x.com", "button", &ActionKind::Click).is_none());
     }
 }

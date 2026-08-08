@@ -383,4 +383,185 @@ mod tests {
         assert!(text.contains("Click on button failed"));
         assert!(text.contains("Try alternative elements"));
     }
+
+    // ── ReflectionConfig ──────────────────────────────────────────────
+
+    #[test]
+    fn config_defaults() {
+        let c = ReflectionConfig::default();
+        assert_eq!(c.lookback_window, 10);
+        assert_eq!(c.min_failures_threshold, 2);
+        assert!(c.failure_score_threshold > 0.2 && c.failure_score_threshold < 0.5);
+        assert_eq!(c.max_reflections_per_turn, 3);
+    }
+
+    // ── format_as_system_message edge cases ───────────────────────────
+
+    #[test]
+    fn format_empty_reflections_returns_none() {
+        let engine = ReflectionEngine::new();
+        assert!(engine.format_as_system_message(&[]).is_none());
+    }
+
+    #[test]
+    fn format_without_strategy_omits_arrow() {
+        let engine = ReflectionEngine::new();
+        let reflections = vec![Reflection {
+            category: ReflectionCategory::Generic,
+            message: "Something went wrong.".to_string(),
+            confidence: 0.5,
+            suggested_strategy: None,
+        }];
+        let text = engine.format_as_system_message(&reflections).unwrap();
+        assert!(text.contains("Something went wrong"));
+        assert!(!text.contains("→ Strategy"));
+    }
+
+    #[test]
+    fn format_multiple_reflections() {
+        let engine = ReflectionEngine::new();
+        let reflections = vec![
+            Reflection {
+                category: ReflectionCategory::RepeatedFailure,
+                message: "Failure 1".to_string(),
+                confidence: 0.8,
+                suggested_strategy: Some("S1".to_string()),
+            },
+            Reflection {
+                category: ReflectionCategory::TimeoutPattern,
+                message: "Timeout 2".to_string(),
+                confidence: 0.7,
+                suggested_strategy: None,
+            },
+        ];
+        let text = engine.format_as_system_message(&reflections).unwrap();
+        assert!(text.contains("1. Failure 1"));
+        assert!(text.contains("2. Timeout 2"));
+        assert!(text.contains("Strategy: S1"));
+    }
+
+    // ── detect_timeout_pattern ────────────────────────────────────────
+
+    #[test]
+    fn detects_timeout_pattern() {
+        let mut scorer = OutcomeScorer::new();
+        for _ in 0..3 {
+            scorer.record(make_outcome(
+                ActionKind::Click,
+                "button",
+                0.1,
+                OutcomeSignals { completed_in_time: false, ..Default::default() },
+            ));
+        }
+        let mut engine = ReflectionEngine::new();
+        let reflections = engine.reflect(&scorer);
+        let timeout = reflections.iter().find(|r| r.category == ReflectionCategory::TimeoutPattern);
+        assert!(timeout.is_some(), "Should detect timeout pattern");
+    }
+
+    // ── reflect with empty scorer ─────────────────────────────────────
+
+    #[test]
+    fn reflect_empty_scorer_returns_nothing() {
+        let scorer = OutcomeScorer::new();
+        let mut engine = ReflectionEngine::new();
+        assert!(engine.reflect(&scorer).is_empty());
+    }
+
+    // ── max_reflections_per_turn truncation ───────────────────────────
+
+    #[test]
+    fn reflect_truncates_to_max_per_turn() {
+        let mut scorer = OutcomeScorer::new();
+        // Trigger repeated failure + blocking overlay + timeout + nav loop
+        for _ in 0..4 {
+            scorer.record(make_outcome(
+                ActionKind::Click, "button", 0.1,
+                OutcomeSignals { completed_in_time: false, ..Default::default() },
+            ));
+        }
+        for _ in 0..4 {
+            scorer.record(ActionOutcome {
+                action_kind: ActionKind::Navigate,
+                target_selector: String::new(),
+                target_role: "link".to_string(),
+                page_url: "https://loop.com".to_string(),
+                score: 0.1,
+                signals: OutcomeSignals { url_changed: true, completed_in_time: false, ..Default::default() },
+                timestamp_ms: 0,
+            });
+        }
+        let mut engine = ReflectionEngine::with_config(ReflectionConfig {
+            max_reflections_per_turn: 2,
+            ..Default::default()
+        });
+        let reflections = engine.reflect(&scorer);
+        assert!(reflections.len() <= 2, "Should truncate to max_reflections_per_turn");
+    }
+
+    // ── with_config ───────────────────────────────────────────────────
+
+    #[test]
+    fn with_config_uses_custom_values() {
+        let engine = ReflectionEngine::with_config(ReflectionConfig {
+            lookback_window: 20,
+            min_failures_threshold: 5,
+            failure_score_threshold: 0.5,
+            max_reflections_per_turn: 1,
+        });
+        assert_eq!(engine.config.lookback_window, 20);
+        assert_eq!(engine.config.min_failures_threshold, 5);
+    }
+
+    // ── reflection_counts tracking ────────────────────────────────────
+
+    #[test]
+    fn reflection_counts_increment_on_repeated_detection() {
+        let mut scorer = OutcomeScorer::new();
+        for _ in 0..4 {
+            scorer.record(make_outcome(
+                ActionKind::Click, "button", 0.1,
+                OutcomeSignals { error_thrown: true, ..Default::default() },
+            ));
+        }
+        let mut engine = ReflectionEngine::new();
+        let _ = engine.reflect(&scorer);
+        assert!(engine.reflection_counts.contains_key("repeated::button::click"));
+        assert_eq!(*engine.reflection_counts.get("repeated::button::click").unwrap(), 1);
+    }
+
+    // ── below-threshold failures don't trigger ────────────────────────
+
+    #[test]
+    fn single_failure_below_threshold() {
+        let mut scorer = OutcomeScorer::new();
+        scorer.record(make_outcome(
+            ActionKind::Click, "button", 0.1,
+            OutcomeSignals { error_thrown: true, ..Default::default() },
+        ));
+        let mut engine = ReflectionEngine::new();
+        let reflections = engine.reflect(&scorer);
+        // Only 1 failure, threshold is 2
+        let repeated = reflections.iter().find(|r| r.category == ReflectionCategory::RepeatedFailure);
+        assert!(repeated.is_none(), "Single failure should not trigger repeated failure");
+    }
+
+    // ── different action kinds don't cluster ──────────────────────────
+
+    #[test]
+    fn different_actions_dont_cluster() {
+        let mut scorer = OutcomeScorer::new();
+        scorer.record(make_outcome(
+            ActionKind::Click, "button", 0.1,
+            OutcomeSignals { error_thrown: true, ..Default::default() },
+        ));
+        scorer.record(make_outcome(
+            ActionKind::Fill, "button", 0.1,
+            OutcomeSignals { error_thrown: true, ..Default::default() },
+        ));
+        let mut engine = ReflectionEngine::new();
+        let reflections = engine.reflect(&scorer);
+        let repeated = reflections.iter().find(|r| r.category == ReflectionCategory::RepeatedFailure);
+        assert!(repeated.is_none(), "Different actions shouldn't cluster as repeated failure");
+    }
 }

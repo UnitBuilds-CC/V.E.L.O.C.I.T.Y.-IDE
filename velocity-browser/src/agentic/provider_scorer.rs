@@ -256,4 +256,147 @@ mod tests {
         let scorer = ProviderScorer::new();
         assert!(scorer.best_for(&TaskCategory::Creative).is_none());
     }
+
+    // ── TaskCategory::from_str ────────────────────────────────────────
+
+    #[test]
+    fn task_category_from_str_all_variants() {
+        assert_eq!(TaskCategory::from_str("coding"), TaskCategory::Coding);
+        assert_eq!(TaskCategory::from_str("code"), TaskCategory::Coding);
+        assert_eq!(TaskCategory::from_str("programming"), TaskCategory::Coding);
+        assert_eq!(TaskCategory::from_str("browsing"), TaskCategory::Browsing);
+        assert_eq!(TaskCategory::from_str("navigation"), TaskCategory::Browsing);
+        assert_eq!(TaskCategory::from_str("web"), TaskCategory::Browsing);
+        assert_eq!(TaskCategory::from_str("extraction"), TaskCategory::DataExtraction);
+        assert_eq!(TaskCategory::from_str("data"), TaskCategory::DataExtraction);
+        assert_eq!(TaskCategory::from_str("scraping"), TaskCategory::DataExtraction);
+        assert_eq!(TaskCategory::from_str("form"), TaskCategory::FormFilling);
+        assert_eq!(TaskCategory::from_str("filling"), TaskCategory::FormFilling);
+        assert_eq!(TaskCategory::from_str("input"), TaskCategory::FormFilling);
+        assert_eq!(TaskCategory::from_str("reasoning"), TaskCategory::Reasoning);
+        assert_eq!(TaskCategory::from_str("analysis"), TaskCategory::Reasoning);
+        assert_eq!(TaskCategory::from_str("logic"), TaskCategory::Reasoning);
+        assert_eq!(TaskCategory::from_str("creative"), TaskCategory::Creative);
+        assert_eq!(TaskCategory::from_str("writing"), TaskCategory::Creative);
+        assert_eq!(TaskCategory::from_str("generation"), TaskCategory::Creative);
+    }
+
+    #[test]
+    fn task_category_from_str_case_insensitive() {
+        assert_eq!(TaskCategory::from_str("CODING"), TaskCategory::Coding);
+        assert_eq!(TaskCategory::from_str("Browsing"), TaskCategory::Browsing);
+    }
+
+    #[test]
+    fn task_category_from_str_unknown_is_general() {
+        assert_eq!(TaskCategory::from_str("random"), TaskCategory::General);
+        assert_eq!(TaskCategory::from_str(""), TaskCategory::General);
+    }
+
+    // ── TaskCategory::label ───────────────────────────────────────────
+
+    #[test]
+    fn task_category_label_roundtrip() {
+        let cats = [
+            TaskCategory::Coding, TaskCategory::Browsing,
+            TaskCategory::DataExtraction, TaskCategory::FormFilling,
+            TaskCategory::Reasoning, TaskCategory::Creative,
+            TaskCategory::General,
+        ];
+        for cat in &cats {
+            let label = cat.label();
+            assert!(!label.is_empty(), "Label should not be empty");
+        }
+    }
+
+    // ── ProviderPerformance::combined_score ───────────────────────────
+
+    #[test]
+    fn combined_score_perfect_fast() {
+        let p = ProviderPerformance {
+            provider_slug: "p".to_string(),
+            model_id: "m".to_string(),
+            success_count: 100,
+            failure_count: 0,
+            ema_success_rate: 1.0,
+            avg_latency_ms: 100.0,
+            observations: 100,
+        };
+        let score = p.combined_score();
+        assert!(score > 0.95, "Perfect fast provider should score > 0.95, got {}", score);
+    }
+
+    #[test]
+    fn combined_score_terrible_slow() {
+        let p = ProviderPerformance {
+            provider_slug: "p".to_string(),
+            model_id: "m".to_string(),
+            success_count: 0,
+            failure_count: 100,
+            ema_success_rate: 0.0,
+            avg_latency_ms: 60000.0,
+            observations: 100,
+        };
+        let score = p.combined_score();
+        assert!(score < 0.01, "Terrible slow provider should score near 0, got {}", score);
+    }
+
+    // ── ProviderScorer::report ────────────────────────────────────────
+
+    #[test]
+    fn report_sorted_by_score() {
+        let mut scorer = ProviderScorer::new();
+        for _ in 0..5 {
+            scorer.record("good", "m1", TaskCategory::Coding, true, 500);
+            scorer.record("bad", "m2", TaskCategory::Coding, false, 5000);
+        }
+        let report = scorer.report();
+        assert_eq!(report.len(), 2);
+        assert!(report[0].2 >= report[1].2, "Report should be sorted by score");
+    }
+
+    #[test]
+    fn report_empty() {
+        let scorer = ProviderScorer::new();
+        assert!(scorer.report().is_empty());
+    }
+
+    // ── success_rate with no data ─────────────────────────────────────
+
+    #[test]
+    fn success_rate_none_for_unknown_provider() {
+        let scorer = ProviderScorer::new();
+        assert!(scorer.success_rate("unknown", "model", &TaskCategory::Coding).is_none());
+    }
+
+    // ── should_fallback ───────────────────────────────────────────────
+
+    #[test]
+    fn should_fallback_false_when_no_data() {
+        let scorer = ProviderScorer::new();
+        assert!(!scorer.should_fallback("unknown", "model", &TaskCategory::Coding, 0.5));
+    }
+
+    #[test]
+    fn should_fallback_false_when_above_threshold() {
+        let mut scorer = ProviderScorer::new();
+        for _ in 0..5 {
+            scorer.record("good", "m", TaskCategory::Coding, true, 500);
+        }
+        assert!(!scorer.should_fallback("good", "m", &TaskCategory::Coding, 0.5));
+    }
+
+    // ── record with multiple categories ───────────────────────────────
+
+    #[test]
+    fn record_separate_categories() {
+        let mut scorer = ProviderScorer::new();
+        scorer.record("p", "m", TaskCategory::Coding, true, 1000);
+        scorer.record("p", "m", TaskCategory::Browsing, false, 5000);
+        let coding = scorer.success_rate("p", "m", &TaskCategory::Coding);
+        let browsing = scorer.success_rate("p", "m", &TaskCategory::Browsing);
+        assert!(coding.is_some());
+        assert!(browsing.is_some());
+        assert!(coding.unwrap() > browsing.unwrap());
+    }
 }
