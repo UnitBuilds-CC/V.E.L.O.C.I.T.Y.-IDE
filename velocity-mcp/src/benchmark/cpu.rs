@@ -358,7 +358,11 @@ impl BitNet3BLayerData {
         let weight_down = vec![0x99999999u32; (8640 * 3200) / 16];
 
         let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
+            let byte_len = slice
+                .len()
+                .checked_mul(4)
+                .expect("benchmark slice overflow");
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
         };
         let to_u32_vec = |bytes: Vec<u8>| -> Vec<u32> {
             unsafe {

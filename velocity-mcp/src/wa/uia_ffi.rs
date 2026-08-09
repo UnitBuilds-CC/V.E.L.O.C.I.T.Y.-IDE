@@ -341,6 +341,10 @@ impl UiaDirectClient {
             use windows::Win32::UI::Accessibility::CUIAutomation;
 
             // Initialize COM (ignore RPC_E_CHANGED_MODE if already initialized)
+            // SAFETY: CoInitializeEx with COINIT_APARTMENTTHREADED initializes COM for the
+            // current thread as a single-threaded apartment. Passing None uses the default
+            // threading model. This is safe to call multiple times; RPC_E_CHANGED_MODE
+            // (0x80010106) is accepted when COM was already initialized with a different model.
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
             let com_ok = hr.is_ok() || hr.0 == 0x80010106u32 as i32; // RPC_E_CHANGED_MODE
 
@@ -349,6 +353,10 @@ impl UiaDirectClient {
             }
 
             // Create the IUIAutomation instance
+            // SAFETY: CoCreateInstance with CLSID_CUIAutomation and CLSCTX_INPROC_SERVER
+            // creates an in-process UIAutomation COM object. The `windows` crate wraps the
+            // returned COM pointer in a safe IUIAutomation handle with proper refcounting.
+            // The call is sound because COM has been successfully initialized above.
             let automation: Result<windows::Win32::UI::Accessibility::IUIAutomation, _> = unsafe {
                 windows::Win32::System::Com::CoCreateInstance(
                     &CUIAutomation,
@@ -441,6 +449,10 @@ impl UiaDirectClient {
                     x: x as i32,
                     y: y as i32,
                 };
+                // SAFETY: ElementFromPoint is a COM method on IUIAutomation that takes a POINT
+                // struct (two i32 values). The `auto` reference is valid because it was successfully
+                // created via CoCreateInstance. The returned IUIAutomationElement (if Ok) is a
+                // valid COM interface pointer with proper refcounting by the `windows` crate.
                 let result = unsafe { auto.ElementFromPoint(pt) };
                 match result {
                     Ok(elem) => {
@@ -544,6 +556,17 @@ fn com_element_to_cached(
     child_index: u32,
     depth: u32,
 ) -> CachedUiaElement {
+    // SAFETY: All unsafe calls below are COM property getters on `elem`, a valid
+    // IUIAutomationElement pointer obtained from the UI Automation framework.
+    // Each method (CurrentAutomationId, CurrentName, CurrentClassName,
+    // CurrentControlType, CurrentBoundingRectangle, CurrentIsEnabled,
+    // CurrentIsOffscreen, CurrentProcessId, GetCurrentPattern) is a standard
+    // UIAutomation property accessor that:
+    // - Returns an HRESULT with an out-parameter (wrapped by the `windows` crate as Result)
+    // - Does not transfer ownership of internal pointers (BSTRs are copied by the crate)
+    // - Is safe to call on any valid element, even if the property is unsupported
+    //   (returns an error that we handle with unwrap_or_default/unwrap_or)
+    // The element reference remains valid for the duration of this function call.
     let automation_id = unsafe { elem.CurrentAutomationId() }
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();

@@ -17,7 +17,8 @@ pub fn pack_weights_uvec4(src: &[u8], k: usize, n: usize) -> Vec<u8> {
 
     unsafe {
         let bytes_ptr = dest.as_ptr() as *const u8;
-        std::slice::from_raw_parts(bytes_ptr, dest.len() * 4).to_vec()
+        let byte_len = dest.len().checked_mul(4).expect("dest len overflow");
+        std::slice::from_raw_parts(bytes_ptr, byte_len).to_vec()
     }
 }
 
@@ -116,9 +117,12 @@ pub fn pack_weights_nda(weights_ternary_bytes: &[u8], k: usize, n: usize) -> (Ve
     }
 
     let act_bytes = unsafe {
-        std::slice::from_raw_parts(active.as_ptr() as *const u8, active.len() * 4).to_vec()
+        let byte_len = active.len().checked_mul(4).expect("active len overflow");
+        std::slice::from_raw_parts(active.as_ptr() as *const u8, byte_len).to_vec()
     };
-    let pos_bytes =
-        unsafe { std::slice::from_raw_parts(pos.as_ptr() as *const u8, pos.len() * 4).to_vec() };
+    let pos_bytes = unsafe {
+        let byte_len = pos.len().checked_mul(4).expect("pos len overflow");
+        std::slice::from_raw_parts(pos.as_ptr() as *const u8, byte_len).to_vec()
+    };
     (act_bytes, pos_bytes)
 }

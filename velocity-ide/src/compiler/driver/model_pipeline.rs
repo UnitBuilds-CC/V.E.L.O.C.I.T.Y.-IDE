@@ -198,10 +198,11 @@ impl VulkanModelPipeline {
 
         for i in 0..n_layers {
             let bytes_attn = unsafe {
-                std::slice::from_raw_parts(
-                    attn_norm_weights[i].as_ptr() as *const u8,
-                    attn_norm_weights[i].len() * 4,
-                )
+                let byte_len = attn_norm_weights[i]
+                    .len()
+                    .checked_mul(4)
+                    .expect("attn_norm overflow");
+                std::slice::from_raw_parts(attn_norm_weights[i].as_ptr() as *const u8, byte_len)
             };
             let (attn_buf, attn_mem) = create_device_local_buffer(
                 &device,
@@ -215,10 +216,11 @@ impl VulkanModelPipeline {
             layer_attn_norms.push((attn_buf, attn_mem));
 
             let bytes_ffn = unsafe {
-                std::slice::from_raw_parts(
-                    ffn_norm_weights[i].as_ptr() as *const u8,
-                    ffn_norm_weights[i].len() * 4,
-                )
+                let byte_len = ffn_norm_weights[i]
+                    .len()
+                    .checked_mul(4)
+                    .expect("ffn_norm overflow");
+                std::slice::from_raw_parts(ffn_norm_weights[i].as_ptr() as *const u8, byte_len)
             };
             let (ffn_buf, ffn_mem) = create_device_local_buffer(
                 &device,
@@ -232,8 +234,10 @@ impl VulkanModelPipeline {
             layer_ffn_norms.push((ffn_buf, ffn_mem));
 
             if let Some(qb) = q_biases[i] {
-                let bytes =
-                    unsafe { std::slice::from_raw_parts(qb.as_ptr() as *const u8, qb.len() * 4) };
+                let bytes = unsafe {
+                    let byte_len = qb.len().checked_mul(4).expect("q_bias overflow");
+                    std::slice::from_raw_parts(qb.as_ptr() as *const u8, byte_len)
+                };
                 let (buf, mem) = create_device_local_buffer(
                     &device,
                     &instance,
@@ -249,8 +253,10 @@ impl VulkanModelPipeline {
             }
 
             if let Some(kb) = k_biases[i] {
-                let bytes =
-                    unsafe { std::slice::from_raw_parts(kb.as_ptr() as *const u8, kb.len() * 4) };
+                let bytes = unsafe {
+                    let byte_len = kb.len().checked_mul(4).expect("k_bias overflow");
+                    std::slice::from_raw_parts(kb.as_ptr() as *const u8, byte_len)
+                };
                 let (buf, mem) = create_device_local_buffer(
                     &device,
                     &instance,
@@ -266,8 +272,10 @@ impl VulkanModelPipeline {
             }
 
             if let Some(vb) = v_biases[i] {
-                let bytes =
-                    unsafe { std::slice::from_raw_parts(vb.as_ptr() as *const u8, vb.len() * 4) };
+                let bytes = unsafe {
+                    let byte_len = vb.len().checked_mul(4).expect("v_bias overflow");
+                    std::slice::from_raw_parts(vb.as_ptr() as *const u8, byte_len)
+                };
                 let (buf, mem) = create_device_local_buffer(
                     &device,
                     &instance,
@@ -282,7 +290,11 @@ impl VulkanModelPipeline {
                 layer_v_biases.push(None);
             }
 
-            let cache_size = 2 * max_seq_len * kv_dim * 4;
+            let cache_size = 2usize
+                .checked_mul(max_seq_len)
+                .and_then(|v| v.checked_mul(kv_dim))
+                .and_then(|v| v.checked_mul(4))
+                .expect("KV cache size overflow");
             let (cache_buf, cache_mem) = create_uninitialized_device_local_buffer(
                 &device,
                 &instance,
@@ -294,10 +306,11 @@ impl VulkanModelPipeline {
         }
 
         let bytes_final = unsafe {
-            std::slice::from_raw_parts(
-                final_norm_weight.as_ptr() as *const u8,
-                final_norm_weight.len() * 4,
-            )
+            let byte_len = final_norm_weight
+                .len()
+                .checked_mul(4)
+                .expect("final_norm overflow");
+            std::slice::from_raw_parts(final_norm_weight.as_ptr() as *const u8, byte_len)
         };
         let (final_norm_buf, final_norm_mem) = create_device_local_buffer(
             &device,

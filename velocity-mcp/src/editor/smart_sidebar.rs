@@ -97,7 +97,7 @@ impl Default for SmartSidebarState {
 
 impl SmartSidebarState {
     fn now_ms(&self) -> u32 {
-        self.start_time.elapsed().as_millis() as u32
+        self.start_time.elapsed().as_millis().min(u32::MAX as u128) as u32
     }
 
     fn store_text(&mut self, text: &str) -> (u16, u16) {

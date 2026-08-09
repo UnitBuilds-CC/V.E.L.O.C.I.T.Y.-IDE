@@ -103,12 +103,20 @@ fn tile_weights_nda(matrix: &NdaMatrix) -> (Vec<u8>, Vec<u8>) {
 
     let active_bytes = unsafe {
         let bytes_ptr = active_packed.as_ptr() as *const u8;
-        std::slice::from_raw_parts(bytes_ptr, active_packed.len() * 4).to_vec()
+        let byte_len = active_packed
+            .len()
+            .checked_mul(4)
+            .expect("active_packed overflow");
+        std::slice::from_raw_parts(bytes_ptr, byte_len).to_vec()
     };
 
     let pos_bytes = unsafe {
         let bytes_ptr = pos_packed.as_ptr() as *const u8;
-        std::slice::from_raw_parts(bytes_ptr, pos_packed.len() * 4).to_vec()
+        let byte_len = pos_packed
+            .len()
+            .checked_mul(4)
+            .expect("pos_packed overflow");
+        std::slice::from_raw_parts(bytes_ptr, byte_len).to_vec()
     };
 
     (active_bytes, pos_bytes)

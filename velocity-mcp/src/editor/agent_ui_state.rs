@@ -105,7 +105,10 @@ impl ThinkingPanelState {
         self.steps[idx] = ThinkingStepEntry {
             phase,
             completed: false,
-            timestamp_ms: (std::time::Instant::now().elapsed().as_millis() as u32),
+            timestamp_ms: (std::time::Instant::now()
+                .elapsed()
+                .as_millis()
+                .min(u32::MAX as u128) as u32),
             text_offset: self.text_used as u16,
             text_len: 0,
         };
@@ -243,7 +246,10 @@ impl ApprovalManagerState {
             tool_name_offset: self.text_used as u16,
             tool_name_len: name_bytes.len() as u16,
             auto_approve,
-            timestamp_ms: (std::time::Instant::now().elapsed().as_millis() as u32),
+            timestamp_ms: (std::time::Instant::now()
+                .elapsed()
+                .as_millis()
+                .min(u32::MAX as u128) as u32),
         };
 
         self.text_pool[self.text_used..self.text_used + name_bytes.len()]
@@ -353,7 +359,10 @@ impl AgentMetricsState {
     pub fn record_snapshot(&mut self, tool_duration_ms: u32) {
         let idx = self.history_head;
         self.history[idx] = MetricsHistoryEntry {
-            timestamp_ms: (std::time::Instant::now().elapsed().as_millis() as u32),
+            timestamp_ms: (std::time::Instant::now()
+                .elapsed()
+                .as_millis()
+                .min(u32::MAX as u128) as u32),
             tokens_used: self.tokens_used,
             estimated_cost: self.estimated_cost,
             tool_duration_ms,

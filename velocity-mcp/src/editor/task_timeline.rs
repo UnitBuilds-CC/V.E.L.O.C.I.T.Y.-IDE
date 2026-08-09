@@ -154,7 +154,7 @@ pub fn persist_mission_activity_nda(workspace_root: &Path, state: &TaskTimelineS
 impl TaskTimelineState {
     /// Get elapsed milliseconds since start
     fn now_ms(&self) -> u32 {
-        self.start_time.elapsed().as_millis() as u32
+        self.start_time.elapsed().as_millis().min(u32::MAX as u128) as u32
     }
 
     /// Store string in text pool, return (offset, len) or (0, 0) if full
