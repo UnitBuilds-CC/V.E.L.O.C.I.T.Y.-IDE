@@ -68,6 +68,7 @@ impl VulkanGemv {
             crate::compiler::shaders::INT4_SPV
         };
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(spv_code);
+        // SAFETY: create_shader_module with valid SPIR-V bytecode.
         let shader_module = unsafe { device.create_shader_module(&shader_info, None)? };
 
         let bindings = [
@@ -91,6 +92,7 @@ impl VulkanGemv {
                 .build(),
         ];
         let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+        // SAFETY: create_descriptor_set_layout with storage buffer bindings.
         let desc_set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
 
         let push_constant_ranges = [vk::PushConstantRange::builder()
@@ -102,6 +104,7 @@ impl VulkanGemv {
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&layouts)
             .push_constant_ranges(&push_constant_ranges);
+        // SAFETY: create_pipeline_layout with descriptor set layout and push constants.
         let pipeline_layout =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
 
@@ -113,6 +116,7 @@ impl VulkanGemv {
         let pipeline_create_info = vk::ComputePipelineCreateInfo::builder()
             .stage(stage_info.build())
             .layout(pipeline_layout);
+        // SAFETY: create_compute_pipelines with valid shader and pipeline layout.
         let compute_pipelines = unsafe {
             device
                 .create_compute_pipelines(
@@ -176,12 +180,14 @@ impl VulkanGemv {
         let pool_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(1)
             .pool_sizes(&pool_sizes);
+        // SAFETY: create_descriptor_pool with capacity for storage buffer sets.
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
         let layouts = [desc_set_layout];
         let alloc_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(desc_pool)
             .set_layouts(&layouts);
+        // SAFETY: allocate_descriptor_sets from the pool.
         let desc_sets = unsafe { device.allocate_descriptor_sets(&alloc_info)? };
         let desc_set = desc_sets[0];
 
@@ -222,22 +228,26 @@ impl VulkanGemv {
                 .buffer_info(&buffer_infos[2..3])
                 .build(),
         ];
+        // SAFETY: update_descriptor_sets binds buffer info to descriptor set.
         unsafe { device.update_descriptor_sets(&writes, &[]) };
 
         let pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(driver.queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        // SAFETY: create_command_pool for the compute queue family.
         let command_pool = unsafe { device.create_command_pool(&pool_info, None)? };
 
         let alloc_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
+        // SAFETY: allocate_command_buffers allocates one primary command buffer.
         let command_buffers = unsafe { device.allocate_command_buffers(&alloc_info)? };
         let command_buffer = command_buffers[0];
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+        // SAFETY: Record compute dispatch into the command buffer.
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info)?;
             device.cmd_bind_pipeline(
@@ -274,6 +284,7 @@ impl VulkanGemv {
         }
 
         let fence_info = vk::FenceCreateInfo::builder();
+        // SAFETY: create_fence for GPU synchronization.
         let fence = unsafe { device.create_fence(&fence_info, None)? };
 
         Ok(Self {
