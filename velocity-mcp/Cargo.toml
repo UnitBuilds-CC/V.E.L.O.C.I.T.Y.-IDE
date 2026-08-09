@@ -5,6 +5,16 @@ edition = "2021"
 authors = ["UnitBuilds <ian@unitbuilds.com>"]
 description = "A high-performance, zero-allocation Model Context Protocol (MCP) server in Rust"
 
+[features]
+default = ["full"]
+full = []                          # Enable all modules (default for development)
+plugins = []                       # Plugin system (PluginRegistry, PluginHandler, etc.)
+collaboration = []                 # Real-time collaboration (sessions, conflict resolution)
+webhooks = []                      # Webhook integration (GitHub, GitLab, Jira, etc.)
+background_agents = []             # Background agent orchestration
+connectors = []                    # External service connectors (sync rules, OAuth2)
+benchmark_gpu = []                 # GPU benchmark suite (requires Vulkan/GPU)
+
 [dependencies]
 pathdiff = "0.2.3"
 serde = { version = "1.0", features = ["derive"] }

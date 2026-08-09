@@ -1,6 +1,7 @@
 use crate::dom::DomTree;
 use crate::js::scope::{Scope, ScopeRef};
 use std::collections::HashMap;
+use velocity_ide::safety::SafeMutex;
 
 #[derive(Debug, Clone)]
 pub enum JsValue {
@@ -79,7 +80,7 @@ impl JsVirtualMachine {
 
         // Register built-in globals in the scope chain
         {
-            let mut s = scope_ref.lock().unwrap();
+            let mut s = scope_ref.lock_safe();
             s.locals.insert("undefined".to_string(), JsValue::Undefined);
             s.locals.insert("null".to_string(), JsValue::Null);
             s.locals.insert("NaN".to_string(), JsValue::Number(f64::NAN));
@@ -338,7 +339,7 @@ impl JsVirtualMachine {
 
         // Sync scope_ref with global_scope for backward compat
         {
-            let mut s = self.scope_ref.lock().unwrap();
+            let mut s = self.scope_ref.lock_safe();
             for (k, v) in &self.global_scope {
                 if !s.locals.contains_key(k) {
                     s.locals.insert(k.clone(), v.clone());
@@ -362,7 +363,7 @@ impl JsVirtualMachine {
 
         // Sync back any new variables to global_scope for backward compat
         {
-            let s = self.scope_ref.lock().unwrap();
+            let s = self.scope_ref.lock_safe();
             for (k, v) in &s.locals {
                 self.global_scope.insert(k.clone(), v.clone());
             }

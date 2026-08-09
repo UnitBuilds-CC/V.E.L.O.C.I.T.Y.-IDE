@@ -5,6 +5,7 @@ use super::coercion::*;
 use super::eval::{eval_program, eval_expr_node};
 use crate::js::scope::{Scope, ScopeRef};
 use crate::js::vm::JsValue;
+use velocity_ide::safety::SafeMutex;
 use std::collections::HashMap;
 
 /// Evaluate a single JS expression against a flat variable scope.
@@ -15,7 +16,7 @@ pub fn eval_expr(input: &str, scope_map: &HashMap<String, JsValue>) -> Result<Js
     let mut parser = Parser::new(tokens);
     let expr = parser.parse_expr().map_err(|e| e.to_string())?;
     let scope = Scope::new_global();
-    { let mut s = scope.lock().unwrap(); s.locals = scope_map.clone(); }
+    { let mut s = scope.lock_safe(); s.locals = scope_map.clone(); }
     match eval_expr_node(&expr, &scope) {
         Ok(v) => Ok(v),
         Err(Signal::Throw(v)) => Err(to_string(&v)),

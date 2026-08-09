@@ -4,6 +4,7 @@ use super::parser::Parser;
 use super::eval::{eval_stmt, eval_expr_node};
 use crate::js::scope::{Scope, ScopeRef};
 use crate::js::vm::JsValue;
+use velocity_ide::safety::SafeMutex;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -23,29 +24,29 @@ pub static MODULE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Set a module resolver callback.
 pub fn set_module_resolver(resolver: impl Fn(&str) -> Option<String> + Send + Sync + 'static) {
-    *MODULE_RESOLVER.lock().unwrap() = Some(Box::new(resolver));
+    *MODULE_RESOLVER.lock_safe() = Some(Box::new(resolver));
 }
 
 /// Clear the module resolver.
 pub fn clear_module_resolver() {
-    *MODULE_RESOLVER.lock().unwrap() = None;
+    *MODULE_RESOLVER.lock_safe() = None;
 }
 
 /// Register a module's exports in the global registry.
 pub fn register_module(specifier: &str, exports: HashMap<String, JsValue>) {
-    let mut registry = MODULE_REGISTRY.lock().unwrap();
+    let mut registry = MODULE_REGISTRY.lock_safe();
     let map = registry.get_or_insert_with(HashMap::new);
     map.insert(specifier.to_string(), exports);
 }
 
 /// Clear all registered modules.
 pub fn clear_module_registry() {
-    *MODULE_REGISTRY.lock().unwrap() = None;
+    *MODULE_REGISTRY.lock_safe() = None;
 }
 
 /// Resolve a module import. Returns the module's exports or None if not registered.
 pub fn resolve_module(specifier: &str) -> Option<HashMap<String, JsValue>> {
-    let registry = MODULE_REGISTRY.lock().unwrap();
+    let registry = MODULE_REGISTRY.lock_safe();
     registry.as_ref().and_then(|map| map.get(specifier).cloned())
 }
 
@@ -104,7 +105,7 @@ pub fn apply_import(
     let module_exports = match resolve_module(source) {
         Some(exports) => exports,
         None => {
-            let fetched = MODULE_RESOLVER.lock().unwrap()
+            let fetched = MODULE_RESOLVER.lock_safe()
                 .as_ref()
                 .and_then(|resolver| resolver(source));
             match fetched {

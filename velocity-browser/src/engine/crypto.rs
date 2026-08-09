@@ -45,6 +45,10 @@ impl WebCryptoEngine {
                 ) -> u32;
             }
             const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x00000002;
+            // SAFETY: BCryptGenRandom is called with valid parameters:
+            // - h_algorithm=0 with BCRYPT_USE_SYSTEM_PREFERRED_RNG uses the system's preferred RNG
+            // - buf.as_mut_ptr() points to a valid buffer of buf.len() bytes
+            // - buf.len() is cast to u32 which is safe for reasonable buffer sizes
             let status = unsafe {
                 BCryptGenRandom(0, buf.as_mut_ptr(), buf.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
             };

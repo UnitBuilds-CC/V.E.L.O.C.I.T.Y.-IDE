@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::nda::NdaMatrix;
 use crate::nda_int::NdaVec;
+use crate::safety::SafeMutex;
 use crate::site_map::verifier::{CmpOp, VecOpKind};
 use crate::site_map::NdaNode;
 
@@ -1076,7 +1077,7 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
                     )
                 });
                 if needs_fallback {
-                    let mut guard = fallback_fns.lock().unwrap();
+                    let mut guard = fallback_fns.lock_safe();
                     if guard.is_none() {
                         *guard = Some(compile_interpreter_sequence(
                             &fallback_nodes,

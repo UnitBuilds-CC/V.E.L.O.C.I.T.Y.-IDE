@@ -2,6 +2,7 @@
 use crate::site_map::{NdaNode, SiteMap};
 use crate::sandbox::SandboxResult;
 use crate::compiler::nda_jit::JitProgram;
+use crate::safety::SafeMutex;
 
 use std::sync::{Arc, LazyLock, Mutex};
 use std::collections::HashMap;
@@ -229,7 +230,7 @@ impl NdaJitSandbox {
 
         // Retrieve from cache or compile
         let program = {
-            let mut cache = JIT_CACHE.lock().unwrap();
+            let mut cache = JIT_CACHE.lock_safe();
             cache.entry(program_hash)
                 .or_insert_with(|| Arc::new(crate::compiler::nda_jit::compile(nodes)))
                 .clone()

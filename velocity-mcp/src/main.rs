@@ -10,6 +10,9 @@
 #![allow(clippy::upper_case_acronyms)]        // Windows FFI type names (STARTUPINFOW, etc.)
 #![allow(clippy::only_used_in_recursion)]     // Recursion params kept for signature clarity
 #![allow(clippy::manual_c_str_literals)]      // Explicit nul-terminated construction for FFI
+#![allow(dead_code)]                          // Scaffolding modules for future features
+#![allow(unused_imports)]                     // Imports retained for API completeness
+#![allow(unused_variables)]                   // Variables retained for future wiring
 
 use eframe::egui;
 use std::env;
@@ -81,7 +84,35 @@ fn hash_str(s: &str) -> u64 {
     u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
+/// Install a global panic hook that logs diagnostic context before the process exits.
+/// This ensures that any unhandled panic produces actionable output rather than a
+/// silent crash.
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = info
+            .location()
+            .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string payload>".to_string()
+        };
+        eprintln!(
+            "\n[PANIC] V.E.L.O.C.I.T.Y. encountered an unrecoverable error.\n\
+             \x20  Location: {location}\n\
+             \x20  Detail:   {payload}\n\
+             Please report this crash with the above details."
+        );
+    }));
+}
+
 fn main() {
+    // Install global panic hook for crash diagnostics
+    install_panic_hook();
+
     // Install graceful shutdown handlers early
     let _shutdown_flag = shutdown::install_shutdown_handlers();
 

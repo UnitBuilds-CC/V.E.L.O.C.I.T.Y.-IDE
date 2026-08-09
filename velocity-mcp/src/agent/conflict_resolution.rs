@@ -301,8 +301,6 @@ impl ConflictResolver {
             // Read + write is a read-write conflict.
             (OperationKind::Read, OperationKind::Update) => true,
             (OperationKind::Update, OperationKind::Read) => true,
-            (OperationKind::Read, OperationKind::Delete) => true,
-            (OperationKind::Delete, OperationKind::Read) => true,
             // Execute + update conflicts.
             (OperationKind::Execute, OperationKind::Update) => true,
             (OperationKind::Update, OperationKind::Execute) => true,

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::nda_int::NdaVec;
+use crate::safety::SafeMutex;
 use crate::sandbox::SandboxResult;
 use crate::site_map::SiteMap;
 
@@ -27,13 +28,13 @@ impl VarRegistry {
     }
 
     pub fn get_or_create_slot(&self, name_hash: u64) -> usize {
-        let mut guard = self.map.lock().unwrap();
+        let mut guard = self.map.lock_safe();
         let next_slot = guard.len();
         *guard.entry(name_hash).or_insert(next_slot)
     }
 
     pub fn total_slots(&self) -> usize {
-        self.map.lock().unwrap().len()
+        self.map.lock_safe().len()
     }
 }
 

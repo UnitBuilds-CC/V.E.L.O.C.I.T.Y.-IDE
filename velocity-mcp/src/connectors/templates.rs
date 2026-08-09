@@ -34,6 +34,7 @@ pub struct IntegrationTemplate {
 
 /// Service categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(non_camel_case_types)]
 pub enum IntegrationCategory {
     SourceControl,
     ProjectManagement,

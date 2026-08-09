@@ -124,6 +124,10 @@ impl<'a> NmcpBinaryFrame<'a> {
             return Err("Buffer too small for NMCP binary frame header");
         }
 
+        // SAFETY: We verified bytes.len() >= 36 above, so:
+        // - bytes[0..4] is a valid 4-byte slice that can be reinterpret as *const [u8; 4]
+        // - bytes[4..36] is a valid 32-byte slice that can be reinterpret as *const [u8; 32]
+        // The pointer casts are sound because the slices have the exact size of the target arrays.
         let magic = unsafe { &*(bytes[0..4].as_ptr() as *const [u8; 4]) };
         if magic != b"NMCP" {
             return Err("Invalid NMCP magic signature");

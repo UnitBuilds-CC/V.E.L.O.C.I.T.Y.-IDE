@@ -84,6 +84,8 @@ mod os {
         if buf.is_empty() {
             return true;
         }
+        // SAFETY: BCryptGenRandom with null algorithm handle and BCRYPT_USE_SYSTEM_PREFERRED_RNG
+        // uses the system's preferred RNG. buf.as_mut_ptr() is valid for buf.len() bytes.
         unsafe {
             BCryptGenRandom(
                 core::ptr::null_mut(),
@@ -95,6 +97,9 @@ mod os {
     }
 
     pub fn protect(plaintext: &[u8]) -> Option<Vec<u8>> {
+        // SAFETY: CryptProtectData encrypts plaintext using DPAPI. We provide valid DataBlob
+        // pointers and entropy. The output blob is allocated by the system and must be freed
+        // with LocalFree. We check for null output and free the memory after copying.
         unsafe {
             let mut in_blob = DataBlob {
                 cb_data: plaintext.len() as u32,
@@ -127,6 +132,8 @@ mod os {
     }
 
     pub fn unprotect(sealed: &[u8]) -> Option<Vec<u8>> {
+        // SAFETY: CryptUnprotectData decrypts DPAPI-sealed data. Same safety reasoning as protect():
+        // valid input blobs, system-allocated output, null-checked, freed after copy.
         unsafe {
             let mut in_blob = DataBlob {
                 cb_data: sealed.len() as u32,

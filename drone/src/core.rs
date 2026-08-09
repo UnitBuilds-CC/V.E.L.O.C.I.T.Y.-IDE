@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::safety::SafeMutex;
+
 // ── Helpers ──
 
 pub fn now_secs() -> u64 {
@@ -313,7 +315,7 @@ impl DroneCore {
     // ── Pairing ──
 
     pub fn handle_pair(&self, peer_id: &str, name: &str) -> serde_json::Value {
-        let mut peers = self.paired_peers.lock().unwrap();
+        let mut peers = self.paired_peers.lock_safe();
         peers.insert(
             peer_id.to_string(),
             serde_json::json!({
@@ -332,7 +334,7 @@ impl DroneCore {
     // ── Messages ──
 
     pub fn handle_message(&self, msg: serde_json::Value) -> serde_json::Value {
-        let mut messages = self.messages.lock().unwrap();
+        let mut messages = self.messages.lock_safe();
         let msg_id = msg
             .get("id")
             .and_then(|v| v.as_str())
@@ -359,7 +361,7 @@ impl DroneCore {
 
         let transfer = FileTransfer::new(transfer_id, filename, total_size, sha256, total_chunks, instructions);
 
-        let mut transfers = self.transfers.lock().unwrap();
+        let mut transfers = self.transfers.lock_safe();
         transfers.insert(transfer_id.to_string(), transfer);
 
         serde_json::json!({
@@ -379,7 +381,7 @@ impl DroneCore {
             Err(e) => return serde_json::json!({ "error": format!("Base64 decode: {e}") }),
         };
 
-        let mut transfers = self.transfers.lock().unwrap();
+        let mut transfers = self.transfers.lock_safe();
         match transfers.get_mut(transfer_id) {
             Some(transfer) => {
                 let ok = transfer.receive_chunk(index, chunk_data);
@@ -392,7 +394,7 @@ impl DroneCore {
     pub fn handle_file_complete(&self, data: &serde_json::Value) -> serde_json::Value {
         let transfer_id = data["transfer_id"].as_str().unwrap_or("");
 
-        let mut transfers = self.transfers.lock().unwrap();
+        let mut transfers = self.transfers.lock_safe();
         let transfer = match transfers.get_mut(transfer_id) {
             Some(t) => t,
             None => return serde_json::json!({ "error": format!("Unknown transfer {transfer_id}") }),
@@ -471,7 +473,7 @@ impl DroneCore {
         let task_arc = Arc::new(Mutex::new(task));
 
         {
-            let mut tasks = self.tasks.lock().unwrap();
+            let mut tasks = self.tasks.lock_safe();
             tasks.insert(task_id.clone(), Arc::clone(&task_arc));
         }
 
@@ -481,7 +483,7 @@ impl DroneCore {
         std::thread::Builder::new()
             .name(format!("drone-task-{task_id}"))
             .spawn(move || {
-                let mut t = task_clone.lock().unwrap();
+                let mut t = task_clone.lock_safe();
                 t.execute(&workspace);
             })
             .ok();
@@ -494,10 +496,10 @@ impl DroneCore {
     }
 
     pub fn handle_task_status(&self, task_id: &str) -> (u16, serde_json::Value) {
-        let tasks = self.tasks.lock().unwrap();
+        let tasks = self.tasks.lock_safe();
         match tasks.get(task_id) {
             Some(task_arc) => {
-                let task = task_arc.lock().unwrap();
+                let task = task_arc.lock_safe();
                 (200, task.to_json())
             }
             None => (404, serde_json::json!({ "error": format!("Unknown task {task_id}") })),

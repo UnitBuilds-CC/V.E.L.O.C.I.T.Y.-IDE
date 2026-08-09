@@ -9,6 +9,7 @@ mod nda;
 mod nda_int;
 mod pipeline_bridge;
 mod pipeline_nda;
+mod safety;
 mod site_map;
 mod sandbox;
 mod tokenizer;

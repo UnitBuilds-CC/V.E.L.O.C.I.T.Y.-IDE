@@ -11,6 +11,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use velocity_ide::safety::SafeMutex;
+
 use crate::net::webrtc::{
     ConnectionState, DataChannelState, IceConnectionState, SessionDescription, SignalingState,
     SdpType, WebRtcTransport,
@@ -22,7 +24,7 @@ static PEERS: Mutex<Option<HashMap<u32, WebRtcTransport>>> = Mutex::new(None);
 static NEXT_ID: Mutex<u32> = Mutex::new(1);
 
 fn with_peers<R>(f: impl FnOnce(&mut HashMap<u32, WebRtcTransport>) -> R) -> R {
-    let mut guard = PEERS.lock().unwrap();
+    let mut guard = PEERS.lock_safe();
     let map = guard.get_or_insert_with(HashMap::new);
     f(map)
 }
@@ -37,7 +39,7 @@ impl JsRtcPeerConnection {
     /// Construct a new peer connection (`new RTCPeerConnection(config)`).
     pub fn new() -> Self {
         let id = {
-            let mut n = NEXT_ID.lock().unwrap();
+            let mut n = NEXT_ID.lock_safe();
             let id = *n;
             *n += 1;
             id
@@ -222,8 +224,15 @@ fn data_channel_state_str(s: &DataChannelState) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Serialization lock for tests that mutate the global peer registry.
+    /// All tests creating peers must hold this lock to avoid racing with
+    /// `clear_peers()` or shared `NEXT_ID` state.
+    static RTC_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn new_peer_starts_in_new_states() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         assert_eq!(pc.signaling_state(), Some("stable"));
         assert_eq!(pc.connection_state(), Some("new"));
@@ -233,6 +242,8 @@ mod tests {
 
     #[test]
     fn offer_answer_handshake_reaches_connected() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let caller = JsRtcPeerConnection::new();
         let callee = JsRtcPeerConnection::new();
 
@@ -261,6 +272,8 @@ mod tests {
 
     #[test]
     fn data_channel_lifecycle_and_send() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         assert_eq!(pc.create_data_channel("chat").as_deref(), Some("chat"));
         assert_eq!(pc.data_channel_state("chat"), Some("connecting"));
@@ -275,6 +288,8 @@ mod tests {
 
     #[test]
     fn close_transitions_all_states() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         pc.create_data_channel("chan");
         pc.close();
@@ -286,6 +301,8 @@ mod tests {
 
     #[test]
     fn invalid_sdp_type_is_rejected() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         let mut bad = HashMap::new();
         bad.insert("type".to_string(), "bogus".to_string());
@@ -295,6 +312,8 @@ mod tests {
 
     #[test]
     fn set_local_offer_advances_signaling_state() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         let mut desc = HashMap::new();
         desc.insert("type".to_string(), "offer".to_string());
@@ -306,6 +325,8 @@ mod tests {
 
     #[test]
     fn add_ice_candidate_doesnt_panic() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         pc.add_ice_candidate("candidate:1 UDP 1 ice.example.com 12345 typ host");
         // No panic = success; the candidate is silently consumed.
@@ -314,6 +335,8 @@ mod tests {
 
     #[test]
     fn multiple_data_channels_coexist() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         assert_eq!(pc.create_data_channel("chat").as_deref(), Some("chat"));
         assert_eq!(pc.create_data_channel("files").as_deref(), Some("files"));
@@ -327,6 +350,8 @@ mod tests {
 
     #[test]
     fn send_to_nonexistent_channel_returns_error() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         let err = pc.send("nonexistent", b"data").unwrap_err();
         assert!(err.contains("no such channel") || err.contains("peer not found"));
@@ -335,6 +360,8 @@ mod tests {
 
     #[test]
     fn open_nonexistent_channel_returns_false() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         assert!(!pc.open_data_channel("ghost"));
         pc.close();
@@ -342,6 +369,8 @@ mod tests {
 
     #[test]
     fn data_channel_state_unknown_label_returns_none() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         assert_eq!(pc.data_channel_state("nope"), None);
         pc.close();
@@ -349,6 +378,8 @@ mod tests {
 
     #[test]
     fn set_remote_description_with_answer_type() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         // First set a local offer to get to have-local-offer
         let mut offer = HashMap::new();
@@ -366,6 +397,8 @@ mod tests {
 
     #[test]
     fn clear_peers_removes_all_registered_peers() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc1 = JsRtcPeerConnection::new();
         let pc2 = JsRtcPeerConnection::new();
         // Both peers should be functional
@@ -380,6 +413,8 @@ mod tests {
 
     #[test]
     fn default_creates_valid_peer_connection() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::default();
         assert_eq!(pc.signaling_state(), Some("stable"));
         assert_eq!(pc.connection_state(), Some("new"));
@@ -388,6 +423,8 @@ mod tests {
 
     #[test]
     fn create_offer_contains_sdp_field() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         let offer = pc.create_offer().expect("offer");
         assert!(offer.contains_key("type"));
@@ -398,6 +435,8 @@ mod tests {
 
     #[test]
     fn set_local_description_pranswer_type() {
+        let _g = RTC_TEST_LOCK.lock().unwrap();
+        clear_peers();
         let pc = JsRtcPeerConnection::new();
         // Must be in have-local-offer to set answer/pranswer
         let offer = pc.create_offer().expect("offer");

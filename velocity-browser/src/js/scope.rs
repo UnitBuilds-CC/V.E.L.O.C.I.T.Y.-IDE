@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use velocity_ide::safety::SafeMutex;
+
 use crate::js::vm::JsValue;
 
 /// A single scope level in the chain.
@@ -65,13 +67,13 @@ impl Scope {
 
     /// Register a disposable resource in this scope.
     pub fn add_disposable(scope: &ScopeRef, resource: JsValue) {
-        let mut s = scope.lock().unwrap();
+        let mut s = scope.lock_safe();
         s.disposables.push(resource);
     }
 
     /// Drain all disposables from this scope (returns them in LIFO order for disposal).
     pub fn take_disposables(scope: &ScopeRef) -> Vec<JsValue> {
-        let mut s = scope.lock().unwrap();
+        let mut s = scope.lock_safe();
         let mut items = std::mem::take(&mut s.disposables);
         items.reverse(); // LIFO disposal per spec
         items
@@ -79,7 +81,7 @@ impl Scope {
 
     /// Resolve a variable by walking up the scope chain.
     pub fn resolve(scope: &ScopeRef, name: &str) -> Option<JsValue> {
-        let s = scope.lock().unwrap();
+        let s = scope.lock_safe();
         if let Some(val) = s.locals.get(name) {
             return Some(val.clone());
         }
@@ -91,7 +93,7 @@ impl Scope {
 
     /// Assign to an existing variable anywhere in the chain. Returns true if found.
     pub fn assign(scope: &ScopeRef, name: &str, value: JsValue) -> bool {
-        let mut s = scope.lock().unwrap();
+        let mut s = scope.lock_safe();
         if s.locals.contains_key(name) {
             s.locals.insert(name.to_string(), value);
             return true;
@@ -106,22 +108,22 @@ impl Scope {
 
     /// Declare a new variable in the current (innermost) scope.
     pub fn declare(scope: &ScopeRef, name: &str, value: JsValue) {
-        let mut s = scope.lock().unwrap();
+        let mut s = scope.lock_safe();
         s.locals.insert(name.to_string(), value);
     }
 
     /// Declare a `var` variable — hoists to the nearest function/global scope.
     pub fn declare_var(scope: &ScopeRef, name: &str, value: JsValue) {
-        let is_fn = { scope.lock().unwrap().is_function_scope };
+        let is_fn = { scope.lock_safe().is_function_scope };
         if is_fn {
-            let mut s = scope.lock().unwrap();
+            let mut s = scope.lock_safe();
             s.locals.insert(name.to_string(), value);
         } else {
-            let parent = { scope.lock().unwrap().parent.clone() };
+            let parent = { scope.lock_safe().parent.clone() };
             match parent {
                 Some(p) => Scope::declare_var(&p, name, value),
                 None => {
-                    let mut s = scope.lock().unwrap();
+                    let mut s = scope.lock_safe();
                     s.locals.insert(name.to_string(), value);
                 }
             }
@@ -130,14 +132,14 @@ impl Scope {
 
     /// Declare a `const` variable in the current scope and mark it immutable.
     pub fn declare_const(scope: &ScopeRef, name: &str, value: JsValue) {
-        let mut s = scope.lock().unwrap();
+        let mut s = scope.lock_safe();
         s.locals.insert(name.to_string(), value);
         s.consts.insert(name.to_string());
     }
 
     /// Check if a variable is a const anywhere in the chain.
     pub fn is_const(scope: &ScopeRef, name: &str) -> bool {
-        let s = scope.lock().unwrap();
+        let s = scope.lock_safe();
         if s.consts.contains(name) {
             return true;
         }
@@ -157,7 +159,7 @@ impl Scope {
     }
 
     fn collect_bindings(scope: &ScopeRef, out: &mut HashMap<String, JsValue>) {
-        let s = scope.lock().unwrap();
+        let s = scope.lock_safe();
         // Walk parent first so inner scopes can shadow
         if let Some(ref parent) = s.parent {
             Scope::collect_bindings(parent, out);
@@ -169,7 +171,7 @@ impl Scope {
 
     /// Agent-first: list only the bindings declared directly in this scope level.
     pub fn local_keys(scope: &ScopeRef) -> Vec<String> {
-        let s = scope.lock().unwrap();
+        let s = scope.lock_safe();
         s.locals.keys().cloned().collect()
     }
 }

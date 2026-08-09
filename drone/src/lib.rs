@@ -7,4 +7,5 @@
 //! See `DRONE_PROTOCOL.md` for the full specification.
 
 pub mod core;
+pub mod safety;
 pub mod server;

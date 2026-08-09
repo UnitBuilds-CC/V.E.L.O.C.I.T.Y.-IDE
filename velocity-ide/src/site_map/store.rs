@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::nda_int::NdaVec;
+use crate::safety::SafeMutex;
 
 use super::kv::KvRecord;
 use super::serialization::{deserialise_node, serialise_node};
@@ -252,7 +253,7 @@ impl SiteMap {
 
         let mut triples = Vec::new();
         Self::extract_triples_recursive(node, &mut triples);
-        self.node_triples_cache.lock().unwrap().insert(key, triples);
+        self.node_triples_cache.lock_safe().insert(key, triples);
 
         Ok(key)
     }
@@ -472,7 +473,7 @@ impl SiteMap {
             if path.exists() {
                 fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
             }
-            self.snapshot_triples_cache.lock().unwrap().remove(&key);
+            self.snapshot_triples_cache.lock_safe().remove(&key);
             self.recompute_root();
             // Auto-invalidate the predicate index since triples have changed
             self.invalidate_predicate_index();
@@ -589,7 +590,7 @@ impl SiteMap {
 
     pub fn register_string(&self, s: &str) -> Result<u64> {
         let hash = self.hash_string(s);
-        let mut dict = self.string_dict.lock().unwrap();
+        let mut dict = self.string_dict.lock_safe();
 
         if dict.is_empty() {
             let dict_path = self.base.join("dictionary.json");
@@ -621,7 +622,7 @@ impl SiteMap {
     }
 
     pub fn resolve_string(&self, hash: u64) -> Option<String> {
-        let mut dict = self.string_dict.lock().unwrap();
+        let mut dict = self.string_dict.lock_safe();
 
         if dict.is_empty() {
             let dict_path = self.base.join("dictionary.json");
@@ -684,7 +685,7 @@ impl SiteMap {
 
     fn collect_historical_triples(&self) -> Vec<VcTriple> {
         let mut all_triples = Vec::new();
-        let mut cache = self.node_triples_cache.lock().unwrap();
+        let mut cache = self.node_triples_cache.lock_safe();
 
         for entry in self.index.values() {
             if entry.kind != EntryKind::Node {
@@ -707,7 +708,7 @@ impl SiteMap {
 
     fn collect_live_snapshot_triples(&self) -> Vec<VcTriple> {
         let mut all_triples = Vec::new();
-        let mut cache = self.snapshot_triples_cache.lock().unwrap();
+        let mut cache = self.snapshot_triples_cache.lock_safe();
 
         for entry in self.index.values() {
             if entry.kind != EntryKind::Snapshot {
@@ -763,7 +764,7 @@ impl SiteMap {
     pub fn find_live_by_predicate(&self, predicate_id: u16) -> Vec<VcTriple> {
         // Check if the index is already built
         {
-            let idx = self.predicate_index.lock().unwrap();
+            let idx = self.predicate_index.lock_safe();
             if let Some(index) = idx.as_ref() {
                 if let Some(triples) = index.get(&predicate_id) {
                     return triples.clone();
@@ -778,13 +779,13 @@ impl SiteMap {
             index.entry(triple.predicate_id).or_default().push(triple.clone());
         }
         let result = index.get(&predicate_id).cloned().unwrap_or_default();
-        *self.predicate_index.lock().unwrap() = Some(index);
+        *self.predicate_index.lock_safe() = Some(index);
         result
     }
 
     /// Invalidate the predicate index (call when snapshots are updated).
     pub fn invalidate_predicate_index(&self) {
-        *self.predicate_index.lock().unwrap() = None;
+        *self.predicate_index.lock_safe() = None;
     }
 
     /// Batch query: find all triples matching any of the given subject hashes.
