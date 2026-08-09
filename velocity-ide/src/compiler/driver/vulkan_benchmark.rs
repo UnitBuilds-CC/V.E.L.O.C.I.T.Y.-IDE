@@ -1,3 +1,12 @@
+//! Vulkan benchmark: NDA attention vs contiguous attention performance comparison.
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks wrap Vulkan API calls via `ash`. Handles are valid from the
+//! `VulkanDriver` parameter. Buffers, descriptor sets, and pipelines follow the same
+//! creation/validation patterns as the main pipeline code. Resources are cleaned up
+//! before the function returns.
+
 use std::ffi::CString;
 use std::time::Instant;
 
@@ -16,10 +25,13 @@ pub fn benchmark_attention_nda_vs_contig(
 
     let shader_info_contig =
         vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::ATTN_CONTIG_SPV);
+    // SAFETY: create_shader_module with valid attention SPIR-V bytecodes.
     let shader_module_contig = unsafe { device.create_shader_module(&shader_info_contig, None)? };
 
     let shader_info_ndakv =
         vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::ATTN_NDAKV_SPV);
+    // SAFETY: All following unsafe blocks create Vulkan pipeline resources (descriptor set
+    // layouts, pipeline layouts, compute pipelines) with valid handles from the driver.
     let shader_module_ndakv = unsafe { device.create_shader_module(&shader_info_ndakv, None)? };
 
     let bindings_contig = [
@@ -192,6 +204,8 @@ pub fn benchmark_attention_nda_vs_contig(
         vk::BufferUsageFlags::STORAGE_BUFFER,
     )?;
 
+    // SAFETY: Initialize benchmark input data via mapped HOST_VISIBLE pointers.
+    // All pointers come from create_coherent_buffer; slice lengths fit within buffer sizes.
     unsafe {
         let q_slice = std::slice::from_raw_parts_mut(q_ptr as *mut u32, 64);
         q_slice[0..32].fill(0x55555555);
@@ -230,6 +244,8 @@ pub fn benchmark_attention_nda_vs_contig(
     let pool_info = vk::DescriptorPoolCreateInfo::builder()
         .max_sets(2)
         .pool_sizes(&pool_sizes);
+    // SAFETY: create_descriptor_pool, allocate descriptor sets, update bindings,
+    // create command pool and allocate command buffers — all with valid handles.
     let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
     let desc_set_contig = unsafe {
@@ -295,6 +311,7 @@ pub fn benchmark_attention_nda_vs_contig(
             .buffer_info(&buffer_infos_contig[3..4])
             .build(),
     ];
+    // SAFETY: update_descriptor_sets and create command infrastructure.
     unsafe { device.update_descriptor_sets(&writes_contig, &[]) };
 
     let buffer_infos_ndakv = [
@@ -341,6 +358,7 @@ pub fn benchmark_attention_nda_vs_contig(
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
     let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
 
+    // SAFETY: allocate_command_buffers from the pool for recording benchmark dispatches.
     let command_buffers = unsafe {
         device.allocate_command_buffers(
             &vk::CommandBufferAllocateInfo::builder()
