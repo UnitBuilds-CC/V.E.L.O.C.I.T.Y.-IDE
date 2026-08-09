@@ -283,7 +283,7 @@ pub fn recent_failed_session_transcript_entries(
         .into_iter()
         .filter(|entry| !entry.outcome.eq_ignore_ascii_case("ok"))
         .collect::<Vec<_>>();
-    entries.sort_by(|left, right| right.sequence.cmp(&left.sequence));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.sequence));
     entries.truncate(limit);
     Ok(entries
         .into_iter()

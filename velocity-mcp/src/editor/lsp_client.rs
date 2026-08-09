@@ -587,10 +587,8 @@ impl LspManager {
         content: &str,
     ) -> Option<HoverResult> {
         self.sync_document(ext, path, content);
-        let id = match self.server_for_extension(ext) {
-            Some(s) => s.hover(path, line, col),
-            None => return None,
-        };
+        let s = self.server_for_extension(ext)?;
+        let id = s.hover(path, line, col);
         let Ok(id) = id else { return None };
         self.await_response(ext, id)
             .and_then(|resp| parse_hover(&resp))

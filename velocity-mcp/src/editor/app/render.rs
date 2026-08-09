@@ -1617,18 +1617,18 @@ impl<'a> TabViewerImpl<'a> {
                                                 let mut last_status: Option<&str> = None;
                                                 for ev in thread.events.iter().rev() {
                                                     match ev.kind {
-                                                        crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted => {
-                                                            if current_tool.is_none() {
-                                                                current_tool = Some(ev.message.as_str());
-                                                            }
+                                                        crate::orchestrator::worker::WorkerThreadEventKind::ToolStarted
+                                                            if current_tool.is_none() =>
+                                                        {
+                                                            current_tool = Some(ev.message.as_str());
                                                         }
                                                         crate::orchestrator::worker::WorkerThreadEventKind::ToolFinished => {
                                                             // tool finished, keep looking for an active one
                                                         }
-                                                        crate::orchestrator::worker::WorkerThreadEventKind::Status => {
-                                                            if last_status.is_none() {
-                                                                last_status = Some(ev.message.as_str());
-                                                            }
+                                                        crate::orchestrator::worker::WorkerThreadEventKind::Status
+                                                            if last_status.is_none() =>
+                                                        {
+                                                            last_status = Some(ev.message.as_str());
                                                         }
                                                         _ => {}
                                                     }

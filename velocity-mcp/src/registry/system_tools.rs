@@ -780,27 +780,21 @@ pub fn handle_system_tool(
                     .unwrap_or_default(),
                 body: arguments["body"].as_str().map(str::to_string),
             };
-            match crate::connectors::call_connector(root, id, &req) {
-                Ok(resp) => serde_json::to_string(&resp)?,
-                Err(e) => return Err(e.into()),
-            }
+            let resp = crate::connectors::call_connector(root, id, &req)?;
+            serde_json::to_string(&resp)?
         }
         "generate_image" => {
             let prompt = arguments["prompt"].as_str().ok_or("prompt is required")?;
             let model = arguments["model"].as_str();
             let out = arguments["output"].as_str();
-            match crate::editor::multimodal::generate_image(root, prompt, model, out) {
-                Ok(path) => format!("Saved generated image to {}", path.display()),
-                Err(e) => return Err(e.into()),
-            }
+            let path = crate::editor::multimodal::generate_image(root, prompt, model, out)?;
+            format!("Saved generated image to {}", path.display())
         }
         "describe_image" => {
             let path_arg = arguments["path"].as_str().ok_or("path is required")?;
             let path = root.join(path_arg);
-            match crate::editor::multimodal::describe_image(&path) {
-                Ok(v) => serde_json::to_string(&v)?,
-                Err(e) => return Err(e.into()),
-            }
+            let v = crate::editor::multimodal::describe_image(&path)?;
+            serde_json::to_string(&v)?
         }
         _ => return Ok(None),
     };

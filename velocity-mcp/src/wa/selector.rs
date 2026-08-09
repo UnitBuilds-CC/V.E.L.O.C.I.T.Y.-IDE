@@ -305,7 +305,7 @@ pub fn resolve_css_selector(
         .iter()
         .filter_map(|node| score_css(node, part).map(|s| (s, node.clone())))
         .collect();
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
     Ok(candidates)
 }
 
@@ -445,7 +445,7 @@ pub fn resolve_xpath(
             .map(|n| (200i32 + (n.confidence * 100.0) as i32, n.clone()))
             .collect(),
     };
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
     Ok(candidates)
 }
 
