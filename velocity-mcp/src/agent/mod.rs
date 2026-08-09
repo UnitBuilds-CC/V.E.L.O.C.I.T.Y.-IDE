@@ -5,7 +5,9 @@ pub mod executor;
 pub mod memory_store;
 pub mod models;
 pub mod nda;
+pub mod planning;
 pub mod provider;
+pub mod reasoning;
 pub mod self_improve;
 
 #[cfg(test)]

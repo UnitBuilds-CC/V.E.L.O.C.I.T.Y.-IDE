@@ -13,7 +13,35 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Workflows",
-            &format!("{} workflow(s) · list composer", self.workflows.len()),
+            &format!("{} workflow(s) · visual builder", self.workflows.len()),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Mode tabs: List | Visual | Templates | AI Generate
+        let mut mode: &str = if self.workflow_visual_mode { "Visual" } else { "List" };
+        ui.horizontal(|ui| {
+            let list_btn = ui.selectable_label(!self.workflow_visual_mode, RichText::new("List").size(9.0));
+            let visual_btn = ui.selectable_label(self.workflow_visual_mode, RichText::new("Visual").size(9.0));
+            let templates_btn = ui.selectable_label(false, RichText::new("Templates").size(9.0));
+            let ai_btn = ui.selectable_label(false, RichText::new("AI Generate").size(9.0));
+            if list_btn.clicked() { self.workflow_visual_mode = false; mode = "List"; }
+            if visual_btn.clicked() { self.workflow_visual_mode = true; mode = "Visual"; }
+            if templates_btn.clicked() { /* render templates inline below */ }
+            if ai_btn.clicked() { /* render AI generate inline below */ }
+        });
+        ui.add_space(4.0);
+
+        if self.workflow_visual_mode {
+            self.render_workflow_visual(ui);
+            return;
+        }
+
+        // ── List mode (original) ──
+        Self::tier3_header(
+            ui,
+            "List Composer",
+            &format!("{} workflow(s)", self.workflows.len()),
             palette.accent,
             palette.text_muted,
         );
@@ -651,6 +679,178 @@ impl VelocityApp {
                     self.gov_status = format!("{} preset connector added.", preset);
                 }
             });
+    }
+
+    /// Render the visual workflow canvas editor.
+    pub fn render_workflow_visual(&mut self, ui: &mut egui::Ui) {
+        use crate::editor::workflow_canvas::{CanvasNodeKind, NodePosition, WorkflowCanvas};
+        use crate::editor::workflow_templates;
+        let palette = self.palette();
+
+        // Workflow selector + actions bar
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Workflow:").size(9.0).color(palette.text_muted));
+            let mut selected_id = self.workflow_canvas_selected.clone();
+
+            egui::ComboBox::from_id_salt("workflow_canvas_selector")
+                .selected_text(
+                    selected_id
+                        .as_deref()
+                        .and_then(|id| self.workflow_canvases.get(id))
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| "Select workflow…".into()),
+                )
+                .show_ui(ui, |ui| {
+                    for (id, canvas) in &self.workflow_canvases {
+                        ui.selectable_value(&mut selected_id, Some(id.clone()), &canvas.name);
+                    }
+                });
+
+            if ui.button(RichText::new("+ New").size(9.0)).clicked() {
+                let id = format!("wf-{}", crate::editor::triggers::now_secs());
+                let name = format!("Workflow {}", self.workflow_canvases.len() + 1);
+                let canvas = WorkflowCanvas::new(&id, &name);
+                self.workflow_canvases.insert(id.clone(), canvas);
+                selected_id = Some(id);
+            }
+
+            egui::ComboBox::from_id_salt("workflow_template_selector")
+                .selected_text("From template…")
+                .show_ui(ui, |ui| {
+                    for template in workflow_templates::all_templates() {
+                        if ui.button(format!("{} — {}", template.name, template.description)).clicked() {
+                            let id = format!("wf-{}", crate::editor::triggers::now_secs());
+                            let canvas = template.build(&id, template.name);
+                            self.workflow_canvases.insert(id.clone(), canvas);
+                            selected_id = Some(id);
+                        }
+                    }
+                });
+
+            self.workflow_canvas_selected = selected_id;
+        });
+        ui.add_space(4.0);
+
+        if let Some(sel_id) = self.workflow_canvas_selected.clone() {
+            // Node palette: add-node buttons
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Add node:").size(8.0).color(palette.text_muted));
+                let add_buttons: &[(&str, CanvasNodeKind)] = &[
+                    ("Agent", CanvasNodeKind::AgentTask { prompt: "Describe task…".into(), team: None }),
+                    ("Tool", CanvasNodeKind::Tool { name: "tool_name".into(), args: serde_json::json!({}) }),
+                    ("Connector", CanvasNodeKind::Connector { id: "connector_id".into(), req: serde_json::json!({}) }),
+                    ("Condition", CanvasNodeKind::Condition { description: "Check condition".into() }),
+                ];
+                for (label, kind) in add_buttons {
+                    if ui.small_button(RichText::new(*label).size(8.0)).clicked() {
+                        if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                            let offset = canvas.nodes.len() as f32;
+                            let pos = NodePosition {
+                                x: 200.0 + offset * 40.0,
+                                y: 150.0 + (offset * 30.0) % 200.0,
+                            };
+                            canvas.add_node(kind.clone(), pos);
+                        }
+                    }
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button(RichText::new("Snapshot").size(8.0)).clicked() {
+                        if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
+                            self.workflow_versions.snapshot(canvas, "Manual snapshot");
+                            let _ = self.workflow_versions.save(&self.workspace_root);
+                        }
+                    }
+                    if ui.small_button(RichText::new("Delete Node").size(8.0)).clicked() {
+                        if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                            if let Some(selected) = canvas.selected_node() {
+                                let nid = selected.id.clone();
+                                canvas.remove_node(&nid);
+                            }
+                        }
+                    }
+                });
+            });
+            ui.add_space(4.0);
+
+            // Canvas area
+            let canvas_size = egui::vec2(ui.available_width(), 350.0);
+            if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                let _action = canvas.draw(ui, canvas_size);
+            }
+            ui.add_space(4.0);
+
+            // Edge connection controls
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Connect:").size(8.0).color(palette.text_muted));
+                if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
+                    let node_ids: Vec<_> = canvas.nodes.iter()
+                        .map(|n| (n.id.clone(), n.kind.label().to_string()))
+                        .collect();
+                    let mut from_idx: usize = 0;
+                    let mut to_idx: usize = 0;
+                    egui::ComboBox::from_id_salt("edge_from")
+                        .selected_text("from…")
+                        .show_ui(ui, |ui| {
+                            for (i, (_, label)) in node_ids.iter().enumerate() {
+                                ui.selectable_value(&mut from_idx, i, label.as_str());
+                            }
+                        });
+                    ui.label("→");
+                    egui::ComboBox::from_id_salt("edge_to")
+                        .selected_text("to…")
+                        .show_ui(ui, |ui| {
+                            for (i, (_, label)) in node_ids.iter().enumerate() {
+                                ui.selectable_value(&mut to_idx, i, label.as_str());
+                            }
+                        });
+                    if ui.small_button(RichText::new("Link").size(8.0)).clicked() {
+                        if from_idx != to_idx {
+                            if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
+                                let from = node_ids[from_idx].0.clone();
+                                let to = node_ids[to_idx].0.clone();
+                                canvas.add_edge(from, "ok", to);
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Run button
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("▶ Run Workflow").size(10.0)).clicked() {
+                    if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
+                        if let Some(wf) = canvas.to_workflow() {
+                            let ws = self.workspace_root.clone();
+                            let runrec = wf.execute(&ws);
+                            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                                "Workflow '{}' → {}", wf.name, runrec.status.label()
+                            )));
+                            self.workflow_last_run = Some(runrec);
+                        }
+                    }
+                }
+                if let Some(runrec) = &self.workflow_last_run {
+                    use crate::editor::workflow::RunStatus;
+                    let status_color = match runrec.status {
+                        RunStatus::Success => palette.success,
+                        RunStatus::Failed => palette.error,
+                        RunStatus::Partial => palette.warning,
+                    };
+                    ui.label(
+                        RichText::new(format!("Last: {} ({} ok / {} steps)",
+                            runrec.status.label(), runrec.ok_count(), runrec.steps.len()))
+                            .size(9.0).color(status_color),
+                    );
+                }
+            });
+        } else {
+            ui.label(
+                RichText::new("Select or create a workflow to begin editing.")
+                    .size(10.0).color(palette.text_muted),
+            );
+        }
     }
 }
 

@@ -346,6 +346,16 @@ pub struct VelocityApp {
     pub workflow_step_prompt_input: String,
     /// Last workflow run result rendered in the Workflows panel run log.
     pub workflow_last_run: Option<crate::editor::workflow::WorkflowRun>,
+    /// Visual canvas instances keyed by workflow id.
+    pub workflow_canvases: std::collections::HashMap<String, crate::editor::workflow_canvas::WorkflowCanvas>,
+    /// Id of the workflow currently open in the visual canvas editor.
+    pub workflow_canvas_selected: Option<String>,
+    /// Whether the visual canvas editor is active (vs list composer).
+    pub workflow_visual_mode: bool,
+    /// AI generation prompt input for natural language workflow creation.
+    pub workflow_ai_prompt: String,
+    /// Version history registry for workflows.
+    pub workflow_versions: crate::editor::workflow_version::VersionRegistry,
     /// Governance policy engine edited in the Governance panel.
     pub policy: crate::editor::governance::PolicyEngine,
     /// Approval queue shown in the Governance panel.
@@ -916,6 +926,11 @@ impl VelocityApp {
             workflow_step_args_input: String::new(),
             workflow_step_prompt_input: String::new(),
             workflow_last_run: None,
+            workflow_canvases: std::collections::HashMap::new(),
+            workflow_canvas_selected: None,
+            workflow_visual_mode: false,
+            workflow_ai_prompt: String::new(),
+            workflow_versions: crate::editor::workflow_version::VersionRegistry::load(&workspace_root),
             policy: crate::editor::governance::PolicyEngine::load(&workspace_root),
             approvals: crate::editor::governance::ApprovalQueue::load(&workspace_root),
             secrets: crate::security::secrets::SecretStore::load(&workspace_root),
