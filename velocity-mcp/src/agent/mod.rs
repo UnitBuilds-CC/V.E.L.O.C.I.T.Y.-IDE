@@ -1,3 +1,4 @@
+pub mod background_agents;
 pub mod checkpoint;
 pub mod coordination;
 pub mod crypto;
