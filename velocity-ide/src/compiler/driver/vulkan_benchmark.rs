@@ -62,6 +62,7 @@ pub fn benchmark_attention_nda_vs_contig(
     ];
     let layout_info_contig =
         vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_contig);
+    // SAFETY: Create descriptor set layout with 1 storage buffer binding (contig attention).
     let desc_set_layout_contig =
         unsafe { device.create_descriptor_set_layout(&layout_info_contig, None)? };
 
@@ -86,6 +87,7 @@ pub fn benchmark_attention_nda_vs_contig(
             .build(),
     ];
     let layout_info_ndakv = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_ndakv);
+    // SAFETY: Create descriptor set layout with 3 storage buffer bindings (NDA KV attention).
     let desc_set_layout_ndakv =
         unsafe { device.create_descriptor_set_layout(&layout_info_ndakv, None)? };
 
@@ -98,6 +100,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let pipeline_layout_info_contig = vk::PipelineLayoutCreateInfo::builder()
         .set_layouts(&layouts_contig)
         .push_constant_ranges(&push_constant_ranges);
+    // SAFETY: Create pipeline layout with contig descriptor set layout and push constants.
     let pipeline_layout_contig =
         unsafe { device.create_pipeline_layout(&pipeline_layout_info_contig, None)? };
 
@@ -105,6 +108,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let pipeline_layout_info_ndakv = vk::PipelineLayoutCreateInfo::builder()
         .set_layouts(&layouts_ndakv)
         .push_constant_ranges(&push_constant_ranges);
+    // SAFETY: Create pipeline layout with ndakv descriptor set layout and push constants.
     let pipeline_layout_ndakv =
         unsafe { device.create_pipeline_layout(&pipeline_layout_info_ndakv, None)? };
 
@@ -117,6 +121,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let pipeline_create_info_contig = vk::ComputePipelineCreateInfo::builder()
         .stage(stage_info_contig.build())
         .layout(pipeline_layout_contig);
+    // SAFETY: Create compute pipeline for contig attention from valid shader and layout.
     let compute_pipelines_contig = unsafe {
         device
             .create_compute_pipelines(
@@ -135,6 +140,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let pipeline_create_info_ndakv = vk::ComputePipelineCreateInfo::builder()
         .stage(stage_info_ndakv.build())
         .layout(pipeline_layout_ndakv);
+    // SAFETY: Create compute pipeline for NDA KV attention from valid shader and layout.
     let compute_pipelines_ndakv = unsafe {
         device
             .create_compute_pipelines(
@@ -248,6 +254,7 @@ pub fn benchmark_attention_nda_vs_contig(
     // create command pool and allocate command buffers — all with valid handles.
     let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
+    // SAFETY: Allocate descriptor set for contig attention from pool.
     let desc_set_contig = unsafe {
         device.allocate_descriptor_sets(
             &vk::DescriptorSetAllocateInfo::builder()
@@ -255,6 +262,7 @@ pub fn benchmark_attention_nda_vs_contig(
                 .set_layouts(&[desc_set_layout_contig]),
         )?[0]
     };
+    // SAFETY: Allocate descriptor set for NDA KV attention from pool.
     let desc_set_ndakv = unsafe {
         device.allocate_descriptor_sets(
             &vk::DescriptorSetAllocateInfo::builder()
@@ -351,11 +359,13 @@ pub fn benchmark_attention_nda_vs_contig(
             .buffer_info(&buffer_infos_ndakv[2..3])
             .build(),
     ];
+    // SAFETY: Update NDA KV descriptor set with buffer bindings.
     unsafe { device.update_descriptor_sets(&writes_ndakv, &[]) };
 
     let command_pool_info = vk::CommandPoolCreateInfo::builder()
         .queue_family_index(driver.queue_family_index)
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+    // SAFETY: Create command pool for benchmark dispatch recording.
     let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
 
     // SAFETY: allocate_command_buffers from the pool for recording benchmark dispatches.
@@ -370,6 +380,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let cmd_contig = command_buffers[0];
     let cmd_ndakv = command_buffers[1];
 
+    // SAFETY: Record contig attention dispatch: begin, bind pipeline/descriptors, push constants, dispatch, end.
     unsafe {
         device.begin_command_buffer(
             cmd_contig,
@@ -402,6 +413,7 @@ pub fn benchmark_attention_nda_vs_contig(
         device.end_command_buffer(cmd_contig)?;
     }
 
+    // SAFETY: Record NDA KV attention dispatch: begin, bind pipeline/descriptors, push constants, dispatch, end.
     unsafe {
         device.begin_command_buffer(
             cmd_ndakv,
@@ -435,6 +447,7 @@ pub fn benchmark_attention_nda_vs_contig(
     }
 
     let fence_info = vk::FenceCreateInfo::builder();
+    // SAFETY: Create fence for benchmark synchronization.
     let fence = unsafe { device.create_fence(&fence_info, None)? };
 
     let iterations = 500;
@@ -442,6 +455,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let mut total_contig = 0.0;
     for _ in 0..iterations {
         let start = Instant::now();
+        // SAFETY: Submit contig benchmark command buffer and wait for completion.
         unsafe {
             device.reset_fences(&[fence])?;
             device.queue_submit(
@@ -460,6 +474,7 @@ pub fn benchmark_attention_nda_vs_contig(
     let mut total_ndakv = 0.0;
     for _ in 0..iterations {
         let start = Instant::now();
+        // SAFETY: Submit NDA KV benchmark command buffer and wait for completion.
         unsafe {
             device.reset_fences(&[fence])?;
             device.queue_submit(
@@ -475,6 +490,8 @@ pub fn benchmark_attention_nda_vs_contig(
     }
     let ndakv_avg_us = total_ndakv / (iterations as f64);
 
+    // SAFETY: Cleanup — wait for idle, destroy all benchmark resources (fence, command buffers,
+    // command pool, descriptor pool, buffers, pipelines, layouts, shader modules).
     unsafe {
         let _ = device.device_wait_idle();
         device.destroy_fence(fence, None);

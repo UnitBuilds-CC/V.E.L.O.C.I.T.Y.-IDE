@@ -206,6 +206,7 @@ impl VulkanModelPipeline {
         let kv_dim = n_kv_heads * head_dim;
 
         for i in 0..n_layers {
+            // SAFETY: Reinterpret Vec<u32> attn norm weights as bytes. Length checked via checked_mul.
             let bytes_attn = unsafe {
                 let byte_len = attn_norm_weights[i]
                     .len()
@@ -224,6 +225,7 @@ impl VulkanModelPipeline {
             )?;
             layer_attn_norms.push((attn_buf, attn_mem));
 
+            // SAFETY: Reinterpret Vec<u32> ffn norm weights as bytes. Length checked via checked_mul.
             let bytes_ffn = unsafe {
                 let byte_len = ffn_norm_weights[i]
                     .len()
@@ -243,6 +245,7 @@ impl VulkanModelPipeline {
             layer_ffn_norms.push((ffn_buf, ffn_mem));
 
             if let Some(qb) = q_biases[i] {
+                // SAFETY: Reinterpret Vec<u32> q_bias as bytes. Length checked via checked_mul.
                 let bytes = unsafe {
                     let byte_len = qb.len().checked_mul(4).expect("q_bias overflow");
                     std::slice::from_raw_parts(qb.as_ptr() as *const u8, byte_len)
@@ -262,6 +265,7 @@ impl VulkanModelPipeline {
             }
 
             if let Some(kb) = k_biases[i] {
+                // SAFETY: Reinterpret Vec<u32> k_bias as bytes. Length checked via checked_mul.
                 let bytes = unsafe {
                     let byte_len = kb.len().checked_mul(4).expect("k_bias overflow");
                     std::slice::from_raw_parts(kb.as_ptr() as *const u8, byte_len)
@@ -281,6 +285,7 @@ impl VulkanModelPipeline {
             }
 
             if let Some(vb) = v_biases[i] {
+                // SAFETY: Reinterpret Vec<u32> v_bias as bytes. Length checked via checked_mul.
                 let bytes = unsafe {
                     let byte_len = vb.len().checked_mul(4).expect("v_bias overflow");
                     std::slice::from_raw_parts(vb.as_ptr() as *const u8, byte_len)
@@ -314,6 +319,7 @@ impl VulkanModelPipeline {
             layer_kv_caches.push((cache_buf, cache_mem));
         }
 
+        // SAFETY: Reinterpret Vec<u32> final norm weight as bytes. Length checked via checked_mul.
         let bytes_final = unsafe {
             let byte_len = final_norm_weight
                 .len()
@@ -353,18 +359,21 @@ impl VulkanModelPipeline {
         let pool_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&pool_sizes)
             .max_sets(total_sets as u32);
+        // SAFETY: Create Vulkan descriptor pool for binding GPU buffers to shader pipelines.
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
         let layouts_2 = vec![desc_layout_2; total_sets_2];
         let alloc_info_2 = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(desc_pool)
             .set_layouts(&layouts_2);
+        // SAFETY: Allocate descriptor sets from pool for 2-buffer shader bindings.
         let sets_2 = unsafe { device.allocate_descriptor_sets(&alloc_info_2)? };
 
         let layouts_3 = vec![desc_layout_3; total_sets_3];
         let alloc_info_3 = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(desc_pool)
             .set_layouts(&layouts_3);
+        // SAFETY: Allocate descriptor sets from pool for 3-buffer shader bindings.
         let sets_3 = unsafe { device.allocate_descriptor_sets(&alloc_info_3)? };
 
         let mut sets_2_iter = sets_2.into_iter();
@@ -630,12 +639,15 @@ impl VulkanModelPipeline {
             &mut writes,
         );
 
+        // SAFETY: Update descriptor sets with buffer bindings. All buffers and sets are valid.
         unsafe { device.update_descriptor_sets(&writes, &[]) };
 
         let command_pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(driver.queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        // SAFETY: Create command pool for recording GPU dispatch commands.
         let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
+        // SAFETY: Allocate primary command buffer from the pool.
         let command_buffers = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
@@ -647,6 +659,7 @@ impl VulkanModelPipeline {
         let command_buffer = command_buffers[0];
 
         let fence_info = vk::FenceCreateInfo::builder();
+        // SAFETY: Create fence for CPU-GPU synchronization.
         let fence = unsafe { device.create_fence(&fence_info, None)? };
 
         Ok(Self {
@@ -745,6 +758,9 @@ impl VulkanModelPipeline {
 
 impl Drop for VulkanModelPipeline {
     fn drop(&mut self) {
+        // SAFETY: Wait for GPU idle, then destroy all Vulkan resources (fence, command pool,
+        // descriptor pool, buffers, pipelines, layouts, shader modules). All handles are valid
+        // from pipeline creation and owned by this struct.
         unsafe {
             let _ = self.device.device_wait_idle();
 
