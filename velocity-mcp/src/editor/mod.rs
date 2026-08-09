@@ -63,6 +63,8 @@ pub mod minimap;
 pub mod multimodal;
 pub mod nda_document;
 pub mod nda_viewer;
+pub mod plugin_registry;
+pub mod plugin_sdk;
 pub mod regex_engine;
 pub mod semantic_search;
 pub mod snippets;
