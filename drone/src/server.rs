@@ -440,4 +440,64 @@ mod tests {
         assert_eq!(req.path, "/peer/pair");
         assert_eq!(req.body, body.as_bytes());
     }
+
+    // ── Integration tests using the HTTP helpers ──
+
+    #[test]
+    fn integration_health_endpoint() {
+        let (server, port) = start_test_server();
+        let _serve_handle = std::thread::spawn(move || {
+            let _ = server.serve();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let (status, body) = http_get(port, "/peer/health");
+        assert_eq!(status, 200);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[test]
+    fn integration_identity_endpoint() {
+        let (server, port) = start_test_server();
+        let _serve_handle = std::thread::spawn(move || {
+            let _ = server.serve();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let (status, body) = http_get(port, "/peer/identity");
+        assert_eq!(status, 200);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(json["name"].as_str().is_some());
+    }
+
+    #[test]
+    fn integration_pair_post_endpoint() {
+        let (server, port) = start_test_server();
+        let _serve_handle = std::thread::spawn(move || {
+            let _ = server.serve();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let (status, body) = http_post(
+            port,
+            "/peer/pair",
+            r#"{"peer_id":"int_p1","name":"IntTest"}"#,
+        );
+        assert_eq!(status, 200);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(json["accepted"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn integration_not_found_endpoint() {
+        let (server, port) = start_test_server();
+        let _serve_handle = std::thread::spawn(move || {
+            let _ = server.serve();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let (status, _) = http_get(port, "/nonexistent/path");
+        assert_eq!(status, 404);
+    }
 }

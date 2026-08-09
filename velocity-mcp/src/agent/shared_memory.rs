@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn private_entries_visibility() {
         let mut store = SharedMemoryStore::new();
-        let mut id = store.add_entry(
+        let id = store.add_entry(
             "My Note",
             "Private",
             KnowledgeCategory::Notes,
