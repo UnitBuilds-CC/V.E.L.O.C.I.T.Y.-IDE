@@ -8,7 +8,10 @@ pub mod executor;
 pub mod memory_store;
 pub mod models;
 pub mod nda;
+pub mod peer_bridge;
 pub mod peer_link;
+#[cfg(test)]
+mod peer_e2e_test;
 pub mod peer_server;
 pub mod planning;
 pub mod provider;

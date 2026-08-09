@@ -63,6 +63,7 @@ pub mod minimap;
 pub mod multimodal;
 pub mod nda_document;
 pub mod nda_viewer;
+pub mod peer_panel;
 pub mod plugin_registry;
 pub mod plugin_sdk;
 pub mod regex_engine;

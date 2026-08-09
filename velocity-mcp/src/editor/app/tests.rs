@@ -439,6 +439,15 @@ semantic_search_active: false,
         gov_connector_url_input: String::new(),
         gov_connector_secret_input: String::new(),
         gov_status: String::new(),
+        peer_manager: crate::agent::peer_link::PeerManager::new(),
+        peer_server_running: false,
+        peer_port: 9191,
+        peer_add_host: String::new(),
+        peer_add_port: String::new(),
+        peer_add_name: String::new(),
+        peer_chat_message: String::new(),
+        peer_chat_selected: None,
+        peer_status: String::new(),
     };
 
     app.mirror_worker_events_into_timeline(&first_snapshot);
@@ -658,6 +667,15 @@ semantic_search_active: false,
         gov_connector_url_input: String::new(),
         gov_connector_secret_input: String::new(),
         gov_status: String::new(),
+        peer_manager: crate::agent::peer_link::PeerManager::new(),
+        peer_server_running: false,
+        peer_port: 9191,
+        peer_add_host: String::new(),
+        peer_add_port: String::new(),
+        peer_add_name: String::new(),
+        peer_chat_message: String::new(),
+        peer_chat_selected: None,
+        peer_status: String::new(),
     };
 
     app.mirror_worker_events_into_timeline(&snapshot);

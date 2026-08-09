@@ -380,6 +380,26 @@ pub struct VelocityApp {
     pub gov_connector_secret_input: String,
     /// Transient status line shown at the top of the Governance panel.
     pub gov_status: String,
+
+    // ─── Cross-device Peer Collaboration ────────────────────────────────────
+    /// Peer manager for cross-device agent collaboration.
+    pub peer_manager: crate::agent::peer_link::PeerManager,
+    /// Whether the peer API server is currently running.
+    pub peer_server_running: bool,
+    /// Port configured for the peer API server.
+    pub peer_port: u16,
+    /// Draft peer host for adding a new peer connection.
+    pub peer_add_host: String,
+    /// Draft peer port for adding a new peer connection.
+    pub peer_add_port: String,
+    /// Draft peer name for adding a new peer connection.
+    pub peer_add_name: String,
+    /// Draft chat message for peer-to-peer messaging.
+    pub peer_chat_message: String,
+    /// Selected peer ID for the chat panel.
+    pub peer_chat_selected: Option<String>,
+    /// Transient status line for the peer panel.
+    pub peer_status: String,
 }
 
 impl VelocityApp {
@@ -943,6 +963,23 @@ impl VelocityApp {
             gov_connector_url_input: String::new(),
             gov_connector_secret_input: String::new(),
             gov_status: String::new(),
+            // Cross-device peer collaboration
+            peer_manager: {
+                let mut mgr = crate::agent::peer_link::PeerManager::new();
+                let hostname = std::env::var("COMPUTERNAME")
+                    .or_else(|_| std::env::var("HOSTNAME"))
+                    .unwrap_or_else(|_| "velocity-instance".to_string());
+                mgr.init(&workspace_root, &hostname);
+                mgr
+            },
+            peer_server_running: false,
+            peer_port: 9191,
+            peer_add_host: String::new(),
+            peer_add_port: String::new(),
+            peer_add_name: String::new(),
+            peer_chat_message: String::new(),
+            peer_chat_selected: None,
+            peer_status: String::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);

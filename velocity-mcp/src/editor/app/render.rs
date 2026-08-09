@@ -257,6 +257,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Governance => {
                 self.app.render_governance_panel(ui);
             }
+            TabKind::Peers => {
+                self.app.render_peer_panel(ui);
+            }
             TabKind::NdaDoc { .. } => {
                 let palette = self.app.palette();
                 let tab_id = tab.id.clone();

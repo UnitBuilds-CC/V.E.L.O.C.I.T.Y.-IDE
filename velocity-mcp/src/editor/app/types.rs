@@ -56,6 +56,7 @@ impl Tab {
             TabKind::Workflows => "Workflows".into(),
             TabKind::Governance => "Governance".into(),
             TabKind::Changes => "Changes".into(),
+            TabKind::Peers => "Peers".into(),
             TabKind::NdaDoc { path } => path
                 .as_ref()
                 .and_then(|p| p.file_name())
@@ -118,6 +119,8 @@ pub enum TabKind {
     Governance,
     // Recent changes timeline (git log + uncommitted changes)
     Changes,
+    // Cross-device peer collaboration
+    Peers,
     // NDA document editor (portable/sealed NDA1 with in-file history)
     NdaDoc {
         path: Option<PathBuf>,
