@@ -1,3 +1,12 @@
+//! Vulkan model pipeline: initializes GPU resources for transformer model inference.
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks wrap Vulkan API calls via `ash`. This module creates and manages
+//! Vulkan buffers, descriptor pools, pipelines, and per-layer GEMV dispatchers.
+//! All handles are derived from a valid `VulkanDriver`. The `Drop` impl cleans up
+//! all allocated resources.
+
 use super::layer_gpu_gemvs::LayerGpuGemvs;
 use super::vulkan_init::*;
 use ash::vk;

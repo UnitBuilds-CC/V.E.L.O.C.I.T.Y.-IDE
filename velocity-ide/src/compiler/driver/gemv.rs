@@ -1,3 +1,12 @@
+//! Vulkan GEMV (General Matrix-Vector) compute dispatch for contiguous weight layouts.
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks wrap Vulkan API calls via `ash`. Handles are valid from the
+//! `VulkanDriver` parameter. Buffers use `create_coherent_buffer`/`create_device_local_buffer`.
+//! Descriptor sets, pipelines, and command buffers follow standard Vulkan lifecycle patterns.
+//! The `Drop` impl tears down resources in reverse dependency order.
+
 use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;

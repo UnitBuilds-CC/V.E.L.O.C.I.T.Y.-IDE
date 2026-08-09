@@ -1,3 +1,11 @@
+//! GPU benchmark data structures for Qwen/BitNet layer initialization.
+//!
+//! # Safety Invariants
+//!
+//! Unsafe blocks in this module wrap Vulkan buffer creation and data initialization
+//! via the `VulkanDriver` API. All pointers come from `create_coherent_buffer` which
+//! returns valid HOST_VISIBLE mapped memory.
+
 use velocity_ide::compiler::driver::{
     VulkanBitNetLayer, VulkanDriver, VulkanNdaBitNetLayer, VulkanQwenLayer,
 };
