@@ -14,7 +14,11 @@ pub enum ConnectorKind {
     GenericRest,
     Webhook,
     GitHub,
+    GitLab,
+    Jira,
     Slack,
+    Discord,
+    Notion,
 }
 
 /// How a resolved secret value is injected into an outbound request.
@@ -97,8 +101,103 @@ impl ConnectorConfig {
         }
     }
 
+    /// GitLab REST preset: `https://gitlab.com/api/v4`, private-token header auth.
+    pub fn gitlab(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind: ConnectorKind::GitLab,
+            base_url: "https://gitlab.com/api/v4".to_string(),
+            auth_secret,
+            auth: AuthScheme::Header { name: "PRIVATE-TOKEN".to_string() },
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+        }
+    }
+
+    /// Jira Cloud REST preset: `https://api.atlassian.com/ex/jira`, basic auth
+    /// via bearer (cloud API token). `auth_secret` should name a stored token.
+    pub fn jira(id: impl Into<String>, name: impl Into<String>, cloud_id: &str, auth_secret: Option<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind: ConnectorKind::Jira,
+            base_url: format!("https://api.atlassian.com/ex/jira/{cloud_id}"),
+            auth_secret,
+            auth: AuthScheme::Bearer,
+            headers: vec![
+                ("Accept".to_string(), "application/json".to_string()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+        }
+    }
+
+    /// Discord webhook/API preset: `https://discord.com/api/v10`, bearer auth.
+    pub fn discord(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind: ConnectorKind::Discord,
+            base_url: "https://discord.com/api/v10".to_string(),
+            auth_secret,
+            auth: AuthScheme::Bearer,
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+        }
+    }
+
+    /// Notion API preset: `https://api.notion.com/v1`, bearer auth with
+    /// Notion-Version header.
+    pub fn notion(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind: ConnectorKind::Notion,
+            base_url: "https://api.notion.com/v1".to_string(),
+            auth_secret,
+            auth: AuthScheme::Bearer,
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("Notion-Version".to_string(), "2022-06-28".to_string()),
+            ],
+        }
+    }
+
+    /// Webhook connector: POST-only outbound to an arbitrary URL.
+    pub fn webhook(id: impl Into<String>, name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind: ConnectorKind::Webhook,
+            base_url: url.into(),
+            auth_secret: None,
+            auth: AuthScheme::None,
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ],
+        }
+    }
+
     /// Whether this connector needs a secret to build a valid request.
     pub fn requires_secret(&self) -> bool {
         !matches!(self.auth, AuthScheme::None)
+    }
+}
+
+impl ConnectorKind {
+    /// Human-readable label for the connector kind.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::GenericRest => "generic",
+            Self::Webhook => "webhook",
+            Self::GitHub => "github",
+            Self::GitLab => "gitlab",
+            Self::Jira => "jira",
+            Self::Slack => "slack",
+            Self::Discord => "discord",
+            Self::Notion => "notion",
+        }
     }
 }

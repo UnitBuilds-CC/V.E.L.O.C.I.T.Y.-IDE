@@ -7,14 +7,22 @@
 //! time and never persisted in plaintext.
 
 pub mod http;
+pub mod oauth2;
 pub mod registry;
+pub mod sync;
+pub mod templates;
 pub mod types;
+pub mod webhooks;
 
 use std::path::Path;
 
 pub use http::{ConnectorRequest, ConnectorResponse, PreparedRequest};
+pub use oauth2::{OAuth2Manager, OAuth2Provider, OAuth2Token};
 pub use registry::ConnectorRegistry;
-pub use types::{AuthScheme, ConnectorConfig};
+pub use sync::{SyncDirection, SyncEngine, SyncRule};
+pub use templates::{IntegrationTemplate, all_templates, find_template};
+pub use types::{AuthScheme, ConnectorConfig, ConnectorKind};
+pub use webhooks::{WebhookEvent, WebhookManager};
 
 use crate::security::secrets::SecretStore;
 
