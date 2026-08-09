@@ -8,6 +8,8 @@ pub mod executor;
 pub mod memory_store;
 pub mod models;
 pub mod nda;
+pub mod peer_link;
+pub mod peer_server;
 pub mod planning;
 pub mod provider;
 pub mod reasoning;
