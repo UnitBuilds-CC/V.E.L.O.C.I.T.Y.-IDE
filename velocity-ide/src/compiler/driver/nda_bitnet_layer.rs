@@ -1,3 +1,15 @@
+//! Vulkan NDA BitNet (1-bit quantized) transformer layer implementation.
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks wrap Vulkan API calls via `ash`. The following invariants hold:
+//! - All handles (Device, Queue, Buffers, Pipelines, DescriptorSets) are valid and initialized.
+//! - Buffers are created via `create_coherent_buffer` / `create_device_local_buffer`.
+//! - Descriptor sets are allocated from pools with sufficient capacity.
+//! - Command buffers are recorded within valid scopes and submitted to the correct queue.
+//! - Push constants match the pipeline layout ranges.
+//! - `Drop` tears down resources in reverse dependency order.
+
 use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;
@@ -120,10 +132,12 @@ impl VulkanNdaBitNetLayer {
 
         let shader_info_nda =
             vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::NDA_SPV);
+        // SAFETY: create_shader_module with valid NDA SPIR-V bytecode.
         let shader_nda = unsafe { device.create_shader_module(&shader_info_nda, None)? };
 
         let shader_info_act =
             vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::ACT_NDA_SPV);
+        // SAFETY: create_shader_module with valid activation SPIR-V bytecode.
         let shader_act = unsafe { device.create_shader_module(&shader_info_act, None)? };
 
         let bindings_nda = [
@@ -159,6 +173,7 @@ impl VulkanNdaBitNetLayer {
                 .build(),
         ];
         let layout_info_nda = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_nda);
+        // SAFETY: create_descriptor_set_layout for NDA compute bindings (5 storage buffers).
         let desc_set_layout_nda =
             unsafe { device.create_descriptor_set_layout(&layout_info_nda, None)? };
 
@@ -189,6 +204,7 @@ impl VulkanNdaBitNetLayer {
                 .build(),
         ];
         let layout_info_act = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_act);
+        // SAFETY: create_descriptor_set_layout for activation function bindings (4 storage buffers).
         let desc_set_layout_act =
             unsafe { device.create_descriptor_set_layout(&layout_info_act, None)? };
 
@@ -202,6 +218,7 @@ impl VulkanNdaBitNetLayer {
         let pipeline_layout_info_nda = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&layouts_nda)
             .push_constant_ranges(&push_constant_ranges);
+        // SAFETY: create_pipeline_layout for NDA and activation pipelines (8-byte push constants).
         let pipeline_layout_nda =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info_nda, None)? };
 
@@ -230,6 +247,7 @@ impl VulkanNdaBitNetLayer {
             .stage(stage_info_act.build())
             .layout(pipeline_layout_act);
 
+        // SAFETY: create_compute_pipelines for NDA and activation pipelines with valid shaders.
         let pipelines_nda = unsafe {
             device
                 .create_compute_pipelines(
@@ -241,6 +259,7 @@ impl VulkanNdaBitNetLayer {
         };
         let pipeline_nda = pipelines_nda[0];
 
+        // SAFETY: create_compute_pipelines for the activation pipeline.
         let pipelines_act = unsafe {
             device
                 .create_compute_pipelines(
@@ -490,9 +509,11 @@ impl VulkanNdaBitNetLayer {
         let pool_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(8)
             .pool_sizes(&pool_sizes);
+        // SAFETY: create_descriptor_pool with capacity for 8 sets of 40 storage buffers.
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
         let layouts_nda = vec![desc_set_layout_nda; 7];
+        // SAFETY: allocate_descriptor_sets allocates 7 NDA sets + 1 activation set from pool.
         let desc_sets_nda = unsafe {
             device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
@@ -501,6 +522,7 @@ impl VulkanNdaBitNetLayer {
             )?
         };
 
+        // SAFETY: allocate one activation descriptor set from the pool.
         let desc_set_act = unsafe {
             device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
@@ -621,6 +643,7 @@ impl VulkanNdaBitNetLayer {
                     .buffer_info(&buffer_infos[4..5])
                     .build(),
             ];
+            // SAFETY: update_descriptor_sets binds buffer info to NDA descriptor sets.
             unsafe { device.update_descriptor_sets(&writes, &[]) };
         }
 
@@ -672,17 +695,20 @@ impl VulkanNdaBitNetLayer {
                 .buffer_info(&buffer_infos_act[3..4])
                 .build(),
         ];
+        // SAFETY: update_descriptor_sets binds buffer info to activation descriptor set.
         unsafe { device.update_descriptor_sets(&writes_act, &[]) };
 
         let pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(driver.queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        // SAFETY: create_command_pool for the compute queue family.
         let command_pool = unsafe { device.create_command_pool(&pool_info, None)? };
 
         let alloc_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
+        // SAFETY: allocate_command_buffers allocates one primary command buffer.
         let command_buffers = unsafe { device.allocate_command_buffers(&alloc_info)? };
         let command_buffer = command_buffers[0];
 
@@ -869,6 +895,10 @@ impl VulkanNdaBitNetLayer {
 
 impl Drop for VulkanNdaBitNetLayer {
     fn drop(&mut self) {
+        // SAFETY: Vulkan resource teardown in correct dependency order:
+        // device_wait_idle → fence → command_pool → descriptor_pool → all buffers/memory →
+        // pipelines → pipeline layouts → descriptor set layouts → shader modules.
+        // All handles are valid and owned by this struct.
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_fence(self.fence, None);
