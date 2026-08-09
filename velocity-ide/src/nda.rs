@@ -451,6 +451,9 @@ pub fn nda_gemv_v1_tern(matrix: &NdaMatrix, x: &[f32]) -> Vec<f32> {
             while temp > 0 {
                 let bit = temp.trailing_zeros() as usize;
                 let mask = 1_u8 << bit;
+                // SAFETY: `bit_start + bit` is within `x.len()` because `byte_idx < stride`
+                // and `stride * 8 >= matrix.cols == x.len()`. The bit is set in `temp`,
+                // so `bit < 8` and `bit_start + bit < (byte_idx + 1) * 8 <= stride * 8`.
                 let xi = unsafe { *x.get_unchecked(bit_start + bit) };
                 if pos_b & mask != 0 {
                     acc += xi;
@@ -514,6 +517,8 @@ pub fn nda_gemv_v2_i8(matrix: &NdaMatrix, q: &[i8], act_scale: f32) -> Vec<f32> 
             for bit in 0..bit_end {
                 let s = (sign_byte >> bit) & 1;
                 let e = (extra_byte >> bit) & 1;
+                // SAFETY: `bit_start + bit` is within `q.len()` because `bit < bit_end`
+                // and `bit_start + bit_end <= matrix.cols <= q.len()`.
                 let qi = unsafe { *q.get_unchecked(bit_start + bit) } as i32;
 
                 // Step A: +qi or -qi (no multiply — just conditional negate)

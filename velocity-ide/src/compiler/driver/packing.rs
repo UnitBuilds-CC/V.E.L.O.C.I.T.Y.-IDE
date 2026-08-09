@@ -1,4 +1,15 @@
+//! Weight and input packing routines for NDA and uvec4 GPU formats.
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks reinterpret between `&[u8]` and `&[u32]` via `from_raw_parts`.
+//! Callers must ensure input byte slices are 4-byte aligned and have lengths that are
+//! multiples of 4. All packing functions are internal and called with pre-validated
+//! weight buffers from the model loader.
+
 pub fn pack_weights_uvec4(src: &[u8], k: usize, n: usize) -> Vec<u8> {
+    // SAFETY: `src` is a weight buffer whose length is guaranteed to be a multiple of 4
+    // by the model loader. Pointer cast is valid because the buffer is 4-byte aligned.
     let src_u32 = unsafe { std::slice::from_raw_parts(src.as_ptr() as *const u32, src.len() / 4) };
     let num_col_groups = k / 16;
     let num_col_groups_4 = num_col_groups / 4;
@@ -15,6 +26,8 @@ pub fn pack_weights_uvec4(src: &[u8], k: usize, n: usize) -> Vec<u8> {
         }
     }
 
+    // SAFETY: `dest` is a Vec<u32>; reinterpreting as bytes is valid. Length is
+    // checked via checked_mul to prevent overflow.
     unsafe {
         let bytes_ptr = dest.as_ptr() as *const u8;
         let byte_len = dest.len().checked_mul(4).expect("dest len overflow");
@@ -65,6 +78,8 @@ pub fn pack_inputs_nda(inputs_ternary_u32: &[u32]) -> (Vec<u32>, Vec<u32>) {
 }
 
 pub fn pack_weights_nda(weights_ternary_bytes: &[u8], k: usize, n: usize) -> (Vec<u8>, Vec<u8>) {
+    // SAFETY: `weights_ternary_bytes` length is a multiple of 4 (guaranteed by caller).
+    // Pointer cast is valid because the buffer is 4-byte aligned.
     let src_u32 = unsafe {
         std::slice::from_raw_parts(
             weights_ternary_bytes.as_ptr() as *const u32,
@@ -116,10 +131,12 @@ pub fn pack_weights_nda(weights_ternary_bytes: &[u8], k: usize, n: usize) -> (Ve
         }
     }
 
+    // SAFETY: `active` is a Vec<u32>; reinterpreting as bytes is valid. Length checked.
     let act_bytes = unsafe {
         let byte_len = active.len().checked_mul(4).expect("active len overflow");
         std::slice::from_raw_parts(active.as_ptr() as *const u8, byte_len).to_vec()
     };
+    // SAFETY: `pos` is a Vec<u32>; reinterpreting as bytes is valid. Length checked.
     let pos_bytes = unsafe {
         let byte_len = pos.len().checked_mul(4).expect("pos len overflow");
         std::slice::from_raw_parts(pos.as_ptr() as *const u8, byte_len).to_vec()

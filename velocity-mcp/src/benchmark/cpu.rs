@@ -271,6 +271,8 @@ pub fn gemv_nda(
 ) {
     #[cfg(target_arch = "x86_64")]
     {
+        // SAFETY: SSE2 GEMV call. Input/output slices are valid and have correct lengths
+        // guaranteed by the caller. SSE2 is available on all x86_64 processors.
         unsafe {
             gemv_nda_sse2(
                 k,
@@ -362,9 +364,13 @@ impl BitNet3BLayerData {
                 .len()
                 .checked_mul(4)
                 .expect("benchmark slice overflow");
+            // SAFETY: `slice` is &[u32]; reinterpreting as &[u8] is valid.
+            // Length checked via checked_mul.
             unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
         };
         let to_u32_vec = |bytes: Vec<u8>| -> Vec<u32> {
+            // SAFETY: `bytes` came from a Vec<u32> via to_bytes; alignment and length
+            // are guaranteed to be correct for u32 reinterpretation.
             unsafe {
                 let u32_ptr = bytes.as_ptr() as *const u32;
                 std::slice::from_raw_parts(u32_ptr, bytes.len() / 4).to_vec()

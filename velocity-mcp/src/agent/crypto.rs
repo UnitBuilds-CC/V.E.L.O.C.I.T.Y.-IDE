@@ -182,6 +182,8 @@ mod os {
     fn machine_key() -> [u8; 32] {
         let hostname =
             std::fs::read_to_string("/etc/hostname").unwrap_or_else(|_| "localhost".to_string());
+        // SAFETY: `libc::getuid()` is a POSIX syscall that always returns a valid uid.
+        // It never fails and has no pointer arguments.
         let uid = unsafe { libc::getuid() };
         let mut seed = hostname.into_bytes();
         seed.extend_from_slice(&uid.to_le_bytes());

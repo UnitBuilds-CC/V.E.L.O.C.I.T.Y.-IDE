@@ -9,6 +9,17 @@
 //   • Q quantisation (post-RoPE)         : FP32 → v2 quad {-2,-1,+1,+2} 2-bit bitmaps
 //   • Q·K attention dot product          : pure bitwise popcount (no FP32 in hot loop)
 //   • KV-cache                           : v2 quad bitmaps — O(seq × d_kv/4) memory
+//
+//! # Safety Invariants
+//!
+//! `unsafe` blocks in this module perform GPU buffer operations:
+//! - `copy_nonoverlapping`: copies between CPU slices and GPU-resident buffers
+//!   (`x_residual_ptr`). Pointers come from `GpuPipeline` which allocates and owns
+//!   the buffer for the lifetime of the pipeline. Copy length is `hidden_size` which
+//!   is guaranteed to fit within both source and destination.
+//! - `from_raw_parts_mut`: creates mutable slices from `driver.shared_input_ptr`
+//!   (a Vulkan coherent buffer mapping). The pointer is valid for `hidden_size` elements
+//!   because the buffer was created with that exact size. The driver outlives the slice.
 
 use rand::Rng;
 use rayon::prelude::*;
@@ -768,6 +779,8 @@ impl Transformer {
             // 1. Copy initial token embeddings to x_residual_buffer on GPU
             let embed_src =
                 &self.weights.embed_tokens[token as usize * h..(token as usize + 1) * h];
+            // SAFETY: `embed_src` has exactly `h` elements. `pipeline.x_residual_ptr`
+            // points to a GPU buffer of at least `h` f32 elements. Non-overlapping.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     embed_src.as_ptr(),
@@ -814,6 +827,8 @@ impl Transformer {
                 .expect("Vulkan pipeline execution failed");
 
             // 4. Read back the final hidden state from x_residual_buffer to CPU self.scratch.x
+            // SAFETY: `pipeline.x_residual_ptr` and `self.scratch.x.as_mut_ptr()` are
+            // valid for `h` f32 elements. Non-overlapping (GPU buffer vs CPU Vec).
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     pipeline.x_residual_ptr as *const f32,
@@ -838,6 +853,8 @@ impl Transformer {
 
             // 1. Attention pre-norm (zero-copy straight to mapped GPU buffer if Vulkan is used!)
             let x_input: &[f32] = if let Some(ref driver) = self.weights.vulkan {
+                // SAFETY: `driver.shared_input_ptr` is a valid coherent buffer mapping
+                // for `h` f32 elements. The driver outlives this mutable borrow.
                 unsafe {
                     let dest_slice =
                         std::slice::from_raw_parts_mut(driver.shared_input_ptr as *mut f32, h);
@@ -943,6 +960,8 @@ impl Transformer {
 
             // 7. FFN pre-norm (zero-copy straight to mapped GPU buffer if Vulkan is used!)
             let x_ffn_input: &[f32] = if let Some(ref driver) = self.weights.vulkan {
+                // SAFETY: `driver.shared_input_ptr` is a valid coherent buffer mapping
+                // for `h` f32 elements. The driver outlives this mutable borrow.
                 unsafe {
                     let dest_slice =
                         std::slice::from_raw_parts_mut(driver.shared_input_ptr as *mut f32, h);

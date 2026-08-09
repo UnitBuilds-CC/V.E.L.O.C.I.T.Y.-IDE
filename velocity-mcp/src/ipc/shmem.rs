@@ -90,6 +90,7 @@ impl SharedMemoryBuffer {
         // The event names are null-terminated wide strings from to_wstring().
         // We check for null handles and return Err if creation fails.
         let h_req_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, w_req.as_ptr()) };
+        // SAFETY: Same as h_req_event — CreateEventW with valid null-terminated name.
         let h_res_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, w_res.as_ptr()) };
 
         if h_req_event.is_null() || h_res_event.is_null() {

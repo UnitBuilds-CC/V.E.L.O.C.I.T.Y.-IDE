@@ -10,6 +10,26 @@
 //! - CachedUiaTree: In-memory cache of the automation tree for fast lookups
 //! - UiaFfi: Direct FFI calls via `windows` crate types for high-performance COM interop
 //! - Performance: ~100x faster than PowerShell for single-element lookups
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks in this module are COM interface method calls via the `windows` crate.
+//! The `windows` crate wraps raw COM pointers in RAII handles (`IUIAutomation`,
+//! `IUIAutomationElement`, etc.) with proper `AddRef`/`Release` refcounting. Safety relies on:
+//!
+//! 1. **COM initialization**: `CoInitializeEx` is called before any COM object creation.
+//!    `RPC_E_CHANGED_MODE` (0x80010106) is accepted for re-initialization.
+//! 2. **COM object validity**: All COM interface pointers come from successful `CoCreateInstance`
+//!    or from method calls on valid parent COM objects (e.g., `ElementFromPoint`, `GetRootElement`).
+//! 3. **Element validity**: `IUIAutomationElement` references remain valid for the duration of
+//!    the enclosing function call. Property getters (`CurrentAutomationId`, `CurrentName`, etc.)
+//!    and pattern queries (`GetCurrentPattern`) are called on elements obtained from valid tree
+//!    walks or find operations.
+//! 4. **Pattern validity**: Pattern objects (`IUIAutomationInvokePattern`, etc.) are obtained via
+//!    `GetCurrentPattern` on a valid element and cast from valid `IUnknown` pointers.
+//! 5. **Tree walker validity**: `IUIAutomationTreeWalker` is created from a valid `IUIAutomation`
+//!    instance. Walker methods (`GetFirstChildElement`, `GetNextSiblingElement`) return valid
+//!    element references or null (handled via `Result`).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -728,6 +748,10 @@ fn control_type_name(ct: i32) -> String {
 }
 
 /// Build the UIA tree via direct COM TreeWalker (~5ms for typical windows).
+// SAFETY: Tree walker COM calls. `auto` is a valid IUIAutomation from CoCreateInstance.
+// GetRootElement, CreateTrueCondition, CreateTreeWalker all return valid COM handles on success.
+// Walker methods (GetFirstChildElement, GetNextSiblingElement) return valid elements or null.
+// Property getters on elements (CurrentProcessId, etc.) are safe on valid element references.
 #[cfg(windows)]
 fn build_tree_com(
     auto: &windows::Win32::UI::Accessibility::IUIAutomation,
@@ -775,6 +799,8 @@ fn build_tree_com(
 }
 
 /// Recursively walk a COM element and its children.
+// SAFETY: Walker COM calls (GetFirstChildElement, GetNextSiblingElement) on a valid
+// IUIAutomationTreeWalker. Element references are valid for the duration of the call.
 #[cfg(windows)]
 fn walk_element_com(
     walker: &windows::Win32::UI::Accessibility::IUIAutomationTreeWalker,
@@ -838,6 +864,11 @@ fn invoke_pattern_com(
         WindowVisualState_Minimized, WindowVisualState_Normal,
     };
 
+    // SAFETY: All following unsafe blocks are COM method calls on valid UIA objects.
+    // `auto` is a valid IUIAutomation, `desktop` comes from GetRootElement,
+    // `com_elem` from FindFirst on a valid condition. Pattern objects come from
+    // GetCurrentPattern on valid elements. All COM pointers have proper refcounting
+    // via the `windows` crate RAII wrappers.
     // Find the element via COM using its automation ID or name
     let desktop =
         unsafe { auto.GetRootElement() }.map_err(|e| format!("GetRootElement: {:?}", e))?;

@@ -1046,6 +1046,10 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
 
         type ScalarJitFunc =
             unsafe extern "C" fn(vars: *mut i32, stack: *mut i32, init_len: i32) -> i32;
+        // SAFETY: `page_ptr` points to executable memory containing valid x86-64 machine
+        // code written by the emitter. The transmute converts it to a function pointer
+        // matching the calling convention used by the emitted code. The `page` Arc keeps
+        // the memory alive for the lifetime of the returned closure.
         let func: ScalarJitFunc = unsafe { std::mem::transmute(page_ptr) };
 
         let total_slots = registry.total_slots();
@@ -1108,6 +1112,8 @@ pub fn compile_scalar_block(nodes: &[NdaNode], registry: &VarRegistry) -> Option
                     }
                 }
 
+                // SAFETY: `func` is a valid JIT-compiled function pointer. `temp_vars` and
+                // `temp_stack` have sufficient capacity. The function returns the new stack length.
                 let final_len = unsafe {
                     func(
                         temp_vars.as_mut_ptr(),

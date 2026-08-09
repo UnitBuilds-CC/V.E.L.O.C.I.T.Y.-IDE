@@ -2,6 +2,12 @@
 //
 // Loads converted NDA weight files (.nda) and FP32 tensors (.bin)
 // produced by tools/convert_to_nda.py into in-memory structures.
+//
+//! # Safety Invariants
+//!
+//! `unsafe` blocks reinterpret `Vec<u32>` as `&[u8]` via `from_raw_parts`.
+//! This is sound because `Vec<u32>` guarantees 4-byte alignment and the byte
+//! length is computed via `checked_mul(4)` to prevent overflow.
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -101,6 +107,8 @@ fn tile_weights_nda(matrix: &NdaMatrix) -> (Vec<u8>, Vec<u8>) {
         }
     }
 
+    // SAFETY: `active_packed` is a Vec<u32>; reinterpreting as bytes is valid.
+    // Length checked via checked_mul to prevent overflow.
     let active_bytes = unsafe {
         let bytes_ptr = active_packed.as_ptr() as *const u8;
         let byte_len = active_packed
@@ -110,6 +118,8 @@ fn tile_weights_nda(matrix: &NdaMatrix) -> (Vec<u8>, Vec<u8>) {
         std::slice::from_raw_parts(bytes_ptr, byte_len).to_vec()
     };
 
+    // SAFETY: `pos_packed` is a Vec<u32>; reinterpreting as bytes is valid.
+    // Length checked via checked_mul to prevent overflow.
     let pos_bytes = unsafe {
         let bytes_ptr = pos_packed.as_ptr() as *const u8;
         let byte_len = pos_packed

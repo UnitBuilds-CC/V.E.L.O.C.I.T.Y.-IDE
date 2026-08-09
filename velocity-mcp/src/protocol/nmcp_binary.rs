@@ -133,6 +133,7 @@ impl<'a> NmcpBinaryFrame<'a> {
             return Err("Invalid NMCP magic signature");
         }
 
+        // SAFETY: bytes[4..36] is exactly 32 bytes; pointer cast to *const [u8; 32] is sound.
         let merkle_root = unsafe { &*(bytes[4..36].as_ptr() as *const [u8; 32]) };
         let payload = &bytes[36..];
 

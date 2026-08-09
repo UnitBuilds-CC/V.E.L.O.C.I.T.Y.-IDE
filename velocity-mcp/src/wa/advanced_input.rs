@@ -7,6 +7,13 @@
 //! - Drag-and-drop operations
 //! - Complex keyboard combinations (Ctrl+Shift+..., Alt+Tab, etc.)
 //! - SendInput-based low-level input injection
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks wrap Win32 API calls (`VkKeyScanW`, `SetCursorPos`, `SendInput`)
+//! via the `windows` crate. These are safe FFI calls: `VkKeyScanW` takes a valid `WCHAR`,
+//! `SetCursorPos` takes screen coordinates, and `SendInput` receives properly initialized
+//! `INPUT` structs. The `windows` crate handles null-pointer checks and error propagation.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -483,6 +490,8 @@ pub fn execute_sequence_native(sequence: &InputSequence) -> InputExecutionResult
             }
             InputEvent::TypeText { text } => {
                 for ch in text.chars() {
+                    // SAFETY: VkKeyScanW translates a character to a virtual-key code.
+                    // The input `ch as u16` is a valid WCHAR value.
                     let vk = unsafe {
                         windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(ch as u16)
                     };
@@ -547,6 +556,7 @@ fn native_mouse_button_flags(button: &MouseButton) -> (u32, u32) {
 
 #[cfg(target_os = "windows")]
 fn native_set_cursor_pos(x: i32, y: i32) {
+    // SAFETY: SetCursorPos takes screen coordinates; no pointer safety concerns.
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SetCursorPos(x, y);
     }
@@ -555,6 +565,8 @@ fn native_set_cursor_pos(x: i32, y: i32) {
 #[cfg(target_os = "windows")]
 fn native_send_mouse(flags: u32, data: u32) {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    // SAFETY: INPUT struct is properly initialized before passing to SendInput.
+    // SendInput with a valid INPUT slice and correct size is a safe FFI call.
     unsafe {
         let mut input = INPUT::default();
         input.r#type = INPUT_MOUSE;
@@ -567,6 +579,8 @@ fn native_send_mouse(flags: u32, data: u32) {
 #[cfg(target_os = "windows")]
 fn native_send_key(vk_code: u16, key_up: bool) {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    // SAFETY: INPUT struct is properly initialized with a valid virtual-key code.
+    // SendInput with a valid INPUT slice and correct size is a safe FFI call.
     unsafe {
         let mut input = INPUT::default();
         input.r#type = INPUT_KEYBOARD;

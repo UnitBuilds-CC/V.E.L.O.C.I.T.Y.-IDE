@@ -1294,6 +1294,9 @@ fn run_in_dll_sandbox(
         ])
         .output();
 
+    // SAFETY: CreateProcessW with zeroed STARTUPINFOW (with cb set) and PROCESS_INFORMATION.
+    // The command line is a valid mutable wide-string. CREATE_SUSPENDED flag is used to
+    // allow sandbox configuration before resuming the process.
     unsafe {
         let mut si: STARTUPINFOW = std::mem::zeroed();
         si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
