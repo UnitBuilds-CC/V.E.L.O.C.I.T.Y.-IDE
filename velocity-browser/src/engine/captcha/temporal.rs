@@ -90,7 +90,7 @@ impl TemporalMonitor {
                         count += 1;
                     }
                 }
-                let mean = if count > 0 { (sum / count) as u8 } else { 0 };
+                let mean = sum.checked_div(count).unwrap_or(0) as u8;
                 cell_means.push(mean);
             }
         }
@@ -156,7 +156,7 @@ impl TemporalMonitor {
                 transitions: transitions[i],
             })
             .collect();
-        regions.sort_by(|a, b| b.magnitude.cmp(&a.magnitude));
+        regions.sort_by_key(|r| std::cmp::Reverse(r.magnitude));
         regions
     }
 

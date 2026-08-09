@@ -222,7 +222,8 @@ impl GpuTileCompositor {
 
                         // Alpha blend
                         let out_a = src_a + (dst_a * (255 - src_a)) / 255;
-                        if out_a > 0 {
+                        if let Some(inv) = 1u32.checked_div(out_a) {
+                            let _ = inv; // use checked_div to guard against zero
                             tile_buffer[tile_idx] =
                                 ((src_r * src_a + dst_r * (255 - src_a)) / out_a) as u8;
                             tile_buffer[tile_idx + 1] =

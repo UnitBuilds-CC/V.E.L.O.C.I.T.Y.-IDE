@@ -345,16 +345,11 @@ impl BrowserSession {
             } else {
                 self.http_client.get(&url)
             };
-            match resp {
-                Ok(r) => {
-                    self.network_tracker
-                        .record_request(&url, &method, r.status_code, "fetch");
-                    let fetch_resp =
-                        crate::js::web_apis::build_fetch_response(r.status_code, &r.body);
-                    return Ok(format!("{:?}", fetch_resp));
-                }
-                Err(e) => return Err(e),
-            }
+            let r = resp?;
+            self.network_tracker
+                .record_request(&url, &method, r.status_code, "fetch");
+            let fetch_resp = crate::js::web_apis::build_fetch_response(r.status_code, &r.body);
+            return Ok(format!("{:?}", fetch_resp));
         }
 
         // Handle storage operations

@@ -541,11 +541,11 @@ impl WasmInterpreter {
             }
             op::I32_DIV_U => {
                 let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
-                self.push(WasmValue::I32(if b != 0 {
-                    (a / b) as i32
-                } else {
-                    return Err("i32.div_u by zero".into());
-                }));
+                self.push(WasmValue::I32(
+                    (a).checked_div(b)
+                        .map(|v| v as i32)
+                        .ok_or_else(|| "i32.div_u by zero".to_string())?,
+                ));
             }
             op::I32_REM_S => {
                 let (b, a) = (self.pop_i32()?, self.pop_i32()?);

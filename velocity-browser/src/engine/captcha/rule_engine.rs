@@ -164,7 +164,7 @@ impl RuleEngine {
 
     pub fn add_rule(&mut self, rule: SolveRule) {
         self.rules.push(rule);
-        self.rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
     }
 
     pub fn rule_count(&self) -> usize {

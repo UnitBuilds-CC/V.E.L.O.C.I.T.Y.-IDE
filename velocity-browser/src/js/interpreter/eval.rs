@@ -2172,13 +2172,9 @@ pub(super) fn find_proto_method(class_val: &JsValue, method: &str) -> Option<JsV
                 return Some(func.clone());
             }
         }
-        match cm.get("__parent__") {
-            Some(parent) => {
-                current = parent.clone();
-                depth += 1;
-            }
-            None => return None,
-        }
+        let parent = cm.get("__parent__")?;
+        current = parent.clone();
+        depth += 1;
     }
 }
 
@@ -2197,13 +2193,9 @@ pub(super) fn find_static_method(class_val: &JsValue, method: &str) -> Option<Js
                 return Some(func.clone());
             }
         }
-        match cm.get("__parent__") {
-            Some(parent) => {
-                current = parent.clone();
-                depth += 1;
-            }
-            None => return None,
-        }
+        let parent = cm.get("__parent__")?;
+        current = parent.clone();
+        depth += 1;
     }
 }
 
