@@ -415,3 +415,130 @@ fn decode_raw_token_sp(raw: &str) -> String {
     // Regular token: replace SentencePiece ▁ with a leading space
     raw.replace('\u{2581}', " ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── decode_raw_token_sp edge cases ──
+
+    #[test]
+    fn decode_sp_sentence_piece_marker() {
+        // U+2581 (lower one-eighth block) → ASCII space
+        assert_eq!(decode_raw_token_sp("\u{2581}"), " ");
+    }
+
+    #[test]
+    fn decode_sp_leading_space_token() {
+        // Token with leading ▁ → replaced with space
+        assert_eq!(decode_raw_token_sp("\u{2581}hello"), " hello");
+    }
+
+    #[test]
+    fn decode_sp_byte_token() {
+        // <0x41> → 'A'
+        assert_eq!(decode_raw_token_sp("<0x41>"), "A");
+        // <0x00> → NUL byte
+        assert_eq!(decode_raw_token_sp("<0x00>"), "\0");
+        // <0xFF> → invalid UTF-8 → replacement character
+        assert_eq!(decode_raw_token_sp("<0xFF>"), "\u{FFFD}");
+    }
+
+    #[test]
+    fn decode_sp_llama_special_token() {
+        // <s>, </s>, <|...|> patterns → empty string
+        assert_eq!(decode_raw_token_sp("<s>"), "");
+        assert_eq!(decode_raw_token_sp("</s>"), "");
+        assert_eq!(decode_raw_token_sp("<|begin_of_text|>"), "");
+    }
+
+    #[test]
+    fn decode_sp_regular_token() {
+        // Regular token without special markers → returned as-is
+        assert_eq!(decode_raw_token_sp("hello"), "hello");
+        assert_eq!(decode_raw_token_sp("world"), "world");
+    }
+
+    #[test]
+    fn decode_sp_angle_bracket_with_space_not_special() {
+        // <foo bar> has a space → not treated as special token
+        assert_eq!(decode_raw_token_sp("<foo bar>"), "<foo bar>");
+    }
+
+    #[test]
+    fn decode_sp_empty_string() {
+        assert_eq!(decode_raw_token_sp(""), "");
+    }
+
+    // ── decode_token boundary IDs ──
+
+    #[test]
+    fn decode_token_owned_returns_string() {
+        // Build a minimal tokenizer with owned tokens (no file_bytes slicing).
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![
+                TokenRef::Owned("hello".into()),
+                TokenRef::Owned("".into()),
+                TokenRef::Owned("world".into()),
+            ],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 2,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        assert_eq!(tok.decode_token(0), "hello");
+        // Empty owned token → empty string
+        assert_eq!(tok.decode_token(1), "");
+        assert_eq!(tok.decode_token(2), "world");
+    }
+
+    #[test]
+    fn decode_token_out_of_range_returns_empty() {
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![TokenRef::Owned("only".into())],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 0,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        // ID beyond vocabulary → empty string
+        assert_eq!(tok.decode_token(999), "");
+    }
+
+    #[test]
+    fn decode_batch() {
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![
+                TokenRef::Owned("hello".into()),
+                TokenRef::Owned(" ".into()),
+                TokenRef::Owned("world".into()),
+            ],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 2,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        assert_eq!(tok.decode(&[0, 1, 2]), "hello world");
+        assert_eq!(tok.decode(&[]), "");
+    }
+
+    #[test]
+    fn vocab_size_matches_id_to_token_len() {
+        let tok = Tokenizer {
+            vocab: HashMap::new(),
+            id_to_token: vec![TokenRef::Owned("a".into()), TokenRef::Owned("b".into())],
+            merges: HashMap::new(),
+            bos_id: 0,
+            eos_id: 1,
+            is_tiktoken: false,
+            file_bytes: vec![],
+        };
+        assert_eq!(tok.vocab_size(), 2);
+    }
+}

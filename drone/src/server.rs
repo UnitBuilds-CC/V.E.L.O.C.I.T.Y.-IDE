@@ -500,4 +500,51 @@ mod tests {
         let (status, _) = http_get(port, "/nonexistent/path");
         assert_eq!(status, 404);
     }
+
+    /// Multiple threads hitting the server concurrently all get valid responses.
+    #[test]
+    fn integration_concurrent_requests() {
+        let (server, port) = start_test_server();
+        let _serve_handle = std::thread::spawn(move || {
+            let _ = server.serve();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let h = std::thread::spawn(move || {
+                let (status, body) = http_get(port, "/peer/health");
+                assert_eq!(status, 200);
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(json["status"], "ok");
+            });
+            handles.push(h);
+        }
+        for h in handles {
+            h.join().expect("concurrent request thread panicked");
+        }
+    }
+
+    /// Rapid connect-disconnect cycles should not crash the server.
+    #[test]
+    fn integration_rapid_connect_disconnect() {
+        let (server, port) = start_test_server();
+        let _serve_handle = std::thread::spawn(move || {
+            let _ = server.serve();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        for _ in 0..20 {
+            // Connect then immediately drop (close) the stream.
+            let stream = TcpStream::connect(format!("127.0.0.1:{port}"));
+            assert!(stream.is_ok());
+            // Stream dropped here.
+        }
+
+        // Server should still respond after all the rapid disconnects.
+        let (status, body) = http_get(port, "/peer/health");
+        assert_eq!(status, 200);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
 }

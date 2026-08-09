@@ -1097,4 +1097,32 @@ mod tests {
         assert!(d.has_commit && d.changed);
         assert_eq!(d.commands, 1);
     }
+
+    /// Encoding a doc with no triples and no commands still produces a valid
+    /// buffer (just the 48-byte header + string pool with the empty string).
+    #[test]
+    fn encode_empty_triples_and_commands() {
+        let doc = NdaPortableDoc::new();
+        let bytes = doc.to_portable_bytes();
+        // Header is 48 bytes; string pool starts right after with just "".
+        assert!(bytes.len() >= PORTABLE_HEADER_LEN + 2);
+        // Round-trip succeeds.
+        let parsed = NdaPortableDoc::from_portable_bytes(&bytes).unwrap();
+        assert_eq!(parsed.triples.len(), 0);
+        assert_eq!(parsed.commands.len(), 0);
+        assert_eq!(doc, parsed);
+    }
+
+    /// Encoding a doc with only a title (one internal triple) and no commands.
+    #[test]
+    fn encode_title_only_no_commands() {
+        let mut doc = NdaPortableDoc::new();
+        doc.set_title("OnlyTitle");
+        let bytes = doc.try_to_portable_bytes().expect("title-only encodes");
+        let parsed = NdaPortableDoc::from_portable_bytes(&bytes).unwrap();
+        // Title is stored as a triple.
+        assert_eq!(parsed.triples.len(), 1);
+        assert_eq!(parsed.commands.len(), 0);
+        assert_eq!(doc, parsed);
+    }
 }
