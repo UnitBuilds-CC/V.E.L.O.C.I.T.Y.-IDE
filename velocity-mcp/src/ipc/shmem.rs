@@ -69,6 +69,9 @@ impl SharedMemoryBuffer {
 
         file.set_len(TOTAL_BUFFER_SIZE as u64)?;
 
+        // SAFETY: MmapMut::map_mut creates a mutable memory-mapped view of the file.
+        // The file was opened with read+write+create and sized to TOTAL_BUFFER_SIZE.
+        // The mapping is valid for the lifetime of the file handle (held by mmap).
         let mmap = unsafe { MmapMut::map_mut(&file)? };
 
         let file_name = path
@@ -83,6 +86,9 @@ impl SharedMemoryBuffer {
         let w_req = to_wstring(&req_event_name);
         let w_res = to_wstring(&res_event_name);
 
+        // SAFETY: CreateEventW with null security attributes and manual reset (0).
+        // The event names are null-terminated wide strings from to_wstring().
+        // We check for null handles and return Err if creation fails.
         let h_req_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, w_req.as_ptr()) };
         let h_res_event = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, w_res.as_ptr()) };
 
@@ -113,6 +119,9 @@ impl SharedMemoryBuffer {
 
         file.set_len(TOTAL_BUFFER_SIZE as u64)?;
 
+        // SAFETY: MmapMut::map_mut creates a mutable memory-mapped view of the file.
+        // The file was opened with read+write+create and sized to TOTAL_BUFFER_SIZE.
+        // The mapping is valid for the lifetime of the file handle (held by mmap).
         let mmap = unsafe { MmapMut::map_mut(&file)? };
 
         let mut buffer = SharedMemoryBuffer { mmap };
@@ -126,6 +135,8 @@ impl SharedMemoryBuffer {
 
     #[cfg(target_os = "windows")]
     pub fn wait_for_request(&self) {
+        // SAFETY: self.h_req_event is a valid event handle created by CreateEventW.
+        // INFINITE (0xFFFFFFFF) timeout blocks until the event is signaled.
         unsafe {
             WaitForSingleObject(self.h_req_event, 0xFFFFFFFF);
         }
@@ -138,6 +149,8 @@ impl SharedMemoryBuffer {
 
     #[cfg(target_os = "windows")]
     pub fn signal_response(&self) {
+        // SAFETY: self.h_res_event is a valid event handle created by CreateEventW.
+        // SetEvent sets it to signaled state, unblocking any waiting threads.
         unsafe {
             SetEvent(self.h_res_event);
         }
@@ -150,6 +163,7 @@ impl SharedMemoryBuffer {
 
     #[cfg(target_os = "windows")]
     pub fn signal_request(&self) {
+        // SAFETY: self.h_req_event is a valid event handle created by CreateEventW.
         unsafe {
             SetEvent(self.h_req_event);
         }
@@ -162,6 +176,8 @@ impl SharedMemoryBuffer {
 
     #[cfg(target_os = "windows")]
     pub fn wait_for_response(&self) {
+        // SAFETY: self.h_res_event is a valid event handle created by CreateEventW.
+        // INFINITE timeout blocks until the response is signaled.
         unsafe {
             WaitForSingleObject(self.h_res_event, 0xFFFFFFFF);
         }
@@ -256,6 +272,9 @@ impl SharedMemoryBuffer {
 #[cfg(target_os = "windows")]
 impl Drop for SharedMemoryBuffer {
     fn drop(&mut self) {
+        // SAFETY: CloseHandle is called exactly once via Drop, preventing handle leaks.
+        // The handles were created by CreateEventW and are checked for null before use.
+        // Null checks prevent closing invalid handles.
         unsafe {
             if !self.h_req_event.is_null() {
                 CloseHandle(self.h_req_event);
