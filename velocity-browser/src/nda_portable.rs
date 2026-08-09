@@ -603,8 +603,15 @@ impl NdaPortableDoc {
             command_offsets.push(add_string(&c.content)?);
         }
 
-        let triples_block = triple_offsets.len() * 12;
-        let commands_block = self.commands.len() * 18;
+        let triples_block = triple_offsets
+            .len()
+            .checked_mul(12)
+            .expect("nda_portable: triples block overflow");
+        let commands_block = self
+            .commands
+            .len()
+            .checked_mul(18)
+            .expect("nda_portable: commands block overflow");
         let string_pool_offset = PORTABLE_HEADER_LEN + triples_block + commands_block;
         if validate && string_pool_offset > MAX_POOL_OFFSET {
             return Err(NdaEncodeError::PoolOffsetTooLarge(string_pool_offset));

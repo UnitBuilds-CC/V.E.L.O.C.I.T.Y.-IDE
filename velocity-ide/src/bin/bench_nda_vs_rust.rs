@@ -310,7 +310,7 @@ fn bench_3_matrix_chain() {
 
     // Memory comparison
     let nda_bytes: usize = nda_mats.iter().map(|m| m.sign.len() + m.extra.len()).sum();
-    let f32_bytes: usize = f32_mats.iter().map(|m| m.len() * 4).sum();
+    let f32_bytes: usize = f32_mats.iter().map(|m| m.len().saturating_mul(4)).sum();
     println!(
         "│  NDA memory (2-bit weights)  : {:>8.1} KB                     │",
         nda_bytes as f64 / 1024.0
@@ -795,7 +795,7 @@ fn bench_6_jit_vs_rust() {
 
     // Memory footprint comparison
     let nda_weight_bytes: usize = nda_mats.iter().map(|m| m.sign.len() + m.extra.len()).sum();
-    let f32_weight_bytes: usize = f32_mats.iter().map(|m| m.len() * 4).sum();
+    let f32_weight_bytes: usize = f32_mats.iter().map(|m| m.len().saturating_mul(4)).sum();
     println!("│                                                                 │");
     println!(
         "│  NDA weight memory (2-bit)      : {:>9.1} KB               │",

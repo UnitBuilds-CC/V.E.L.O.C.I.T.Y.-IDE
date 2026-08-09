@@ -68,7 +68,8 @@ impl BitNet3BGpuLayerData {
         let weight_down = vec![0x99999999u32; (8640 * 3200) / 16];
 
         let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
+            let byte_len = slice.len().checked_mul(4).expect("gpu slice overflow");
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
         };
 
         let layer = VulkanBitNetLayer::new(
@@ -111,15 +112,18 @@ impl BitNet3BGpuNdaLayerData {
         let weight_down = vec![0x99999999u32; (8640 * 3200) / 16];
 
         let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
-            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
+            let byte_len = slice.len().checked_mul(4).expect("gpu nda slice overflow");
+            unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
         };
 
         let (in_act, in_pos) = velocity_ide::compiler::driver::pack_inputs_nda(&inputs_3200);
         let inputs_active = unsafe {
-            std::slice::from_raw_parts(in_act.as_ptr() as *const u8, in_act.len() * 4).to_vec()
+            let byte_len = in_act.len().checked_mul(4).expect("in_act overflow");
+            std::slice::from_raw_parts(in_act.as_ptr() as *const u8, byte_len).to_vec()
         };
         let inputs_pos = unsafe {
-            std::slice::from_raw_parts(in_pos.as_ptr() as *const u8, in_pos.len() * 4).to_vec()
+            let byte_len = in_pos.len().checked_mul(4).expect("in_pos overflow");
+            std::slice::from_raw_parts(in_pos.as_ptr() as *const u8, byte_len).to_vec()
         };
 
         let layer = VulkanNdaBitNetLayer::new(
@@ -146,7 +150,8 @@ pub fn bench_qwen_3b_layer_gpu(
     data: &mut Qwen3BGpuLayerData,
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let to_bytes_f32 = |slice: &[f32]| -> &[u8] {
-        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
+        let byte_len = slice.len().checked_mul(4).expect("qwen bench overflow");
+        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
     };
     data.layer
         .run(to_bytes_f32(&data.inputs_2304), &mut data.out_2304_a)
@@ -156,7 +161,8 @@ pub fn bench_bitnet_3b_layer_gpu(
     data: &mut BitNet3BGpuLayerData,
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
-        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
+        let byte_len = slice.len().checked_mul(4).expect("bitnet bench overflow");
+        unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
     };
     data.layer
         .run(to_bytes_u32(&data.inputs_3200), &mut data.out_3200_down)

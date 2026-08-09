@@ -316,8 +316,23 @@ impl Tokenizer {
         let raw = match self.id_to_token.get(id as usize) {
             Some(TokenRef::Owned(s)) if !s.is_empty() => s.as_str(),
             Some(TokenRef::Slice { offset, len }) if *len > 0 => {
-                let start = 24 + self.vocab_size() * 8 + self.merges.len() * 20 + *offset as usize;
-                let end = start + *len as usize;
+                let vocab_bytes = self
+                    .vocab_size()
+                    .checked_mul(8)
+                    .expect("tokenizer: vocab_size overflow");
+                let merges_bytes = self
+                    .merges
+                    .len()
+                    .checked_mul(20)
+                    .expect("tokenizer: merges overflow");
+                let start = 24_usize
+                    .checked_add(vocab_bytes)
+                    .and_then(|v| v.checked_add(merges_bytes))
+                    .and_then(|v| v.checked_add(*offset as usize))
+                    .expect("tokenizer: token offset overflow");
+                let end = start
+                    .checked_add(*len as usize)
+                    .expect("tokenizer: token end overflow");
                 std::str::from_utf8(&self.file_bytes[start..end]).unwrap_or("")
             }
             _ => return String::new(),
