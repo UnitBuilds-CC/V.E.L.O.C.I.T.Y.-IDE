@@ -472,8 +472,7 @@ impl ExecutionState {
                 let mat_vec = self.eval_node(matrix, site_map)?;
                 let vec = self.eval_node(vector, site_map)?;
                 let cols = vec.len;
-                if cols > 0 {
-                    let rows = mat_vec.len / cols;
+                if let Some(rows) = mat_vec.len.checked_div(cols) {
                     let n_mat = NdaMatrix::new_quad(
                         rows,
                         cols,

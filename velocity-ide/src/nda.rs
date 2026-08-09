@@ -257,13 +257,12 @@ pub fn nda_gemv_fp4(matrix: &NdaMatrix, x: &[f32]) -> Vec<f32> {
             let q_scale = matrix.q_scales[row * n_blocks + block_idx] as f32;
             let scale = q_scale * global_scale;
             let block_start_col = block_idx * block_size;
-            let mut byte_idx = (row_start + block_start_col) / 2;
+            let start_byte = (row_start + block_start_col) / 2;
             let col_pairs = block_size / 2;
 
-            for pair in 0..col_pairs {
+            for (byte_idx, pair) in (start_byte..).zip(0..col_pairs) {
                 let col0 = block_start_col + pair * 2;
                 let byte = matrix.packed_codes[byte_idx];
-                byte_idx += 1;
 
                 let code0 = (byte & 0x0F) as usize;
                 let code1 = ((byte >> 4) & 0x0F) as usize;
@@ -300,13 +299,12 @@ pub fn nda_gemv_fp2(matrix: &NdaMatrix, x: &[f32]) -> Vec<f32> {
             let q_scale = matrix.q_scales[row * n_blocks + block_idx] as f32;
             let scale = q_scale * global_scale;
             let block_start_col = block_idx * block_size;
-            let mut byte_idx = (row_start + block_start_col) / 4;
+            let start_byte = (row_start + block_start_col) / 4;
             let col_quads = block_size / 4;
 
-            for quad in 0..col_quads {
+            for (byte_idx, quad) in (start_byte..).zip(0..col_quads) {
                 let col0 = block_start_col + quad * 4;
                 let byte = matrix.packed_codes[byte_idx];
-                byte_idx += 1;
 
                 let code0 = (byte & 0x03) as usize;
                 let code1 = ((byte >> 2) & 0x03) as usize;
