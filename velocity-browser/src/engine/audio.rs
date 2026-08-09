@@ -56,7 +56,12 @@ pub enum OscillatorType {
 
 impl OscillatorType {
     pub fn as_str(&self) -> &'static str {
-        match self { Self::Sine => "sine", Self::Square => "square", Self::Sawtooth => "sawtooth", Self::Triangle => "triangle" }
+        match self {
+            Self::Sine => "sine",
+            Self::Square => "square",
+            Self::Sawtooth => "sawtooth",
+            Self::Triangle => "triangle",
+        }
     }
 }
 
@@ -265,7 +270,12 @@ impl WebAudioEngine {
     }
 
     /// Generate a waveform sample buffer.
-    pub fn generate_waveform(&self, osc_type: OscillatorType, frequency: f32, duration_secs: f32) -> Vec<f32> {
+    pub fn generate_waveform(
+        &self,
+        osc_type: OscillatorType,
+        frequency: f32,
+        duration_secs: f32,
+    ) -> Vec<f32> {
         let num_samples = (self.sample_rate as f32 * duration_secs) as usize;
         let two_pi = std::f32::consts::TAU;
 
@@ -276,7 +286,13 @@ impl WebAudioEngine {
 
                 let sample = match osc_type {
                     OscillatorType::Sine => phase.sin(),
-                    OscillatorType::Square => if phase.sin() >= 0.0 { 1.0 } else { -1.0 },
+                    OscillatorType::Square => {
+                        if phase.sin() >= 0.0 {
+                            1.0
+                        } else {
+                            -1.0
+                        }
+                    }
                     OscillatorType::Sawtooth => {
                         let normalized = (frequency * t) % 1.0;
                         2.0 * normalized - 1.0
@@ -307,7 +323,9 @@ impl WebAudioEngine {
         let mut output = vec![0.0f32; num_samples];
 
         // Find destination node
-        let dest_id = self.nodes.iter()
+        let dest_id = self
+            .nodes
+            .iter()
             .find(|n| n.node_type == AudioNodeType::Destination)
             .map(|n| n.node_id);
 
@@ -318,21 +336,23 @@ impl WebAudioEngine {
 
         // Process each source node and mix into output
         for node in &self.nodes {
-            if node.node_type == AudioNodeType::Destination { continue; }
+            if node.node_type == AudioNodeType::Destination {
+                continue;
+            }
 
             let samples = match node.node_type {
                 AudioNodeType::Oscillator => {
                     self.generate_sine_wave(node.frequency_hz, duration_secs)
                 }
-                AudioNodeType::BufferSource => {
-                    node.buffer_samples.clone()
-                }
+                AudioNodeType::BufferSource => node.buffer_samples.clone(),
                 _ => continue,
             };
 
             // Apply gain and mix
             for (i, &sample) in samples.iter().enumerate() {
-                if i >= output.len() { break; }
+                if i >= output.len() {
+                    break;
+                }
                 output[i] += sample * node.gain;
             }
         }
@@ -347,7 +367,10 @@ impl WebAudioEngine {
 
     /// Get analyzer data for a specific analyzer node.
     pub fn get_analyzer_data(&self, analyzer_id: usize) -> Option<AnalyzerData> {
-        let _node = self.nodes.iter().find(|n| n.node_id == analyzer_id && n.node_type == AudioNodeType::Analyzer)?;
+        let _node = self
+            .nodes
+            .iter()
+            .find(|n| n.node_id == analyzer_id && n.node_type == AudioNodeType::Analyzer)?;
 
         // Generate fake frequency and time domain data
         let fft_size = 1024;
@@ -473,9 +496,21 @@ mod tests {
         let osc = engine.create_oscillator(440.0);
         let gain = engine.create_gain(0.5);
         engine.connect(osc, gain);
-        assert!(engine.nodes.iter().find(|n| n.node_id == osc).unwrap().connected_to.contains(&gain));
+        assert!(engine
+            .nodes
+            .iter()
+            .find(|n| n.node_id == osc)
+            .unwrap()
+            .connected_to
+            .contains(&gain));
         assert!(engine.remove_node(gain));
-        assert!(!engine.nodes.iter().find(|n| n.node_id == osc).unwrap().connected_to.contains(&gain));
+        assert!(!engine
+            .nodes
+            .iter()
+            .find(|n| n.node_id == osc)
+            .unwrap()
+            .connected_to
+            .contains(&gain));
     }
 
     #[test]
@@ -509,7 +544,10 @@ mod tests {
         assert_eq!(AudioNodeType::Filter.as_str(), "BiquadFilterNode");
         assert_eq!(AudioNodeType::Delay.as_str(), "DelayNode");
         assert_eq!(AudioNodeType::Destination.as_str(), "AudioDestinationNode");
-        assert_eq!(AudioNodeType::BufferSource.as_str(), "AudioBufferSourceNode");
+        assert_eq!(
+            AudioNodeType::BufferSource.as_str(),
+            "AudioBufferSourceNode"
+        );
     }
 
     #[test]

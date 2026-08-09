@@ -41,12 +41,18 @@ pub struct WebWorkerPool {
 }
 
 impl Default for WebWorkerPool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebWorkerPool {
     pub fn new() -> Self {
-        Self { workers: Vec::new(), channels: Vec::new(), next_channel_id: 1 }
+        Self {
+            workers: Vec::new(),
+            channels: Vec::new(),
+            next_channel_id: 1,
+        }
     }
 
     /// Spawn a new worker and return its ID.
@@ -68,7 +74,9 @@ impl WebWorkerPool {
     /// Post a message to a worker's inbox.
     pub fn post_message(&mut self, worker_id: &str, payload_json: &str) -> bool {
         if let Some(worker) = self.workers.iter_mut().find(|w| w.worker_id == worker_id) {
-            if worker.state != WorkerState::Running { return false; }
+            if worker.state != WorkerState::Running {
+                return false;
+            }
             worker.inbox.push_back(WorkerMessage {
                 channel_id: "main".to_string(),
                 payload_json: payload_json.to_string(),
@@ -173,16 +181,24 @@ impl WebWorkerPool {
     }
 
     /// Total number of workers (including terminated).
-    pub fn worker_count(&self) -> usize { self.workers.len() }
+    pub fn worker_count(&self) -> usize {
+        self.workers.len()
+    }
 
     /// Number of currently running workers.
     pub fn active_worker_count(&self) -> usize {
-        self.workers.iter().filter(|w| w.state == WorkerState::Running).count()
+        self.workers
+            .iter()
+            .filter(|w| w.state == WorkerState::Running)
+            .count()
     }
 
     /// Get a worker's current state.
     pub fn worker_state(&self, worker_id: &str) -> Option<&WorkerState> {
-        self.workers.iter().find(|w| w.worker_id == worker_id).map(|w| &w.state)
+        self.workers
+            .iter()
+            .find(|w| w.worker_id == worker_id)
+            .map(|w| &w.state)
     }
 
     /// Record an error for a worker. If max_errors exceeded, auto-terminate.
@@ -201,8 +217,12 @@ impl WebWorkerPool {
     /// Create a message channel between two workers.
     pub fn create_channel(&mut self, worker_a: &str, worker_b: &str) -> Option<String> {
         // Verify both workers exist
-        if !self.workers.iter().any(|w| w.worker_id == worker_a) { return None; }
-        if !self.workers.iter().any(|w| w.worker_id == worker_b) { return None; }
+        if !self.workers.iter().any(|w| w.worker_id == worker_a) {
+            return None;
+        }
+        if !self.workers.iter().any(|w| w.worker_id == worker_b) {
+            return None;
+        }
         let cid = format!("channel_{}", self.next_channel_id);
         self.next_channel_id += 1;
         self.channels.push(MessageChannel {
@@ -214,7 +234,12 @@ impl WebWorkerPool {
     }
 
     /// Send a message through a channel from worker A to worker B.
-    pub fn send_channel_message(&mut self, channel_id: &str, from_worker: &str, payload: &str) -> bool {
+    pub fn send_channel_message(
+        &mut self,
+        channel_id: &str,
+        from_worker: &str,
+        payload: &str,
+    ) -> bool {
         let channel = match self.channels.iter().find(|c| c.channel_id == channel_id) {
             Some(c) => c,
             None => return false,
@@ -282,7 +307,9 @@ mod tests {
         let id = pool.spawn_worker("w.js");
         // Set low threshold
         pool.workers[0].max_errors = 3;
-        for _ in 0..3 { pool.record_error(&id); }
+        for _ in 0..3 {
+            pool.record_error(&id);
+        }
         assert_eq!(*pool.worker_state(&id).unwrap(), WorkerState::Terminated);
     }
 

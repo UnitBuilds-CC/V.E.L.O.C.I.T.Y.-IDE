@@ -45,7 +45,9 @@ fn start_drone(name: &str) -> (Arc<DroneCore>, u16) {
 
 fn http_get(port: u16, path: &str) -> (u16, serde_json::Value) {
     let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).unwrap();
     stream.flush().unwrap();
@@ -76,7 +78,9 @@ fn http_get(port: u16, path: &str) -> (u16, serde_json::Value) {
 fn http_post(port: u16, path: &str, data: &serde_json::Value) -> (u16, serde_json::Value) {
     let body = data.to_string();
     let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     let req = format!(
         "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -165,7 +169,11 @@ fn e2e_full_collaboration_workflow() {
         .contains("BUILD_SUCCESS"));
 
     // Step 4: Transfer "artifact" to drone 2.
-    let artifact = b"ELF_BINARY_MOCK_" .iter().copied().chain(std::iter::repeat(0).take(100)).collect::<Vec<u8>>();
+    let artifact = b"ELF_BINARY_MOCK_"
+        .iter()
+        .copied()
+        .chain(std::iter::repeat(0).take(100))
+        .collect::<Vec<u8>>();
     let sha256 = format!("{:x}", Sha256::new().chain_update(&artifact).finalize());
     let b64 = B64.encode(&artifact);
 

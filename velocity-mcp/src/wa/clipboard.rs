@@ -15,11 +15,18 @@ pub enum ClipboardContent {
     /// Plain text (CF_UNICODETEXT).
     Text(String),
     /// HTML content with source URL.
-    Html { html: String, source_url: Option<String> },
+    Html {
+        html: String,
+        source_url: Option<String>,
+    },
     /// RTF rich text.
     Rtf(String),
     /// Image as raw RGBA pixels.
-    Image { width: u32, height: u32, pixels: Vec<u8> },
+    Image {
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    },
     /// File list (CF_HDROP).
     Files(Vec<PathBuf>),
     /// Raw binary data with format name.
@@ -309,6 +316,20 @@ mod native {
         let mut formats = Vec::new();
         let mut content = ClipboardContent::Empty;
 
+        // SAFETY: Win32 clipboard read sequence.
+        // - OpenClipboard(HWND::default()) associates the clipboard with the current task;
+        //   if it fails (another window has it open), we return early with an empty state.
+        // - GetClipboardData returns an HGLOBAL owned by the clipboard; we cast its HANDLE
+        //   to HGLOBAL via `handle.0 as *mut _`, which is valid because CF_UNICODETEXT /
+        //   CF_HDROP always yield a global-memory handle.
+        // - GlobalLock pins the handle and returns a stable pointer valid until GlobalUnlock.
+        //   We scan for the NUL terminator in the UTF-16 text case, then build a slice via
+        //   from_raw_parts with the measured length — the pointer remains valid because
+        //   GlobalUnlock is called only after the slice is consumed.
+        // - For CF_HDROP, DragQueryFileW internally locks the handle; we pass index 0xFFFFFFFF
+        //   to get the count, then iterate with per-file calls. The HDROP cast from HANDLE
+        //   is valid because CF_HDROP always yields a DROPFILES global.
+        // - CloseClipboard is always called before returning, releasing the clipboard lock.
         unsafe {
             if OpenClipboard(HWND::default()).is_err() {
                 return ClipboardState {
@@ -381,6 +402,18 @@ mod native {
 
     /// Write text to clipboard using native Win32 API.
     pub fn write_text_native(text: &str) -> ClipboardOpResult {
+        // SAFETY: Win32 clipboard write sequence for CF_UNICODETEXT.
+        // - OpenClipboard(HWND::default()) opens the clipboard for this task; early return on failure.
+        // - The text is encoded to UTF-16 with a NUL terminator, so `wide.len()` includes the
+        //   terminator and `byte_len = wide.len() * 2` is the exact byte count needed.
+        // - GlobalAlloc(GMEM_MOVEABLE, byte_len) allocates a moveable global buffer of exactly
+        //   the right size. On failure we close the clipboard and return an error.
+        // - GlobalLock pins the buffer; copy_nonoverlapping copies `wide.len()` u16 elements
+        //   from the Vec (valid source for `wide.len()` elements) into the locked pointer
+        //   (valid destination for `byte_len / 2 = wide.len()` u16 elements). Regions do not
+        //   overlap (separate allocations). GlobalUnlock is called immediately after.
+        // - SetClipboardData transfers ownership of the HGLOBAL to the system clipboard;
+        //   the handle must not be freed after success. CloseClipboard releases the lock.
         unsafe {
             if OpenClipboard(HWND::default()).is_err() {
                 return ClipboardOpResult {
@@ -395,7 +428,7 @@ mod native {
 
             // Convert to UTF-16 with null terminator
             let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-            let byte_len = wide.len() * 2;
+            let byte_len = wide.len().saturating_mul(2);
 
             // Allocate global memory
             let handle = match GlobalAlloc(GMEM_MOVEABLE, byte_len) {
@@ -442,6 +475,12 @@ mod native {
     /// Copy `bytes` into a moveable global buffer and hand it to the clipboard
     /// under `format`. The clipboard must already be open. On success, ownership
     /// of the global transfers to the system (do not free it).
+    ///
+    /// SAFETY: The clipboard must be open (caller guarantees). `bytes` is a valid
+    /// `&[u8]` slice. GlobalAlloc creates a buffer of `bytes.len()` bytes; GlobalLock
+    /// pins it. copy_nonoverlapping is valid because source and destination are
+    /// separate allocations of at least `bytes.len()` bytes. On success,
+    /// SetClipboardData transfers ownership of the HGLOBAL to the system.
     unsafe fn set_clipboard_blob(format: u32, bytes: &[u8]) -> Result<(), String> {
         let handle = GlobalAlloc(GMEM_MOVEABLE, bytes.len())
             .map_err(|e| format!("GlobalAlloc failed: {:?}", e))?;
@@ -465,6 +504,17 @@ mod native {
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
+        // SAFETY: Win32 clipboard write sequence for HTML + text fallback.
+        // - OpenClipboard(HWND::default()) opens the clipboard; early return on failure.
+        // - RegisterClipboardFormatW("HTML Format") registers/looks up the CF_HTML format ID.
+        //   A return of 0 means registration failed; we skip the HTML blob in that case.
+        // - set_clipboard_blob internally allocates GlobalAlloc, locks, copies, and calls
+        //   SetClipboardData. The cf_html Vec<u8> is a valid byte slice. On success,
+        //   ownership of the HGLOBAL transfers to the clipboard.
+        // - The fallback text is reinterpreted from Vec<u16> to &[u8] via from_raw_parts:
+        //   `fallback.as_ptr()` is valid for `fallback.len()` u16 elements = `fallback.len() * 2`
+        //   bytes. The Vec outlives the set_clipboard_blob call.
+        // - CloseClipboard is always called before returning.
         unsafe {
             if OpenClipboard(HWND::default()).is_err() {
                 return ClipboardOpResult {
@@ -489,8 +539,10 @@ mod native {
                 }
             }
 
-            let fallback_bytes =
-                std::slice::from_raw_parts(fallback.as_ptr() as *const u8, fallback.len() * 2);
+            let fallback_bytes = std::slice::from_raw_parts(
+                fallback.as_ptr() as *const u8,
+                fallback.len().saturating_mul(2),
+            );
             let text_result = set_clipboard_blob(CF_UNICODETEXT, fallback_bytes);
             let _ = CloseClipboard();
 
@@ -515,6 +567,12 @@ mod native {
     /// so Explorer and other shell targets accept a subsequent paste).
     pub fn write_files_native(paths: &[PathBuf]) -> ClipboardOpResult {
         let payload = build_hdrop_payload(paths);
+        // SAFETY: Win32 clipboard write for CF_HDROP.
+        // - OpenClipboard(HWND::default()) opens the clipboard; early return on failure.
+        // - build_hdrop_payload produces a valid DROPFILES + double-null-terminated UTF-16
+        //   file list. set_clipboard_blob allocates a global buffer, copies the payload,
+        //   and transfers ownership via SetClipboardData.
+        // - CloseClipboard is always called before returning.
         unsafe {
             if OpenClipboard(HWND::default()).is_err() {
                 return ClipboardOpResult {
@@ -546,6 +604,10 @@ mod native {
 
     /// Clear the clipboard.
     pub fn clear_clipboard_native() -> ClipboardOpResult {
+        // SAFETY: Win32 clipboard clear sequence.
+        // - OpenClipboard(HWND::default()) opens the clipboard; early return on failure.
+        // - EmptyClipboard removes all content. CloseClipboard always follows, releasing
+        //   the clipboard lock regardless of EmptyClipboard's result.
         unsafe {
             if OpenClipboard(HWND::default()).is_err() {
                 return ClipboardOpResult {
@@ -562,7 +624,11 @@ mod native {
             ClipboardOpResult {
                 success: result.is_ok(),
                 operation: "clear".into(),
-                detail: if result.is_ok() { "ok".into() } else { "EmptyClipboard failed".into() },
+                detail: if result.is_ok() {
+                    "ok".into()
+                } else {
+                    "EmptyClipboard failed".into()
+                },
                 sequence_number: Some(get_sequence_number_native()),
             }
         }
@@ -570,14 +636,16 @@ mod native {
 
     /// Get clipboard sequence number.
     pub fn get_sequence_number_native() -> u32 {
+        // SAFETY: GetClipboardSequenceNumber is a pure query that returns a monotonically
+        // increasing u32. It takes no parameters and has no pointer or lifetime requirements.
         unsafe { GetClipboardSequenceNumber() }
     }
 }
 
 #[cfg(target_os = "windows")]
 use native::{
-    clear_clipboard_native, get_sequence_number_native, read_clipboard_native,
-    write_files_native, write_html_native, write_text_native,
+    clear_clipboard_native, get_sequence_number_native, read_clipboard_native, write_files_native,
+    write_html_native, write_text_native,
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -631,25 +699,48 @@ mod tests {
                     state.available_formats
                 );
                 assert_eq!(files.len(), 2, "expected two files, got {:?}", files);
-                assert!(files.iter().any(|p| p == &a), "missing {:?} in {:?}", a, files);
-                assert!(files.iter().any(|p| p == &b), "missing {:?} in {:?}", b, files);
+                assert!(
+                    files.iter().any(|p| p == &a),
+                    "missing {:?} in {:?}",
+                    a,
+                    files
+                );
+                assert!(
+                    files.iter().any(|p| p == &b),
+                    "missing {:?} in {:?}",
+                    b,
+                    files
+                );
                 return;
             }
             last = Some(state.content);
             std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
         }
-        panic!("clipboard never returned our files after retries; last content: {:?}", last);
+        panic!(
+            "clipboard never returned our files after retries; last content: {:?}",
+            last
+        );
     }
 
     #[test]
     fn clipboard_content_variants() {
         let contents = [
             ClipboardContent::Text("hello".to_string()),
-            ClipboardContent::Html { html: "<b>bold</b>".to_string(), source_url: None },
+            ClipboardContent::Html {
+                html: "<b>bold</b>".to_string(),
+                source_url: None,
+            },
             ClipboardContent::Rtf("{\\rtf1}".to_string()),
-            ClipboardContent::Image { width: 100, height: 100, pixels: vec![0; 40000] },
+            ClipboardContent::Image {
+                width: 100,
+                height: 100,
+                pixels: vec![0; 40000],
+            },
             ClipboardContent::Files(vec![PathBuf::from("test.txt")]),
-            ClipboardContent::Raw { format_name: "Custom".to_string(), data: vec![1, 2, 3] },
+            ClipboardContent::Raw {
+                format_name: "Custom".to_string(),
+                data: vec![1, 2, 3],
+            },
             ClipboardContent::Empty,
         ];
         assert_eq!(contents.len(), 7);
@@ -702,10 +793,20 @@ mod tests {
         let text = String::from_utf8(format_cf_html("<p>x</p>", Some("https://ex.com"))).unwrap();
         assert!(text.contains("SourceURL:https://ex.com"));
         // Offsets still land on the fragment despite the extra header line.
-        let sf: usize = text.lines().find(|l| l.starts_with("StartFragment:")).unwrap()
-            ["StartFragment:".len()..].trim().parse().unwrap();
-        let ef: usize = text.lines().find(|l| l.starts_with("EndFragment:")).unwrap()
-            ["EndFragment:".len()..].trim().parse().unwrap();
+        let sf: usize = text
+            .lines()
+            .find(|l| l.starts_with("StartFragment:"))
+            .unwrap()["StartFragment:".len()..]
+            .trim()
+            .parse()
+            .unwrap();
+        let ef: usize = text
+            .lines()
+            .find(|l| l.starts_with("EndFragment:"))
+            .unwrap()["EndFragment:".len()..]
+            .trim()
+            .parse()
+            .unwrap();
         assert_eq!(&text[sf..ef], "<p>x</p>");
     }
 

@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 use velocity_ide::site_map::SiteMap;
 
 use crate::agent::{AgentToUiMessage, ModelInfo, UiToAgentMessage};
@@ -347,7 +347,8 @@ pub struct VelocityApp {
     /// Last workflow run result rendered in the Workflows panel run log.
     pub workflow_last_run: Option<crate::editor::workflow::WorkflowRun>,
     /// Visual canvas instances keyed by workflow id.
-    pub workflow_canvases: std::collections::HashMap<String, crate::editor::workflow_canvas::WorkflowCanvas>,
+    pub workflow_canvases:
+        std::collections::HashMap<String, crate::editor::workflow_canvas::WorkflowCanvas>,
     /// Id of the workflow currently open in the visual canvas editor.
     pub workflow_canvas_selected: Option<String>,
     /// Whether the visual canvas editor is active (vs list composer).
@@ -556,8 +557,12 @@ impl VelocityApp {
 
         let primary_kinds: Vec<TabKind> = match profile {
             WorkspaceProfile::Coder => vec![TabKind::Chat, TabKind::Output],
-            WorkspaceProfile::AutomationOperator => vec![TabKind::Orchestrator, TabKind::Chat, TabKind::Output],
-            WorkspaceProfile::MissionControl => vec![TabKind::MissionControl, TabKind::Chat, TabKind::Output],
+            WorkspaceProfile::AutomationOperator => {
+                vec![TabKind::Orchestrator, TabKind::Chat, TabKind::Output]
+            }
+            WorkspaceProfile::MissionControl => {
+                vec![TabKind::MissionControl, TabKind::Chat, TabKind::Output]
+            }
             WorkspaceProfile::Accessibility => vec![TabKind::Chat, TabKind::Output],
         };
 
@@ -927,7 +932,8 @@ impl VelocityApp {
             precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
             semantic_index: None,
             semantic_search_active: false,
-            inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
+            inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(
+            ),
             test_generator: crate::editor::test_generator::TestGenerator::default(),
             deploy_pipeline: None,
             voice_input: crate::editor::voice_commands::VoiceInputState::new(),
@@ -950,7 +956,9 @@ impl VelocityApp {
             workflow_canvas_selected: None,
             workflow_visual_mode: false,
             workflow_ai_prompt: String::new(),
-            workflow_versions: crate::editor::workflow_version::VersionRegistry::load(&workspace_root),
+            workflow_versions: crate::editor::workflow_version::VersionRegistry::load(
+                &workspace_root,
+            ),
             policy: crate::editor::governance::PolicyEngine::load(&workspace_root),
             approvals: crate::editor::governance::ApprovalQueue::load(&workspace_root),
             secrets: crate::security::secrets::SecretStore::load(&workspace_root),
@@ -995,14 +1003,18 @@ impl VelocityApp {
         });
         app.save_workspace_preferences();
         // Initialize LSP manager (auto-detect language servers)
-        app.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(&app.workspace_root));
+        app.lsp_manager = Some(crate::editor::lsp_client::LspManager::auto_detect(
+            &app.workspace_root,
+        ));
         // Initialize git state
         app.git_state.refresh(&app.workspace_root);
         // Load keybindings from workspace config
-        app.keybindings_config = crate::editor::keybindings::KeybindingsConfig::load(&app.workspace_root);
+        app.keybindings_config =
+            crate::editor::keybindings::KeybindingsConfig::load(&app.workspace_root);
         // Load snippets
         let snippets_path = app.workspace_root.join(".velocity").join("snippets.json");
-        app.snippet_collection = crate::editor::snippets::SnippetCollection::load_from_file(&snippets_path);
+        app.snippet_collection =
+            crate::editor::snippets::SnippetCollection::load_from_file(&snippets_path);
         app
     }
 }

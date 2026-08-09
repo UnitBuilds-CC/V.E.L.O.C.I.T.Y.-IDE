@@ -20,7 +20,7 @@ pub use http::{ConnectorRequest, ConnectorResponse, PreparedRequest};
 pub use oauth2::{OAuth2Manager, OAuth2Provider, OAuth2Token};
 pub use registry::ConnectorRegistry;
 pub use sync::{SyncDirection, SyncEngine, SyncRule};
-pub use templates::{IntegrationTemplate, all_templates, find_template};
+pub use templates::{all_templates, find_template, IntegrationTemplate};
 pub use types::{AuthScheme, ConnectorConfig, ConnectorKind};
 pub use webhooks::{WebhookEvent, WebhookManager};
 

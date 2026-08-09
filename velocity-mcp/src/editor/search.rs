@@ -236,8 +236,19 @@ pub struct FileSymbol {
 /// view. Keyword-based and language-light: works for Rust, Python, JS/TS, etc.
 pub fn extract_file_symbols(content: &str) -> Vec<FileSymbol> {
     const KEYWORDS: &[&str] = &[
-        "fn ", "struct ", "enum ", "trait ", "impl ", "type ", "const ", "static ", "mod ",
-        "class ", "def ", "interface ", "function ",
+        "fn ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "impl ",
+        "type ",
+        "const ",
+        "static ",
+        "mod ",
+        "class ",
+        "def ",
+        "interface ",
+        "function ",
     ];
     let mut out = Vec::new();
     for (idx, line) in content.lines().enumerate() {

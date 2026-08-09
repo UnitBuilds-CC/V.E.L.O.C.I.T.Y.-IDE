@@ -216,7 +216,12 @@ impl TestGenerator {
     /// available for the file's language.
     pub fn analyze_file(&mut self, workspace_root: &Path, file: &Path) {
         let mut functions = Vec::new();
-        if is_source_file(&file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()) {
+        if is_source_file(
+            &file
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        ) {
             extract_functions(file, &mut functions);
         }
         self.apply_discovered_functions(workspace_root, functions);
@@ -241,21 +246,30 @@ impl TestGenerator {
             total_functions: total,
             tested_functions: tested,
             untested_functions: untested,
-            coverage_percent: if total == 0 { 100.0 } else { (tested as f32 / total as f32) * 100.0 },
+            coverage_percent: if total == 0 {
+                100.0
+            } else {
+                (tested as f32 / total as f32) * 100.0
+            },
         };
     }
 }
 
 /// Recursively parse LSP documentSymbol response into TestableFunction entries.
 /// LSP SymbolKind: 12 = Function, 6 = Method, 9 = Constructor
-fn parse_lsp_symbols_recursive(file: &Path, value: &serde_json::Value, out: &mut Vec<TestableFunction>) {
+fn parse_lsp_symbols_recursive(
+    file: &Path,
+    value: &serde_json::Value,
+    out: &mut Vec<TestableFunction>,
+) {
     if let Some(arr) = value.as_array() {
         for sym in arr {
             let kind = sym["kind"].as_u64().unwrap_or(0);
             // Function (12), Method (6), Constructor (9)
             if kind == 12 || kind == 6 || kind == 9 {
                 let name = sym["name"].as_str().unwrap_or("").to_string();
-                let line = sym["location"]["range"]["start"]["line"].as_u64()
+                let line = sym["location"]["range"]["start"]["line"]
+                    .as_u64()
                     .or_else(|| sym["range"]["start"]["line"].as_u64())
                     .unwrap_or(0) as usize;
                 let detail = sym["detail"].as_str().unwrap_or("").to_string();
@@ -292,7 +306,9 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
             if config.include_assertions {
                 format!(
                     "#[test]\nfn {}() {{\n{}    let result = {}(\n{}    );\n{}\n}}",
-                    test_name, setup, func.name,
+                    test_name,
+                    setup,
+                    func.name,
                     generate_default_args(&func.signature, TestFramework::RustBuiltin),
                     assertion
                 )
@@ -306,7 +322,9 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
         TestFramework::Pytest => {
             format!(
                 "def {}():\n{}    result = {}(\n{}    )\n{}",
-                test_name, setup, func.name,
+                test_name,
+                setup,
+                func.name,
                 generate_default_args(&func.signature, TestFramework::Pytest),
                 assertion
             )
@@ -314,7 +332,9 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
         TestFramework::Jest => {
             format!(
                 "test('{}', () => {{\n{}  const result = {}(\n{}  );\n{}\n}});",
-                func.name, setup, func.name,
+                func.name,
+                setup,
+                func.name,
                 generate_default_args(&func.signature, TestFramework::Jest),
                 assertion
             )
@@ -322,7 +342,9 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
         TestFramework::Mocha => {
             format!(
                 "it('should {}', () => {{\n{}  const result = {}(\n{}  );\n{}\n}});",
-                func.name, setup, func.name,
+                func.name,
+                setup,
+                func.name,
                 generate_default_args(&func.signature, TestFramework::Mocha),
                 assertion
             )
@@ -330,7 +352,9 @@ fn generate_test_for_function(func: &TestableFunction, config: &TestGenConfig) -
         TestFramework::JUnit => {
             format!(
                 "@Test\npublic void {}() {{\n{}    var result = {}(\n{}    );\n{}\n}}",
-                test_name, setup, func.name,
+                test_name,
+                setup,
+                func.name,
                 generate_default_args(&func.signature, TestFramework::JUnit),
                 assertion
             )
@@ -363,12 +387,20 @@ fn analyze_function_signature(
     let returns_result = sig.contains("Result") || sig.contains("throws");
     let returns_vec = sig.contains("Vec") || sig.contains("[]") || sig.contains("List");
     let returns_string = sig.contains("String") || sig.contains("str");
-    let returns_number = sig.contains("f64") || sig.contains("f32") || sig.contains("i32")
-        || sig.contains("u32") || sig.contains("usize") || sig.contains("int") || sig.contains("float");
+    let returns_number = sig.contains("f64")
+        || sig.contains("f32")
+        || sig.contains("i32")
+        || sig.contains("u32")
+        || sig.contains("usize")
+        || sig.contains("int")
+        || sig.contains("float");
 
     let is_bool_predicate = {
         let n = func.name.to_lowercase();
-        n.starts_with("is_") || n.starts_with("has_") || n.starts_with("can_") || n.starts_with("should_")
+        n.starts_with("is_")
+            || n.starts_with("has_")
+            || n.starts_with("can_")
+            || n.starts_with("should_")
     };
 
     let kind = if returns_bool {
@@ -518,7 +550,6 @@ fn framework_assertion(
     }
 }
 
-
 /// Generate default argument expressions for a function call.
 fn generate_default_args(signature: &str, framework: TestFramework) -> String {
     // Extract parameter names from signature
@@ -531,7 +562,8 @@ fn generate_default_args(signature: &str, framework: TestFramework) -> String {
         TestFramework::Pytest => "        ",
         TestFramework::Jest | TestFramework::Mocha => "        ",
     };
-    params.iter()
+    params
+        .iter()
         .map(|name| format!("{}{}, // TODO: provide test value", indent, name))
         .collect::<Vec<_>>()
         .join("\n")
@@ -559,7 +591,8 @@ fn extract_param_names(signature: &str) -> Vec<String> {
                 }
                 // Python/JS: just the name
                 else if trimmed.contains(char::is_alphabetic) {
-                    let name = trimmed.split(|c: char| !c.is_alphanumeric() && c != '_')
+                    let name = trimmed
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
                         .next()
                         .unwrap_or("");
                     if !name.is_empty() && name != "self" {
@@ -583,7 +616,9 @@ fn build_test_index(workspace_root: &Path) -> HashMap<String, PathBuf> {
 /// is a file, its parent directory is used as the scan root.
 fn build_test_index_for(root: &Path) -> HashMap<String, PathBuf> {
     let scan_root = if root.is_file() {
-        root.parent().map(Path::to_path_buf).unwrap_or_else(|| root.to_path_buf())
+        root.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| root.to_path_buf())
     } else {
         root.to_path_buf()
     };
@@ -810,7 +845,12 @@ mod tests {
             .collect();
         assert!(names.contains(&"add"));
         assert!(names.contains(&"render"));
-        let add = gen.analysis.untested_functions.iter().find(|f| f.name == "add").unwrap();
+        let add = gen
+            .analysis
+            .untested_functions
+            .iter()
+            .find(|f| f.name == "add")
+            .unwrap();
         assert_eq!(add.visibility, Visibility::Public); // detail contains "pub"
         assert_eq!(add.line, 5); // converted to 1-based
     }

@@ -26,7 +26,12 @@ impl ScreencastRecorder {
         }
     }
 
-    pub fn capture_frame(&mut self, width: u32, height: u32, element_count: usize) -> ScreencastFrame {
+    pub fn capture_frame(
+        &mut self,
+        width: u32,
+        height: u32,
+        element_count: usize,
+    ) -> ScreencastFrame {
         let frame_idx = self.frames.len() as u32;
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

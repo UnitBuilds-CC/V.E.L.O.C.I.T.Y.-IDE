@@ -84,7 +84,8 @@ fn site_map_open_and_store_triples() {
             object_hash: 2000 + i,
         })
         .collect();
-    sm.put_file_snapshot("test.rs", &triples).expect("put snapshot");
+    sm.put_file_snapshot("test.rs", &triples)
+        .expect("put snapshot");
     sm.flush().expect("flush");
 }
 
@@ -98,7 +99,11 @@ fn nda_node_hash_is_deterministic() {
     let node3 = NdaNode::Int { value: 99 };
 
     assert_eq!(node1.hash(), node2.hash(), "same value -> same hash");
-    assert_ne!(node1.hash(), node3.hash(), "different value -> different hash");
+    assert_ne!(
+        node1.hash(),
+        node3.hash(),
+        "different value -> different hash"
+    );
 }
 
 /// Test that the tokenizer module is accessible and Tokenizer type exists.

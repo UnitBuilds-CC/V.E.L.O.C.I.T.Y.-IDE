@@ -32,19 +32,16 @@
 
 #![allow(dead_code)]
 
-use std::{
-    collections::HashMap,
-    path::Path,
-};
+use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
 use syn::{
-    visit::Visit, Expr, ExprCall, ExprMethodCall, File, ImplItem,
-    Item, ItemFn, ItemImpl, Lit, Pat, Stmt, Type,
+    visit::Visit, Expr, ExprCall, ExprMethodCall, File, ImplItem, Item, ItemFn, ItemImpl, Lit, Pat,
+    Stmt, Type,
 };
 
 use crate::site_map::{
-    verifier::{NdaNode, MerkleVerifier},
+    verifier::{MerkleVerifier, NdaNode},
     SiteMap,
 };
 
@@ -54,14 +51,14 @@ use crate::site_map::{
 #[derive(Clone, Debug)]
 pub struct CompiledFn {
     /// The fully-qualified function name (e.g. "TcpEncoder::encode").
-    pub name:      String,
+    pub name: String,
     /// The NDA Scope representing this function's full body.
-    pub node:      NdaNode,
+    pub node: NdaNode,
     /// Hash of the Scope node (for Call node targets).
-    pub hash:      u64,
+    pub hash: u64,
     /// Names of all functions this function calls (resolved to hashes after
     /// the full compilation pass).
-    pub callees:   Vec<String>,
+    pub callees: Vec<String>,
 }
 
 // ─── RustToNda compiler ───────────────────────────────────────────────────────
@@ -91,7 +88,7 @@ impl Default for RustToNda {
 impl RustToNda {
     pub fn new() -> Self {
         Self {
-            functions:    HashMap::new(),
+            functions: HashMap::new(),
             current_impl: None,
         }
     }
@@ -101,8 +98,7 @@ impl RustToNda {
     /// Returns the top-level NDA program node (a Scope whose children are
     /// one Scope per top-level function / impl block).
     pub fn compile_source(&mut self, source: &str) -> Result<NdaNode> {
-        let file: File = syn::parse_str(source)
-            .context("Failed to parse Rust source")?;
+        let file: File = syn::parse_str(source).context("Failed to parse Rust source")?;
 
         // Pass 1: compile every function/impl into NDA Scope nodes.
         for item in &file.items {
@@ -110,7 +106,8 @@ impl RustToNda {
         }
 
         // Pass 2: resolve Call node targets (fill in hashes from function names).
-        let fn_hashes: HashMap<String, u64> = self.functions
+        let fn_hashes: HashMap<String, u64> = self
+            .functions
             .iter()
             .map(|(name, cf)| (name.clone(), cf.hash))
             .collect();
@@ -126,9 +123,7 @@ impl RustToNda {
         let mut sorted_fns: Vec<&CompiledFn> = self.functions.values().collect();
         sorted_fns.sort_by_key(|cf| &cf.name);
 
-        let children: Vec<NdaNode> = sorted_fns.into_iter()
-            .map(|cf| cf.node.clone())
-            .collect();
+        let children: Vec<NdaNode> = sorted_fns.into_iter().map(|cf| cf.node.clone()).collect();
 
         Ok(NdaNode::Scope { children })
     }
@@ -150,14 +145,14 @@ impl RustToNda {
 
         // Store individual functions first (so Call targets resolve).
         for cf in self.functions.values() {
-            site_map.put_program(&cf.node)
+            site_map
+                .put_program(&cf.node)
                 .with_context(|| format!("Storing function '{}'", cf.name))?;
             count += 1;
         }
 
         // Store the full program root.
-        site_map.put_program(root)
-            .context("Storing root program")?;
+        site_map.put_program(root).context("Storing root program")?;
         count += 1;
 
         site_map.flush().context("Flushing SiteMap")?;
@@ -178,9 +173,13 @@ impl RustToNda {
 
     fn compile_item(&mut self, item: &Item) {
         match item {
-            Item::Fn(f)   => { self.compile_fn(f, None); }
-            Item::Impl(i) => { self.compile_impl(i); }
-            Item::Mod(m)  => {
+            Item::Fn(f) => {
+                self.compile_fn(f, None);
+            }
+            Item::Impl(i) => {
+                self.compile_impl(i);
+            }
+            Item::Mod(m) => {
                 // Recurse into inline modules.
                 if let Some((_, items)) = &m.content {
                     for inner in items {
@@ -203,12 +202,15 @@ impl RustToNda {
                 let children = self.compile_stmts(&method.block.stmts);
                 let node = NdaNode::Scope { children };
                 let hash = node.hash();
-                self.functions.insert(name.clone(), CompiledFn {
-                    name,
-                    node,
-                    hash,
-                    callees: vec![],
-                });
+                self.functions.insert(
+                    name.clone(),
+                    CompiledFn {
+                        name,
+                        node,
+                        hash,
+                        callees: vec![],
+                    },
+                );
             }
         }
 
@@ -228,12 +230,15 @@ impl RustToNda {
         let node = NdaNode::Scope { children };
         let hash = node.hash();
 
-        self.functions.insert(name.clone(), CompiledFn {
-            name,
-            node,
-            hash,
-            callees,
-        });
+        self.functions.insert(
+            name.clone(),
+            CompiledFn {
+                name,
+                node,
+                hash,
+                callees,
+            },
+        );
     }
 
     fn qualified_name(&self, base: &str) -> String {
@@ -282,8 +287,11 @@ impl RustToNda {
                 None
             }
             Stmt::Expr(expr, _) => self.compile_expr(expr, callees),
-            Stmt::Item(item)    => { self.compile_item(item); None }
-            Stmt::Macro(_)      => None,
+            Stmt::Item(item) => {
+                self.compile_item(item);
+                None
+            }
+            Stmt::Macro(_) => None,
         }
     }
 
@@ -292,8 +300,11 @@ impl RustToNda {
             // Block: recurse → Scope
             Expr::Block(b) => {
                 let children = self.compile_stmts_with_calls(&b.block.stmts, callees);
-                if children.is_empty() { None }
-                else { Some(NdaNode::Scope { children }) }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
             }
 
             // Function call: record callee, emit Call node (hash resolved in pass 2)
@@ -301,7 +312,8 @@ impl RustToNda {
                 let callee_name = expr_to_name(func);
 
                 // Also compile each argument expression.
-                let mut arg_nodes: Vec<NdaNode> = args.iter()
+                let mut arg_nodes: Vec<NdaNode> = args
+                    .iter()
                     .filter_map(|a| self.compile_expr(a, callees))
                     .collect();
 
@@ -311,42 +323,69 @@ impl RustToNda {
                     arg_nodes.push(NdaNode::Call { target: 0 });
                 }
 
-                if arg_nodes.is_empty() { None }
-                else if arg_nodes.len() == 1 { Some(arg_nodes.remove(0)) }
-                else { Some(NdaNode::Scope { children: arg_nodes }) }
+                if arg_nodes.is_empty() {
+                    None
+                } else if arg_nodes.len() == 1 {
+                    Some(arg_nodes.remove(0))
+                } else {
+                    Some(NdaNode::Scope {
+                        children: arg_nodes,
+                    })
+                }
             }
 
             // Method call: same as function call.
-            Expr::MethodCall(ExprMethodCall { receiver, method, args, .. }) => {
+            Expr::MethodCall(ExprMethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            }) => {
                 let callee_name = method.to_string();
                 callees.push(callee_name);
 
                 let mut children = Vec::new();
-                if let Some(n) = self.compile_expr(receiver, callees) { children.push(n); }
+                if let Some(n) = self.compile_expr(receiver, callees) {
+                    children.push(n);
+                }
                 for a in args {
-                    if let Some(n) = self.compile_expr(a, callees) { children.push(n); }
+                    if let Some(n) = self.compile_expr(a, callees) {
+                        children.push(n);
+                    }
                 }
                 children.push(NdaNode::Call { target: 0 });
 
-                if children.is_empty() { None }
-                else { Some(NdaNode::Scope { children }) }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
             }
 
             // For / while loops: the body becomes a Scope.
             Expr::ForLoop(fl) => {
                 let children = self.compile_stmts_with_calls(&fl.body.stmts, callees);
-                if children.is_empty() { None }
-                else { Some(NdaNode::Scope { children }) }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
             }
             Expr::While(w) => {
                 let children = self.compile_stmts_with_calls(&w.body.stmts, callees);
-                if children.is_empty() { None }
-                else { Some(NdaNode::Scope { children }) }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
             }
             Expr::Loop(l) => {
                 let children = self.compile_stmts_with_calls(&l.body.stmts, callees);
-                if children.is_empty() { None }
-                else { Some(NdaNode::Scope { children }) }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
             }
 
             // If/else: both branches become Scopes.
@@ -354,21 +393,31 @@ impl RustToNda {
                 let then_nodes = self.compile_stmts_with_calls(&i.then_branch.stmts, callees);
                 let mut children = Vec::new();
                 if !then_nodes.is_empty() {
-                    children.push(NdaNode::Scope { children: then_nodes });
+                    children.push(NdaNode::Scope {
+                        children: then_nodes,
+                    });
                 }
                 if let Some((_, else_expr)) = &i.else_branch {
                     if let Some(n) = self.compile_expr(else_expr, callees) {
                         children.push(n);
                     }
                 }
-                if children.is_empty() { None }
-                else { Some(NdaNode::Scope { children }) }
+                if children.is_empty() {
+                    None
+                } else {
+                    Some(NdaNode::Scope { children })
+                }
             }
 
             // Integer / float literals → Int node.
             Expr::Lit(l) => match &l.lit {
-                Lit::Int(i)   => i.base10_parse::<i32>().ok().map(|v| NdaNode::Int { value: v }),
-                Lit::Float(f) => f.base10_parse::<f32>().ok()
+                Lit::Int(i) => i
+                    .base10_parse::<i32>()
+                    .ok()
+                    .map(|v| NdaNode::Int { value: v }),
+                Lit::Float(f) => f
+                    .base10_parse::<f32>()
+                    .ok()
                     .map(|v| NdaNode::Int { value: v as i32 }),
                 _ => None,
             },
@@ -396,36 +445,40 @@ impl RustToNda {
             }
 
             // Return value: compile the returned expression.
-            Expr::Return(r) => {
-                r.expr.as_ref().and_then(|e| self.compile_expr(e, callees))
-            }
+            Expr::Return(r) => r.expr.as_ref().and_then(|e| self.compile_expr(e, callees)),
 
             // Closure: body becomes a Scope.
-            Expr::Closure(c) => {
-                self.compile_expr(&c.body, callees)
-            }
+            Expr::Closure(c) => self.compile_expr(&c.body, callees),
 
             // Binary ops: compile both sides, wrap in Scope if both produce nodes.
             Expr::Binary(b) => {
                 let lhs = self.compile_expr(&b.left, callees);
                 let rhs = self.compile_expr(&b.right, callees);
                 match (lhs, rhs) {
-                    (Some(l), Some(r)) => Some(NdaNode::Scope { children: vec![l, r] }),
-                    (Some(l), None)    => Some(l),
-                    (None,    Some(r)) => Some(r),
-                    _                  => None,
+                    (Some(l), Some(r)) => Some(NdaNode::Scope {
+                        children: vec![l, r],
+                    }),
+                    (Some(l), None) => Some(l),
+                    (None, Some(r)) => Some(r),
+                    _ => None,
                 }
             }
 
             // Everything else: attempt to recurse on sub-expressions.
             _ => {
-                let mut collector = ExprCollector { nodes: Vec::new(), callees };
+                let mut collector = ExprCollector {
+                    nodes: Vec::new(),
+                    callees,
+                };
                 collector.visit_expr(expr);
-                if collector.nodes.is_empty() { None }
-                else if collector.nodes.len() == 1 {
+                if collector.nodes.is_empty() {
+                    None
+                } else if collector.nodes.len() == 1 {
                     Some(collector.nodes.remove(0))
                 } else {
-                    Some(NdaNode::Scope { children: collector.nodes })
+                    Some(NdaNode::Scope {
+                        children: collector.nodes,
+                    })
                 }
             }
         }
@@ -492,15 +545,28 @@ fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
     let cols = cols.clamp(1, 65535) as u16;
     let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
     // Alternating 0xAA / 0x55 gives a balanced {+2,+1,-1,-2} distribution.
-    let sign:  Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
-    let extra: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0x55 } else { 0xAA }).collect();
-    NdaNode::Matrix { rows, cols, scale: 0, sign, extra }
+    let sign: Vec<u8> = (0..bitmap_bytes)
+        .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+        .collect();
+    let extra: Vec<u8> = (0..bitmap_bytes)
+        .map(|i| if i % 2 == 0 { 0x55 } else { 0xAA })
+        .collect();
+    NdaNode::Matrix {
+        rows,
+        cols,
+        scale: 0,
+        sign,
+        extra,
+    }
 }
 
 /// Extract a dotted name string from an expression (e.g. `foo::bar` → "foo::bar").
 fn expr_to_name(expr: &Expr) -> String {
     match expr {
-        Expr::Path(p) => p.path.segments.iter()
+        Expr::Path(p) => p
+            .path
+            .segments
+            .iter()
             .map(|s| s.ident.to_string())
             .collect::<Vec<_>>()
             .join("::"),
@@ -511,7 +577,10 @@ fn expr_to_name(expr: &Expr) -> String {
 /// Extract a human-readable name from a type (for impl block qualification).
 fn type_name_of(ty: &Type) -> String {
     match ty {
-        Type::Path(p) => p.path.segments.iter()
+        Type::Path(p) => p
+            .path
+            .segments
+            .iter()
             .map(|s| s.ident.to_string())
             .collect::<Vec<_>>()
             .join("::"),
@@ -524,7 +593,7 @@ fn type_name_of(ty: &Type) -> String {
 /// A simple syn visitor that collects any Int/Array nodes from sub-expressions
 /// that the main match arm doesn't explicitly handle.
 struct ExprCollector<'a> {
-    nodes:   Vec<NdaNode>,
+    nodes: Vec<NdaNode>,
     /// Retained for future call-graph surfacing; populated but not yet consumed.
     #[allow(dead_code)]
     callees: &'a mut Vec<String>,
@@ -572,27 +641,28 @@ pub fn seed_from_source(source_path: &Path, site_map: &mut SiteMap) -> Result<Se
     let n_stored = compiler.store_all(site_map, &root)?;
 
     Ok(SeedReport {
-        source_path:   source_path.to_path_buf(),
-        functions:     compiler.function_count(),
-        nodes_stored:  n_stored,
+        source_path: source_path.to_path_buf(),
+        functions: compiler.function_count(),
+        nodes_stored: n_stored,
         root_hash,
-        elapsed_ms:    t0.elapsed().as_millis(),
+        elapsed_ms: t0.elapsed().as_millis(),
     })
 }
 
 /// Summary returned by `seed_from_source`.
 #[derive(Debug)]
 pub struct SeedReport {
-    pub source_path:  std::path::PathBuf,
-    pub functions:    usize,
+    pub source_path: std::path::PathBuf,
+    pub functions: usize,
     pub nodes_stored: usize,
-    pub root_hash:    u64,
-    pub elapsed_ms:   u128,
+    pub root_hash: u64,
+    pub elapsed_ms: u128,
 }
 
 impl std::fmt::Display for SeedReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f,
+        write!(
+            f,
             "Seeded '{}': {} functions → {} NDA nodes stored | root={:016x} | {}ms",
             self.source_path.display(),
             self.functions,
@@ -652,7 +722,10 @@ mod tests {
                 _ => false,
             }
         }
-        assert!(find_matrix(&root), "Expected a Matrix node in compiled output");
+        assert!(
+            find_matrix(&root),
+            "Expected a Matrix node in compiled output"
+        );
     }
 
     #[test]
@@ -670,7 +743,10 @@ mod tests {
                 _ => false,
             }
         }
-        assert!(find_call(&root), "Expected a Call node from function call site");
+        assert!(
+            find_call(&root),
+            "Expected a Call node from function call site"
+        );
     }
 
     #[test]
@@ -694,7 +770,13 @@ mod tests {
         let mut compiler = RustToNda::new();
         compiler.compile_source(source).unwrap();
         let names: Vec<&str> = compiler.function_names();
-        assert!(names.contains(&"TcpEncoder::encode"), "impl method should be qualified");
-        assert!(names.contains(&"TcpEncoder::decode"), "impl method should be qualified");
+        assert!(
+            names.contains(&"TcpEncoder::encode"),
+            "impl method should be qualified"
+        );
+        assert!(
+            names.contains(&"TcpEncoder::decode"),
+            "impl method should be qualified"
+        );
     }
 }

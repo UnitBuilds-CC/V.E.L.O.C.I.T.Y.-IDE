@@ -89,14 +89,19 @@ impl PluginRegistry {
             author: manifest.author.clone(),
             tool_count: manifest.tools.len(),
             tool_names: manifest.tools.iter().map(|t| t.name.clone()).collect(),
-            permissions: manifest.permissions.iter().map(|p| p.label().to_string()).collect(),
+            permissions: manifest
+                .permissions
+                .iter()
+                .map(|p| p.label().to_string())
+                .collect(),
             enabled: true,
         })
     }
 
     /// List all loaded plugins.
     pub fn list(&self) -> Vec<PluginInfo> {
-        self.load_order.iter()
+        self.load_order
+            .iter()
             .filter_map(|id| self.info(id))
             .collect()
     }
@@ -110,9 +115,11 @@ impl PluginRegistry {
     pub fn execute_tool(&self, qualified_name: &str, input: &serde_json::Value) -> PluginResult {
         let (plugin_id, tool_name) = match qualified_name.split_once("::") {
             Some((pid, tn)) => (pid, tn),
-            None => return PluginResult::err(&format!(
-                "Invalid tool name '{qualified_name}'. Expected format: plugin_id::tool_name"
-            )),
+            None => {
+                return PluginResult::err(&format!(
+                    "Invalid tool name '{qualified_name}'. Expected format: plugin_id::tool_name"
+                ))
+            }
         };
 
         let handler = match self.plugins.get(plugin_id) {
@@ -141,7 +148,8 @@ impl PluginRegistry {
 
     /// Grant permissions to a plugin.
     pub fn grant_permissions(&mut self, plugin_id: &str, permissions: Vec<PluginPermission>) {
-        self.granted_permissions.insert(plugin_id.to_string(), permissions);
+        self.granted_permissions
+            .insert(plugin_id.to_string(), permissions);
     }
 
     /// Get all available tools across all plugins (for agent tool discovery).
@@ -186,17 +194,21 @@ impl PluginRegistry {
     /// Save granted permissions to disk.
     pub fn save_permissions(&self) -> Result<(), String> {
         let dir = self.workspace_root.join(".velocity");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Cannot create .velocity dir: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create .velocity dir: {e}"))?;
 
-        let perms: HashMap<String, Vec<String>> = self.granted_permissions.iter()
+        let perms: HashMap<String, Vec<String>> = self
+            .granted_permissions
+            .iter()
             .map(|(id, perms)| {
-                (id.clone(), perms.iter().map(|p| p.label().to_string()).collect())
+                (
+                    id.clone(),
+                    perms.iter().map(|p| p.label().to_string()).collect(),
+                )
             })
             .collect();
 
-        let json = serde_json::to_vec_pretty(&perms)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&perms).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("plugin_permissions.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -204,11 +216,15 @@ impl PluginRegistry {
 
     /// Load granted permissions from disk.
     pub fn load_permissions(&mut self) {
-        let path = self.workspace_root.join(".velocity").join("plugin_permissions.json");
+        let path = self
+            .workspace_root
+            .join(".velocity")
+            .join("plugin_permissions.json");
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(perms) = serde_json::from_slice::<HashMap<String, Vec<String>>>(&bytes) {
                 for (id, labels) in perms {
-                    let permissions: Vec<PluginPermission> = labels.iter()
+                    let permissions: Vec<PluginPermission> = labels
+                        .iter()
                         .filter_map(|l| PluginPermission::from_str(l))
                         .collect();
                     self.granted_permissions.insert(id, permissions);
@@ -253,9 +269,7 @@ mod tests {
             tool_name,
             &format!("Test tool {tool_name}"),
             serde_json::json!({"type": "object"}),
-            move |input| {
-                PluginResult::ok(serde_json::json!({"plugin": id_owned, "input": input}))
-            },
+            move |input| PluginResult::ok(serde_json::json!({"plugin": id_owned, "input": input})),
         ))
     }
 
@@ -290,7 +304,8 @@ mod tests {
     fn execute_tool_dispatch() {
         let mut registry = PluginRegistry::new(Path::new("."));
         registry.register(test_plugin("myplugin", "greet")).unwrap();
-        let result = registry.execute_tool("myplugin::greet", &serde_json::json!({"name": "world"}));
+        let result =
+            registry.execute_tool("myplugin::greet", &serde_json::json!({"name": "world"}));
         assert!(result.success);
         assert_eq!(result.output["plugin"], "myplugin");
     }
@@ -322,18 +337,22 @@ mod tests {
 
     #[test]
     fn permission_check() {
-        use crate::editor::plugin_sdk::{PluginManifest, PluginTool, PluginHandler};
+        use crate::editor::plugin_sdk::{PluginHandler, PluginManifest, PluginTool};
 
         // A simple handler that requires filesystem permission.
         struct SecureHandler {
             manifest: PluginManifest,
         }
         impl PluginHandler for SecureHandler {
-            fn initialize(&mut self, _config: &serde_json::Value) -> Result<(), String> { Ok(()) }
+            fn initialize(&mut self, _config: &serde_json::Value) -> Result<(), String> {
+                Ok(())
+            }
             fn execute(&self, _tool_name: &str, _input: &serde_json::Value) -> PluginResult {
                 PluginResult::ok(serde_json::json!({"data": "secret"}))
             }
-            fn manifest(&self) -> &PluginManifest { &self.manifest }
+            fn manifest(&self) -> &PluginManifest {
+                &self.manifest
+            }
         }
 
         let mut registry = PluginRegistry::new(Path::new("."));
@@ -370,7 +389,9 @@ mod tests {
     #[test]
     fn plugin_info() {
         let mut registry = PluginRegistry::new(Path::new("."));
-        registry.register(test_plugin("info-test", "mytool")).unwrap();
+        registry
+            .register(test_plugin("info-test", "mytool"))
+            .unwrap();
         let info = registry.info("info-test").unwrap();
         assert_eq!(info.name, "info-test Plugin");
         assert_eq!(info.tool_count, 1);

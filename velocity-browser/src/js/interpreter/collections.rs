@@ -1,14 +1,28 @@
-use super::signal::*;
 use super::coercion::*;
 use super::function::call_function;
+use super::signal::*;
 use crate::js::scope::ScopeRef;
 use crate::js::vm::JsValue;
 
-pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+pub(super) fn call_array_method(
+    a: &mut Vec<JsValue>,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
     Ok(match method {
-        "push" => { a.extend(args.iter().cloned()); JsValue::Number(a.len() as f64) }
+        "push" => {
+            a.extend(args.iter().cloned());
+            JsValue::Number(a.len() as f64)
+        }
         "pop" => a.pop().unwrap_or(JsValue::Undefined),
-        "shift" => { if a.is_empty() { JsValue::Undefined } else { a.remove(0) } }
+        "shift" => {
+            if a.is_empty() {
+                JsValue::Undefined
+            } else {
+                a.remove(0)
+            }
+        }
         "unshift" => {
             let tail = std::mem::take(a);
             let mut new = args.to_vec();
@@ -21,23 +35,34 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
             let len = a.len() as i64;
             let mut from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0);
-            if from < 0 { from += len; }
+            if from < 0 {
+                from += len;
+            }
             let start = from.max(0) as usize;
-            let found = a.iter().enumerate().skip(start)
+            let found = a
+                .iter()
+                .enumerate()
+                .skip(start)
                 .find(|(_, x)| strict_eq(x, &target))
-                .map(|(i, _)| i as f64).unwrap_or(-1.0);
+                .map(|(i, _)| i as f64)
+                .unwrap_or(-1.0);
             JsValue::Number(found)
         }
         "lastIndexOf" => {
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
             let len = a.len() as i64;
             let mut from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len - 1);
-            if from < 0 { from += len; }
+            if from < 0 {
+                from += len;
+            }
             let end = from.min(len - 1);
             let mut result = -1.0;
             if end >= 0 {
                 for i in (0..=end as usize).rev() {
-                    if strict_eq(&a[i], &target) { result = i as f64; break; }
+                    if strict_eq(&a[i], &target) {
+                        result = i as f64;
+                        break;
+                    }
                 }
             }
             JsValue::Number(result)
@@ -46,7 +71,9 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let target = args.first().cloned().unwrap_or(JsValue::Undefined);
             let len = a.len() as i64;
             let mut from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0);
-            if from < 0 { from += len; }
+            if from < 0 {
+                from += len;
+            }
             let start = from.max(0) as usize;
             let found = a.iter().skip(start).any(|x| match (x, &target) {
                 (JsValue::Number(p), JsValue::Number(q)) if p.is_nan() && q.is_nan() => true,
@@ -58,69 +85,122 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let i = args.first().map(to_number).unwrap_or(0.0) as i64;
             let len = a.len() as i64;
             let idx = if i < 0 { len + i } else { i };
-            if (0..len).contains(&idx) { a[idx as usize].clone() } else { JsValue::Undefined }
+            if (0..len).contains(&idx) {
+                a[idx as usize].clone()
+            } else {
+                JsValue::Undefined
+            }
         }
         "join" => {
             let sep = match args.first() {
                 None | Some(JsValue::Undefined) => ",".to_string(),
                 Some(v) => to_string(v),
             };
-            let parts: Vec<String> = a.iter().map(|x| match x {
-                JsValue::Null | JsValue::Undefined => String::new(),
-                other => to_string(other),
-            }).collect();
+            let parts: Vec<String> = a
+                .iter()
+                .map(|x| match x {
+                    JsValue::Null | JsValue::Undefined => String::new(),
+                    other => to_string(other),
+                })
+                .collect();
             JsValue::String(parts.join(&sep))
         }
         "toString" | "toLocaleString" => {
-            let parts: Vec<String> = a.iter().map(|x| match x {
-                JsValue::Null | JsValue::Undefined => String::new(),
-                other => to_string(other),
-            }).collect();
+            let parts: Vec<String> = a
+                .iter()
+                .map(|x| match x {
+                    JsValue::Null | JsValue::Undefined => String::new(),
+                    other => to_string(other),
+                })
+                .collect();
             JsValue::String(parts.join(","))
         }
         "slice" => {
             let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
-            let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(a.len() as i64);
-            let s = if start < 0 { (a.len() as i64 + start).max(0) as usize } else { start as usize };
-            let e = if end < 0 { (a.len() as i64 + end).max(0) as usize } else { (end as usize).min(a.len()) };
+            let end = args
+                .get(1)
+                .map(|v| to_number(v) as i64)
+                .unwrap_or(a.len() as i64);
+            let s = if start < 0 {
+                (a.len() as i64 + start).max(0) as usize
+            } else {
+                start as usize
+            };
+            let e = if end < 0 {
+                (a.len() as i64 + end).max(0) as usize
+            } else {
+                (end as usize).min(a.len())
+            };
             JsValue::Array(a.get(s..e).unwrap_or(&[]).to_vec())
         }
         "concat" => {
             let mut new_arr = a.clone();
-            for x in args { if let JsValue::Array(other) = x { new_arr.extend(other.iter().cloned()); } else { new_arr.push(x.clone()); } }
+            for x in args {
+                if let JsValue::Array(other) = x {
+                    new_arr.extend(other.iter().cloned());
+                } else {
+                    new_arr.push(x.clone());
+                }
+            }
             JsValue::Array(new_arr)
         }
-        "reverse" => { a.reverse(); JsValue::Array(a.clone()) }
+        "reverse" => {
+            a.reverse();
+            JsValue::Array(a.clone())
+        }
         "sort" => {
             match args.first() {
                 Some(cb) if !matches!(cb, JsValue::Undefined | JsValue::Null) => {
                     let mut sort_err: Option<Signal> = None;
                     a.sort_by(|x, y| {
-                        if sort_err.is_some() { return std::cmp::Ordering::Equal; }
+                        if sort_err.is_some() {
+                            return std::cmp::Ordering::Equal;
+                        }
                         match call_function(cb, &[x.clone(), y.clone()], scope) {
                             Ok(v) => {
                                 let n = to_number(&v);
-                                if n < 0.0 { std::cmp::Ordering::Less }
-                                else if n > 0.0 { std::cmp::Ordering::Greater }
-                                else { std::cmp::Ordering::Equal }
+                                if n < 0.0 {
+                                    std::cmp::Ordering::Less
+                                } else if n > 0.0 {
+                                    std::cmp::Ordering::Greater
+                                } else {
+                                    std::cmp::Ordering::Equal
+                                }
                             }
-                            Err(e) => { sort_err = Some(e); std::cmp::Ordering::Equal }
+                            Err(e) => {
+                                sort_err = Some(e);
+                                std::cmp::Ordering::Equal
+                            }
                         }
                     });
-                    if let Some(e) = sort_err { return Err(e); }
+                    if let Some(e) = sort_err {
+                        return Err(e);
+                    }
                 }
-                _ => { a.sort_by_key(to_string); }
+                _ => {
+                    a.sort_by_key(to_string);
+                }
             }
             JsValue::Array(a.clone())
         }
         "splice" => {
             let len = a.len() as i64;
             let start_raw = args.first().map(to_number).unwrap_or(0.0) as i64;
-            let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
-            let delete_count = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len).max(0) as usize;
+            let start = if start_raw < 0 {
+                (len + start_raw).max(0) as usize
+            } else {
+                (start_raw as usize).min(a.len())
+            };
+            let delete_count = args
+                .get(1)
+                .map(|v| to_number(v) as i64)
+                .unwrap_or(len)
+                .max(0) as usize;
             let end = (start + delete_count).min(a.len());
             let removed: Vec<JsValue> = a.drain(start..end).collect();
-            for (i, item) in args.iter().skip(2).enumerate() { a.insert(start + i, item.clone()); }
+            for (i, item) in args.iter().skip(2).enumerate() {
+                a.insert(start + i, item.clone());
+            }
             JsValue::Array(removed)
         }
         "map" => {
@@ -128,7 +208,11 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let arr_val = JsValue::Array(a.clone());
             let mut result = Vec::new();
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
+                let r = call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
                 result.push(r);
             }
             JsValue::Array(result)
@@ -138,8 +222,14 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let arr_val = JsValue::Array(a.clone());
             let mut result = Vec::new();
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
-                if to_boolean(&r) { result.push(item.clone()); }
+                let r = call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
+                if to_boolean(&r) {
+                    result.push(item.clone());
+                }
             }
             JsValue::Array(result)
         }
@@ -147,7 +237,11 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate() {
-                call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
+                call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
             }
             JsValue::Undefined
         }
@@ -155,8 +249,14 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
-                if to_boolean(&r) { return Ok(item.clone()); }
+                let r = call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
+                if to_boolean(&r) {
+                    return Ok(item.clone());
+                }
             }
             JsValue::Undefined
         }
@@ -164,8 +264,14 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
-                if to_boolean(&r) { return Ok(JsValue::Number(i as f64)); }
+                let r = call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
+                if to_boolean(&r) {
+                    return Ok(JsValue::Number(i as f64));
+                }
             }
             JsValue::Number(-1.0)
         }
@@ -173,8 +279,14 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate().rev() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
-                if to_boolean(&r) { return Ok(item.clone()); }
+                let r = call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
+                if to_boolean(&r) {
+                    return Ok(item.clone());
+                }
             }
             JsValue::Undefined
         }
@@ -182,18 +294,36 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
             for (i, item) in a.iter().enumerate().rev() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
-                if to_boolean(&r) { return Ok(JsValue::Number(i as f64)); }
+                let r = call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
+                if to_boolean(&r) {
+                    return Ok(JsValue::Number(i as f64));
+                }
             }
             JsValue::Number(-1.0)
         }
         "reduce" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
-            let mut acc = args.get(1).cloned().unwrap_or_else(|| a.first().cloned().unwrap_or(JsValue::Undefined));
+            let mut acc = args
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| a.first().cloned().unwrap_or(JsValue::Undefined));
             let start = if args.len() > 1 { 0 } else { 1 };
             for (i, item) in a.iter().enumerate().skip(start) {
-                acc = call_function(&callback, &[acc, item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?;
+                acc = call_function(
+                    &callback,
+                    &[
+                        acc,
+                        item.clone(),
+                        JsValue::Number(i as f64),
+                        arr_val.clone(),
+                    ],
+                    scope,
+                )?;
             }
             acc
         }
@@ -201,31 +331,63 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
             let has_initial = args.len() > 1;
-            let mut acc = if has_initial { args[1].clone() } else { a.last().cloned().unwrap_or(JsValue::Undefined) };
-            let upper = if has_initial { a.len() } else { a.len().saturating_sub(1) };
+            let mut acc = if has_initial {
+                args[1].clone()
+            } else {
+                a.last().cloned().unwrap_or(JsValue::Undefined)
+            };
+            let upper = if has_initial {
+                a.len()
+            } else {
+                a.len().saturating_sub(1)
+            };
             for i in (0..upper).rev() {
                 let item = a[i].clone();
-                acc = call_function(&callback, &[acc, item, JsValue::Number(i as f64), arr_val.clone()], scope)?;
+                acc = call_function(
+                    &callback,
+                    &[acc, item, JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?;
             }
             acc
         }
         "some" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
-            for (i, item) in a.iter().enumerate() { if to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?) { return Ok(JsValue::Boolean(true)); } }
+            for (i, item) in a.iter().enumerate() {
+                if to_boolean(&call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?) {
+                    return Ok(JsValue::Boolean(true));
+                }
+            }
             JsValue::Boolean(false)
         }
         "every" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let arr_val = JsValue::Array(a.clone());
-            for (i, item) in a.iter().enumerate() { if !to_boolean(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64), arr_val.clone()], scope)?) { return Ok(JsValue::Boolean(false)); } }
+            for (i, item) in a.iter().enumerate() {
+                if !to_boolean(&call_function(
+                    &callback,
+                    &[item.clone(), JsValue::Number(i as f64), arr_val.clone()],
+                    scope,
+                )?) {
+                    return Ok(JsValue::Boolean(false));
+                }
+            }
             JsValue::Boolean(true)
         }
         "flat" => {
             let depth = match args.first() {
                 Some(v) if !matches!(v, JsValue::Undefined) => {
                     let n = to_number(v);
-                    if n.is_finite() { n.max(0.0) as usize } else { usize::MAX }
+                    if n.is_finite() {
+                        n.max(0.0) as usize
+                    } else {
+                        usize::MAX
+                    }
                 }
                 _ => 1,
             };
@@ -235,8 +397,13 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
             let mut result = Vec::new();
             for (i, item) in a.iter().enumerate() {
-                let r = call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
-                if let JsValue::Array(inner) = r { result.extend(inner); } else { result.push(r); }
+                let r =
+                    call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], scope)?;
+                if let JsValue::Array(inner) = r {
+                    result.extend(inner);
+                } else {
+                    result.push(r);
+                }
             }
             JsValue::Array(result)
         }
@@ -245,9 +412,19 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
             let len = a.len() as i64;
             let start_raw = args.get(1).map(to_number).unwrap_or(0.0) as i64;
             let end_raw = args.get(2).map(to_number).unwrap_or(len as f64) as i64;
-            let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
-            let end = if end_raw < 0 { (len + end_raw).max(0) as usize } else { (end_raw as usize).min(a.len()) };
-            for item in a.iter_mut().take(end).skip(start) { *item = val.clone(); }
+            let start = if start_raw < 0 {
+                (len + start_raw).max(0) as usize
+            } else {
+                (start_raw as usize).min(a.len())
+            };
+            let end = if end_raw < 0 {
+                (len + end_raw).max(0) as usize
+            } else {
+                (end_raw as usize).min(a.len())
+            };
+            for item in a.iter_mut().take(end).skip(start) {
+                *item = val.clone();
+            }
             JsValue::Array(a.clone())
         }
         "toReversed" => {
@@ -261,20 +438,33 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
                 Some(cb) if !matches!(cb, JsValue::Undefined | JsValue::Null) => {
                     let mut sort_err: Option<Signal> = None;
                     out.sort_by(|x, y| {
-                        if sort_err.is_some() { return std::cmp::Ordering::Equal; }
+                        if sort_err.is_some() {
+                            return std::cmp::Ordering::Equal;
+                        }
                         match call_function(cb, &[x.clone(), y.clone()], scope) {
                             Ok(v) => {
                                 let n = to_number(&v);
-                                if n < 0.0 { std::cmp::Ordering::Less }
-                                else if n > 0.0 { std::cmp::Ordering::Greater }
-                                else { std::cmp::Ordering::Equal }
+                                if n < 0.0 {
+                                    std::cmp::Ordering::Less
+                                } else if n > 0.0 {
+                                    std::cmp::Ordering::Greater
+                                } else {
+                                    std::cmp::Ordering::Equal
+                                }
                             }
-                            Err(e) => { sort_err = Some(e); std::cmp::Ordering::Equal }
+                            Err(e) => {
+                                sort_err = Some(e);
+                                std::cmp::Ordering::Equal
+                            }
                         }
                     });
-                    if let Some(e) = sort_err { return Err(e); }
+                    if let Some(e) = sort_err {
+                        return Err(e);
+                    }
                 }
-                _ => { out.sort_by_key(to_string); }
+                _ => {
+                    out.sort_by_key(to_string);
+                }
             }
             JsValue::Array(out)
         }
@@ -291,18 +481,32 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
         "toSpliced" => {
             let len = a.len() as i64;
             let start_raw = args.first().map(to_number).unwrap_or(0.0) as i64;
-            let start = if start_raw < 0 { (len + start_raw).max(0) as usize } else { (start_raw as usize).min(a.len()) };
-            let delete_count = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len).max(0) as usize;
+            let start = if start_raw < 0 {
+                (len + start_raw).max(0) as usize
+            } else {
+                (start_raw as usize).min(a.len())
+            };
+            let delete_count = args
+                .get(1)
+                .map(|v| to_number(v) as i64)
+                .unwrap_or(len)
+                .max(0) as usize;
             let end = (start + delete_count).min(a.len());
             let mut out = a.clone();
             out.drain(start..end);
-            for (i, item) in args.iter().skip(2).enumerate() { out.insert(start + i, item.clone()); }
+            for (i, item) in args.iter().skip(2).enumerate() {
+                out.insert(start + i, item.clone());
+            }
             JsValue::Array(out)
         }
         "copyWithin" => {
             let len = a.len() as i64;
             let norm = |raw: i64| -> usize {
-                if raw < 0 { (len + raw).max(0) as usize } else { (raw as usize).min(a.len()) }
+                if raw < 0 {
+                    (len + raw).max(0) as usize
+                } else {
+                    (raw as usize).min(a.len())
+                }
             };
             let target = norm(args.first().map(to_number).unwrap_or(0.0) as i64);
             let start = norm(args.get(1).map(to_number).unwrap_or(0.0) as i64);
@@ -311,7 +515,9 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
                 let slice: Vec<JsValue> = a[start..end].to_vec();
                 for (i, v) in slice.into_iter().enumerate() {
                     let pos = target + i;
-                    if pos >= a.len() { break; }
+                    if pos >= a.len() {
+                        break;
+                    }
                     a[pos] = v;
                 }
             }
@@ -323,7 +529,12 @@ pub(super) fn call_array_method(a: &mut Vec<JsValue>, method: &str, args: &[JsVa
 
 /// Handle `String.prototype.replace` / `replaceAll` when the replacement is a
 /// function.
-pub(super) fn string_replace_with_fn(s: &str, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+pub(super) fn string_replace_with_fn(
+    s: &str,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
     let pattern = args.first().map(to_string).unwrap_or_default();
     let func = args.get(1).cloned().unwrap_or(JsValue::Undefined);
     let replace_all = method == "replaceAll";
@@ -337,15 +548,21 @@ pub(super) fn string_replace_with_fn(s: &str, method: &str, args: &[JsValue], sc
         let idx = search_start + rel;
         out.push_str(&s[search_start..idx]);
         let matched = &s[idx..idx + pattern.len()];
-        let result = call_function(&func, &[
-            JsValue::String(matched.to_string()),
-            JsValue::Number(idx as f64),
-            JsValue::String(s.to_string()),
-        ], scope)?;
+        let result = call_function(
+            &func,
+            &[
+                JsValue::String(matched.to_string()),
+                JsValue::Number(idx as f64),
+                JsValue::String(s.to_string()),
+            ],
+            scope,
+        )?;
         out.push_str(&to_string(&result));
         search_start = idx + pattern.len();
         replaced = true;
-        if !replace_all { break; }
+        if !replace_all {
+            break;
+        }
     }
     if !replaced {
         return Ok(JsValue::String(s.to_string()));
@@ -357,67 +574,134 @@ pub(super) fn string_replace_with_fn(s: &str, method: &str, args: &[JsValue], sc
 pub(super) fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsValue {
     match method {
         "length" => JsValue::Number(s.chars().count() as f64),
-        "charAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::String(c.to_string())).unwrap_or(JsValue::String(String::new())) }
-        "charCodeAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::Number(c as u32 as f64)).unwrap_or(JsValue::Number(f64::NAN)) }
-        "codePointAt" => { let i = args.first().map(to_number).unwrap_or(0.0) as usize; s.chars().nth(i).map(|c| JsValue::Number(c as u32 as f64)).unwrap_or(JsValue::Undefined) }
+        "charAt" => {
+            let i = args.first().map(to_number).unwrap_or(0.0) as usize;
+            s.chars()
+                .nth(i)
+                .map(|c| JsValue::String(c.to_string()))
+                .unwrap_or(JsValue::String(String::new()))
+        }
+        "charCodeAt" => {
+            let i = args.first().map(to_number).unwrap_or(0.0) as usize;
+            s.chars()
+                .nth(i)
+                .map(|c| JsValue::Number(c as u32 as f64))
+                .unwrap_or(JsValue::Number(f64::NAN))
+        }
+        "codePointAt" => {
+            let i = args.first().map(to_number).unwrap_or(0.0) as usize;
+            s.chars()
+                .nth(i)
+                .map(|c| JsValue::Number(c as u32 as f64))
+                .unwrap_or(JsValue::Undefined)
+        }
         "at" => {
             let chars: Vec<char> = s.chars().collect();
             let len = chars.len() as i64;
             let raw = args.first().map(to_number).unwrap_or(0.0) as i64;
             let idx = if raw < 0 { len + raw } else { raw };
-            if (0..len).contains(&idx) { JsValue::String(chars[idx as usize].to_string()) } else { JsValue::Undefined }
+            if (0..len).contains(&idx) {
+                JsValue::String(chars[idx as usize].to_string())
+            } else {
+                JsValue::Undefined
+            }
         }
         "indexOf" => {
-            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let needle: Vec<char> = args
+                .first()
+                .map(to_string)
+                .unwrap_or_default()
+                .chars()
+                .collect();
             let chars: Vec<char> = s.chars().collect();
             let from = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0).max(0) as usize;
             let start = from.min(chars.len());
             let mut result = -1.0;
             if needle.len() <= chars.len() {
                 for i in start..=(chars.len() - needle.len()) {
-                    if chars[i..i + needle.len()] == needle[..] { result = i as f64; break; }
+                    if chars[i..i + needle.len()] == needle[..] {
+                        result = i as f64;
+                        break;
+                    }
                 }
             }
             JsValue::Number(result)
         }
         "lastIndexOf" => {
-            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let needle: Vec<char> = args
+                .first()
+                .map(to_string)
+                .unwrap_or_default()
+                .chars()
+                .collect();
             let chars: Vec<char> = s.chars().collect();
             let mut result = -1.0;
             if needle.len() <= chars.len() {
                 let max_start = chars.len() - needle.len();
                 let from = args.get(1).map(to_number).unwrap_or(f64::INFINITY);
-                let cap = if from.is_nan() || from >= max_start as f64 { max_start } else if from < 0.0 { 0 } else { from as usize };
+                let cap = if from.is_nan() || from >= max_start as f64 {
+                    max_start
+                } else if from < 0.0 {
+                    0
+                } else {
+                    from as usize
+                };
                 for i in (0..=cap).rev() {
-                    if chars[i..i + needle.len()] == needle[..] { result = i as f64; break; }
+                    if chars[i..i + needle.len()] == needle[..] {
+                        result = i as f64;
+                        break;
+                    }
                 }
             }
             JsValue::Number(result)
         }
         "includes" => {
-            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let needle: Vec<char> = args
+                .first()
+                .map(to_string)
+                .unwrap_or_default()
+                .chars()
+                .collect();
             let chars: Vec<char> = s.chars().collect();
             let pos = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0).max(0) as usize;
             let start = pos.min(chars.len());
             let mut found = false;
             if needle.len() <= chars.len() {
                 for i in start..=(chars.len() - needle.len()) {
-                    if chars[i..i + needle.len()] == needle[..] { found = true; break; }
+                    if chars[i..i + needle.len()] == needle[..] {
+                        found = true;
+                        break;
+                    }
                 }
             }
             JsValue::Boolean(found)
         }
         "startsWith" => {
-            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let needle: Vec<char> = args
+                .first()
+                .map(to_string)
+                .unwrap_or_default()
+                .chars()
+                .collect();
             let chars: Vec<char> = s.chars().collect();
             let pos = args.get(1).map(|v| to_number(v) as i64).unwrap_or(0).max(0) as usize;
-            let ok = pos + needle.len() <= chars.len() && chars[pos..pos + needle.len()] == needle[..];
+            let ok =
+                pos + needle.len() <= chars.len() && chars[pos..pos + needle.len()] == needle[..];
             JsValue::Boolean(ok)
         }
         "endsWith" => {
-            let needle: Vec<char> = args.first().map(to_string).unwrap_or_default().chars().collect();
+            let needle: Vec<char> = args
+                .first()
+                .map(to_string)
+                .unwrap_or_default()
+                .chars()
+                .collect();
             let chars: Vec<char> = s.chars().collect();
-            let end = args.get(1).map(|v| (to_number(v) as i64).max(0) as usize).unwrap_or(chars.len()).min(chars.len());
+            let end = args
+                .get(1)
+                .map(|v| (to_number(v) as i64).max(0) as usize)
+                .unwrap_or(chars.len())
+                .min(chars.len());
             let ok = needle.len() <= end && chars[end - needle.len()..end] == needle[..];
             JsValue::Boolean(ok)
         }
@@ -426,15 +710,35 @@ pub(super) fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsV
             let len = chars.len() as i64;
             let start = args.first().map(|v| to_number(v) as i64).unwrap_or(0);
             let end = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len);
-            let s_idx = if start < 0 { (len + start).max(0) as usize } else { (start as usize).min(len as usize) };
-            let e_idx = if end < 0 { (len + end).max(0) as usize } else { (end as usize).min(len as usize) };
+            let s_idx = if start < 0 {
+                (len + start).max(0) as usize
+            } else {
+                (start as usize).min(len as usize)
+            };
+            let e_idx = if end < 0 {
+                (len + end).max(0) as usize
+            } else {
+                (end as usize).min(len as usize)
+            };
             JsValue::String(chars.get(s_idx..e_idx).unwrap_or(&[]).iter().collect())
         }
         "substring" => {
             let chars: Vec<char> = s.chars().collect();
-            let start = args.first().map(|v| to_number(v) as usize).unwrap_or(0).min(chars.len());
-            let end = args.get(1).map(|v| to_number(v) as usize).unwrap_or(chars.len()).min(chars.len());
-            let (s_idx, e_idx) = if start <= end { (start, end) } else { (end, start) };
+            let start = args
+                .first()
+                .map(|v| to_number(v) as usize)
+                .unwrap_or(0)
+                .min(chars.len());
+            let end = args
+                .get(1)
+                .map(|v| to_number(v) as usize)
+                .unwrap_or(chars.len())
+                .min(chars.len());
+            let (s_idx, e_idx) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
             JsValue::String(chars.get(s_idx..e_idx).unwrap_or(&[]).iter().collect())
         }
         "toLowerCase" | "toLocaleLowerCase" => JsValue::String(s.to_lowercase()),
@@ -443,7 +747,13 @@ pub(super) fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsV
         "trimStart" | "trimLeft" => JsValue::String(s.trim_start().to_string()),
         "trimEnd" | "trimRight" => JsValue::String(s.trim_end().to_string()),
         "split" => {
-            let limit = args.get(1).and_then(|v| if matches!(v, JsValue::Undefined) { None } else { Some(to_number(v) as usize) });
+            let limit = args.get(1).and_then(|v| {
+                if matches!(v, JsValue::Undefined) {
+                    None
+                } else {
+                    Some(to_number(v) as usize)
+                }
+            });
             let mut parts: Vec<JsValue> = match args.first() {
                 None | Some(JsValue::Undefined) => vec![JsValue::String(s.to_string())],
                 Some(sep_val) => {
@@ -451,25 +761,39 @@ pub(super) fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsV
                     if sep.is_empty() {
                         s.chars().map(|c| JsValue::String(c.to_string())).collect()
                     } else {
-                        s.split(&sep).map(|p| JsValue::String(p.to_string())).collect()
+                        s.split(&sep)
+                            .map(|p| JsValue::String(p.to_string()))
+                            .collect()
                     }
                 }
             };
-            if let Some(n) = limit { parts.truncate(n); }
+            if let Some(n) = limit {
+                parts.truncate(n);
+            }
             JsValue::Array(parts)
         }
         "substr" => {
             let chars: Vec<char> = s.chars().collect();
             let len = chars.len() as i64;
             let raw = args.first().map(to_number).unwrap_or(0.0) as i64;
-            let start = if raw < 0 { (len + raw).max(0) as usize } else { (raw as usize).min(chars.len()) };
-            let count = args.get(1).map(|v| to_number(v) as i64).unwrap_or(len).max(0) as usize;
+            let start = if raw < 0 {
+                (len + raw).max(0) as usize
+            } else {
+                (raw as usize).min(chars.len())
+            };
+            let count = args
+                .get(1)
+                .map(|v| to_number(v) as i64)
+                .unwrap_or(len)
+                .max(0) as usize;
             let end = (start + count).min(chars.len());
             JsValue::String(chars.get(start..end).unwrap_or(&[]).iter().collect())
         }
         "concat" => {
             let mut out = s.to_string();
-            for a in args { out.push_str(&to_string(a)); }
+            for a in args {
+                out.push_str(&to_string(a));
+            }
             JsValue::String(out)
         }
         "replace" => {
@@ -546,7 +870,11 @@ pub(super) fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsV
         }
         "search" => {
             let pattern = args.first().map(to_string).unwrap_or_default();
-            let idx = if pattern.is_empty() { 0 } else { s.find(pattern.as_str()).map(|i| i as i64).unwrap_or(-1) };
+            let idx = if pattern.is_empty() {
+                0
+            } else {
+                s.find(pattern.as_str()).map(|i| i as i64).unwrap_or(-1)
+            };
             JsValue::Number(idx as f64)
         }
         "matchAll" => JsValue::Null,
@@ -557,11 +885,19 @@ pub(super) fn call_string_method(s: &str, method: &str, args: &[JsValue]) -> JsV
 
 pub(super) fn pad_string(s: &str, target: usize, pad: &str, at_start: bool) -> String {
     let cur = s.chars().count();
-    if cur >= target || pad.is_empty() { return s.to_string(); }
+    if cur >= target || pad.is_empty() {
+        return s.to_string();
+    }
     let needed = target - cur;
     let pad_chars: Vec<char> = pad.chars().collect();
-    let fill: String = (0..needed).map(|i| pad_chars[i % pad_chars.len()]).collect();
-    if at_start { format!("{}{}", fill, s) } else { format!("{}{}", s, fill) }
+    let fill: String = (0..needed)
+        .map(|i| pad_chars[i % pad_chars.len()])
+        .collect();
+    if at_start {
+        format!("{}{}", fill, s)
+    } else {
+        format!("{}{}", s, fill)
+    }
 }
 
 pub(super) fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsValue {
@@ -576,23 +912,29 @@ pub(super) fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsVa
         }
         "toFixed" => {
             let digits = args.first().map(to_number).unwrap_or(0.0);
-            let digits = if digits.is_finite() { (digits as i64).clamp(0, 100) as usize } else { 0 };
+            let digits = if digits.is_finite() {
+                (digits as i64).clamp(0, 100) as usize
+            } else {
+                0
+            };
             JsValue::String(to_fixed_js(n, digits))
         }
-        "toPrecision" => {
-            match args.first() {
-                Some(v) if !matches!(v, JsValue::Undefined) => {
-                    let p = (to_number(v) as usize).clamp(1, 100);
-                    JsValue::String(to_precision_js(n, p))
-                }
-                _ => JsValue::String(format_number(n)),
+        "toPrecision" => match args.first() {
+            Some(v) if !matches!(v, JsValue::Undefined) => {
+                let p = (to_number(v) as usize).clamp(1, 100);
+                JsValue::String(to_precision_js(n, p))
             }
-        }
+            _ => JsValue::String(format_number(n)),
+        },
         "toExponential" => {
             let frac = match args.first() {
                 Some(v) if !matches!(v, JsValue::Undefined) => {
                     let d = to_number(v);
-                    if d.is_finite() { Some((d as i64).clamp(0, 100) as usize) } else { None }
+                    if d.is_finite() {
+                        Some((d as i64).clamp(0, 100) as usize)
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             };
@@ -604,7 +946,9 @@ pub(super) fn call_number_method(n: f64, method: &str, args: &[JsValue]) -> JsVa
 }
 
 pub(super) fn number_to_radix(n: f64, radix: u32) -> String {
-    if !n.is_finite() { return format_number(n); }
+    if !n.is_finite() {
+        return format_number(n);
+    }
     let negative = n < 0.0;
     let abs = n.abs();
     let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
@@ -634,22 +978,45 @@ pub(super) fn number_to_radix(n: f64, radix: u32) -> String {
         }
     }
     let mut result = String::new();
-    if negative { result.push('-'); }
+    if negative {
+        result.push('-');
+    }
     result.push_str(&String::from_utf8(out).unwrap_or_default());
     result
 }
 
-pub(super) fn expand_replacement(replacement: &str, matched: &str, before: &str, after: &str) -> String {
+pub(super) fn expand_replacement(
+    replacement: &str,
+    matched: &str,
+    before: &str,
+    after: &str,
+) -> String {
     let chars: Vec<char> = replacement.chars().collect();
     let mut out = String::new();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '$' && i + 1 < chars.len() {
             match chars[i + 1] {
-                '$' => { out.push('$'); i += 2; continue; }
-                '&' => { out.push_str(matched); i += 2; continue; }
-                '`' => { out.push_str(before); i += 2; continue; }
-                '\'' => { out.push_str(after); i += 2; continue; }
+                '$' => {
+                    out.push('$');
+                    i += 2;
+                    continue;
+                }
+                '&' => {
+                    out.push_str(matched);
+                    i += 2;
+                    continue;
+                }
+                '`' => {
+                    out.push_str(before);
+                    i += 2;
+                    continue;
+                }
+                '\'' => {
+                    out.push_str(after);
+                    i += 2;
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -660,8 +1027,16 @@ pub(super) fn expand_replacement(replacement: &str, matched: &str, before: &str,
 }
 
 pub(super) fn to_fixed_js(n: f64, digits: usize) -> String {
-    if n.is_nan() { return "NaN".to_string(); }
-    if n.is_infinite() { return if n < 0.0 { "-Infinity".to_string() } else { "Infinity".to_string() }; }
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n < 0.0 {
+            "-Infinity".to_string()
+        } else {
+            "Infinity".to_string()
+        };
+    }
     let neg = n.is_sign_negative() && n != 0.0;
     let scale = 10f64.powi(digits as i32);
     let rounded = (n.abs() * scale).round();
@@ -677,23 +1052,39 @@ pub(super) fn to_fixed_js(n: f64, digits: usize) -> String {
         let split = padded.len() - digits;
         format!("{}.{}", &padded[..split], &padded[split..])
     };
-    if neg && rounded != 0.0 { format!("-{}", body) } else { body }
+    if neg && rounded != 0.0 {
+        format!("-{}", body)
+    } else {
+        body
+    }
 }
 
 pub(super) fn to_precision_js(n: f64, p: usize) -> String {
-    if n.is_nan() { return "NaN".to_string(); }
-    if n.is_infinite() { return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string(); }
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
     let negative = n < 0.0 || (n == 0.0 && n.is_sign_negative());
     let a = n.abs();
     let prefix = if negative { "-" } else { "" };
     if a == 0.0 {
-        return if p <= 1 { format!("{}0", prefix) } else { format!("{}0.{}", prefix, "0".repeat(p - 1)) };
+        return if p <= 1 {
+            format!("{}0", prefix)
+        } else {
+            format!("{}0.{}", prefix, "0".repeat(p - 1))
+        };
     }
     let sci = format!("{:e}", a);
     let e_pos = sci.find('e').unwrap();
     let sig = &sci[..e_pos];
     let rust_exp: i64 = sci[e_pos + 1..].parse().unwrap_or(0);
-    let mut digits: Vec<u8> = sig.chars().filter(|c| *c != '.').map(|c| c as u8 - b'0').collect();
+    let mut digits: Vec<u8> = sig
+        .chars()
+        .filter(|c| *c != '.')
+        .map(|c| c as u8 - b'0')
+        .collect();
     let point = sig.find('.').unwrap_or(sig.len());
     let mut exp10 = rust_exp + point as i64;
     if digits.len() > p {
@@ -702,22 +1093,43 @@ pub(super) fn to_precision_js(n: f64, p: usize) -> String {
         let mut i = p as isize - 1;
         while carry && i >= 0 {
             digits[i as usize] += 1;
-            if digits[i as usize] >= 10 { digits[i as usize] = 0; } else { carry = false; }
+            if digits[i as usize] >= 10 {
+                digits[i as usize] = 0;
+            } else {
+                carry = false;
+            }
             i -= 1;
         }
-        if carry { digits = vec![1]; exp10 += 1; }
+        if carry {
+            digits = vec![1];
+            exp10 += 1;
+        }
     }
-    while digits.len() < p { digits.push(0); }
+    while digits.len() < p {
+        digits.push(0);
+    }
     let k = digits.len() as i64;
     let e = exp10 - 1;
     let chars: Vec<char> = digits.iter().map(|d| (b'0' + d) as char).collect();
     if e >= -6 && e < p as i64 {
         let body = if exp10 >= k {
-            format!("{}{}", chars.iter().collect::<String>(), "0".repeat((exp10 - k) as usize))
+            format!(
+                "{}{}",
+                chars.iter().collect::<String>(),
+                "0".repeat((exp10 - k) as usize)
+            )
         } else if exp10 > 0 {
-            format!("{}.{}", chars[..exp10 as usize].iter().collect::<String>(), chars[exp10 as usize..].iter().collect::<String>())
+            format!(
+                "{}.{}",
+                chars[..exp10 as usize].iter().collect::<String>(),
+                chars[exp10 as usize..].iter().collect::<String>()
+            )
         } else {
-            format!("0.{}{}", "0".repeat((-exp10) as usize), chars.iter().collect::<String>())
+            format!(
+                "0.{}{}",
+                "0".repeat((-exp10) as usize),
+                chars.iter().collect::<String>()
+            )
         };
         format!("{}{}", prefix, body)
     } else {
@@ -726,17 +1138,30 @@ pub(super) fn to_precision_js(n: f64, p: usize) -> String {
         } else {
             format!("{}.{}", chars[0], chars[1..].iter().collect::<String>())
         };
-        format!("{}{}e{}{}", prefix, mantissa, if e >= 0 { "+" } else { "-" }, e.abs())
+        format!(
+            "{}{}e{}{}",
+            prefix,
+            mantissa,
+            if e >= 0 { "+" } else { "-" },
+            e.abs()
+        )
     }
 }
 
 pub(super) fn to_exponential_js(n: f64, frac: Option<usize>) -> String {
-    if n.is_nan() { return "NaN".to_string(); }
-    if n.is_infinite() { return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string(); }
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
     let negative = n < 0.0;
     let a = n.abs();
     if a == 0.0 {
-        let mantissa = match frac { Some(f) if f > 0 => format!("0.{}", "0".repeat(f)), _ => "0".to_string() };
+        let mantissa = match frac {
+            Some(f) if f > 0 => format!("0.{}", "0".repeat(f)),
+            _ => "0".to_string(),
+        };
         return format!("{}e+0", mantissa);
     }
     let sci = format!("{:e}", a);
@@ -749,7 +1174,9 @@ pub(super) fn to_exponential_js(n: f64, frac: Option<usize>) -> String {
     match frac {
         Some(f) => {
             let keep = f + 1;
-            while digits.len() < keep { digits.push('0'); }
+            while digits.len() < keep {
+                digits.push('0');
+            }
             if digits.len() > keep {
                 let mut d: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
                 let mut carry = d[keep] >= 5;
@@ -757,21 +1184,51 @@ pub(super) fn to_exponential_js(n: f64, frac: Option<usize>) -> String {
                 let mut i = keep as isize - 1;
                 while carry && i >= 0 {
                     d[i as usize] += 1;
-                    if d[i as usize] >= 10 { d[i as usize] = 0; carry = true; } else { carry = false; }
+                    if d[i as usize] >= 10 {
+                        d[i as usize] = 0;
+                        carry = true;
+                    } else {
+                        carry = false;
+                    }
                     i -= 1;
                 }
-                if carry { d.insert(0, 1); exp10 += 1; }
+                if carry {
+                    d.insert(0, 1);
+                    exp10 += 1;
+                }
                 digits = d.iter().map(|x| (b'0' + x) as char).collect();
             }
-            let mantissa = if f == 0 { digits[..1].to_string() } else { format!("{}.{}", &digits[..1], &digits[1..1 + f]) };
+            let mantissa = if f == 0 {
+                digits[..1].to_string()
+            } else {
+                format!("{}.{}", &digits[..1], &digits[1..1 + f])
+            };
             let prefix = if negative { "-" } else { "" };
-            format!("{}{}e{}{}", prefix, mantissa, if exp10 >= 0 { "+" } else { "-" }, exp10.abs())
+            format!(
+                "{}{}e{}{}",
+                prefix,
+                mantissa,
+                if exp10 >= 0 { "+" } else { "-" },
+                exp10.abs()
+            )
         }
         None => {
-            while digits.len() > 1 && digits.ends_with('0') { digits.pop(); }
-            let mantissa = if digits.len() == 1 { digits.clone() } else { format!("{}.{}", &digits[..1], &digits[1..]) };
+            while digits.len() > 1 && digits.ends_with('0') {
+                digits.pop();
+            }
+            let mantissa = if digits.len() == 1 {
+                digits.clone()
+            } else {
+                format!("{}.{}", &digits[..1], &digits[1..])
+            };
             let prefix = if negative { "-" } else { "" };
-            format!("{}{}e{}{}", prefix, mantissa, if exp10 >= 0 { "+" } else { "-" }, exp10.abs())
+            format!(
+                "{}{}e{}{}",
+                prefix,
+                mantissa,
+                if exp10 >= 0 { "+" } else { "-" },
+                exp10.abs()
+            )
         }
     }
 }
@@ -784,131 +1241,247 @@ mod tests {
 
     #[test]
     fn string_length() {
-        assert_eq!(call_string_method("hello", "length", &[]), JsValue::Number(5.0));
+        assert_eq!(
+            call_string_method("hello", "length", &[]),
+            JsValue::Number(5.0)
+        );
         assert_eq!(call_string_method("", "length", &[]), JsValue::Number(0.0));
     }
 
     #[test]
     fn string_char_at() {
-        assert_eq!(call_string_method("hello", "charAt", &[JsValue::Number(0.0)]), JsValue::String("h".into()));
-        assert_eq!(call_string_method("hello", "charAt", &[JsValue::Number(4.0)]), JsValue::String("o".into()));
-        assert_eq!(call_string_method("hello", "charAt", &[JsValue::Number(99.0)]), JsValue::String("".into()));
+        assert_eq!(
+            call_string_method("hello", "charAt", &[JsValue::Number(0.0)]),
+            JsValue::String("h".into())
+        );
+        assert_eq!(
+            call_string_method("hello", "charAt", &[JsValue::Number(4.0)]),
+            JsValue::String("o".into())
+        );
+        assert_eq!(
+            call_string_method("hello", "charAt", &[JsValue::Number(99.0)]),
+            JsValue::String("".into())
+        );
     }
 
     #[test]
     fn string_char_code_at() {
-        assert_eq!(call_string_method("A", "charCodeAt", &[JsValue::Number(0.0)]), JsValue::Number(65.0));
-        assert!(matches!(call_string_method("A", "charCodeAt", &[JsValue::Number(5.0)]), JsValue::Number(n) if n.is_nan()));
+        assert_eq!(
+            call_string_method("A", "charCodeAt", &[JsValue::Number(0.0)]),
+            JsValue::Number(65.0)
+        );
+        assert!(
+            matches!(call_string_method("A", "charCodeAt", &[JsValue::Number(5.0)]), JsValue::Number(n) if n.is_nan())
+        );
     }
 
     #[test]
     fn string_code_point_at() {
-        assert_eq!(call_string_method("A", "codePointAt", &[JsValue::Number(0.0)]), JsValue::Number(65.0));
-        assert_eq!(call_string_method("A", "codePointAt", &[JsValue::Number(5.0)]), JsValue::Undefined);
+        assert_eq!(
+            call_string_method("A", "codePointAt", &[JsValue::Number(0.0)]),
+            JsValue::Number(65.0)
+        );
+        assert_eq!(
+            call_string_method("A", "codePointAt", &[JsValue::Number(5.0)]),
+            JsValue::Undefined
+        );
     }
 
     #[test]
     fn string_at_positive() {
-        assert_eq!(call_string_method("hello", "at", &[JsValue::Number(1.0)]), JsValue::String("e".into()));
+        assert_eq!(
+            call_string_method("hello", "at", &[JsValue::Number(1.0)]),
+            JsValue::String("e".into())
+        );
     }
 
     #[test]
     fn string_at_negative() {
-        assert_eq!(call_string_method("hello", "at", &[JsValue::Number(-1.0)]), JsValue::String("o".into()));
+        assert_eq!(
+            call_string_method("hello", "at", &[JsValue::Number(-1.0)]),
+            JsValue::String("o".into())
+        );
     }
 
     #[test]
     fn string_at_out_of_bounds() {
-        assert_eq!(call_string_method("hello", "at", &[JsValue::Number(10.0)]), JsValue::Undefined);
+        assert_eq!(
+            call_string_method("hello", "at", &[JsValue::Number(10.0)]),
+            JsValue::Undefined
+        );
     }
 
     #[test]
     fn string_index_of() {
-        assert_eq!(call_string_method("hello world", "indexOf", &[JsValue::String("world".into())]), JsValue::Number(6.0));
-        assert_eq!(call_string_method("hello", "indexOf", &[JsValue::String("z".into())]), JsValue::Number(-1.0));
+        assert_eq!(
+            call_string_method("hello world", "indexOf", &[JsValue::String("world".into())]),
+            JsValue::Number(6.0)
+        );
+        assert_eq!(
+            call_string_method("hello", "indexOf", &[JsValue::String("z".into())]),
+            JsValue::Number(-1.0)
+        );
     }
 
     #[test]
     fn string_index_of_with_from() {
-        assert_eq!(call_string_method("abcabc", "indexOf", &[JsValue::String("bc".into()), JsValue::Number(2.0)]), JsValue::Number(4.0));
+        assert_eq!(
+            call_string_method(
+                "abcabc",
+                "indexOf",
+                &[JsValue::String("bc".into()), JsValue::Number(2.0)]
+            ),
+            JsValue::Number(4.0)
+        );
     }
 
     #[test]
     fn string_last_index_of() {
-        assert_eq!(call_string_method("abcabc", "lastIndexOf", &[JsValue::String("bc".into())]), JsValue::Number(4.0));
+        assert_eq!(
+            call_string_method("abcabc", "lastIndexOf", &[JsValue::String("bc".into())]),
+            JsValue::Number(4.0)
+        );
     }
 
     #[test]
     fn string_includes_true() {
-        assert_eq!(call_string_method("hello world", "includes", &[JsValue::String("world".into())]), JsValue::Boolean(true));
+        assert_eq!(
+            call_string_method(
+                "hello world",
+                "includes",
+                &[JsValue::String("world".into())]
+            ),
+            JsValue::Boolean(true)
+        );
     }
 
     #[test]
     fn string_includes_false() {
-        assert_eq!(call_string_method("hello", "includes", &[JsValue::String("xyz".into())]), JsValue::Boolean(false));
+        assert_eq!(
+            call_string_method("hello", "includes", &[JsValue::String("xyz".into())]),
+            JsValue::Boolean(false)
+        );
     }
 
     #[test]
     fn string_starts_with() {
-        assert_eq!(call_string_method("hello", "startsWith", &[JsValue::String("hel".into())]), JsValue::Boolean(true));
-        assert_eq!(call_string_method("hello", "startsWith", &[JsValue::String("llo".into())]), JsValue::Boolean(false));
+        assert_eq!(
+            call_string_method("hello", "startsWith", &[JsValue::String("hel".into())]),
+            JsValue::Boolean(true)
+        );
+        assert_eq!(
+            call_string_method("hello", "startsWith", &[JsValue::String("llo".into())]),
+            JsValue::Boolean(false)
+        );
     }
 
     #[test]
     fn string_starts_with_position() {
-        assert_eq!(call_string_method("hello", "startsWith", &[JsValue::String("lo".into()), JsValue::Number(3.0)]), JsValue::Boolean(true));
+        assert_eq!(
+            call_string_method(
+                "hello",
+                "startsWith",
+                &[JsValue::String("lo".into()), JsValue::Number(3.0)]
+            ),
+            JsValue::Boolean(true)
+        );
     }
 
     #[test]
     fn string_ends_with() {
-        assert_eq!(call_string_method("hello", "endsWith", &[JsValue::String("llo".into())]), JsValue::Boolean(true));
-        assert_eq!(call_string_method("hello", "endsWith", &[JsValue::String("hel".into())]), JsValue::Boolean(false));
+        assert_eq!(
+            call_string_method("hello", "endsWith", &[JsValue::String("llo".into())]),
+            JsValue::Boolean(true)
+        );
+        assert_eq!(
+            call_string_method("hello", "endsWith", &[JsValue::String("hel".into())]),
+            JsValue::Boolean(false)
+        );
     }
 
     #[test]
     fn string_slice_basic() {
-        assert_eq!(call_string_method("hello", "slice", &[JsValue::Number(1.0), JsValue::Number(3.0)]), JsValue::String("el".into()));
+        assert_eq!(
+            call_string_method(
+                "hello",
+                "slice",
+                &[JsValue::Number(1.0), JsValue::Number(3.0)]
+            ),
+            JsValue::String("el".into())
+        );
     }
 
     #[test]
     fn string_slice_negative() {
-        assert_eq!(call_string_method("hello", "slice", &[JsValue::Number(-3.0)]), JsValue::String("llo".into()));
+        assert_eq!(
+            call_string_method("hello", "slice", &[JsValue::Number(-3.0)]),
+            JsValue::String("llo".into())
+        );
     }
 
     #[test]
     fn string_substring() {
-        assert_eq!(call_string_method("hello", "substring", &[JsValue::Number(1.0), JsValue::Number(3.0)]), JsValue::String("el".into()));
+        assert_eq!(
+            call_string_method(
+                "hello",
+                "substring",
+                &[JsValue::Number(1.0), JsValue::Number(3.0)]
+            ),
+            JsValue::String("el".into())
+        );
     }
 
     #[test]
     fn string_substring_swapped() {
         // substring swaps if start > end
-        assert_eq!(call_string_method("hello", "substring", &[JsValue::Number(3.0), JsValue::Number(1.0)]), JsValue::String("el".into()));
+        assert_eq!(
+            call_string_method(
+                "hello",
+                "substring",
+                &[JsValue::Number(3.0), JsValue::Number(1.0)]
+            ),
+            JsValue::String("el".into())
+        );
     }
 
     #[test]
     fn string_to_lower_case() {
-        assert_eq!(call_string_method("HELLO", "toLowerCase", &[]), JsValue::String("hello".into()));
+        assert_eq!(
+            call_string_method("HELLO", "toLowerCase", &[]),
+            JsValue::String("hello".into())
+        );
     }
 
     #[test]
     fn string_to_upper_case() {
-        assert_eq!(call_string_method("hello", "toUpperCase", &[]), JsValue::String("HELLO".into()));
+        assert_eq!(
+            call_string_method("hello", "toUpperCase", &[]),
+            JsValue::String("HELLO".into())
+        );
     }
 
     #[test]
     fn string_trim() {
-        assert_eq!(call_string_method("  hello  ", "trim", &[]), JsValue::String("hello".into()));
+        assert_eq!(
+            call_string_method("  hello  ", "trim", &[]),
+            JsValue::String("hello".into())
+        );
     }
 
     #[test]
     fn string_trim_start() {
-        assert_eq!(call_string_method("  hello  ", "trimStart", &[]), JsValue::String("hello  ".into()));
+        assert_eq!(
+            call_string_method("  hello  ", "trimStart", &[]),
+            JsValue::String("hello  ".into())
+        );
     }
 
     #[test]
     fn string_trim_end() {
-        assert_eq!(call_string_method("  hello  ", "trimEnd", &[]), JsValue::String("  hello".into()));
+        assert_eq!(
+            call_string_method("  hello  ", "trimEnd", &[]),
+            JsValue::String("  hello".into())
+        );
     }
 
     #[test]
@@ -916,15 +1489,23 @@ mod tests {
         let r = call_string_method("a,b,c", "split", &[JsValue::String(",".into())]);
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 3);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
     fn string_split_with_limit() {
-        let r = call_string_method("a,b,c", "split", &[JsValue::String(",".into()), JsValue::Number(2.0)]);
+        let r = call_string_method(
+            "a,b,c",
+            "split",
+            &[JsValue::String(",".into()), JsValue::Number(2.0)],
+        );
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -932,48 +1513,104 @@ mod tests {
         let r = call_string_method("abc", "split", &[JsValue::String("".into())]);
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 3);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
     fn string_substr() {
-        assert_eq!(call_string_method("hello", "substr", &[JsValue::Number(1.0), JsValue::Number(3.0)]), JsValue::String("ell".into()));
+        assert_eq!(
+            call_string_method(
+                "hello",
+                "substr",
+                &[JsValue::Number(1.0), JsValue::Number(3.0)]
+            ),
+            JsValue::String("ell".into())
+        );
     }
 
     #[test]
     fn string_concat() {
-        assert_eq!(call_string_method("hello", "concat", &[JsValue::String(" world".into())]), JsValue::String("hello world".into()));
+        assert_eq!(
+            call_string_method("hello", "concat", &[JsValue::String(" world".into())]),
+            JsValue::String("hello world".into())
+        );
     }
 
     #[test]
     fn string_replace() {
-        assert_eq!(call_string_method("hello world", "replace", &[JsValue::String("world".into()), JsValue::String("rust".into())]), JsValue::String("hello rust".into()));
+        assert_eq!(
+            call_string_method(
+                "hello world",
+                "replace",
+                &[
+                    JsValue::String("world".into()),
+                    JsValue::String("rust".into())
+                ]
+            ),
+            JsValue::String("hello rust".into())
+        );
     }
 
     #[test]
     fn string_replace_no_match() {
-        assert_eq!(call_string_method("hello", "replace", &[JsValue::String("xyz".into()), JsValue::String("abc".into())]), JsValue::String("hello".into()));
+        assert_eq!(
+            call_string_method(
+                "hello",
+                "replace",
+                &[JsValue::String("xyz".into()), JsValue::String("abc".into())]
+            ),
+            JsValue::String("hello".into())
+        );
     }
 
     #[test]
     fn string_replace_all() {
-        assert_eq!(call_string_method("aabaa", "replaceAll", &[JsValue::String("a".into()), JsValue::String("x".into())]), JsValue::String("xxbxx".into()));
+        assert_eq!(
+            call_string_method(
+                "aabaa",
+                "replaceAll",
+                &[JsValue::String("a".into()), JsValue::String("x".into())]
+            ),
+            JsValue::String("xxbxx".into())
+        );
     }
 
     #[test]
     fn string_repeat() {
-        assert_eq!(call_string_method("ab", "repeat", &[JsValue::Number(3.0)]), JsValue::String("ababab".into()));
-        assert_eq!(call_string_method("x", "repeat", &[JsValue::Number(0.0)]), JsValue::String("".into()));
+        assert_eq!(
+            call_string_method("ab", "repeat", &[JsValue::Number(3.0)]),
+            JsValue::String("ababab".into())
+        );
+        assert_eq!(
+            call_string_method("x", "repeat", &[JsValue::Number(0.0)]),
+            JsValue::String("".into())
+        );
     }
 
     #[test]
     fn string_pad_start() {
-        assert_eq!(call_string_method("5", "padStart", &[JsValue::Number(3.0), JsValue::String("0".into())]), JsValue::String("005".into()));
+        assert_eq!(
+            call_string_method(
+                "5",
+                "padStart",
+                &[JsValue::Number(3.0), JsValue::String("0".into())]
+            ),
+            JsValue::String("005".into())
+        );
     }
 
     #[test]
     fn string_pad_end() {
-        assert_eq!(call_string_method("5", "padEnd", &[JsValue::Number(3.0), JsValue::String("0".into())]), JsValue::String("500".into()));
+        assert_eq!(
+            call_string_method(
+                "5",
+                "padEnd",
+                &[JsValue::Number(3.0), JsValue::String("0".into())]
+            ),
+            JsValue::String("500".into())
+        );
     }
 
     #[test]
@@ -986,12 +1623,18 @@ mod tests {
 
     #[test]
     fn string_is_well_formed() {
-        assert_eq!(call_string_method("hello", "isWellFormed", &[]), JsValue::Boolean(true));
+        assert_eq!(
+            call_string_method("hello", "isWellFormed", &[]),
+            JsValue::Boolean(true)
+        );
     }
 
     #[test]
     fn string_to_well_formed() {
-        assert_eq!(call_string_method("hello", "toWellFormed", &[]), JsValue::String("hello".into()));
+        assert_eq!(
+            call_string_method("hello", "toWellFormed", &[]),
+            JsValue::String("hello".into())
+        );
     }
 
     #[test]
@@ -1000,23 +1643,37 @@ mod tests {
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0], JsValue::String("world".into()));
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
     fn string_match_not_found() {
-        assert_eq!(call_string_method("hello", "match", &[JsValue::String("xyz".into())]), JsValue::Null);
+        assert_eq!(
+            call_string_method("hello", "match", &[JsValue::String("xyz".into())]),
+            JsValue::Null
+        );
     }
 
     #[test]
     fn string_search() {
-        assert_eq!(call_string_method("hello world", "search", &[JsValue::String("world".into())]), JsValue::Number(6.0));
-        assert_eq!(call_string_method("hello", "search", &[JsValue::String("xyz".into())]), JsValue::Number(-1.0));
+        assert_eq!(
+            call_string_method("hello world", "search", &[JsValue::String("world".into())]),
+            JsValue::Number(6.0)
+        );
+        assert_eq!(
+            call_string_method("hello", "search", &[JsValue::String("xyz".into())]),
+            JsValue::Number(-1.0)
+        );
     }
 
     #[test]
     fn string_to_string() {
-        assert_eq!(call_string_method("hello", "toString", &[]), JsValue::String("hello".into()));
+        assert_eq!(
+            call_string_method("hello", "toString", &[]),
+            JsValue::String("hello".into())
+        );
     }
 
     #[test]
@@ -1028,27 +1685,42 @@ mod tests {
 
     #[test]
     fn number_to_string_default() {
-        assert_eq!(call_number_method(42.0, "toString", &[]), JsValue::String("42".into()));
+        assert_eq!(
+            call_number_method(42.0, "toString", &[]),
+            JsValue::String("42".into())
+        );
     }
 
     #[test]
     fn number_to_string_radix() {
-        assert_eq!(call_number_method(255.0, "toString", &[JsValue::Number(16.0)]), JsValue::String("ff".into()));
+        assert_eq!(
+            call_number_method(255.0, "toString", &[JsValue::Number(16.0)]),
+            JsValue::String("ff".into())
+        );
     }
 
     #[test]
     fn number_to_fixed() {
-        assert_eq!(call_number_method(1.234, "toFixed", &[JsValue::Number(2.0)]), JsValue::String("1.23".into()));
+        assert_eq!(
+            call_number_method(1.234, "toFixed", &[JsValue::Number(2.0)]),
+            JsValue::String("1.23".into())
+        );
     }
 
     #[test]
     fn number_to_fixed_zero_digits() {
-        assert_eq!(call_number_method(2.72, "toFixed", &[JsValue::Number(0.0)]), JsValue::String("3".into()));
+        assert_eq!(
+            call_number_method(2.72, "toFixed", &[JsValue::Number(0.0)]),
+            JsValue::String("3".into())
+        );
     }
 
     #[test]
     fn number_to_fixed_nan() {
-        assert_eq!(call_number_method(f64::NAN, "toFixed", &[JsValue::Number(2.0)]), JsValue::String("NaN".into()));
+        assert_eq!(
+            call_number_method(f64::NAN, "toFixed", &[JsValue::Number(2.0)]),
+            JsValue::String("NaN".into())
+        );
     }
 
     #[test]
@@ -1056,12 +1728,17 @@ mod tests {
         let r = call_number_method(1000.0, "toExponential", &[JsValue::Number(2.0)]);
         if let JsValue::String(s) = r {
             assert!(s.contains("e+"), "expected exponential format, got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
     fn number_value_of() {
-        assert_eq!(call_number_method(42.0, "valueOf", &[]), JsValue::Number(42.0));
+        assert_eq!(
+            call_number_method(42.0, "valueOf", &[]),
+            JsValue::Number(42.0)
+        );
     }
 
     #[test]
@@ -1142,7 +1819,10 @@ mod tests {
 
     #[test]
     fn expand_replacement_dollar_ampersand() {
-        assert_eq!(expand_replacement("$&", "hello", "before ", " after"), "hello");
+        assert_eq!(
+            expand_replacement("$&", "hello", "before ", " after"),
+            "hello"
+        );
     }
 
     #[test]
@@ -1152,7 +1832,10 @@ mod tests {
 
     #[test]
     fn expand_replacement_dollar_quote() {
-        assert_eq!(expand_replacement("$'", "hello", "before ", " world"), " world");
+        assert_eq!(
+            expand_replacement("$'", "hello", "before ", " world"),
+            " world"
+        );
     }
 
     #[test]

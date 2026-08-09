@@ -188,9 +188,7 @@ pub fn parse_chatlogs_nda(text: &str) -> Vec<ChatMessage> {
             };
             let field = parts[2];
             let value = parts[3];
-            let tool_call = tool_calls
-                .entry((message_index, call_index))
-                .or_default();
+            let tool_call = tool_calls.entry((message_index, call_index)).or_default();
             match field {
                 "id" | "type" => {
                     tool_call.insert(field.to_string(), Value::String(decode_nda_text(value)));
@@ -1000,7 +998,10 @@ mod tests {
     fn test_api_style_name() {
         assert_eq!(api_style_name(ApiStyle::OpenAiTools), "openai-tools");
         assert_eq!(api_style_name(ApiStyle::OpenAiChat), "openai-chat");
-        assert_eq!(api_style_name(ApiStyle::PromptCompletion), "prompt-completion");
+        assert_eq!(
+            api_style_name(ApiStyle::PromptCompletion),
+            "prompt-completion"
+        );
     }
 
     #[test]

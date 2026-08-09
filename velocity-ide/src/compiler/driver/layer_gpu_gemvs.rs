@@ -34,11 +34,7 @@ impl<'a> LayerGpuGemvs<'a> {
     /// dispatches and inserts barriers between stages.
     ///
     /// Returns a `LayerForwardResult` indicating which projections were dispatched.
-    pub fn forward(
-        &self,
-        driver: &VulkanDriver,
-        cmd: vk::CommandBuffer,
-    ) -> LayerForwardResult {
+    pub fn forward(&self, driver: &VulkanDriver, cmd: vk::CommandBuffer) -> LayerForwardResult {
         let mut result = LayerForwardResult {
             q_dispatched: false,
             k_dispatched: false,
@@ -105,9 +101,7 @@ impl<'a> LayerGpuGemvs<'a> {
 
     /// Check if all FFN projections are available.
     pub fn has_full_ffn(&self) -> bool {
-        self.gate_proj_gpu.is_some()
-            && self.up_proj_gpu.is_some()
-            && self.down_proj_gpu.is_some()
+        self.gate_proj_gpu.is_some() && self.up_proj_gpu.is_some() && self.down_proj_gpu.is_some()
     }
 
     /// Total number of projection GEMVs configured for this layer.

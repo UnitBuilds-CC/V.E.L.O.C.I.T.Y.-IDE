@@ -43,8 +43,7 @@ fn command_runs_in_explicit_workspace() {
     let root = temp.path().join("project");
     fs::create_dir_all(&root).unwrap();
 
-    let output =
-        call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
+    let output = call_tool_in_workspace(&root, "run_command", &json!({"command": "cd"})).unwrap();
     assert!(output.to_lowercase().contains("project"));
 }
 

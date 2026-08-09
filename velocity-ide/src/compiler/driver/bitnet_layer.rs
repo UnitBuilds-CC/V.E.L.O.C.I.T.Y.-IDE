@@ -316,16 +316,8 @@ impl VulkanBitNetLayer {
             (inputs_3200_buffer, weight_o_buffer, out_3200_o_buffer),
             (inputs_3200_buffer, weight_gate_buffer, out_8640_gate_buffer),
             (inputs_3200_buffer, weight_up_buffer, out_8640_up_buffer),
-            (
-                out_8640_gate_buffer,
-                out_8640_up_buffer,
-                inputs_8640_buffer,
-            ),
-            (
-                inputs_8640_buffer,
-                weight_down_buffer,
-                out_3200_down_buffer,
-            ),
+            (out_8640_gate_buffer, out_8640_up_buffer, inputs_8640_buffer),
+            (inputs_8640_buffer, weight_down_buffer, out_3200_down_buffer),
         ];
 
         for (i, (b0, b1, b2)) in set_configs.iter().enumerate() {
@@ -386,28 +378,29 @@ impl VulkanBitNetLayer {
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info)?;
 
-            let dispatch_ternary = |cmd: vk::CommandBuffer, set: vk::DescriptorSet, k: u32, n: u32| {
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline_ternary);
-                device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::COMPUTE,
-                    pipeline_layout,
-                    0,
-                    &[set],
-                    &[],
-                );
-                let params = [k, n];
-                let params_bytes = std::slice::from_raw_parts(params.as_ptr() as *const u8, 8);
-                device.cmd_push_constants(
-                    cmd,
-                    pipeline_layout,
-                    vk::ShaderStageFlags::COMPUTE,
-                    0,
-                    params_bytes,
-                );
-                let workgroups = n.div_ceil(256u32);
-                device.cmd_dispatch(cmd, workgroups, 1, 1);
-            };
+            let dispatch_ternary =
+                |cmd: vk::CommandBuffer, set: vk::DescriptorSet, k: u32, n: u32| {
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline_ternary);
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::COMPUTE,
+                        pipeline_layout,
+                        0,
+                        &[set],
+                        &[],
+                    );
+                    let params = [k, n];
+                    let params_bytes = std::slice::from_raw_parts(params.as_ptr() as *const u8, 8);
+                    device.cmd_push_constants(
+                        cmd,
+                        pipeline_layout,
+                        vk::ShaderStageFlags::COMPUTE,
+                        0,
+                        params_bytes,
+                    );
+                    let workgroups = n.div_ceil(256u32);
+                    device.cmd_dispatch(cmd, workgroups, 1, 1);
+                };
 
             let dispatch_act = |cmd: vk::CommandBuffer, set: vk::DescriptorSet, n: u32| {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline_act);
@@ -563,8 +556,7 @@ impl Drop for VulkanBitNetLayer {
             self.device.destroy_buffer(self.out_3200_o_buffer, None);
 
             self.device.free_memory(self.out_8640_gate_memory, None);
-            self.device
-                .destroy_buffer(self.out_8640_gate_buffer, None);
+            self.device.destroy_buffer(self.out_8640_gate_buffer, None);
 
             self.device.free_memory(self.out_8640_up_memory, None);
             self.device.destroy_buffer(self.out_8640_up_buffer, None);

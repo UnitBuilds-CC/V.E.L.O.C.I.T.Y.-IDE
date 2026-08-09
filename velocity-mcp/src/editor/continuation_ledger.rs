@@ -118,8 +118,7 @@ impl RelationshipKind {
 
 /// Precise record of what edits were made (or attempted) before handoff.
 /// This is the critical piece for mid-edit continuation.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct EditJournal {
     /// Completed edits: files that were fully and correctly modified.
     pub completed_edits: Vec<FileEdit>,
@@ -131,7 +130,6 @@ pub struct EditJournal {
     /// Files that were deleted during this attempt.
     pub deleted_files: Vec<PathBuf>,
 }
-
 
 /// A completed file edit with before/after state.
 #[derive(Debug, Clone)]
@@ -414,11 +412,7 @@ impl ContinuationLedger {
         if !self.journal.completed_edits.is_empty() {
             prompt.push_str("## Completed Edits\n");
             for edit in &self.journal.completed_edits {
-                prompt.push_str(&format!(
-                    "- {} — {}\n",
-                    edit.path.display(),
-                    edit.intent
-                ));
+                prompt.push_str(&format!("- {} — {}\n", edit.path.display(), edit.intent));
             }
             prompt.push('\n');
         }
@@ -432,7 +426,9 @@ impl ContinuationLedger {
                 prompt.push_str(&format!("Region: lines {}-{}\n", start, end));
             }
             if let Some(false) = partial.compiles {
-                prompt.push_str("⚠ Current state does NOT compile. Fix required before continuing.\n");
+                prompt.push_str(
+                    "⚠ Current state does NOT compile. Fix required before continuing.\n",
+                );
             }
             prompt.push_str("\nThe file is currently in a partially-modified state. ");
             prompt.push_str("Continue the edit from the current state — do NOT redo work that's already done.\n\n");
@@ -526,7 +522,15 @@ fn build_scope_brief(workspace_root: &Path, scope_files: &[PathBuf]) -> ScopeEnv
             if symbols.is_empty() {
                 String::new()
             } else {
-                format!(" [{}]", symbols.iter().take(5).cloned().collect::<Vec<_>>().join(", "))
+                format!(
+                    " [{}]",
+                    symbols
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
         ));
 
@@ -594,7 +598,10 @@ fn detect_partial_edit(
     scope_files: &[PathBuf],
     changed_files: &[String],
 ) -> Option<PartialFileEdit> {
-    let run_dir = workspace_root.join(".velocity").join("agentic").join("runs");
+    let run_dir = workspace_root
+        .join(".velocity")
+        .join("agentic")
+        .join("runs");
     let snapshot_dir = run_dir.join("scope_snapshot");
 
     for file_path in scope_files {
@@ -663,7 +670,10 @@ fn infer_progress(
         });
     }
 
-    let done_count = steps.iter().filter(|s| s.status == StepStatus::Done).count();
+    let done_count = steps
+        .iter()
+        .filter(|s| s.status == StepStatus::Done)
+        .count();
     let total = steps.len().max(1);
     let percent = (done_count as f32 / total as f32) * 100.0;
 
@@ -686,9 +696,11 @@ fn extract_key_decisions(transcript: &str) -> Vec<String> {
             || trimmed.contains("I will ")
             || trimmed.contains("decided to")
             || trimmed.contains("choosing"))
-            && trimmed.len() > 10 && trimmed.len() < 200 {
-                decisions.push(trimmed.to_string());
-            }
+            && trimmed.len() > 10
+            && trimmed.len() < 200
+        {
+            decisions.push(trimmed.to_string());
+        }
     }
     // Cap at 5 most recent decisions
     if decisions.len() > 5 {
@@ -700,8 +712,18 @@ fn extract_key_decisions(transcript: &str) -> Vec<String> {
 /// Extract top-level symbol names from source code.
 fn extract_top_symbols(content: &str) -> Vec<String> {
     const KEYWORDS: &[&str] = &[
-        "fn ", "struct ", "enum ", "trait ", "impl ", "type ", "const ",
-        "mod ", "class ", "def ", "interface ", "function ",
+        "fn ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "impl ",
+        "type ",
+        "const ",
+        "mod ",
+        "class ",
+        "def ",
+        "interface ",
+        "function ",
     ];
     let mut symbols = Vec::new();
     for line in content.lines() {
@@ -797,13 +819,22 @@ pub fn enrich_from_site_map(
         if !callers.is_empty() {
             extra.push_str(&format!(
                 "\nExternal callers (must not break): {}",
-                callers.iter().map(|c| c.name.as_str()).take(10).collect::<Vec<_>>().join(", ")
+                callers
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .take(10)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         if !deps.is_empty() {
             extra.push_str(&format!(
                 "\nExternal dependencies (must respect): {}",
-                deps.iter().map(|d| d.name.as_str()).take(10).collect::<Vec<_>>().join(", ")
+                deps.iter()
+                    .map(|d| d.name.as_str())
+                    .take(10)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         brief.narrative.push_str(&extra);
@@ -900,9 +931,18 @@ mod tests {
             },
             progress: ProgressState {
                 steps: vec![
-                    ProgressStep { description: "Fix token validation".into(), status: StepStatus::Done },
-                    ProgressStep { description: "Update session refresh".into(), status: StepStatus::InProgress },
-                    ProgressStep { description: "Add integration test".into(), status: StepStatus::Pending },
+                    ProgressStep {
+                        description: "Fix token validation".into(),
+                        status: StepStatus::Done,
+                    },
+                    ProgressStep {
+                        description: "Update session refresh".into(),
+                        status: StepStatus::InProgress,
+                    },
+                    ProgressStep {
+                        description: "Add integration test".into(),
+                        status: StepStatus::Pending,
+                    },
                 ],
                 overall_percent: 33.0,
             },
@@ -969,7 +1009,10 @@ mod tests {
         let status_updates = vec!["completed step 1".into(), "starting step 2".into()];
         let progress = infer_progress("some transcript", &journal, &status_updates);
         assert!(!progress.steps.is_empty());
-        assert!(progress.steps.iter().any(|s| s.status == StepStatus::InProgress));
+        assert!(progress
+            .steps
+            .iter()
+            .any(|s| s.status == StepStatus::InProgress));
     }
 
     #[test]
@@ -996,9 +1039,15 @@ mod tests {
 
     #[test]
     fn infer_file_roles() {
-        assert_eq!(infer_file_role(Path::new("tests/auth_test.rs"), &[]), "test module");
+        assert_eq!(
+            infer_file_role(Path::new("tests/auth_test.rs"), &[]),
+            "test module"
+        );
         assert_eq!(infer_file_role(Path::new("src/mod.rs"), &[]), "module root");
-        assert_eq!(infer_file_role(Path::new("config.toml"), &[]), "configuration");
+        assert_eq!(
+            infer_file_role(Path::new("config.toml"), &[]),
+            "configuration"
+        );
         assert_eq!(
             infer_file_role(Path::new("src/app.rs"), &["main".into()]),
             "entry point"

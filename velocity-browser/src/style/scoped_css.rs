@@ -51,7 +51,9 @@ impl ScopedCssMatcher {
             ScopedSelectorKind::HostFunctional(ref inner) => {
                 let is_host = node.attributes.contains_key("shadowroot")
                     || node.attributes.contains_key("shadow-host");
-                if !is_host { return false; }
+                if !is_host {
+                    return false;
+                }
                 Self::matches_simple_selector(node, inner)
             }
             _ => false,
@@ -65,7 +67,9 @@ impl ScopedCssMatcher {
             ScopedSelectorKind::Slotted(ref inner) => {
                 // The node must be assigned to a slot
                 let has_slot = node.attributes.contains_key("slot");
-                if !has_slot { return false; }
+                if !has_slot {
+                    return false;
+                }
                 Self::matches_simple_selector(node, inner)
             }
             _ => false,
@@ -88,10 +92,16 @@ impl ScopedCssMatcher {
             return true;
         }
         if let Some(id_sel) = trimmed.strip_prefix('#') {
-            return node.attributes.get("id").map(|i| i == id_sel).unwrap_or(false);
+            return node
+                .attributes
+                .get("id")
+                .map(|i| i == id_sel)
+                .unwrap_or(false);
         }
         if let Some(class_sel) = trimmed.strip_prefix('.') {
-            return node.attributes.get("class")
+            return node
+                .attributes
+                .get("class")
                 .map(|c| c.split_whitespace().any(|cls| cls == class_sel))
                 .unwrap_or(false);
         }
@@ -99,8 +109,15 @@ impl ScopedCssMatcher {
             let inner = &trimmed[1..trimmed.len() - 1];
             if let Some(eq_pos) = inner.find('=') {
                 let attr_name = inner[..eq_pos].trim();
-                let attr_val = inner[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
-                return node.attributes.get(attr_name).map(|v| v == attr_val).unwrap_or(false);
+                let attr_val = inner[eq_pos + 1..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                return node
+                    .attributes
+                    .get(attr_name)
+                    .map(|v| v == attr_val)
+                    .unwrap_or(false);
             }
             return node.attributes.contains_key(inner.trim());
         }
@@ -110,11 +127,7 @@ impl ScopedCssMatcher {
 
     /// Resolve shadow-piercing combinator (>>>) or /deep/.
     /// Returns true if the selector matches any node in the shadow tree.
-    pub fn matches_deep_combinator(
-        node: &DomNode,
-        selector: &str,
-        all_nodes: &[DomNode],
-    ) -> bool {
+    pub fn matches_deep_combinator(node: &DomNode, selector: &str, all_nodes: &[DomNode]) -> bool {
         // Check for >>> or /deep/ combinator
         let parts = if selector.contains(" >>> ") {
             selector.splitn(2, " >>> ").collect::<Vec<_>>()
@@ -171,13 +184,19 @@ mod tests {
 
     #[test]
     fn test_parse_host() {
-        assert_eq!(ScopedCssMatcher::parse_scoped_selector(":host"), ScopedSelectorKind::Host);
+        assert_eq!(
+            ScopedCssMatcher::parse_scoped_selector(":host"),
+            ScopedSelectorKind::Host
+        );
     }
 
     #[test]
     fn test_parse_host_functional() {
         let kind = ScopedCssMatcher::parse_scoped_selector(":host(.active)");
-        assert_eq!(kind, ScopedSelectorKind::HostFunctional(".active".to_string()));
+        assert_eq!(
+            kind,
+            ScopedSelectorKind::HostFunctional(".active".to_string())
+        );
     }
 
     #[test]
@@ -188,7 +207,10 @@ mod tests {
 
     #[test]
     fn test_parse_defined() {
-        assert_eq!(ScopedCssMatcher::parse_scoped_selector(":defined"), ScopedSelectorKind::Defined);
+        assert_eq!(
+            ScopedCssMatcher::parse_scoped_selector(":defined"),
+            ScopedSelectorKind::Defined
+        );
     }
 
     #[test]
@@ -200,8 +222,14 @@ mod tests {
     #[test]
     fn test_matches_host_functional() {
         let node = make_node("div", vec![("shadowroot", "open"), ("class", "active")]);
-        assert!(ScopedCssMatcher::matches_host_selector(&node, ":host(.active)"));
-        assert!(!ScopedCssMatcher::matches_host_selector(&node, ":host(.missing)"));
+        assert!(ScopedCssMatcher::matches_host_selector(
+            &node,
+            ":host(.active)"
+        ));
+        assert!(!ScopedCssMatcher::matches_host_selector(
+            &node,
+            ":host(.missing)"
+        ));
     }
 
     #[test]
@@ -236,7 +264,11 @@ mod tests {
         let host = make_node("div", vec![("class", "wrapper")]);
         let inner = make_node("span", vec![("class", "target")]);
         let nodes = vec![host.clone(), inner.clone()];
-        assert!(ScopedCssMatcher::matches_deep_combinator(&host, "div >>> .target", &nodes));
+        assert!(ScopedCssMatcher::matches_deep_combinator(
+            &host,
+            "div >>> .target",
+            &nodes
+        ));
     }
 
     #[test]
@@ -269,7 +301,11 @@ mod tests {
         let host = make_node("div", vec![]);
         let inner = make_node("p", vec![("class", "target")]);
         let nodes = vec![host.clone(), inner.clone()];
-        assert!(ScopedCssMatcher::matches_deep_combinator(&host, "div /deep/ .target", &nodes));
+        assert!(ScopedCssMatcher::matches_deep_combinator(
+            &host,
+            "div /deep/ .target",
+            &nodes
+        ));
     }
 
     #[test]
@@ -277,7 +313,11 @@ mod tests {
         let host = make_node("div", vec![]);
         let inner = make_node("span", vec![]);
         let nodes = vec![host.clone(), inner.clone()];
-        assert!(!ScopedCssMatcher::matches_deep_combinator(&host, "div >>> .missing", &nodes));
+        assert!(!ScopedCssMatcher::matches_deep_combinator(
+            &host,
+            "div >>> .missing",
+            &nodes
+        ));
     }
 
     #[test]

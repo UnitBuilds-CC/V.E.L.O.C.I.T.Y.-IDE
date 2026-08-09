@@ -37,40 +37,55 @@ impl FailureCategory {
     /// Classify an error message into a failure category.
     pub fn classify(error_text: &str) -> Self {
         let lower = error_text.to_lowercase();
-        if lower.contains("syntax") || lower.contains("parse") || lower.contains("unexpected token")
+        if lower.contains("syntax")
+            || lower.contains("parse")
+            || lower.contains("unexpected token")
             || lower.contains("expected") && lower.contains("got")
-            || lower.contains("compilation") || lower.contains("compile error")
+            || lower.contains("compilation")
+            || lower.contains("compile error")
             || lower.contains("cannot find") && lower.contains("in this scope")
         {
             Self::Syntax
-        } else if lower.contains("permission") || lower.contains("access denied")
-            || lower.contains("unauthorized") || lower.contains("forbidden")
+        } else if lower.contains("permission")
+            || lower.contains("access denied")
+            || lower.contains("unauthorized")
+            || lower.contains("forbidden")
             || lower.contains("locked by another")
         {
             Self::Permission
-        } else if lower.contains("timeout") || lower.contains("timed out")
-            || lower.contains("deadline") || lower.contains("rate limit")
+        } else if lower.contains("timeout")
+            || lower.contains("timed out")
+            || lower.contains("deadline")
+            || lower.contains("rate limit")
         {
             Self::Timeout
-        } else if lower.contains("not found") || lower.contains("no such file")
-            || lower.contains("does not exist") || lower.contains("missing file")
+        } else if lower.contains("not found")
+            || lower.contains("no such file")
+            || lower.contains("does not exist")
+            || lower.contains("missing file")
             || lower.contains("enoent")
         {
             Self::NotFound
-        } else if lower.contains("dependency") || lower.contains("unresolved import")
-            || lower.contains("module not found") || lower.contains("crate")
+        } else if lower.contains("dependency")
+            || lower.contains("unresolved import")
+            || lower.contains("module not found")
+            || lower.contains("crate")
             || lower.contains("package") && lower.contains("not installed")
         {
             Self::Dependency
-        } else if lower.contains("network") || lower.contains("connection")
-            || lower.contains("dns") || lower.contains("unreachable")
+        } else if lower.contains("network")
+            || lower.contains("connection")
+            || lower.contains("dns")
+            || lower.contains("unreachable")
             || lower.contains("socket")
         {
             Self::Network
         } else if lower.contains("rejected by the user") || lower.contains("rejected") {
             Self::Rejected
-        } else if lower.contains("logic") || lower.contains("assertion")
-            || lower.contains("wrong") || lower.contains("incorrect")
+        } else if lower.contains("logic")
+            || lower.contains("assertion")
+            || lower.contains("wrong")
+            || lower.contains("incorrect")
             || lower.contains("mismatch")
         {
             Self::Logic
@@ -264,7 +279,11 @@ impl ImprovementEngine {
         for f in &self.failures {
             let cat_key = format!("{:?}", f.category);
             *self.stats.category_counts.entry(cat_key).or_default() += 1;
-            *self.stats.tool_counts.entry(f.tool_name.clone()).or_default() += 1;
+            *self
+                .stats
+                .tool_counts
+                .entry(f.tool_name.clone())
+                .or_default() += 1;
         }
         self.stats.total_failures += self.failures.len();
         self.stats.total_successes += self.success_count;
@@ -286,7 +305,11 @@ impl ImprovementEngine {
             memory.remember(
                 &key,
                 &d.directive,
-                &["self_improve", "directive", &format!("{:?}", d.category).to_lowercase()],
+                &[
+                    "self_improve",
+                    "directive",
+                    &format!("{:?}", d.category).to_lowercase(),
+                ],
                 d.confidence,
             );
         }

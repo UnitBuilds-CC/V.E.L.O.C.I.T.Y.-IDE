@@ -158,8 +158,7 @@ impl VulkanNdaBitNetLayer {
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .build(),
         ];
-        let layout_info_nda =
-            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_nda);
+        let layout_info_nda = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_nda);
         let desc_set_layout_nda =
             unsafe { device.create_descriptor_set_layout(&layout_info_nda, None)? };
 
@@ -189,8 +188,7 @@ impl VulkanNdaBitNetLayer {
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .build(),
         ];
-        let layout_info_act =
-            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_act);
+        let layout_info_act = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_act);
         let desc_set_layout_act =
             unsafe { device.create_descriptor_set_layout(&layout_info_act, None)? };
 
@@ -885,7 +883,8 @@ impl Drop for VulkanNdaBitNetLayer {
 
             self.device.unmap_memory(self.inputs_3200_pos_memory);
             self.device.free_memory(self.inputs_3200_pos_memory, None);
-            self.device.destroy_buffer(self.inputs_3200_pos_buffer, None);
+            self.device
+                .destroy_buffer(self.inputs_3200_pos_buffer, None);
 
             self.device.unmap_memory(self.out_3200_down_memory);
             self.device.free_memory(self.out_3200_down_memory, None);
@@ -904,13 +903,13 @@ impl Drop for VulkanNdaBitNetLayer {
             self.device.destroy_buffer(self.out_3200_o_buffer, None);
 
             self.device.free_memory(self.out_8640_gate_memory, None);
-            self.device
-                .destroy_buffer(self.out_8640_gate_buffer, None);
+            self.device.destroy_buffer(self.out_8640_gate_buffer, None);
 
             self.device.free_memory(self.out_8640_up_memory, None);
             self.device.destroy_buffer(self.out_8640_up_buffer, None);
 
-            self.device.free_memory(self.inputs_8640_active_memory, None);
+            self.device
+                .free_memory(self.inputs_8640_active_memory, None);
             self.device
                 .destroy_buffer(self.inputs_8640_active_buffer, None);
 
@@ -960,8 +959,7 @@ impl Drop for VulkanNdaBitNetLayer {
                 .free_memory(self.weight_down_active_memory, None);
             self.device
                 .destroy_buffer(self.weight_down_active_buffer, None);
-            self.device
-                .free_memory(self.weight_down_pos_memory, None);
+            self.device.free_memory(self.weight_down_pos_memory, None);
             self.device
                 .destroy_buffer(self.weight_down_pos_buffer, None);
 

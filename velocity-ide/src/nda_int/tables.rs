@@ -17,14 +17,30 @@ pub static DOT_4_LUT: [[i8; 256]; 256] = {
                 let qs_bit = (qs >> bit) & 1;
                 let qe_bit = (qe >> bit) & 1;
                 let qv = if qs_bit == 1 {
-                    if qe_bit == 1 { 2 } else { 1 }
-                } else if qe_bit == 1 { -1 } else { -2 };
+                    if qe_bit == 1 {
+                        2
+                    } else {
+                        1
+                    }
+                } else if qe_bit == 1 {
+                    -1
+                } else {
+                    -2
+                };
 
                 let ks_bit = (ks >> bit) & 1;
                 let ke_bit = (ke >> bit) & 1;
                 let kv = if ks_bit == 1 {
-                    if ke_bit == 1 { 2 } else { 1 }
-                } else if ke_bit == 1 { -1 } else { -2 };
+                    if ke_bit == 1 {
+                        2
+                    } else {
+                        1
+                    }
+                } else if ke_bit == 1 {
+                    -1
+                } else {
+                    -2
+                };
 
                 dot += qv * kv;
                 bit += 1;
@@ -59,12 +75,28 @@ pub static ADD_LUT_Q16: [u8; 65536] = {
             let d_e_bit = (de >> bit) & 1;
 
             let xv = if x_s_bit == 1 {
-                if x_e_bit == 1 { 2 } else { 1 }
-            } else if x_e_bit == 1 { -1 } else { -2 };
+                if x_e_bit == 1 {
+                    2
+                } else {
+                    1
+                }
+            } else if x_e_bit == 1 {
+                -1
+            } else {
+                -2
+            };
 
             let dv = if d_s_bit == 1 {
-                if d_e_bit == 1 { 2 } else { 1 }
-            } else if d_e_bit == 1 { -1 } else { -2 };
+                if d_e_bit == 1 {
+                    2
+                } else {
+                    1
+                }
+            } else if d_e_bit == 1 {
+                -1
+            } else {
+                -2
+            };
 
             let sum = xv + dv;
             let clamped = (sum + 4) as usize;
@@ -107,16 +139,38 @@ pub static SWIGLU_LUT_Q16: [u8; 65536] = {
             let u_e_bit = (ue >> bit) & 1;
 
             let gv = if g_s_bit == 1 {
-                if g_e_bit == 1 { 2 } else { 1 }
-            } else if g_e_bit == 1 { -1 } else { -2 };
+                if g_e_bit == 1 {
+                    2
+                } else {
+                    1
+                }
+            } else if g_e_bit == 1 {
+                -1
+            } else {
+                -2
+            };
 
             let uv = if u_s_bit == 1 {
-                if u_e_bit == 1 { 2 } else { 1 }
-            } else if u_e_bit == 1 { -1 } else { -2 };
+                if u_e_bit == 1 {
+                    2
+                } else {
+                    1
+                }
+            } else if u_e_bit == 1 {
+                -1
+            } else {
+                -2
+            };
 
             let prod = gv * uv;
             let val = prod + 4;
-            let clamped = if val < 0 { 0 } else if val > 8 { 8 } else { val } as usize;
+            let clamped = if val < 0 {
+                0
+            } else if val > 8 {
+                8
+            } else {
+                val
+            } as usize;
             let enc = encode_table[clamped];
 
             res_sign |= ((enc >> 1) & 1) << bit;
@@ -134,10 +188,7 @@ pub static SWIGLU_LUT_Q16: [u8; 65536] = {
 pub const FP4_PRODUCT_LUT: [[i32; 16]; 4] = {
     let mut table = [[0i32; 16]; 4];
     let x_vals = [-2i32, -1, 1, 2];
-    let w_vals = [
-        0, 1, 4, 6, 8, 12, 16, 24,
-        0, -1, -4, -6, -8, -12, -16, -24,
-    ];
+    let w_vals = [0, 1, 4, 6, 8, 12, 16, 24, 0, -1, -4, -6, -8, -12, -16, -24];
     let mut x_idx = 0;
     while x_idx < 4 {
         let xv = x_vals[x_idx];

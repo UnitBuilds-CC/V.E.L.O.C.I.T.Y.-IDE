@@ -128,7 +128,8 @@ impl StreamJitTokenizer {
                     if pos + 4 <= len && &data[pos..pos + 4] == b"<!--" {
                         // Look for comment end
                         if let Some(end) = Self::find_bytes(&data[pos + 4..], b"-->") {
-                            let comment_text = String::from_utf8_lossy(&data[pos + 4..pos + 4 + end]).to_string();
+                            let comment_text =
+                                String::from_utf8_lossy(&data[pos + 4..pos + 4 + end]).to_string();
                             tokens.push(StreamJitToken {
                                 token_kind: StreamJitTokenKind::Comment,
                                 raw_bytes: data[pos..pos + 4 + end + 3].to_vec(),
@@ -144,10 +145,14 @@ impl StreamJitTokenizer {
                             self.buffer = data[pos..].to_vec();
                             break;
                         }
-                    } else if pos + 9 <= len && data[pos + 1] == b'!' && data[pos + 2..pos + 9].eq_ignore_ascii_case(b"doctype") {
+                    } else if pos + 9 <= len
+                        && data[pos + 1] == b'!'
+                        && data[pos + 2..pos + 9].eq_ignore_ascii_case(b"doctype")
+                    {
                         // DOCTYPE
                         if let Some(gt) = data[pos..].iter().position(|&b| b == b'>') {
-                            let doctype_text = String::from_utf8_lossy(&data[pos..pos + gt + 1]).to_string();
+                            let doctype_text =
+                                String::from_utf8_lossy(&data[pos..pos + gt + 1]).to_string();
                             tokens.push(StreamJitToken {
                                 token_kind: StreamJitTokenKind::Doctype,
                                 raw_bytes: data[pos..pos + gt + 1].to_vec(),
@@ -208,7 +213,11 @@ impl StreamJitTokenizer {
 
         // Close tag
         if trimmed.starts_with('/') {
-            let tag_name = trimmed[1..].split_whitespace().next().unwrap_or("").to_string();
+            let tag_name = trimmed[1..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
             return (StreamJitTokenKind::CloseTag, tag_name, Vec::new());
         }
 
@@ -264,16 +273,20 @@ impl StreamJitTokenizer {
 
             // Skip whitespace
             while let Some(&c) = chars.peek() {
-                if !c.is_whitespace() { break; }
+                if !c.is_whitespace() {
+                    break;
+                }
                 chars.next();
             }
 
             // Check for '='
             if chars.peek() == Some(&'=') {
                 chars.next(); // consume '='
-                // Skip whitespace
+                              // Skip whitespace
                 while let Some(&c) = chars.peek() {
-                    if !c.is_whitespace() { break; }
+                    if !c.is_whitespace() {
+                        break;
+                    }
                     chars.next();
                 }
                 // Read value
@@ -292,7 +305,9 @@ impl StreamJitTokenizer {
                     } else {
                         // Unquoted value
                         while let Some(&c) = chars.peek() {
-                            if c.is_whitespace() { break; }
+                            if c.is_whitespace() {
+                                break;
+                            }
                             value.push(c);
                             chars.next();
                         }
@@ -344,8 +359,14 @@ mod tests {
         assert_eq!(tokens[0].token_kind, StreamJitTokenKind::SelfClosingTag);
         assert_eq!(tokens[0].tag_name, "input");
         assert_eq!(tokens[0].attributes.len(), 2);
-        assert_eq!(tokens[0].attributes[0], ("type".to_string(), "text".to_string()));
-        assert_eq!(tokens[0].attributes[1], ("name".to_string(), "q".to_string()));
+        assert_eq!(
+            tokens[0].attributes[0],
+            ("type".to_string(), "text".to_string())
+        );
+        assert_eq!(
+            tokens[0].attributes[1],
+            ("name".to_string(), "q".to_string())
+        );
     }
 
     #[test]
@@ -474,7 +495,10 @@ mod tests {
         let mut tok = StreamJitTokenizer::new();
         let tokens = tok.tokenize_stream_chunk(b"<input type=text>");
         assert_eq!(tokens[0].attributes.len(), 1);
-        assert_eq!(tokens[0].attributes[0], ("type".to_string(), "text".to_string()));
+        assert_eq!(
+            tokens[0].attributes[0],
+            ("type".to_string(), "text".to_string())
+        );
     }
 
     #[test]
@@ -482,7 +506,10 @@ mod tests {
         let mut tok = StreamJitTokenizer::new();
         let tokens = tok.tokenize_stream_chunk(b"<div class='main'>");
         assert_eq!(tokens[0].attributes.len(), 1);
-        assert_eq!(tokens[0].attributes[0], ("class".to_string(), "main".to_string()));
+        assert_eq!(
+            tokens[0].attributes[0],
+            ("class".to_string(), "main".to_string())
+        );
     }
 
     #[test]

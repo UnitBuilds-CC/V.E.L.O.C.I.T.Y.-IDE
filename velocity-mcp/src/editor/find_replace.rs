@@ -4,8 +4,8 @@
 //! Provides incremental search with match highlighting, case sensitivity toggle,
 //! regex support, and replace-one / replace-all operations.
 
-use eframe::egui;
 use crate::editor::theme::IdePalette;
+use eframe::egui;
 
 /// State for the find/replace overlay within a single editor tab.
 #[derive(Debug, Clone, Default)]
@@ -66,10 +66,11 @@ impl FindReplaceState {
     /// match list is simply left empty (the UI then shows "No results"),
     /// mirroring how an unmatched literal query behaves.
     fn compute_regex_matches(&mut self, text: &str) {
-        let regex = match crate::editor::regex_engine::Regex::compile(&self.query, !self.case_sensitive) {
-            Ok(r) => r,
-            Err(_) => return,
-        };
+        let regex =
+            match crate::editor::regex_engine::Regex::compile(&self.query, !self.case_sensitive) {
+                Ok(r) => r,
+                Err(_) => return,
+            };
         for (start, end) in regex.find_all(text) {
             if self.whole_word && !self.is_whole_word(text, start, end) {
                 continue;
@@ -108,10 +109,9 @@ impl FindReplaceState {
             let end = abs_pos + qlen;
 
             if self.whole_word {
-                let before_ok = abs_pos == 0
-                    || !text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
-                let after_ok = end >= text.len()
-                    || !text.as_bytes()[end].is_ascii_alphanumeric();
+                let before_ok =
+                    abs_pos == 0 || !text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
+                let after_ok = end >= text.len() || !text.as_bytes()[end].is_ascii_alphanumeric();
                 if before_ok && after_ok {
                     self.matches.push((abs_pos, end));
                 }
@@ -173,7 +173,11 @@ impl FindReplaceState {
     }
 
     /// Render the find/replace bar UI. Returns actions to apply.
-    pub fn show(&mut self, ui: &mut egui::Ui, palette: &crate::editor::theme::IdePalette) -> FindAction {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &crate::editor::theme::IdePalette,
+    ) -> FindAction {
         let mut action = FindAction::None;
 
         ui.horizontal(|ui| {
@@ -183,7 +187,7 @@ impl FindReplaceState {
             let find_response = ui.add(
                 egui::TextEdit::singleline(&mut self.query)
                     .desired_width(200.0)
-                    .hint_text("Find...")
+                    .hint_text("Find..."),
             );
             if self.just_opened {
                 find_response.request_focus();
@@ -207,10 +211,18 @@ impl FindReplaceState {
             }
 
             // Nav buttons
-            if ui.small_button("\u{25B2}").on_hover_text("Previous (Shift+F3)").clicked() {
+            if ui
+                .small_button("\u{25B2}")
+                .on_hover_text("Previous (Shift+F3)")
+                .clicked()
+            {
                 action = FindAction::Prev;
             }
-            if ui.small_button("\u{25BC}").on_hover_text("Next (F3)").clicked() {
+            if ui
+                .small_button("\u{25BC}")
+                .on_hover_text("Next (F3)")
+                .clicked()
+            {
                 action = FindAction::Next;
             }
 
@@ -239,7 +251,7 @@ impl FindReplaceState {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.replacement)
                         .desired_width(200.0)
-                        .hint_text("Replace...")
+                        .hint_text("Replace..."),
                 );
                 if ui.small_button("Replace").clicked() {
                     action = FindAction::ReplaceCurrent;
@@ -293,8 +305,13 @@ pub fn render_find_replace(
                 }
                 // Match count
                 let match_text = if state.matches.is_empty() {
-                    if state.use_regex && !state.query.is_empty()
-                        && crate::editor::regex_engine::Regex::compile(&state.query, !state.case_sensitive).is_err()
+                    if state.use_regex
+                        && !state.query.is_empty()
+                        && crate::editor::regex_engine::Regex::compile(
+                            &state.query,
+                            !state.case_sensitive,
+                        )
+                        .is_err()
                     {
                         "Bad regex".to_string()
                     } else {

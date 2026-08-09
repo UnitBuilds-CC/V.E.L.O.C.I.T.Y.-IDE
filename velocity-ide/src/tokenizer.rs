@@ -14,20 +14,20 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct TokenizerFile {
-    model:        BpeModel,
+    model: BpeModel,
     #[serde(default)]
     added_tokens: Vec<AddedToken>,
 }
 
 #[derive(Debug, Deserialize)]
 struct BpeModel {
-    vocab:  HashMap<String, u32>,
+    vocab: HashMap<String, u32>,
     merges: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AddedToken {
-    id:      u32,
+    id: u32,
     content: String,
 }
 
@@ -43,23 +43,23 @@ pub enum TokenRef {
 
 pub struct Tokenizer {
     /// token-string → id
-    vocab:        HashMap<String, u32>,
+    vocab: HashMap<String, u32>,
     /// id → token representation (slice or owned)
-    id_to_token:  Vec<TokenRef>,
+    id_to_token: Vec<TokenRef>,
     /// BPE merge pair → rank (lower rank = apply first)
-    merges:       HashMap<(String, String), u32>,
-    pub bos_id:   u32,
-    pub eos_id:   u32,
-    is_tiktoken:  bool,
+    merges: HashMap<(String, String), u32>,
+    pub bos_id: u32,
+    pub eos_id: u32,
+    is_tiktoken: bool,
     /// Owned binary buffer for raw byte slicing
-    file_bytes:   Vec<u8>,
+    file_bytes: Vec<u8>,
 }
 
 impl Tokenizer {
     /// Load from a file (detects NDAT magic header or falls back to JSON).
     pub fn from_file(path: &Path) -> Result<Self> {
-        let file_bytes = std::fs::read(path)
-            .with_context(|| format!("Reading tokenizer file: {path:?}"))?;
+        let file_bytes =
+            std::fs::read(path).with_context(|| format!("Reading tokenizer file: {path:?}"))?;
 
         if file_bytes.starts_with(b"NDAT") {
             Self::from_binary(file_bytes)
@@ -93,9 +93,17 @@ impl Tokenizer {
         let mut vocab = HashMap::with_capacity(vocab_size);
         for id in 0..vocab_size {
             let entry_offset = 24 + id * 8;
-            let offset = u32::from_le_bytes(file_bytes[entry_offset..entry_offset + 4].try_into().unwrap());
-            let len = u32::from_le_bytes(file_bytes[entry_offset + 4..entry_offset + 8].try_into().unwrap());
-            
+            let offset = u32::from_le_bytes(
+                file_bytes[entry_offset..entry_offset + 4]
+                    .try_into()
+                    .unwrap(),
+            );
+            let len = u32::from_le_bytes(
+                file_bytes[entry_offset + 4..entry_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+
             id_to_token.push(TokenRef::Slice { offset, len });
 
             // Populate vocab map
@@ -110,14 +118,40 @@ impl Tokenizer {
         let mut merges = HashMap::with_capacity(merges_count);
         for i in 0..merges_count {
             let entry_offset = 24 + vocab_size * 8 + i * 20;
-            let a_off = u32::from_le_bytes(file_bytes[entry_offset..entry_offset + 4].try_into().unwrap()) as usize;
-            let a_len = u32::from_le_bytes(file_bytes[entry_offset + 4..entry_offset + 8].try_into().unwrap()) as usize;
-            let b_off = u32::from_le_bytes(file_bytes[entry_offset + 8..entry_offset + 12].try_into().unwrap()) as usize;
-            let b_len = u32::from_le_bytes(file_bytes[entry_offset + 12..entry_offset + 16].try_into().unwrap()) as usize;
-            let rank = u32::from_le_bytes(file_bytes[entry_offset + 16..entry_offset + 20].try_into().unwrap());
+            let a_off = u32::from_le_bytes(
+                file_bytes[entry_offset..entry_offset + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let a_len = u32::from_le_bytes(
+                file_bytes[entry_offset + 4..entry_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let b_off = u32::from_le_bytes(
+                file_bytes[entry_offset + 8..entry_offset + 12]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let b_len = u32::from_le_bytes(
+                file_bytes[entry_offset + 12..entry_offset + 16]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let rank = u32::from_le_bytes(
+                file_bytes[entry_offset + 16..entry_offset + 20]
+                    .try_into()
+                    .unwrap(),
+            );
 
-            let a_str = std::str::from_utf8(&file_bytes[string_data_start + a_off..string_data_start + a_off + a_len])?.to_string();
-            let b_str = std::str::from_utf8(&file_bytes[string_data_start + b_off..string_data_start + b_off + b_len])?.to_string();
+            let a_str = std::str::from_utf8(
+                &file_bytes[string_data_start + a_off..string_data_start + a_off + a_len],
+            )?
+            .to_string();
+            let b_str = std::str::from_utf8(
+                &file_bytes[string_data_start + b_off..string_data_start + b_off + b_len],
+            )?
+            .to_string();
             merges.insert((a_str, b_str), rank);
         }
 
@@ -134,10 +168,8 @@ impl Tokenizer {
 
     /// Load from a legacy JSON file.
     fn from_json(file_bytes: Vec<u8>) -> Result<Self> {
-        let raw = std::str::from_utf8(&file_bytes)
-            .context("Invalid UTF-8 in JSON tokenizer")?;
-        let tf: TokenizerFile =
-            serde_json::from_str(raw).context("Parsing tokenizer.json")?;
+        let raw = std::str::from_utf8(&file_bytes).context("Invalid UTF-8 in JSON tokenizer")?;
+        let tf: TokenizerFile = serde_json::from_str(raw).context("Parsing tokenizer.json")?;
 
         // Build id → token reverse map
         let max_id = tf.model.vocab.values().copied().max().unwrap_or(0) as usize;
@@ -206,7 +238,11 @@ impl Tokenizer {
     ///
     /// Prepends BOS token when `add_bos` is true (standard for LLaMA prompts).
     pub fn encode(&self, text: &str, add_bos: bool) -> Vec<u32> {
-        let mut ids = if add_bos { vec![self.bos_id] } else { Vec::new() };
+        let mut ids = if add_bos {
+            vec![self.bos_id]
+        } else {
+            Vec::new()
+        };
         ids.extend(self.bpe_encode(text));
         ids
     }
@@ -230,9 +266,7 @@ impl Tokenizer {
                     if self.vocab.contains_key(&sym) {
                         vec![sym]
                     } else {
-                        sym.bytes()
-                            .map(|b| format!("<0x{b:02X}>"))
-                            .collect()
+                        sym.bytes().map(|b| format!("<0x{b:02X}>")).collect()
                     }
                 })
                 .collect();
@@ -241,7 +275,7 @@ impl Tokenizer {
         // BPE merge loop — O(n²) in the worst case but fine for typical prompt lengths
         loop {
             let mut best_rank = u32::MAX;
-            let mut best_pos  = None;
+            let mut best_pos = None;
 
             for i in 0..symbols.len().saturating_sub(1) {
                 if let Some(&rank) = self
@@ -250,7 +284,7 @@ impl Tokenizer {
                 {
                     if rank < best_rank {
                         best_rank = rank;
-                        best_pos  = Some(i);
+                        best_pos = Some(i);
                     }
                 }
             }

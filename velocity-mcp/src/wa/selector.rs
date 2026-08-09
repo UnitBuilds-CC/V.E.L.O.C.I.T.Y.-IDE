@@ -9,9 +9,7 @@ use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
 
-use crate::wa::model::{
-    WaNode, WaPlanActionReport, WaResolveSelectorReport, WaScriptStep,
-};
+use crate::wa::model::{WaNode, WaPlanActionReport, WaResolveSelectorReport, WaScriptStep};
 
 fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
     haystack
@@ -107,8 +105,13 @@ pub struct CssSelectorPart {
 pub fn parse_css_selector(selector: &str) -> Vec<CssSelectorPart> {
     let mut parts = Vec::new();
     let mut current = CssSelectorPart {
-        role: None, name_contains: None, name_equals: None,
-        id: None, visible: None, enabled: None, action: None,
+        role: None,
+        name_contains: None,
+        name_equals: None,
+        id: None,
+        visible: None,
+        enabled: None,
+        action: None,
     };
     let mut has_any = false;
     let chars: Vec<char> = selector.chars().collect();
@@ -133,7 +136,9 @@ pub fn parse_css_selector(selector: &str) -> Vec<CssSelectorPart> {
                     i += 1;
                 }
                 let attr_str = &selector[start..i];
-                if i < chars.len() { i += 1; } // skip ']'
+                if i < chars.len() {
+                    i += 1;
+                } // skip ']'
                 parse_attribute_selector(attr_str, &mut current);
                 has_any = true;
             }
@@ -150,15 +155,25 @@ pub fn parse_css_selector(selector: &str) -> Vec<CssSelectorPart> {
             ' ' => {
                 // Combinator: push current and start new part
                 if has_any {
-                    parts.push(std::mem::replace(&mut current, CssSelectorPart {
-                        role: None, name_contains: None, name_equals: None,
-                        id: None, visible: None, enabled: None, action: None,
-                    }));
+                    parts.push(std::mem::replace(
+                        &mut current,
+                        CssSelectorPart {
+                            role: None,
+                            name_contains: None,
+                            name_equals: None,
+                            id: None,
+                            visible: None,
+                            enabled: None,
+                            action: None,
+                        },
+                    ));
                     has_any = false;
                 }
                 i += 1;
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
     if has_any {
@@ -166,8 +181,13 @@ pub fn parse_css_selector(selector: &str) -> Vec<CssSelectorPart> {
     }
     if parts.is_empty() {
         parts.push(CssSelectorPart {
-            role: None, name_contains: None, name_equals: None,
-            id: None, visible: None, enabled: None, action: None,
+            role: None,
+            name_contains: None,
+            name_equals: None,
+            id: None,
+            visible: None,
+            enabled: None,
+            action: None,
         });
     }
     parts
@@ -177,7 +197,10 @@ fn parse_attribute_selector(attr: &str, part: &mut CssSelectorPart) {
     if let Some(eq_pos) = attr.find('*') {
         // [name*="value"] — contains
         let key = attr[..eq_pos].trim();
-        let val = attr[eq_pos+1..].trim().trim_matches('"').trim_matches('\'');
+        let val = attr[eq_pos + 1..]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
         match key {
             "name" => part.name_contains = Some(val.to_string()),
             "role" => part.role = Some(val.to_string()),
@@ -185,7 +208,10 @@ fn parse_attribute_selector(attr: &str, part: &mut CssSelectorPart) {
         }
     } else if let Some(eq_pos) = attr.find('=') {
         let key = attr[..eq_pos].trim();
-        let val = attr[eq_pos+1..].trim().trim_matches('"').trim_matches('\'');
+        let val = attr[eq_pos + 1..]
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
         match key {
             "role" => part.role = Some(val.to_string()),
             "name" => part.name_equals = Some(val.to_string()),
@@ -209,35 +235,53 @@ fn parse_attribute_selector(attr: &str, part: &mut CssSelectorPart) {
 fn score_css(node: &WaNode, part: &CssSelectorPart) -> Option<i32> {
     let mut score = 0i32;
     if let Some(ref expected_id) = part.id {
-        if !node.id.eq_ignore_ascii_case(expected_id) { return None; }
+        if !node.id.eq_ignore_ascii_case(expected_id) {
+            return None;
+        }
         score += 10_000;
     }
     if let Some(ref expected_role) = part.role {
-        if !node.role.eq_ignore_ascii_case(expected_role) { return None; }
+        if !node.role.eq_ignore_ascii_case(expected_role) {
+            return None;
+        }
         score += 500;
     }
     if let Some(ref expected_name) = part.name_equals {
         if node.name.eq_ignore_ascii_case(expected_name) {
             score += 250;
-        } else { return None; }
+        } else {
+            return None;
+        }
     }
     if let Some(ref needle) = part.name_contains {
         if contains_case_insensitive(&node.name, needle) {
             score += 100;
-        } else { return None; }
+        } else {
+            return None;
+        }
     }
     if let Some(expected_action) = &part.action {
-        if !action_supported(node, expected_action) { return None; }
+        if !action_supported(node, expected_action) {
+            return None;
+        }
         score += 400;
     }
     if let Some(vis) = part.visible {
-        if vis && !node.visible { return None; }
-        if !vis && node.visible { return None; }
+        if vis && !node.visible {
+            return None;
+        }
+        if !vis && node.visible {
+            return None;
+        }
         score += 50;
     }
     if let Some(en) = part.enabled {
-        if en && !node.enabled { return None; }
-        if !en && node.enabled { return None; }
+        if en && !node.enabled {
+            return None;
+        }
+        if !en && node.enabled {
+            return None;
+        }
         score += 50;
     }
     score += (node.confidence.clamp(0.0, 1.0) * 100.0).round() as i32;
@@ -256,7 +300,9 @@ pub fn resolve_css_selector(
     let parts = parse_css_selector(css_selector);
     // Match against the last part (descendant combinator simplified)
     let part = parts.last().unwrap();
-    let mut candidates: Vec<(i32, WaNode)> = snapshot.nodes.iter()
+    let mut candidates: Vec<(i32, WaNode)> = snapshot
+        .nodes
+        .iter()
         .filter_map(|node| score_css(node, part).map(|s| (s, node.clone())))
         .collect();
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
@@ -271,7 +317,10 @@ pub enum XPathExpr {
     /// //node — match all nodes
     DescendantAll,
     /// //role[@name='X'] — match by role and optional attribute
-    DescendantByRole { role: String, name_filter: Option<String> },
+    DescendantByRole {
+        role: String,
+        name_filter: Option<String>,
+    },
     /// //*[@id='X'] — match by id
     DescendantById(String),
     /// //*[contains(@name, 'X')] — contains match
@@ -294,7 +343,7 @@ pub fn parse_xpath(xpath: &str) -> Option<XPathExpr> {
         // //*[contains(@name, 'value')]
         if let Some(at_pos) = rest.find(',') {
             let attr = &rest[..at_pos];
-            let remainder = &rest[at_pos+1..];
+            let remainder = &rest[at_pos + 1..];
             if let Some(end) = remainder.find("')]") {
                 let value_clean = remainder[..end].trim().trim_matches(' ').trim_matches('\'');
                 return Some(XPathExpr::DescendantContains {
@@ -350,40 +399,51 @@ pub fn resolve_xpath(
     let resolved_snapshot_name = resolve_snapshot_name(root, session_id, snapshot_name)?;
     let snapshot = crate::wa::storage::load_snapshot(root, session_id, &resolved_snapshot_name)?;
     let expr = parse_xpath(xpath).ok_or_else(|| {
-        IoError::new(ErrorKind::InvalidInput, format!("unsupported XPath: {}", xpath))
+        IoError::new(
+            ErrorKind::InvalidInput,
+            format!("unsupported XPath: {}", xpath),
+        )
     })?;
     let mut candidates: Vec<(i32, WaNode)> = match expr {
-        XPathExpr::DescendantAll => {
-            snapshot.nodes.iter().map(|n| (100i32 + (n.confidence * 100.0) as i32, n.clone())).collect()
-        }
-        XPathExpr::DescendantById(ref id) => {
-            snapshot.nodes.iter()
-                .filter(|n| n.id.eq_ignore_ascii_case(id))
-                .map(|n| (10_000i32 + (n.confidence * 100.0) as i32, n.clone()))
-                .collect()
-        }
-        XPathExpr::DescendantByRole { ref role, ref name_filter } => {
-            snapshot.nodes.iter()
-                .filter(|n| {
-                    n.role.eq_ignore_ascii_case(role)
-                        && name_filter.as_ref().is_none_or(|nf| contains_case_insensitive(&n.name, nf))
-                })
-                .map(|n| (500i32 + (n.confidence * 100.0) as i32, n.clone()))
-                .collect()
-        }
-        XPathExpr::DescendantContains { ref attr, ref value } => {
-            snapshot.nodes.iter()
-                .filter(|n| {
-                    match attr.as_str() {
-                        "name" => contains_case_insensitive(&n.name, value),
-                        "role" => contains_case_insensitive(&n.role, value),
-                        "id" => contains_case_insensitive(&n.id, value),
-                        _ => false,
-                    }
-                })
-                .map(|n| (200i32 + (n.confidence * 100.0) as i32, n.clone()))
-                .collect()
-        }
+        XPathExpr::DescendantAll => snapshot
+            .nodes
+            .iter()
+            .map(|n| (100i32 + (n.confidence * 100.0) as i32, n.clone()))
+            .collect(),
+        XPathExpr::DescendantById(ref id) => snapshot
+            .nodes
+            .iter()
+            .filter(|n| n.id.eq_ignore_ascii_case(id))
+            .map(|n| (10_000i32 + (n.confidence * 100.0) as i32, n.clone()))
+            .collect(),
+        XPathExpr::DescendantByRole {
+            ref role,
+            ref name_filter,
+        } => snapshot
+            .nodes
+            .iter()
+            .filter(|n| {
+                n.role.eq_ignore_ascii_case(role)
+                    && name_filter
+                        .as_ref()
+                        .is_none_or(|nf| contains_case_insensitive(&n.name, nf))
+            })
+            .map(|n| (500i32 + (n.confidence * 100.0) as i32, n.clone()))
+            .collect(),
+        XPathExpr::DescendantContains {
+            ref attr,
+            ref value,
+        } => snapshot
+            .nodes
+            .iter()
+            .filter(|n| match attr.as_str() {
+                "name" => contains_case_insensitive(&n.name, value),
+                "role" => contains_case_insensitive(&n.role, value),
+                "id" => contains_case_insensitive(&n.id, value),
+                _ => false,
+            })
+            .map(|n| (200i32 + (n.confidence * 100.0) as i32, n.clone()))
+            .collect(),
     };
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
     Ok(candidates)
@@ -409,12 +469,7 @@ pub fn resolve_selector(
             score_node(node, node_id, role, name, action).map(|score| (score, node.clone()))
         })
         .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        right
-            .0
-            .cmp(&left.0)
-            .then(left.1.id.cmp(&right.1.id))
-    });
+    candidates.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.id.cmp(&right.1.id)));
     let (_, matched) = candidates.first().cloned().ok_or_else(|| {
         IoError::new(
             ErrorKind::NotFound,
@@ -424,7 +479,8 @@ pub fn resolve_selector(
             ),
         )
     })?;
-    let read_report = crate::wa::storage::read_snapshot_report(root, session_id, &resolved_snapshot_name)?;
+    let read_report =
+        crate::wa::storage::read_snapshot_report(root, session_id, &resolved_snapshot_name)?;
     Ok(WaResolveSelectorReport {
         session_id: session_id.to_string(),
         snapshot_name: resolved_snapshot_name,
@@ -453,7 +509,15 @@ pub fn plan_action(
     name: Option<&str>,
     input_value: Option<&str>,
 ) -> Result<WaPlanActionReport, Box<dyn Error>> {
-    let resolve = resolve_selector(root, session_id, snapshot_name, node_id, role, name, Some(action))?;
+    let resolve = resolve_selector(
+        root,
+        session_id,
+        snapshot_name,
+        node_id,
+        role,
+        name,
+        Some(action),
+    )?;
     let mut preconditions = Vec::new();
     if resolve.matched.visible {
         preconditions.push("visible".to_string());

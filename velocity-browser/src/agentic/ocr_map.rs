@@ -43,7 +43,9 @@ impl Default for VelocityOcrEngine {
 
 impl VelocityOcrEngine {
     pub fn new() -> Self {
-        Self { luminance_threshold: 128 }
+        Self {
+            luminance_threshold: 128,
+        }
     }
 
     /// Segment a raster buffer into opaque (dark-pixel) regions. This locates
@@ -108,7 +110,10 @@ mod tests {
         let regions = engine.process_pixel_buffer(&buffer);
         for r in &regions {
             assert!(r.text.is_empty(), "OCR must not fabricate text");
-            assert_eq!(r.confidence, 0.0, "opaque regions must not claim confidence");
+            assert_eq!(
+                r.confidence, 0.0,
+                "opaque regions must not claim confidence"
+            );
             assert!(!r.is_recognized());
         }
     }
@@ -133,7 +138,10 @@ mod tests {
     fn is_recognized_false_for_opaque() {
         let b = OcrTextBoundingBox {
             text: String::new(),
-            x: 0, y: 0, width: 10, height: 10,
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
             confidence: 0.0,
         };
         assert!(!b.is_recognized());
@@ -143,7 +151,10 @@ mod tests {
     fn is_recognized_true_with_text_and_confidence() {
         let b = OcrTextBoundingBox {
             text: "Hello".into(),
-            x: 0, y: 0, width: 10, height: 10,
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
             confidence: 0.95,
         };
         assert!(b.is_recognized());
@@ -153,7 +164,10 @@ mod tests {
     fn is_recognized_false_with_text_but_zero_confidence() {
         let b = OcrTextBoundingBox {
             text: "Hello".into(),
-            x: 0, y: 0, width: 10, height: 10,
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
             confidence: 0.0,
         };
         assert!(!b.is_recognized());
@@ -169,8 +183,22 @@ mod tests {
     fn export_nda_multiple_boxes() {
         let engine = VelocityOcrEngine::new();
         let boxes = vec![
-            OcrTextBoundingBox { text: String::new(), x: 0, y: 0, width: 10, height: 10, confidence: 0.0 },
-            OcrTextBoundingBox { text: String::new(), x: 20, y: 30, width: 40, height: 50, confidence: 0.0 },
+            OcrTextBoundingBox {
+                text: String::new(),
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10,
+                confidence: 0.0,
+            },
+            OcrTextBoundingBox {
+                text: String::new(),
+                x: 20,
+                y: 30,
+                width: 40,
+                height: 50,
+                confidence: 0.0,
+            },
         ];
         let triples = engine.export_ocr_nda("sess", &boxes);
         assert_eq!(triples.len(), 2);
@@ -206,7 +234,10 @@ mod tests {
         let engine = VelocityOcrEngine::new();
         let boxes = vec![OcrTextBoundingBox {
             text: String::new(),
-            x: 5, y: 10, width: 20, height: 30,
+            x: 5,
+            y: 10,
+            width: 20,
+            height: 30,
             confidence: 0.0,
         }];
         let triples = engine.export_ocr_nda("sess", &boxes);
@@ -225,7 +256,10 @@ mod tests {
             }
         }
         let regions = engine.process_pixel_buffer(&buffer);
-        assert!(regions.is_empty(), "All-white buffer should have no opaque regions");
+        assert!(
+            regions.is_empty(),
+            "All-white buffer should have no opaque regions"
+        );
     }
 
     #[test]
@@ -242,7 +276,10 @@ mod tests {
             }
         }
         let regions = engine.process_pixel_buffer(&buffer);
-        assert!(!regions.is_empty(), "Dark-to-light transition should produce a region");
+        assert!(
+            !regions.is_empty(),
+            "Dark-to-light transition should produce a region"
+        );
     }
 
     #[test]
@@ -260,16 +297,25 @@ mod tests {
             }
         }
         let regions = engine.process_pixel_buffer(&buffer);
-        assert!(!regions.is_empty(), "High threshold should detect medium-gray as dark");
+        assert!(
+            !regions.is_empty(),
+            "High threshold should detect medium-gray as dark"
+        );
     }
 
     #[test]
     fn is_recognized_false_with_empty_text_high_confidence() {
         let b = OcrTextBoundingBox {
             text: String::new(),
-            x: 0, y: 0, width: 10, height: 10,
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
             confidence: 0.99,
         };
-        assert!(!b.is_recognized(), "Empty text with high confidence is not recognized");
+        assert!(
+            !b.is_recognized(),
+            "Empty text with high confidence is not recognized"
+        );
     }
 }

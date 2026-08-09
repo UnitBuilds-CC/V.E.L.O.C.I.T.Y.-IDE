@@ -97,7 +97,13 @@ impl TraceCollector {
     }
 
     /// Record a console message with source location.
-    pub fn record_console_with_source(&mut self, level: &str, message: &str, source: &str, line: u32) {
+    pub fn record_console_with_source(
+        &mut self,
+        level: &str,
+        message: &str,
+        source: &str,
+        line: u32,
+    ) {
         self.console_traces.push(ConsoleTraceRecord {
             level: level.to_string(),
             message: message.to_string(),
@@ -123,7 +129,13 @@ impl TraceCollector {
     }
 
     /// Record a performance mark or measurement.
-    pub fn record_performance(&mut self, name: &str, entry_type: &str, start_ms: u64, duration_ms: u64) {
+    pub fn record_performance(
+        &mut self,
+        name: &str,
+        entry_type: &str,
+        start_ms: u64,
+        duration_ms: u64,
+    ) {
         self.performance_traces.push(PerformanceTraceRecord {
             name: name.to_string(),
             entry_type: entry_type.to_string(),
@@ -137,7 +149,14 @@ impl TraceCollector {
     }
 
     /// Record a performance mark with metadata.
-    pub fn record_performance_with_meta(&mut self, name: &str, entry_type: &str, start_ms: u64, duration_ms: u64, meta: &str) {
+    pub fn record_performance_with_meta(
+        &mut self,
+        name: &str,
+        entry_type: &str,
+        start_ms: u64,
+        duration_ms: u64,
+        meta: &str,
+    ) {
         self.performance_traces.push(PerformanceTraceRecord {
             name: name.to_string(),
             entry_type: entry_type.to_string(),
@@ -151,7 +170,15 @@ impl TraceCollector {
     }
 
     /// Record a network request trace.
-    pub fn record_network(&mut self, request_id: &str, method: &str, url: &str, status: u16, size: usize, duration_ms: u64) {
+    pub fn record_network(
+        &mut self,
+        request_id: &str,
+        method: &str,
+        url: &str,
+        status: u16,
+        size: usize,
+        duration_ms: u64,
+    ) {
         self.network_traces.push(NetworkTraceRecord {
             request_id: request_id.to_string(),
             method: method.to_string(),
@@ -168,7 +195,10 @@ impl TraceCollector {
 
     /// Filter console traces by level.
     pub fn console_by_level(&self, level: &str) -> Vec<&ConsoleTraceRecord> {
-        self.console_traces.iter().filter(|t| t.level == level).collect()
+        self.console_traces
+            .iter()
+            .filter(|t| t.level == level)
+            .collect()
     }
 
     /// Get all errors.
@@ -183,22 +213,34 @@ impl TraceCollector {
 
     /// Get mutations for a specific target.
     pub fn mutations_for(&self, target_id: &str) -> Vec<&DomMutationTraceRecord> {
-        self.mutation_traces.iter().filter(|t| t.target_id == target_id).collect()
+        self.mutation_traces
+            .iter()
+            .filter(|t| t.target_id == target_id)
+            .collect()
     }
 
     /// Get performance entries by type.
     pub fn perf_by_type(&self, entry_type: &str) -> Vec<&PerformanceTraceRecord> {
-        self.performance_traces.iter().filter(|t| t.entry_type == entry_type).collect()
+        self.performance_traces
+            .iter()
+            .filter(|t| t.entry_type == entry_type)
+            .collect()
     }
 
     /// Get failed network requests (4xx/5xx).
     pub fn failed_requests(&self) -> Vec<&NetworkTraceRecord> {
-        self.network_traces.iter().filter(|t| t.status_code >= 400).collect()
+        self.network_traces
+            .iter()
+            .filter(|t| t.status_code >= 400)
+            .collect()
     }
 
     /// Total bytes transferred across all network traces.
     pub fn total_bytes_transferred(&self) -> usize {
-        self.network_traces.iter().map(|t| t.response_size_bytes).sum()
+        self.network_traces
+            .iter()
+            .map(|t| t.response_size_bytes)
+            .sum()
     }
 
     /// Clear all traces.
@@ -216,8 +258,10 @@ impl TraceCollector {
 
     /// Total trace count across all categories.
     pub fn total_count(&self) -> usize {
-        self.console_traces.len() + self.mutation_traces.len()
-            + self.performance_traces.len() + self.network_traces.len()
+        self.console_traces.len()
+            + self.mutation_traces.len()
+            + self.performance_traces.len()
+            + self.network_traces.len()
     }
 
     pub fn export_traces_nda(&self) -> Vec<NdaTriple> {
@@ -226,13 +270,28 @@ impl TraceCollector {
             triples.push(NdaTriple::new(&c.level, 120, &c.message));
         }
         for m in &self.mutation_traces {
-            triples.push(NdaTriple::new(&m.target_id, 121, &format!("{}:{}", m.mutation_type, m.detail)));
+            triples.push(NdaTriple::new(
+                &m.target_id,
+                121,
+                &format!("{}:{}", m.mutation_type, m.detail),
+            ));
         }
         for p in &self.performance_traces {
-            triples.push(NdaTriple::new(&p.name, 122, &format!("{}:{}ms:{}", p.entry_type, p.duration_ms, p.start_ms)));
+            triples.push(NdaTriple::new(
+                &p.name,
+                122,
+                &format!("{}:{}ms:{}", p.entry_type, p.duration_ms, p.start_ms),
+            ));
         }
         for n in &self.network_traces {
-            triples.push(NdaTriple::new(&n.request_id, 123, &format!("{} {} {} {}B {}ms", n.method, n.status_code, n.url, n.response_size_bytes, n.duration_ms)));
+            triples.push(NdaTriple::new(
+                &n.request_id,
+                123,
+                &format!(
+                    "{} {} {} {}B {}ms",
+                    n.method, n.status_code, n.url, n.response_size_bytes, n.duration_ms
+                ),
+            ));
         }
         triples
     }
@@ -250,7 +309,9 @@ pub struct TraceSpan {
 
 impl TraceSpan {
     pub fn duration_ms(&self) -> u64 {
-        self.end_ms.map(|e| e.saturating_sub(self.start_ms)).unwrap_or(0)
+        self.end_ms
+            .map(|e| e.saturating_sub(self.start_ms))
+            .unwrap_or(0)
     }
 
     pub fn is_open(&self) -> bool {
@@ -265,12 +326,17 @@ pub struct SpanTracer {
 }
 
 impl Default for SpanTracer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SpanTracer {
     pub fn new() -> Self {
-        Self { span_stack: Vec::new(), completed_spans: Vec::new() }
+        Self {
+            span_stack: Vec::new(),
+            completed_spans: Vec::new(),
+        }
     }
 
     fn now_ms() -> u64 {
@@ -379,7 +445,11 @@ mod tests {
         // Both spans are recorded in completed_spans
         assert_eq!(tracer.completed_spans.len(), 2);
         // The parent (request) has the child (parse_body) attached
-        let parent = tracer.completed_spans.iter().find(|s| s.name == "request").unwrap();
+        let parent = tracer
+            .completed_spans
+            .iter()
+            .find(|s| s.name == "request")
+            .unwrap();
         assert_eq!(parent.children.len(), 1);
         assert_eq!(parent.children[0].name, "parse_body");
     }

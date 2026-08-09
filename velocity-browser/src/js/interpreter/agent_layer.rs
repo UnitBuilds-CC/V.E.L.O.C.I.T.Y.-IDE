@@ -15,7 +15,7 @@
 //! - **Bulk form fill** — one call fills N fields
 //! - **Link map** — deduplicated navigation targets
 
-use super::dom_bridge::{DomElementSnapshot, snapshot_dom};
+use super::dom_bridge::{snapshot_dom, DomElementSnapshot};
 
 // ── CSS Selector Generation ─────────────────────────────────────────────────
 
@@ -26,18 +26,29 @@ use super::dom_bridge::{DomElementSnapshot, snapshot_dom};
 /// 2. `tag[attr=value]` if element has a unique attribute
 /// 3. `tag:nth-child(n)` fallback
 pub(super) fn generate_selector(snaps: &[DomElementSnapshot], node_id: usize) -> String {
-    let Some(node) = snaps.get(node_id) else { return String::new() };
-    if node.node_type != 1 { return String::new(); }
+    let Some(node) = snaps.get(node_id) else {
+        return String::new();
+    };
+    if node.node_type != 1 {
+        return String::new();
+    }
 
     // 1. ID selector (fastest, most specific).
     if let Some(id) = node.attributes.get("id") {
-        if !id.is_empty() { return format!("#{}", id); }
+        if !id.is_empty() {
+            return format!("#{}", id);
+        }
     }
 
     // 2. Name attribute for form elements.
-    if matches!(node.tag.as_str(), "input" | "select" | "textarea" | "button") {
+    if matches!(
+        node.tag.as_str(),
+        "input" | "select" | "textarea" | "button"
+    ) {
         if let Some(name) = node.attributes.get("name") {
-            if !name.is_empty() { return format!("{}[name=\"{}\"]", node.tag, name); }
+            if !name.is_empty() {
+                return format!("{}[name=\"{}\"]", node.tag, name);
+            }
         }
     }
 
@@ -47,7 +58,11 @@ pub(super) fn generate_selector(snaps: &[DomElementSnapshot], node_id: usize) ->
     loop {
         let Some(n) = snaps.get(current) else { break };
         if n.node_type != 1 {
-            if let Some(p) = n.parent { current = p; } else { break; }
+            if let Some(p) = n.parent {
+                current = p;
+            } else {
+                break;
+            }
             continue;
         }
         // Stop at body/html.
@@ -68,14 +83,22 @@ pub(super) fn generate_selector(snaps: &[DomElementSnapshot], node_id: usize) ->
 
 /// Generate `tag:nth-child(n)` for a node among its siblings.
 fn nth_child_selector(snaps: &[DomElementSnapshot], node_id: usize) -> String {
-    let Some(node) = snaps.get(node_id) else { return String::new() };
-    let Some(parent_id) = node.parent else { return node.tag.clone() };
-    let Some(parent) = snaps.get(parent_id) else { return node.tag.clone() };
+    let Some(node) = snaps.get(node_id) else {
+        return String::new();
+    };
+    let Some(parent_id) = node.parent else {
+        return node.tag.clone();
+    };
+    let Some(parent) = snaps.get(parent_id) else {
+        return node.tag.clone();
+    };
 
     // Count same-tag siblings before this node.
     let mut index = 1;
     for &child_id in &parent.children {
-        if child_id == node_id { break; }
+        if child_id == node_id {
+            break;
+        }
         if let Some(sibling) = snaps.get(child_id) {
             if sibling.node_type == 1 && sibling.tag == node.tag {
                 index += 1;
@@ -84,9 +107,16 @@ fn nth_child_selector(snaps: &[DomElementSnapshot], node_id: usize) -> String {
     }
 
     // Count total same-tag siblings.
-    let total = parent.children.iter().filter(|&&cid| {
-        snaps.get(cid).map(|s| s.node_type == 1 && s.tag == node.tag).unwrap_or(false)
-    }).count();
+    let total = parent
+        .children
+        .iter()
+        .filter(|&&cid| {
+            snaps
+                .get(cid)
+                .map(|s| s.node_type == 1 && s.tag == node.tag)
+                .unwrap_or(false)
+        })
+        .count();
 
     if total == 1 {
         node.tag.clone()
@@ -112,8 +142,8 @@ pub(super) struct InteractiveElement {
 
 /// Tags that are inherently interactive.
 const INTERACTIVE_TAGS: &[&str] = &[
-    "a", "button", "input", "select", "textarea", "details", "summary",
-    "label", "option", "optgroup",
+    "a", "button", "input", "select", "textarea", "details", "summary", "label", "option",
+    "optgroup",
 ];
 
 /// Return all interactive elements in the DOM, sorted by actionability.
@@ -125,14 +155,29 @@ pub(super) fn get_interactive_elements() -> Vec<InteractiveElement> {
     let mut elements = Vec::new();
 
     for snap in &snaps {
-        if snap.node_type != 1 { continue; }
+        if snap.node_type != 1 {
+            continue;
+        }
         // Skip hidden elements.
-        if snap.attributes.contains_key("hidden") { continue; }
-        if snap.attributes.get("aria-hidden").map(|s| s.as_str()) == Some("true") { continue; }
-        if snap.attributes.get("style").map(|s| s.contains("display:none") || s.contains("display: none")).unwrap_or(false) { continue; }
+        if snap.attributes.contains_key("hidden") {
+            continue;
+        }
+        if snap.attributes.get("aria-hidden").map(|s| s.as_str()) == Some("true") {
+            continue;
+        }
+        if snap
+            .attributes
+            .get("style")
+            .map(|s| s.contains("display:none") || s.contains("display: none"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
 
         let role = element_role(snap);
-        if role.is_none() { continue; }
+        if role.is_none() {
+            continue;
+        }
         let role = role.unwrap();
 
         let name = accessible_name(snap, &snaps);
@@ -187,7 +232,11 @@ fn element_role(snap: &DomElementSnapshot) -> Option<&'static str> {
         "a" if snap.attributes.contains_key("href") => Some("link"),
         "button" => Some("button"),
         "input" => {
-            let t = snap.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+            let t = snap
+                .attributes
+                .get("type")
+                .map(|s| s.as_str())
+                .unwrap_or("text");
             Some(match t {
                 "button" | "submit" | "reset" | "image" => "button",
                 "checkbox" => "checkbox",
@@ -211,32 +260,45 @@ fn element_role(snap: &DomElementSnapshot) -> Option<&'static str> {
 fn accessible_name(snap: &DomElementSnapshot, snaps: &[DomElementSnapshot]) -> String {
     // Priority: aria-label > placeholder > title > text content > id
     if let Some(label) = snap.attributes.get("aria-label") {
-        if !label.is_empty() { return label.clone(); }
+        if !label.is_empty() {
+            return label.clone();
+        }
     }
     if let Some(placeholder) = snap.attributes.get("placeholder") {
-        if !placeholder.is_empty() { return placeholder.clone(); }
+        if !placeholder.is_empty() {
+            return placeholder.clone();
+        }
     }
     if let Some(title) = snap.attributes.get("title") {
-        if !title.is_empty() { return title.clone(); }
+        if !title.is_empty() {
+            return title.clone();
+        }
     }
     // For links/buttons, use text content.
     if matches!(snap.tag.as_str(), "a" | "button" | "summary") {
         let text = collect_text(snap.id, snaps);
         let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !trimmed.is_empty() { return trimmed; }
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
     }
     // For inputs, use associated label element.
     if let Some(id) = snap.attributes.get("id") {
         for s in snaps {
-            if s.tag == "label" && s.attributes.get("for").map(|v| v.as_str()) == Some(id.as_str()) {
+            if s.tag == "label" && s.attributes.get("for").map(|v| v.as_str()) == Some(id.as_str())
+            {
                 let text = collect_text(s.id, snaps);
                 let trimmed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                if !trimmed.is_empty() { return trimmed; }
+                if !trimmed.is_empty() {
+                    return trimmed;
+                }
             }
         }
     }
     if let Some(name) = snap.attributes.get("name") {
-        if !name.is_empty() { return name.clone(); }
+        if !name.is_empty() {
+            return name.clone();
+        }
     }
     String::new()
 }
@@ -274,14 +336,14 @@ fn actionability_score(role: &str) -> u8 {
 
 /// Tags considered boilerplate (stripped during content extraction).
 const BOILERPLATE_TAGS: &[&str] = &[
-    "nav", "footer", "header", "aside", "noscript", "script", "style",
-    "svg", "iframe", "object", "embed",
+    "nav", "footer", "header", "aside", "noscript", "script", "style", "svg", "iframe", "object",
+    "embed",
 ];
 
 /// Class/id patterns that indicate boilerplate content.
 const BOILERPLATE_PATTERNS: &[&str] = &[
-    "sidebar", "footer", "nav", "menu", "ad", "advert", "banner",
-    "cookie", "popup", "modal", "social", "share", "related",
+    "sidebar", "footer", "nav", "menu", "ad", "advert", "banner", "cookie", "popup", "modal",
+    "social", "share", "related",
 ];
 
 /// Extract the main content from the DOM, stripping boilerplate.
@@ -293,13 +355,15 @@ pub(super) fn extract_main_content() -> Vec<ContentBlock> {
     let mut blocks = Vec::new();
 
     // Find the body element.
-    let body_id = snaps.iter()
+    let body_id = snaps
+        .iter()
         .find(|s| s.tag == "body" && s.node_type == 1)
         .map(|s| s.id)
         .unwrap_or(root);
 
     // Find <main> if it exists, otherwise use body.
-    let content_root = snaps.iter()
+    let content_root = snaps
+        .iter()
         .find(|s| s.tag == "main" && s.node_type == 1)
         .map(|s| s.id)
         .unwrap_or(body_id);
@@ -323,11 +387,17 @@ fn extract_blocks(
     blocks: &mut Vec<ContentBlock>,
     current_heading: &mut Option<(String, u8)>,
 ) {
-    let Some(node) = snaps.get(node_id) else { return };
-    if node.node_type != 1 { return; }
+    let Some(node) = snaps.get(node_id) else {
+        return;
+    };
+    if node.node_type != 1 {
+        return;
+    }
 
     // Skip boilerplate.
-    if is_boilerplate(node) { return; }
+    if is_boilerplate(node) {
+        return;
+    }
 
     // Check if this is a heading.
     if let Some(depth) = heading_depth(&node.tag) {
@@ -366,7 +436,9 @@ fn extract_blocks(
 }
 
 fn is_boilerplate(node: &DomElementSnapshot) -> bool {
-    if BOILERPLATE_TAGS.contains(&node.tag.as_str()) { return true; }
+    if BOILERPLATE_TAGS.contains(&node.tag.as_str()) {
+        return true;
+    }
     // Check class/id for boilerplate patterns.
     let class = node.attributes.get("class").cloned().unwrap_or_default();
     let id = node.attributes.get("id").cloned().unwrap_or_default();
@@ -387,7 +459,10 @@ fn heading_depth(tag: &str) -> Option<u8> {
 }
 
 fn is_content_container(tag: &str) -> bool {
-    matches!(tag, "p" | "li" | "td" | "th" | "blockquote" | "pre" | "code")
+    matches!(
+        tag,
+        "p" | "li" | "td" | "th" | "blockquote" | "pre" | "code"
+    )
 }
 
 // ── Page Summary ─────────────────────────────────────────────────────────────
@@ -401,7 +476,7 @@ fn is_content_container(tag: &str) -> bool {
 pub(super) struct PageSummary {
     pub title: String,
     pub url: String,
-    pub headings: Vec<(u8, String)>,  // (depth, text)
+    pub headings: Vec<(u8, String)>, // (depth, text)
     pub interactive_count: usize,
     pub form_count: usize,
     pub link_count: usize,
@@ -415,16 +490,22 @@ pub(super) fn summarize_page() -> PageSummary {
     let mut summary = PageSummary::default();
 
     for snap in &snaps {
-        if snap.node_type != 1 { continue; }
+        if snap.node_type != 1 {
+            continue;
+        }
         match snap.tag.as_str() {
             "title" => {
                 summary.title = collect_text(snap.id, &snaps)
-                    .split_whitespace().collect::<Vec<_>>().join(" ");
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
             }
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 if let Some(depth) = heading_depth(&snap.tag) {
                     let text = collect_text(snap.id, &snaps)
-                        .split_whitespace().collect::<Vec<_>>().join(" ");
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     if !text.is_empty() && summary.headings.len() < 50 {
                         summary.headings.push((depth, text));
                     }
@@ -456,8 +537,11 @@ pub(super) fn summary_to_text(summary: &PageSummary) -> String {
     }
     out.push_str(&format!(
         "Links: {} | Forms: {} | Interactive: {} | Images: {} | Text: {} chars\n",
-        summary.link_count, summary.form_count, summary.interactive_count,
-        summary.image_count, summary.total_text_length,
+        summary.link_count,
+        summary.form_count,
+        summary.interactive_count,
+        summary.image_count,
+        summary.total_text_length,
     ));
     if !summary.headings.is_empty() {
         out.push_str("Headings:\n");
@@ -503,17 +587,23 @@ pub(super) struct DomState {
 pub(super) fn capture_dom_state() -> DomState {
     let (snaps, _root) = snapshot_dom();
     let node_count = snaps.len();
-    let interactive_count = snaps.iter()
+    let interactive_count = snaps
+        .iter()
         .filter(|s| s.node_type == 1 && element_role(s).is_some())
         .count();
     // Hash body text for change detection.
-    let body_text = snaps.iter()
+    let body_text = snaps
+        .iter()
         .find(|s| s.tag == "body" && s.node_type == 1)
         .map(|s| collect_text(s.id, &snaps))
         .unwrap_or_default();
     let body_text_hash = simple_hash(&body_text);
 
-    DomState { node_count, interactive_count, body_text_hash }
+    DomState {
+        node_count,
+        interactive_count,
+        body_text_hash,
+    }
 }
 
 /// Check if two DOM states are meaningfully different.
@@ -552,7 +642,9 @@ pub(super) fn extract_tables() -> Vec<TableData> {
     let mut tables = Vec::new();
 
     for snap in &snaps {
-        if snap.node_type != 1 || snap.tag != "table" { continue; }
+        if snap.node_type != 1 || snap.tag != "table" {
+            continue;
+        }
         let mut table = TableData::default();
 
         // Caption.
@@ -564,11 +656,15 @@ pub(super) fn extract_tables() -> Vec<TableData> {
         let mut row_ids = Vec::new();
         collect_descendants_by_tag(snap.id, "tr", &snaps, &mut row_ids);
         for row_id in row_ids {
-            let Some(row) = snaps.get(row_id) else { continue };
+            let Some(row) = snaps.get(row_id) else {
+                continue;
+            };
             let mut cells = Vec::new();
             let mut is_header_row = false;
             for &cell_id in &row.children {
-                let Some(cell) = snaps.get(cell_id) else { continue };
+                let Some(cell) = snaps.get(cell_id) else {
+                    continue;
+                };
                 match cell.tag.as_str() {
                     "th" => {
                         is_header_row = true;
@@ -578,7 +674,9 @@ pub(super) fn extract_tables() -> Vec<TableData> {
                     _ => {}
                 }
             }
-            if cells.is_empty() { continue; }
+            if cells.is_empty() {
+                continue;
+            }
             if is_header_row && table.headers.is_empty() {
                 table.headers = cells;
             } else {
@@ -597,7 +695,9 @@ pub(super) fn extract_tables() -> Vec<TableData> {
 pub(super) fn tables_to_text(tables: &[TableData]) -> String {
     let mut out = String::new();
     for (i, table) in tables.iter().enumerate() {
-        if i > 0 { out.push('\n'); }
+        if i > 0 {
+            out.push('\n');
+        }
         if !table.caption.is_empty() {
             out.push_str("### ");
             out.push_str(&table.caption);
@@ -607,7 +707,9 @@ pub(super) fn tables_to_text(tables: &[TableData]) -> String {
             out.push_str("| ");
             out.push_str(&table.headers.join(" | "));
             out.push_str(" |\n|");
-            for _ in &table.headers { out.push_str(" --- |"); }
+            for _ in &table.headers {
+                out.push_str(" --- |");
+            }
             out.push('\n');
         }
         for row in &table.rows {
@@ -620,11 +722,17 @@ pub(super) fn tables_to_text(tables: &[TableData]) -> String {
 }
 
 /// Find the first descendant with the given tag (depth-first).
-fn find_descendant_by_tag(node_id: usize, tag: &str, snaps: &[DomElementSnapshot]) -> Option<usize> {
+fn find_descendant_by_tag(
+    node_id: usize,
+    tag: &str,
+    snaps: &[DomElementSnapshot],
+) -> Option<usize> {
     let node = snaps.get(node_id)?;
     for &child in &node.children {
         if let Some(c) = snaps.get(child) {
-            if c.node_type == 1 && c.tag == tag { return Some(child); }
+            if c.node_type == 1 && c.tag == tag {
+                return Some(child);
+            }
             if let Some(found) = find_descendant_by_tag(child, tag, snaps) {
                 return Some(found);
             }
@@ -634,11 +742,20 @@ fn find_descendant_by_tag(node_id: usize, tag: &str, snaps: &[DomElementSnapshot
 }
 
 /// Collect all descendants with the given tag in document order.
-fn collect_descendants_by_tag(node_id: usize, tag: &str, snaps: &[DomElementSnapshot], out: &mut Vec<usize>) {
-    let Some(node) = snaps.get(node_id) else { return };
+fn collect_descendants_by_tag(
+    node_id: usize,
+    tag: &str,
+    snaps: &[DomElementSnapshot],
+    out: &mut Vec<usize>,
+) {
+    let Some(node) = snaps.get(node_id) else {
+        return;
+    };
     for &child in &node.children {
         if let Some(c) = snaps.get(child) {
-            if c.node_type == 1 && c.tag == tag { out.push(child); }
+            if c.node_type == 1 && c.tag == tag {
+                out.push(child);
+            }
             collect_descendants_by_tag(child, tag, snaps, out);
         }
     }
@@ -646,7 +763,10 @@ fn collect_descendants_by_tag(node_id: usize, tag: &str, snaps: &[DomElementSnap
 
 /// Whitespace-normalized text content of a node.
 fn normalized_text(node_id: usize, snaps: &[DomElementSnapshot]) -> String {
-    collect_text(node_id, snaps).split_whitespace().collect::<Vec<_>>().join(" ")
+    collect_text(node_id, snaps)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ── Page-to-Markdown ─────────────────────────────────────────────────────────
@@ -658,11 +778,13 @@ fn normalized_text(node_id: usize, snaps: &[DomElementSnapshot]) -> String {
 /// of the token cost of HTML.
 pub(super) fn page_to_markdown() -> String {
     let (snaps, root) = snapshot_dom();
-    let body_id = snaps.iter()
+    let body_id = snaps
+        .iter()
         .find(|s| s.tag == "body" && s.node_type == 1)
         .map(|s| s.id)
         .unwrap_or(root);
-    let content_root = snaps.iter()
+    let content_root = snaps
+        .iter()
         .find(|s| s.tag == "main" && s.node_type == 1)
         .map(|s| s.id)
         .unwrap_or(body_id);
@@ -685,11 +807,24 @@ pub(super) fn page_to_markdown() -> String {
     out.trim_end().to_string() + "\n"
 }
 
-fn markdown_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut String, list_depth: usize) {
-    let Some(node) = snaps.get(node_id) else { return };
-    if node.node_type == 3 { return; } // handled by inline collection
-    if node.node_type != 1 { return; }
-    if is_boilerplate(node) { return; }
+fn markdown_walk(
+    node_id: usize,
+    snaps: &[DomElementSnapshot],
+    out: &mut String,
+    list_depth: usize,
+) {
+    let Some(node) = snaps.get(node_id) else {
+        return;
+    };
+    if node.node_type == 3 {
+        return;
+    } // handled by inline collection
+    if node.node_type != 1 {
+        return;
+    }
+    if is_boilerplate(node) {
+        return;
+    }
 
     match node.tag.as_str() {
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -705,7 +840,9 @@ fn markdown_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut String,
         "p" | "blockquote" => {
             let text = markdown_inline(node_id, snaps);
             if !text.is_empty() {
-                if node.tag == "blockquote" { out.push_str("> "); }
+                if node.tag == "blockquote" {
+                    out.push_str("> ");
+                }
                 out.push_str(&text);
                 out.push_str("\n\n");
             }
@@ -745,32 +882,43 @@ fn markdown_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut String,
                     }
                 }
             }
-            if list_depth == 0 { out.push('\n'); }
+            if list_depth == 0 {
+                out.push('\n');
+            }
         }
         "table" => {
             let mut row_ids = Vec::new();
             collect_descendants_by_tag(node_id, "tr", snaps, &mut row_ids);
             let mut header_done = false;
             for row_id in row_ids {
-                let Some(row) = snaps.get(row_id) else { continue };
+                let Some(row) = snaps.get(row_id) else {
+                    continue;
+                };
                 let mut cells = Vec::new();
                 let mut is_header = false;
                 for &cell_id in &row.children {
                     if let Some(cell) = snaps.get(cell_id) {
                         match cell.tag.as_str() {
-                            "th" => { is_header = true; cells.push(normalized_text(cell_id, snaps)); }
+                            "th" => {
+                                is_header = true;
+                                cells.push(normalized_text(cell_id, snaps));
+                            }
                             "td" => cells.push(normalized_text(cell_id, snaps)),
                             _ => {}
                         }
                     }
                 }
-                if cells.is_empty() { continue; }
+                if cells.is_empty() {
+                    continue;
+                }
                 out.push_str("| ");
                 out.push_str(&cells.join(" | "));
                 out.push_str(" |\n");
                 if is_header && !header_done {
                     out.push('|');
-                    for _ in &cells { out.push_str(" --- |"); }
+                    for _ in &cells {
+                        out.push_str(" --- |");
+                    }
                     out.push('\n');
                     header_done = true;
                 }
@@ -801,12 +949,16 @@ fn markdown_inline(node_id: usize, snaps: &[DomElementSnapshot]) -> String {
 }
 
 fn markdown_inline_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut String) {
-    let Some(node) = snaps.get(node_id) else { return };
+    let Some(node) = snaps.get(node_id) else {
+        return;
+    };
     if node.node_type == 3 {
         out.push_str(&node.text_content);
         return;
     }
-    if node.node_type != 1 { return; }
+    if node.node_type != 1 {
+        return;
+    }
     match node.tag.as_str() {
         "a" => {
             let text = normalized_text(node_id, snaps);
@@ -820,15 +972,21 @@ fn markdown_inline_walk(node_id: usize, snaps: &[DomElementSnapshot], out: &mut 
         }
         "strong" | "b" => {
             let text = normalized_text(node_id, snaps);
-            if !text.is_empty() { out.push_str(&format!("**{}** ", text)); }
+            if !text.is_empty() {
+                out.push_str(&format!("**{}** ", text));
+            }
         }
         "em" | "i" => {
             let text = normalized_text(node_id, snaps);
-            if !text.is_empty() { out.push_str(&format!("*{}* ", text)); }
+            if !text.is_empty() {
+                out.push_str(&format!("*{}* ", text));
+            }
         }
         "code" => {
             let text = collect_text(node_id, snaps);
-            if !text.is_empty() { out.push_str(&format!("`{}` ", text.trim())); }
+            if !text.is_empty() {
+                out.push_str(&format!("`{}` ", text.trim()));
+            }
         }
         "br" => out.push('\n'),
         _ => {
@@ -862,19 +1020,38 @@ pub(super) fn fill_form(values: &[(String, String)]) -> Vec<FillResult> {
         let target = snaps.iter().find(|s| {
             s.node_type == 1
                 && matches!(s.tag.as_str(), "input" | "textarea" | "select")
-                && (s.attributes.get("name").map(|v| v == field).unwrap_or(false)
+                && (s
+                    .attributes
+                    .get("name")
+                    .map(|v| v == field)
+                    .unwrap_or(false)
                     || s.attributes.get("id").map(|v| v == field).unwrap_or(false)
-                    || s.attributes.get("placeholder").map(|v| v == field).unwrap_or(false))
+                    || s.attributes
+                        .get("placeholder")
+                        .map(|v| v == field)
+                        .unwrap_or(false))
         });
         let Some(target) = target else {
-            results.push(FillResult { field: field.clone(), ok: false, reason: "not found" });
+            results.push(FillResult {
+                field: field.clone(),
+                ok: false,
+                reason: "not found",
+            });
             continue;
         };
         if target.attributes.contains_key("disabled") {
-            results.push(FillResult { field: field.clone(), ok: false, reason: "disabled" });
+            results.push(FillResult {
+                field: field.clone(),
+                ok: false,
+                reason: "disabled",
+            });
             continue;
         }
-        let input_type = target.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+        let input_type = target
+            .attributes
+            .get("type")
+            .map(|s| s.as_str())
+            .unwrap_or("text");
         match input_type {
             "checkbox" | "radio" => {
                 let checked = matches!(value.as_str(), "true" | "checked" | "1" | "on");
@@ -892,7 +1069,11 @@ pub(super) fn fill_form(values: &[(String, String)]) -> Vec<FillResult> {
                 super::dom_bridge::fire_event(target.id, "change");
             }
         }
-        results.push(FillResult { field: field.clone(), ok: true, reason: "" });
+        results.push(FillResult {
+            field: field.clone(),
+            ok: true,
+            reason: "",
+        });
     }
     results
 }
@@ -915,12 +1096,23 @@ pub(super) fn get_links() -> Vec<LinkInfo> {
     let mut seen = std::collections::HashSet::new();
 
     for snap in &snaps {
-        if snap.node_type != 1 || snap.tag != "a" { continue; }
-        let Some(href) = snap.attributes.get("href") else { continue };
-        if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:") { continue; }
-        if !seen.insert(href.clone()) { continue; }
+        if snap.node_type != 1 || snap.tag != "a" {
+            continue;
+        }
+        let Some(href) = snap.attributes.get("href") else {
+            continue;
+        };
+        if href.is_empty() || href.starts_with('#') || href.starts_with("javascript:") {
+            continue;
+        }
+        if !seen.insert(href.clone()) {
+            continue;
+        }
         let text = normalized_text(snap.id, &snaps);
-        links.push(LinkInfo { text, href: href.clone() });
+        links.push(LinkInfo {
+            text,
+            href: href.clone(),
+        });
     }
     links
 }
@@ -953,13 +1145,22 @@ pub(super) struct TextMatch {
 pub(super) fn find_by_text(query: &str) -> Vec<TextMatch> {
     let (snaps, _root) = snapshot_dom();
     let needle = query.trim().to_lowercase();
-    if needle.is_empty() { return Vec::new(); }
+    if needle.is_empty() {
+        return Vec::new();
+    }
 
     // Pass 1: all elements whose text contains the needle.
     let mut candidates: Vec<usize> = Vec::new();
     for snap in &snaps {
-        if snap.node_type != 1 { continue; }
-        if matches!(snap.tag.as_str(), "html" | "head" | "script" | "style" | "title") { continue; }
+        if snap.node_type != 1 {
+            continue;
+        }
+        if matches!(
+            snap.tag.as_str(),
+            "html" | "head" | "script" | "style" | "title"
+        ) {
+            continue;
+        }
         let text = normalized_text(snap.id, &snaps).to_lowercase();
         if text.contains(&needle) {
             candidates.push(snap.id);
@@ -971,10 +1172,13 @@ pub(super) fn find_by_text(query: &str) -> Vec<TextMatch> {
     let mut matches: Vec<TextMatch> = Vec::new();
     for &id in &candidates {
         let Some(snap) = snaps.get(id) else { continue };
-        let has_matching_child = snap.children.iter().any(|c| {
-            descendant_in_set(*c, &candidate_set, &snaps)
-        });
-        if has_matching_child { continue; }
+        let has_matching_child = snap
+            .children
+            .iter()
+            .any(|c| descendant_in_set(*c, &candidate_set, &snaps));
+        if has_matching_child {
+            continue;
+        }
         let text = normalized_text(id, &snaps).to_lowercase();
         matches.push(TextMatch {
             node_id: id,
@@ -986,17 +1190,28 @@ pub(super) fn find_by_text(query: &str) -> Vec<TextMatch> {
 
     // Rank: exact > interactive > shortest text.
     matches.sort_by(|a, b| {
-        b.exact.cmp(&a.exact)
+        b.exact
+            .cmp(&a.exact)
             .then(b.interactive.cmp(&a.interactive))
             .then(a.node_id.cmp(&b.node_id))
     });
     matches
 }
 
-fn descendant_in_set(id: usize, set: &std::collections::HashSet<usize>, snaps: &[DomElementSnapshot]) -> bool {
-    if set.contains(&id) { return true; }
-    let Some(node) = snaps.get(id) else { return false };
-    node.children.iter().any(|c| descendant_in_set(*c, set, snaps))
+fn descendant_in_set(
+    id: usize,
+    set: &std::collections::HashSet<usize>,
+    snaps: &[DomElementSnapshot],
+) -> bool {
+    if set.contains(&id) {
+        return true;
+    }
+    let Some(node) = snaps.get(id) else {
+        return false;
+    };
+    node.children
+        .iter()
+        .any(|c| descendant_in_set(*c, set, snaps))
 }
 
 /// Resolve a text query to a clickable node: the best match itself if
@@ -1005,12 +1220,16 @@ pub(super) fn resolve_click_target(query: &str) -> Option<usize> {
     let matches = find_by_text(query);
     let (snaps, _root) = snapshot_dom();
     for m in &matches {
-        if m.interactive { return Some(m.node_id); }
+        if m.interactive {
+            return Some(m.node_id);
+        }
         // Walk up looking for an interactive ancestor.
         let mut current = snaps.get(m.node_id).and_then(|n| n.parent);
         while let Some(id) = current {
             let Some(node) = snaps.get(id) else { break };
-            if element_role(node).is_some() { return Some(id); }
+            if element_role(node).is_some() {
+                return Some(id);
+            }
             current = node.parent;
         }
     }
@@ -1019,7 +1238,10 @@ pub(super) fn resolve_click_target(query: &str) -> Option<usize> {
 
 /// Roles that accept typed text/values.
 pub(super) fn is_fillable_role(role: &str) -> bool {
-    matches!(role, "textbox" | "searchbox" | "spinbutton" | "combobox" | "slider")
+    matches!(
+        role,
+        "textbox" | "searchbox" | "spinbutton" | "combobox" | "slider"
+    )
 }
 
 /// Roles that toggle a checked state.
@@ -1031,12 +1253,22 @@ pub(super) fn is_checkable_role(role: &str) -> bool {
 /// matches over substring matches. Disabled controls are never returned.
 fn resolve_control(query: &str, role_ok: fn(&str) -> bool) -> Option<usize> {
     let needle = query.trim().to_lowercase();
-    if needle.is_empty() { return None; }
+    if needle.is_empty() {
+        return None;
+    }
     let mut best: Option<(usize, u8)> = None;
     for el in get_interactive_elements() {
-        if !role_ok(el.role) || el.disabled { continue; }
+        if !role_ok(el.role) || el.disabled {
+            continue;
+        }
         let name = el.name.to_lowercase();
-        let rank = if name == needle { 2 } else if name.contains(&needle) { 1 } else { continue };
+        let rank = if name == needle {
+            2
+        } else if name.contains(&needle) {
+            1
+        } else {
+            continue;
+        };
         match best {
             Some((_, r)) if r >= rank => {}
             _ => best = Some((el.node_id, rank)),
@@ -1084,8 +1316,16 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
     }
     doc.push_int("page", SESSION_LINK_COUNT, summary.link_count as i64);
     doc.push_int("page", SESSION_FORM_COUNT, summary.form_count as i64);
-    doc.push_int("page", SESSION_INTERACTIVE_COUNT, summary.interactive_count as i64);
-    doc.push_int("page", SESSION_TEXT_LENGTH, summary.total_text_length as i64);
+    doc.push_int(
+        "page",
+        SESSION_INTERACTIVE_COUNT,
+        summary.interactive_count as i64,
+    );
+    doc.push_int(
+        "page",
+        SESSION_TEXT_LENGTH,
+        summary.total_text_length as i64,
+    );
     for (depth, text) in &summary.headings {
         doc.push_str("page", SESSION_HEADING, &format!("h{}:{}", depth, text));
     }
@@ -1104,7 +1344,11 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
         if !el.selector.is_empty() {
             doc.push_str(&subject, AOM_SELECTOR, &el.selector);
         }
-        doc.push_int(&subject, AOM_ACTIONABILITY, actionability_score(el.role) as i64);
+        doc.push_int(
+            &subject,
+            AOM_ACTIONABILITY,
+            actionability_score(el.role) as i64,
+        );
         if el.disabled {
             doc.push_int(&subject, AOM_DISABLED, 1);
         }
@@ -1116,7 +1360,11 @@ pub fn export_agent_state_nda() -> crate::nda::NdaDocument {
     // Network activity the page triggered — one subject per fetch call.
     for entry in super::browser_env::fetch_log() {
         doc.push_str(&entry.url, crate::predicates::NET_METHOD, &entry.method);
-        doc.push_int(&entry.url, crate::predicates::NET_STATUS, entry.status as i64);
+        doc.push_int(
+            &entry.url,
+            crate::predicates::NET_STATUS,
+            entry.status as i64,
+        );
     }
     doc
 }
@@ -1167,7 +1415,8 @@ mod tests {
     #[test]
     fn selector_for_form_element_with_name() {
         let mut snap = make_snap(0, "input", 1);
-        snap.attributes.insert("name".to_string(), "username".to_string());
+        snap.attributes
+            .insert("name".to_string(), "username".to_string());
         let snaps = vec![snap];
         let selector = generate_selector(&snaps, 0);
         assert_eq!(selector, "input[name=\"username\"]");
@@ -1228,7 +1477,8 @@ mod tests {
     #[test]
     fn role_link_with_href() {
         let mut snap = make_snap(0, "a", 1);
-        snap.attributes.insert("href".to_string(), "https://example.com".to_string());
+        snap.attributes
+            .insert("href".to_string(), "https://example.com".to_string());
         let role = element_role(&snap);
         assert_eq!(role, Some("link"));
     }
@@ -1251,7 +1501,8 @@ mod tests {
     #[test]
     fn role_input_text() {
         let mut snap = make_snap(0, "input", 1);
-        snap.attributes.insert("type".to_string(), "text".to_string());
+        snap.attributes
+            .insert("type".to_string(), "text".to_string());
         let role = element_role(&snap);
         assert_eq!(role, Some("textbox"));
     }
@@ -1259,7 +1510,8 @@ mod tests {
     #[test]
     fn role_input_checkbox() {
         let mut snap = make_snap(0, "input", 1);
-        snap.attributes.insert("type".to_string(), "checkbox".to_string());
+        snap.attributes
+            .insert("type".to_string(), "checkbox".to_string());
         let role = element_role(&snap);
         assert_eq!(role, Some("checkbox"));
     }
@@ -1267,7 +1519,8 @@ mod tests {
     #[test]
     fn role_input_radio() {
         let mut snap = make_snap(0, "input", 1);
-        snap.attributes.insert("type".to_string(), "radio".to_string());
+        snap.attributes
+            .insert("type".to_string(), "radio".to_string());
         let role = element_role(&snap);
         assert_eq!(role, Some("radio"));
     }
@@ -1275,7 +1528,8 @@ mod tests {
     #[test]
     fn role_input_submit() {
         let mut snap = make_snap(0, "input", 1);
-        snap.attributes.insert("type".to_string(), "submit".to_string());
+        snap.attributes
+            .insert("type".to_string(), "submit".to_string());
         let role = element_role(&snap);
         assert_eq!(role, Some("button"));
     }
@@ -1297,7 +1551,8 @@ mod tests {
     #[test]
     fn role_explicit_role_attribute() {
         let mut snap = make_snap(0, "div", 1);
-        snap.attributes.insert("role".to_string(), "button".to_string());
+        snap.attributes
+            .insert("role".to_string(), "button".to_string());
         let role = element_role(&snap);
         assert_eq!(role, Some("button"));
     }
@@ -1314,7 +1569,8 @@ mod tests {
     #[test]
     fn accessible_name_aria_label() {
         let mut snap = make_snap(0, "button", 1);
-        snap.attributes.insert("aria-label".to_string(), "Close dialog".to_string());
+        snap.attributes
+            .insert("aria-label".to_string(), "Close dialog".to_string());
         let snaps = vec![snap.clone()];
         let name = accessible_name(&snap, &snaps);
         assert_eq!(name, "Close dialog");
@@ -1323,7 +1579,8 @@ mod tests {
     #[test]
     fn accessible_name_placeholder() {
         let mut snap = make_snap(0, "input", 1);
-        snap.attributes.insert("placeholder".to_string(), "Enter your name".to_string());
+        snap.attributes
+            .insert("placeholder".to_string(), "Enter your name".to_string());
         let snaps = vec![snap.clone()];
         let name = accessible_name(&snap, &snaps);
         assert_eq!(name, "Enter your name");
@@ -1332,7 +1589,8 @@ mod tests {
     #[test]
     fn accessible_name_title() {
         let mut snap = make_snap(0, "button", 1);
-        snap.attributes.insert("title".to_string(), "Submit form".to_string());
+        snap.attributes
+            .insert("title".to_string(), "Submit form".to_string());
         let snaps = vec![snap.clone()];
         let name = accessible_name(&snap, &snaps);
         assert_eq!(name, "Submit form");
@@ -1343,7 +1601,8 @@ mod tests {
         // For links/buttons, accessible_name uses collect_text which walks the tree
         // Since we can't easily mock the tree walk, test with aria-label instead
         let mut snap = make_snap(0, "button", 1);
-        snap.attributes.insert("aria-label".to_string(), "Click me".to_string());
+        snap.attributes
+            .insert("aria-label".to_string(), "Click me".to_string());
         let snaps = vec![snap.clone()];
         let name = accessible_name(&snap, &snaps);
         assert_eq!(name, "Click me");
@@ -1374,4 +1633,3 @@ mod tests {
         assert_eq!(text, "");
     }
 }
-

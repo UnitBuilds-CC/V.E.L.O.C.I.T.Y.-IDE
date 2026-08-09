@@ -8,37 +8,52 @@
 #[derive(Clone, Debug, PartialEq)]
 pub enum Token {
     // Keywords
-    Fn, Let, Loop, While, If, Else, Return, Break, Print,
+    Fn,
+    Let,
+    Loop,
+    While,
+    If,
+    Else,
+    Return,
+    Break,
+    Print,
     // Type keywords
-    Vec, Matrix, Norm, Int,
+    Vec,
+    Matrix,
+    Norm,
+    Int,
     // Built-in function keywords
-    Add, Silu, Negate, Abs, ReduceSum,
+    Add,
+    Silu,
+    Negate,
+    Abs,
+    ReduceSum,
     // Identifiers and literals
     Ident(String),
     IntLit(i64),
     FloatLit(f64),
     // Operators
-    Eq,      // ==
-    Ne,      // !=
-    Lt,      // <
-    Gt,      // >
-    Le,      // <=
-    Ge,      // >=
-    Assign,  // =
-    Plus,    // +
-    Minus,   // -
-    Star,    // *
-    Arrow,   // ->
+    Eq,     // ==
+    Ne,     // !=
+    Lt,     // <
+    Gt,     // >
+    Le,     // <=
+    Ge,     // >=
+    Assign, // =
+    Plus,   // +
+    Minus,  // -
+    Star,   // *
+    Arrow,  // ->
     // Delimiters
-    LParen,  // (
-    RParen,  // )
-    LBrace,  // {
-    RBrace,  // }
-    LBracket,// [
-    RBracket,// ]
-    Comma,   // ,
-    Semi,    // ;
-    Colon,   // :
+    LParen,   // (
+    RParen,   // )
+    LBrace,   // {
+    RBrace,   // }
+    LBracket, // [
+    RBracket, // ]
+    Comma,    // ,
+    Semi,     // ;
+    Colon,    // :
     // End
     Eof,
 }
@@ -76,7 +91,9 @@ impl NdaLexer {
             let tok = self.next_token()?;
             let is_eof = tok.token == Token::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         Ok(tokens)
     }
@@ -108,7 +125,9 @@ impl NdaLexer {
             } else if ch == '/' && self.peek_next() == Some('/') {
                 // Line comment — skip to end of line
                 while let Some(c) = self.advance() {
-                    if c == '\n' { break; }
+                    if c == '\n' {
+                        break;
+                    }
                 }
             } else {
                 break;
@@ -123,43 +142,146 @@ impl NdaLexer {
 
         let ch = match self.peek() {
             Some(c) => c,
-            None => return Ok(Located { token: Token::Eof, line, col }),
+            None => {
+                return Ok(Located {
+                    token: Token::Eof,
+                    line,
+                    col,
+                })
+            }
         };
 
         // Single/double-char operators and delimiters
         match ch {
-            '(' => { self.advance(); return Ok(Located { token: Token::LParen, line, col }); }
-            ')' => { self.advance(); return Ok(Located { token: Token::RParen, line, col }); }
-            '{' => { self.advance(); return Ok(Located { token: Token::LBrace, line, col }); }
-            '}' => { self.advance(); return Ok(Located { token: Token::RBrace, line, col }); }
-            '[' => { self.advance(); return Ok(Located { token: Token::LBracket, line, col }); }
-            ']' => { self.advance(); return Ok(Located { token: Token::RBracket, line, col }); }
-            ',' => { self.advance(); return Ok(Located { token: Token::Comma, line, col }); }
-            ';' => { self.advance(); return Ok(Located { token: Token::Semi, line, col }); }
-            ':' => { self.advance(); return Ok(Located { token: Token::Colon, line, col }); }
-            '+' => { self.advance(); return Ok(Located { token: Token::Plus, line, col }); }
-            '*' => { self.advance(); return Ok(Located { token: Token::Star, line, col }); }
+            '(' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::LParen,
+                    line,
+                    col,
+                });
+            }
+            ')' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::RParen,
+                    line,
+                    col,
+                });
+            }
+            '{' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::LBrace,
+                    line,
+                    col,
+                });
+            }
+            '}' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::RBrace,
+                    line,
+                    col,
+                });
+            }
+            '[' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::LBracket,
+                    line,
+                    col,
+                });
+            }
+            ']' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::RBracket,
+                    line,
+                    col,
+                });
+            }
+            ',' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Comma,
+                    line,
+                    col,
+                });
+            }
+            ';' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Semi,
+                    line,
+                    col,
+                });
+            }
+            ':' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Colon,
+                    line,
+                    col,
+                });
+            }
+            '+' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Plus,
+                    line,
+                    col,
+                });
+            }
+            '*' => {
+                self.advance();
+                return Ok(Located {
+                    token: Token::Star,
+                    line,
+                    col,
+                });
+            }
             '-' => {
                 self.advance();
                 if self.peek() == Some('>') {
                     self.advance();
-                    return Ok(Located { token: Token::Arrow, line, col });
+                    return Ok(Located {
+                        token: Token::Arrow,
+                        line,
+                        col,
+                    });
                 }
-                return Ok(Located { token: Token::Minus, line, col });
+                return Ok(Located {
+                    token: Token::Minus,
+                    line,
+                    col,
+                });
             }
             '=' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    return Ok(Located { token: Token::Eq, line, col });
+                    return Ok(Located {
+                        token: Token::Eq,
+                        line,
+                        col,
+                    });
                 }
-                return Ok(Located { token: Token::Assign, line, col });
+                return Ok(Located {
+                    token: Token::Assign,
+                    line,
+                    col,
+                });
             }
             '!' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    return Ok(Located { token: Token::Ne, line, col });
+                    return Ok(Located {
+                        token: Token::Ne,
+                        line,
+                        col,
+                    });
                 }
                 return Err(format!("{}:{}: Unexpected '!'", line, col));
             }
@@ -167,23 +289,41 @@ impl NdaLexer {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    return Ok(Located { token: Token::Le, line, col });
+                    return Ok(Located {
+                        token: Token::Le,
+                        line,
+                        col,
+                    });
                 }
-                return Ok(Located { token: Token::Lt, line, col });
+                return Ok(Located {
+                    token: Token::Lt,
+                    line,
+                    col,
+                });
             }
             '>' => {
                 self.advance();
                 if self.peek() == Some('=') {
                     self.advance();
-                    return Ok(Located { token: Token::Ge, line, col });
+                    return Ok(Located {
+                        token: Token::Ge,
+                        line,
+                        col,
+                    });
                 }
-                return Ok(Located { token: Token::Gt, line, col });
+                return Ok(Located {
+                    token: Token::Gt,
+                    line,
+                    col,
+                });
             }
             _ => {}
         }
 
         // Numbers (integers and floats)
-        if ch.is_ascii_digit() || (ch == '.' && self.peek_next().is_some_and(|c| c.is_ascii_digit())) {
+        if ch.is_ascii_digit()
+            || (ch == '.' && self.peek_next().is_some_and(|c| c.is_ascii_digit()))
+        {
             return self.lex_number(line, col);
         }
 
@@ -200,7 +340,9 @@ impl NdaLexer {
         let mut is_float = false;
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() || ch == '.' || ch == 'e' || ch == 'E' {
-                if ch == '.' || ch == 'e' || ch == 'E' { is_float = true; }
+                if ch == '.' || ch == 'e' || ch == 'E' {
+                    is_float = true;
+                }
                 s.push(ch);
                 self.advance();
             } else {
@@ -209,12 +351,20 @@ impl NdaLexer {
         }
         if is_float {
             match s.parse::<f64>() {
-                Ok(v) => Ok(Located { token: Token::FloatLit(v), line, col }),
+                Ok(v) => Ok(Located {
+                    token: Token::FloatLit(v),
+                    line,
+                    col,
+                }),
                 Err(_) => Err(format!("{}:{}: Invalid float literal '{}'", line, col, s)),
             }
         } else {
             match s.parse::<i64>() {
-                Ok(v) => Ok(Located { token: Token::IntLit(v), line, col }),
+                Ok(v) => Ok(Located {
+                    token: Token::IntLit(v),
+                    line,
+                    col,
+                }),
                 Err(_) => Err(format!("{}:{}: Invalid integer literal '{}'", line, col, s)),
             }
         }
@@ -231,25 +381,25 @@ impl NdaLexer {
             }
         }
         let token = match s.as_str() {
-            "fn"         => Token::Fn,
-            "let"        => Token::Let,
-            "loop"       => Token::Loop,
-            "while"      => Token::While,
-            "if"         => Token::If,
-            "else"       => Token::Else,
-            "return"     => Token::Return,
-            "break"      => Token::Break,
-            "print"      => Token::Print,
-            "vec"        => Token::Vec,
-            "matrix"     => Token::Matrix,
-            "norm"       => Token::Norm,
-            "int"        => Token::Int,
-            "add"        => Token::Add,
-            "silu"       => Token::Silu,
-            "negate"     => Token::Negate,
-            "abs"        => Token::Abs,
+            "fn" => Token::Fn,
+            "let" => Token::Let,
+            "loop" => Token::Loop,
+            "while" => Token::While,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "return" => Token::Return,
+            "break" => Token::Break,
+            "print" => Token::Print,
+            "vec" => Token::Vec,
+            "matrix" => Token::Matrix,
+            "norm" => Token::Norm,
+            "int" => Token::Int,
+            "add" => Token::Add,
+            "silu" => Token::Silu,
+            "negate" => Token::Negate,
+            "abs" => Token::Abs,
             "reduce_sum" => Token::ReduceSum,
-            _            => Token::Ident(s),
+            _ => Token::Ident(s),
         };
         Ok(Located { token, line, col })
     }

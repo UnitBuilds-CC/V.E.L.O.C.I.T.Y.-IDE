@@ -178,7 +178,11 @@ impl LiveOrchestrationState {
         files_changed: usize,
         transcript_len: usize,
     ) {
-        if let Some(wp) = self.worker_progress.iter_mut().find(|w| w.task_id == task_id) {
+        if let Some(wp) = self
+            .worker_progress
+            .iter_mut()
+            .find(|w| w.task_id == task_id)
+        {
             let had_new_events = events_count > wp.events_count;
             wp.events_count = events_count;
             wp.status_text = status_text.clone();
@@ -219,7 +223,11 @@ impl LiveOrchestrationState {
     pub fn filtered_feed(&self) -> Vec<&ActivityEvent> {
         match self.filter_kind {
             None => self.activity_feed.iter().collect(),
-            Some(kind) => self.activity_feed.iter().filter(|e| e.kind == kind).collect(),
+            Some(kind) => self
+                .activity_feed
+                .iter()
+                .filter(|e| e.kind == kind)
+                .collect(),
         }
     }
 

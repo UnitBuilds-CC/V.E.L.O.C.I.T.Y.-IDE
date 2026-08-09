@@ -45,7 +45,12 @@ impl LspServerConfig {
             command: "typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             root_uri: Some(format!("file:///{}", workspace_root.display()).replace('\\', "/")),
-            extensions: vec!["ts".to_string(), "tsx".to_string(), "js".to_string(), "jsx".to_string()],
+            extensions: vec![
+                "ts".to_string(),
+                "tsx".to_string(),
+                "js".to_string(),
+                "jsx".to_string(),
+            ],
         }
     }
 }
@@ -242,8 +247,12 @@ impl LspServer {
 
         if let Some(ref mut child) = self.process {
             if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(header.as_bytes()).map_err(|e| e.to_string())?;
-                stdin.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(header.as_bytes())
+                    .map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(body.as_bytes())
+                    .map_err(|e| e.to_string())?;
                 stdin.flush().map_err(|e| e.to_string())?;
             }
         }
@@ -263,8 +272,12 @@ impl LspServer {
 
         if let Some(ref mut child) = self.process {
             if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(header.as_bytes()).map_err(|e| e.to_string())?;
-                stdin.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(header.as_bytes())
+                    .map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(body.as_bytes())
+                    .map_err(|e| e.to_string())?;
                 stdin.flush().map_err(|e| e.to_string())?;
             }
         }
@@ -272,71 +285,97 @@ impl LspServer {
     }
 
     /// Notify the server about a file open.
-    pub fn did_open(&mut self, path: &Path, content: &str, language_id: &str) -> Result<(), String> {
+    pub fn did_open(
+        &mut self,
+        path: &Path,
+        content: &str,
+        language_id: &str,
+    ) -> Result<(), String> {
         let uri = path_to_uri(path);
-        self.send_notification("textDocument/didOpen", serde_json::json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": language_id,
-                "version": 1,
-                "text": content,
-            }
-        }))
+        self.send_notification(
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": language_id,
+                    "version": 1,
+                    "text": content,
+                }
+            }),
+        )
     }
 
     /// Notify the server about a file change.
     pub fn did_change(&mut self, path: &Path, content: &str, version: i32) -> Result<(), String> {
         let uri = path_to_uri(path);
-        self.send_notification("textDocument/didChange", serde_json::json!({
-            "textDocument": { "uri": uri, "version": version },
-            "contentChanges": [{ "text": content }]
-        }))
+        self.send_notification(
+            "textDocument/didChange",
+            serde_json::json!({
+                "textDocument": { "uri": uri, "version": version },
+                "contentChanges": [{ "text": content }]
+            }),
+        )
     }
 
     /// Request go-to-definition.
     pub fn goto_definition(&mut self, path: &Path, line: usize, col: usize) -> Result<i64, String> {
         let uri = path_to_uri(path);
-        self.send_request("textDocument/definition", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": col }
-        }))
+        self.send_request(
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col }
+            }),
+        )
     }
 
     /// Request hover information.
     pub fn hover(&mut self, path: &Path, line: usize, col: usize) -> Result<i64, String> {
         let uri = path_to_uri(path);
-        self.send_request("textDocument/hover", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": col }
-        }))
+        self.send_request(
+            "textDocument/hover",
+            serde_json::json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col }
+            }),
+        )
     }
 
     /// Request references.
     pub fn references(&mut self, path: &Path, line: usize, col: usize) -> Result<i64, String> {
         let uri = path_to_uri(path);
-        self.send_request("textDocument/references", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": col },
-            "context": { "includeDeclaration": true }
-        }))
+        self.send_request(
+            "textDocument/references",
+            serde_json::json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col },
+                "context": { "includeDeclaration": true }
+            }),
+        )
     }
 
     /// Request completion at position.
     pub fn completion(&mut self, path: &Path, line: usize, col: usize) -> Result<i64, String> {
         let uri = path_to_uri(path);
-        self.send_request("textDocument/completion", serde_json::json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": col }
-        }))
+        self.send_request(
+            "textDocument/completion",
+            serde_json::json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col }
+            }),
+        )
     }
 
     /// T3c: Request document symbols (outline of all functions, structs, etc.)
     /// Used by the test generator to discover testable functions via LSP.
     pub fn document_symbol(&mut self, path: &Path) -> Result<i64, String> {
         let uri = path_to_uri(path);
-        self.send_request("textDocument/documentSymbol", serde_json::json!({
-            "textDocument": { "uri": uri }
-        }))
+        self.send_request(
+            "textDocument/documentSymbol",
+            serde_json::json!({
+                "textDocument": { "uri": uri }
+            }),
+        )
     }
 
     /// Shutdown the server gracefully.
@@ -393,7 +432,9 @@ impl LspManager {
 
     /// Get the server for a given file extension.
     pub fn server_for_extension(&mut self, ext: &str) -> Option<&mut LspServer> {
-        self.servers.values_mut().find(|s| s.config.extensions.iter().any(|e| e == ext))
+        self.servers
+            .values_mut()
+            .find(|s| s.config.extensions.iter().any(|e| e == ext))
     }
 
     /// Get server by language ID.
@@ -407,10 +448,15 @@ impl LspManager {
 
         // Check for Rust project
         if workspace_root.join("Cargo.toml").exists() {
-            mgr.register(LspServerConfig::rust_analyzer(workspace_root), workspace_root);
+            mgr.register(
+                LspServerConfig::rust_analyzer(workspace_root),
+                workspace_root,
+            );
         }
         // Check for TypeScript/JS project
-        if workspace_root.join("package.json").exists() || workspace_root.join("tsconfig.json").exists() {
+        if workspace_root.join("package.json").exists()
+            || workspace_root.join("tsconfig.json").exists()
+        {
             mgr.register(LspServerConfig::typescript(workspace_root), workspace_root);
         }
 
@@ -546,7 +592,8 @@ impl LspManager {
             None => return None,
         };
         let Ok(id) = id else { return None };
-        self.await_response(ext, id).and_then(|resp| parse_hover(&resp))
+        self.await_response(ext, id)
+            .and_then(|resp| parse_hover(&resp))
     }
 
     /// Completion items at a position. Degrades to an empty vec when unavailable.
@@ -573,12 +620,7 @@ impl LspManager {
     /// Document symbol outline for a file (functions, structs, etc.). Degrades
     /// to an empty vec when no server is available or the request times out.
     /// Used by the test-coverage generator to discover testable functions.
-    pub fn document_symbols(
-        &mut self,
-        ext: &str,
-        path: &Path,
-        content: &str,
-    ) -> Vec<LspSymbol> {
+    pub fn document_symbols(&mut self, ext: &str, path: &Path, content: &str) -> Vec<LspSymbol> {
         self.sync_document(ext, path, content);
         let id = match self.server_for_extension(ext) {
             Some(s) => s.document_symbol(path),
@@ -604,7 +646,10 @@ pub fn path_to_uri(path: &Path) -> String {
 
 /// Convert a file:// URI back to a filesystem path.
 pub fn uri_to_path(uri: &str) -> PathBuf {
-    let stripped = uri.strip_prefix("file:///").or_else(|| uri.strip_prefix("file://")).unwrap_or(uri);
+    let stripped = uri
+        .strip_prefix("file:///")
+        .or_else(|| uri.strip_prefix("file://"))
+        .unwrap_or(uri);
     PathBuf::from(stripped.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
@@ -723,35 +768,51 @@ fn parse_publish_diagnostics(params: &Value) -> Option<Vec<LspDiagnostic>> {
             end_col: end.get("character")?.as_u64()? as usize,
             severity,
             message: diag.get("message")?.as_str()?.to_string(),
-            source: diag.get("source").and_then(|v| v.as_str()).map(String::from),
+            source: diag
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             code: diag.get("code").and_then(|v| {
-                v.as_str().map(String::from).or_else(|| v.as_u64().map(|n| n.to_string()))
+                v.as_str()
+                    .map(String::from)
+                    .or_else(|| v.as_u64().map(|n| n.to_string()))
             }),
         });
     }
-    if results.is_empty() { None } else { Some(results) }
+    if results.is_empty() {
+        None
+    } else {
+        Some(results)
+    }
 }
 
 /// Parse a single LSP `Location` (`{uri, range}`) or `LocationLink`
 /// (`{targetUri, targetRange}`) object into an [`LspLocation`].
 fn parse_location_obj(obj: &Value) -> Option<LspLocation> {
     // Standard Location: { uri, range: { start: { line, character } } }
-    if let (Some(uri), Some(range)) =
-        (obj.get("uri").and_then(|v| v.as_str()), obj.get("range"))
-    {
+    if let (Some(uri), Some(range)) = (obj.get("uri").and_then(|v| v.as_str()), obj.get("range")) {
         let start = range.get("start")?;
         let line = start.get("line")?.as_u64()? as usize;
         let col = start.get("character")?.as_u64()? as usize;
-        return Some(LspLocation { file: uri_to_path(uri), line, col });
+        return Some(LspLocation {
+            file: uri_to_path(uri),
+            line,
+            col,
+        });
     }
     // LocationLink: { targetUri, targetRange: { start: { line, character } } }
-    if let (Some(uri), Some(range)) =
-        (obj.get("targetUri").and_then(|v| v.as_str()), obj.get("targetRange"))
-    {
+    if let (Some(uri), Some(range)) = (
+        obj.get("targetUri").and_then(|v| v.as_str()),
+        obj.get("targetRange"),
+    ) {
         let start = range.get("start")?;
         let line = start.get("line")?.as_u64()? as usize;
         let col = start.get("character")?.as_u64()? as usize;
-        return Some(LspLocation { file: uri_to_path(uri), line, col });
+        return Some(LspLocation {
+            file: uri_to_path(uri),
+            line,
+            col,
+        });
     }
     None
 }
@@ -802,25 +863,31 @@ pub fn parse_hover(v: &Value) -> Option<HoverResult> {
     if contents.trim().is_empty() {
         return None;
     }
-    let range_start = result.get("range").and_then(|r| r.get("start")).and_then(|s| {
-        let l = s.get("line")?.as_u64()? as usize;
-        let c = s.get("character")?.as_u64()? as usize;
-        Some((l, c))
-    });
-    Some(HoverResult { contents, range_start })
+    let range_start = result
+        .get("range")
+        .and_then(|r| r.get("start"))
+        .and_then(|s| {
+            let l = s.get("line")?.as_u64()? as usize;
+            let c = s.get("character")?.as_u64()? as usize;
+            Some((l, c))
+        });
+    Some(HoverResult {
+        contents,
+        range_start,
+    })
 }
 
 /// Map an LSP `CompletionItemKind` number to our [`CompletionKind`].
 fn map_completion_kind(kind: u64) -> CompletionKind {
     match kind {
-        2 | 3 => CompletionKind::Function,          // Method, Function
-        7 | 8 | 13 | 22 => CompletionKind::Type,    // Class, Interface, Enum, Struct
-        9 => CompletionKind::Module,                // Module
-        5 | 10 => CompletionKind::Field,            // Field, Property
-        6 | 12 | 21 => CompletionKind::Variable,    // Variable, Value, Constant
-        14 => CompletionKind::Keyword,              // Keyword
-        15 => CompletionKind::Snippet,              // Snippet
-        17 => CompletionKind::File,                 // File
+        2 | 3 => CompletionKind::Function,       // Method, Function
+        7 | 8 | 13 | 22 => CompletionKind::Type, // Class, Interface, Enum, Struct
+        9 => CompletionKind::Module,             // Module
+        5 | 10 => CompletionKind::Field,         // Field, Property
+        6 | 12 | 21 => CompletionKind::Variable, // Variable, Value, Constant
+        14 => CompletionKind::Keyword,           // Keyword
+        15 => CompletionKind::Snippet,           // Snippet
+        17 => CompletionKind::File,              // File
         _ => CompletionKind::Variable,
     }
 }
@@ -857,7 +924,13 @@ pub fn parse_completion(v: &Value) -> Vec<CompletionItem> {
                 .and_then(|x| x.as_str())
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(20);
-            Some(CompletionItem { label, kind, detail, insert_text, sort_key })
+            Some(CompletionItem {
+                label,
+                kind,
+                detail,
+                insert_text,
+                sort_key,
+            })
         })
         .collect()
 }
@@ -882,9 +955,17 @@ pub fn parse_document_symbols(v: &Value) -> Vec<LspSymbol> {
 /// Build a single [`LspSymbol`] from a `DocumentSymbol` or `SymbolInformation`
 /// JSON value, recursing into `children` when present.
 fn symbol_from_value(sym: &Value) -> LspSymbol {
-    let name = sym.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+    let name = sym
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .to_string();
     let kind = sym.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
-    let detail = sym.get("detail").and_then(|d| d.as_str()).unwrap_or("").to_string();
+    let detail = sym
+        .get("detail")
+        .and_then(|d| d.as_str())
+        .unwrap_or("")
+        .to_string();
     // Hierarchical DocumentSymbol uses `range`; flat SymbolInformation uses `location.range`.
     let line = sym
         .get("range")
@@ -898,7 +979,13 @@ fn symbol_from_value(sym: &Value) -> LspSymbol {
         .and_then(|c| c.as_array())
         .map(|arr| arr.iter().map(symbol_from_value).collect())
         .unwrap_or_default();
-    LspSymbol { name, kind, detail, line, children }
+    LspSymbol {
+        name,
+        kind,
+        detail,
+        line,
+        children,
+    }
 }
 
 #[cfg(test)]
@@ -1056,7 +1143,9 @@ mod tests {
     #[test]
     fn parse_hover_null_is_none() {
         assert!(parse_hover(&serde_json::json!({ "id": 4, "result": null })).is_none());
-        assert!(parse_hover(&serde_json::json!({ "id": 5, "result": { "contents": "" } })).is_none());
+        assert!(
+            parse_hover(&serde_json::json!({ "id": 5, "result": { "contents": "" } })).is_none()
+        );
     }
 
     #[test]

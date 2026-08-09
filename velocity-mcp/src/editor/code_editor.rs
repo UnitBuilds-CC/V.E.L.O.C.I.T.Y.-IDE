@@ -1,5 +1,5 @@
-use crate::editor::theme::AppearanceSettings;
 use crate::editor::bracket_match::find_matching_bracket;
+use crate::editor::theme::AppearanceSettings;
 use eframe::egui;
 use eframe::egui::{Color32, Response, TextEdit, TextFormat};
 use once_cell::sync::Lazy;
@@ -53,7 +53,16 @@ impl CodeEditor {
         appearance: AppearanceSettings,
         diff_marks: &[u8],
     ) -> Response {
-        self.show_enhanced(ui, text, path, pending_line, active_locks, appearance, diff_marks, &EditorOptions::default())
+        self.show_enhanced(
+            ui,
+            text,
+            path,
+            pending_line,
+            active_locks,
+            appearance,
+            diff_marks,
+            &EditorOptions::default(),
+        )
     }
 
     /// Enhanced show with bracket matching, folding, breakpoints, diagnostics.
@@ -134,7 +143,11 @@ impl CodeEditor {
 
             // Breakpoint margin (red dot or empty)
             let bp_glyph = if has_breakpoint { "●" } else { " " };
-            let bp_color = if has_breakpoint { palette.error } else { palette.text_muted };
+            let bp_color = if has_breakpoint {
+                palette.error
+            } else {
+                palette.text_muted
+            };
             gutter_job.append(
                 bp_glyph,
                 0.0,
@@ -279,5 +292,13 @@ fn syntect_color_to_egui(c: highlighting::Color) -> Color32 {
 #[allow(dead_code)]
 pub fn code_block_with_gutter(ui: &mut egui::Ui, text: &mut String) -> Response {
     let mut editor = CodeEditor::default();
-    editor.show(ui, text, None, None, &[], AppearanceSettings::default(), &[])
+    editor.show(
+        ui,
+        text,
+        None,
+        None,
+        &[],
+        AppearanceSettings::default(),
+        &[],
+    )
 }

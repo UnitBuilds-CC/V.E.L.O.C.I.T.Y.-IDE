@@ -207,14 +207,16 @@ impl SharedMemoryStore {
 
     /// Search entries by tag.
     pub fn entries_by_tag(&self, tag: &str) -> Vec<&SharedKnowledge> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.tags.iter().any(|t| t == tag))
             .collect()
     }
 
     /// Search entries by category.
     pub fn entries_by_category(&self, category: KnowledgeCategory) -> Vec<&SharedKnowledge> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.category == category)
             .collect()
     }
@@ -227,7 +229,8 @@ impl SharedMemoryStore {
     /// Search entries by keyword in title or content.
     pub fn search(&self, query: &str) -> Vec<&SharedKnowledge> {
         let q = query.to_lowercase();
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| {
                 e.title.to_lowercase().contains(&q)
                     || e.content.to_lowercase().contains(&q)
@@ -238,7 +241,8 @@ impl SharedMemoryStore {
 
     /// Get entries visible to a specific user based on access level.
     pub fn visible_to(&self, user_id: &str) -> Vec<&SharedKnowledge> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| {
                 match e.access {
                     KnowledgeAccess::Public => true,
@@ -294,7 +298,8 @@ impl SharedMemoryStore {
 
     /// Get annotations for a file.
     pub fn annotations_for_file(&self, file_path: &str) -> Vec<&TeamAnnotation> {
-        self.annotations.values()
+        self.annotations
+            .values()
             .filter(|a| a.file_path == file_path)
             .collect()
     }
@@ -306,7 +311,8 @@ impl SharedMemoryStore {
 
     /// Get unresolved annotations for a file.
     pub fn unresolved_for_file(&self, file_path: &str) -> Vec<&TeamAnnotation> {
-        self.annotations.values()
+        self.annotations
+            .values()
             .filter(|a| a.file_path == file_path && !a.resolved)
             .collect()
     }
@@ -322,8 +328,8 @@ impl SharedMemoryStore {
             entries: self.entries.values().cloned().collect(),
             annotations: self.annotations.values().cloned().collect(),
         };
-        let json = serde_json::to_vec_pretty(&state)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("shared_memory.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -384,7 +390,12 @@ mod tests {
         assert!(store.entries.contains_key(&id));
         assert_eq!(store.search("REST").len(), 1);
         assert_eq!(store.entries_by_tag("api").len(), 1);
-        assert_eq!(store.entries_by_category(KnowledgeCategory::Conventions).len(), 1);
+        assert_eq!(
+            store
+                .entries_by_category(KnowledgeCategory::Conventions)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -406,7 +417,13 @@ mod tests {
     #[test]
     fn pin_entries() {
         let mut store = SharedMemoryStore::new();
-        let id = store.add_entry("Important", "Content", KnowledgeCategory::Notes, "u1", vec![]);
+        let id = store.add_entry(
+            "Important",
+            "Content",
+            KnowledgeCategory::Notes,
+            "u1",
+            vec![],
+        );
         store.set_pinned(&id, true);
         assert_eq!(store.pinned_entries().len(), 1);
     }
@@ -423,7 +440,13 @@ mod tests {
     #[test]
     fn private_entries_visibility() {
         let mut store = SharedMemoryStore::new();
-        let mut id = store.add_entry("My Note", "Private", KnowledgeCategory::Notes, "user1", vec![]);
+        let mut id = store.add_entry(
+            "My Note",
+            "Private",
+            KnowledgeCategory::Notes,
+            "user1",
+            vec![],
+        );
         store.entries.get_mut(&id).unwrap().access = KnowledgeAccess::Private;
 
         let visible = store.visible_to("user1");
@@ -437,7 +460,9 @@ mod tests {
     fn add_and_query_annotations() {
         let mut store = SharedMemoryStore::new();
         let id = store.add_annotation(
-            "src/main.rs", 42, Some(50),
+            "src/main.rs",
+            42,
+            Some(50),
             "This function needs refactoring",
             "user1",
             AnnotationKind::Todo,
@@ -473,8 +498,13 @@ mod tests {
     #[test]
     fn search_by_multiple_tags() {
         let mut store = SharedMemoryStore::new();
-        store.add_entry("Multi", "Content", KnowledgeCategory::Notes, "u1",
-            vec!["rust".to_string(), "web".to_string()]);
+        store.add_entry(
+            "Multi",
+            "Content",
+            KnowledgeCategory::Notes,
+            "u1",
+            vec!["rust".to_string(), "web".to_string()],
+        );
 
         assert_eq!(store.entries_by_tag("rust").len(), 1);
         assert_eq!(store.entries_by_tag("web").len(), 1);

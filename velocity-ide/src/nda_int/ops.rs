@@ -105,11 +105,7 @@ fn isqrt_inv_q14(v: u64) -> u32 {
     let k = 64 - leading;
     let shift = k / 2;
 
-    let mut x = if shift <= 14 {
-        1u64 << (14 - shift)
-    } else {
-        1
-    };
+    let mut x = if shift <= 14 { 1u64 << (14 - shift) } else { 1 };
 
     for _ in 0..3 {
         let x2 = x * x;

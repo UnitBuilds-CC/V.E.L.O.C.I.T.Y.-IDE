@@ -20,11 +20,7 @@ pub struct GenerationResult {
 ///
 /// This uses keyword/pattern matching for common automation intents.
 /// For complex descriptions, it falls back to a structured template.
-pub fn generate_from_description(
-    id: &str,
-    name: &str,
-    description: &str,
-) -> GenerationResult {
+pub fn generate_from_description(id: &str, name: &str, description: &str) -> GenerationResult {
     let lower = description.to_lowercase();
 
     // Pattern: "review" / "lint" / "check" → code review pipeline
@@ -50,7 +46,8 @@ pub fn generate_from_description(
         return GenerationResult {
             canvas: build_deploy_pipeline(id, name, description),
             confidence: 0.80,
-            explanation: "Detected deployment intent — built build→check→deploy→verify pipeline".into(),
+            explanation: "Detected deployment intent — built build→check→deploy→verify pipeline"
+                .into(),
         };
     }
 
@@ -59,30 +56,42 @@ pub fn generate_from_description(
         return GenerationResult {
             canvas: build_debug_pipeline(id, name, description),
             confidence: 0.80,
-            explanation: "Detected debugging intent — built log→analyze→fix→validate pipeline".into(),
+            explanation: "Detected debugging intent — built log→analyze→fix→validate pipeline"
+                .into(),
         };
     }
 
     // Pattern: "document" / "write docs" / "readme" → documentation
-    if contains_any(&lower, &["document", "docs", "readme", "write doc", "documentation"]) {
+    if contains_any(
+        &lower,
+        &["document", "docs", "readme", "write doc", "documentation"],
+    ) {
         return GenerationResult {
             canvas: build_docs_pipeline(id, name, description),
             confidence: 0.75,
-            explanation: "Detected documentation intent — built research→summarize→write pipeline".into(),
+            explanation: "Detected documentation intent — built research→summarize→write pipeline"
+                .into(),
         };
     }
 
     // Pattern: "refactor" → safe refactor pipeline
-    if contains_any(&lower, &["refactor", "clean up", "improve code", "restructure"]) {
+    if contains_any(
+        &lower,
+        &["refactor", "clean up", "improve code", "restructure"],
+    ) {
         return GenerationResult {
             canvas: build_refactor_pipeline(id, name, description),
             confidence: 0.80,
-            explanation: "Detected refactoring intent — built analyze→refactor→test→validate pipeline".into(),
+            explanation:
+                "Detected refactoring intent — built analyze→refactor→test→validate pipeline".into(),
         };
     }
 
     // Pattern: "feature" / "implement" / "build" / "create" → feature implementation
-    if contains_any(&lower, &["feature", "implement", "build", "create", "add", "new"]) {
+    if contains_any(
+        &lower,
+        &["feature", "implement", "build", "create", "add", "new"],
+    ) {
         return GenerationResult {
             canvas: build_feature_pipeline(id, name, description),
             confidence: 0.70,
@@ -94,7 +103,8 @@ pub fn generate_from_description(
     GenerationResult {
         canvas: build_generic_pipeline(id, name, description),
         confidence: 0.50,
-        explanation: "No specific pattern detected — built generic analyze→act→verify pipeline".into(),
+        explanation: "No specific pattern detected — built generic analyze→act→verify pipeline"
+            .into(),
     }
 }
 
@@ -196,13 +206,17 @@ fn build_deploy_pipeline(id: &str, name: &str, desc: &str) -> WorkflowCanvas {
     );
 
     let check = canvas.add_node(
-        CanvasNodeKind::Condition { description: "Build OK?".into() },
+        CanvasNodeKind::Condition {
+            description: "Build OK?".into(),
+        },
         NodePosition { x: 450.0, y: 200.0 },
     );
 
     let deploy = canvas.add_node(
         CanvasNodeKind::AgentTask {
-            prompt: format!("Deploy the application. {desc} Run deployment steps and verify success."),
+            prompt: format!(
+                "Deploy the application. {desc} Run deployment steps and verify success."
+            ),
             team: None,
         },
         NodePosition { x: 650.0, y: 200.0 },
@@ -233,7 +247,9 @@ fn build_debug_pipeline(id: &str, name: &str, desc: &str) -> WorkflowCanvas {
 
     let logs = canvas.add_node(
         CanvasNodeKind::AgentTask {
-            prompt: format!("Read recent logs and error outputs. {desc} Identify the error pattern."),
+            prompt: format!(
+                "Read recent logs and error outputs. {desc} Identify the error pattern."
+            ),
             team: None,
         },
         NodePosition { x: 250.0, y: 200.0 },
@@ -280,7 +296,9 @@ fn build_docs_pipeline(id: &str, name: &str, desc: &str) -> WorkflowCanvas {
 
     let research = canvas.add_node(
         CanvasNodeKind::AgentTask {
-            prompt: format!("Research the topic: {desc}. Find authoritative sources and key concepts."),
+            prompt: format!(
+                "Research the topic: {desc}. Find authoritative sources and key concepts."
+            ),
             team: None,
         },
         NodePosition { x: 280.0, y: 200.0 },
@@ -341,7 +359,9 @@ fn build_refactor_pipeline(id: &str, name: &str, desc: &str) -> WorkflowCanvas {
     );
 
     let condition = canvas.add_node(
-        CanvasNodeKind::Condition { description: "Tests pass?".into() },
+        CanvasNodeKind::Condition {
+            description: "Tests pass?".into(),
+        },
         NodePosition { x: 900.0, y: 200.0 },
     );
 
@@ -362,7 +382,9 @@ fn build_feature_pipeline(id: &str, name: &str, desc: &str) -> WorkflowCanvas {
 
     let plan = canvas.add_node(
         CanvasNodeKind::AgentTask {
-            prompt: format!("Plan this feature: {desc}. Break into steps and identify affected files."),
+            prompt: format!(
+                "Plan this feature: {desc}. Break into steps and identify affected files."
+            ),
             team: None,
         },
         NodePosition { x: 230.0, y: 200.0 },
@@ -397,7 +419,10 @@ fn build_feature_pipeline(id: &str, name: &str, desc: &str) -> WorkflowCanvas {
             prompt: "Document the new feature. Update README and add inline docs.".into(),
             team: None,
         },
-        NodePosition { x: 1100.0, y: 200.0 },
+        NodePosition {
+            x: 1100.0,
+            y: 200.0,
+        },
     );
 
     canvas.add_edge(start_id, "ok", plan.clone());
@@ -452,7 +477,10 @@ fn position_endpoints(canvas: &mut WorkflowCanvas, start_x: f32, end_x: f32) {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
     if let Some(n) = canvas.node_mut(&start_id) {
-        n.position = NodePosition { x: start_x, y: 200.0 };
+        n.position = NodePosition {
+            x: start_x,
+            y: 200.0,
+        };
     }
     if let Some(n) = canvas.node_mut(&end_id) {
         n.position = NodePosition { x: end_x, y: 200.0 };
@@ -480,7 +508,8 @@ mod tests {
 
     #[test]
     fn deploy_pattern_detected() {
-        let result = generate_from_description("wf3", "Test", "Deploy the application to production");
+        let result =
+            generate_from_description("wf3", "Test", "Deploy the application to production");
         assert!(result.confidence > 0.7);
     }
 

@@ -102,9 +102,11 @@ pub fn diff(before: &NdaDocument, after: &NdaDocument) -> NdaDelta {
 
     for (s, p, old_obj) in raw_removed.into_iter() {
         let key = (s.clone(), p);
-        let matched = added_by_key
-            .get_mut(&key)
-            .and_then(|idxs| idxs.iter().position(|&i| !consumed_added[i]).map(|pos| idxs[pos]));
+        let matched = added_by_key.get_mut(&key).and_then(|idxs| {
+            idxs.iter()
+                .position(|&i| !consumed_added[i])
+                .map(|pos| idxs[pos])
+        });
         match matched {
             Some(i) => {
                 consumed_added[i] = true;
@@ -144,7 +146,10 @@ pub struct AgentActionResult {
 
 impl AgentActionResult {
     pub fn new(status: impl Into<String>, delta: NdaDelta) -> Self {
-        Self { status: status.into(), delta }
+        Self {
+            status: status.into(),
+            delta,
+        }
     }
 }
 
@@ -159,7 +164,10 @@ mod tests {
         let mut after = NdaDocument::new();
         after.push_str("node_1", AOM_NAME, "Submit");
         let delta = diff(&before, &after);
-        assert_eq!(delta.added, vec![("node_1".to_string(), AOM_NAME, "Submit".to_string())]);
+        assert_eq!(
+            delta.added,
+            vec![("node_1".to_string(), AOM_NAME, "Submit".to_string())]
+        );
         assert!(delta.removed.is_empty());
         assert!(delta.changed.is_empty());
     }
@@ -170,7 +178,10 @@ mod tests {
         before.push_str("node_1", AOM_NAME, "Submit");
         let after = NdaDocument::new();
         let delta = diff(&before, &after);
-        assert_eq!(delta.removed, vec![("node_1".to_string(), AOM_NAME, "Submit".to_string())]);
+        assert_eq!(
+            delta.removed,
+            vec![("node_1".to_string(), AOM_NAME, "Submit".to_string())]
+        );
         assert!(delta.added.is_empty());
     }
 
@@ -226,7 +237,9 @@ mod tests {
     #[test]
     fn action_result_carries_status_and_delta() {
         let mut delta = NdaDelta::default();
-        delta.added.push(("node".to_string(), AOM_NAME, "Click".to_string()));
+        delta
+            .added
+            .push(("node".to_string(), AOM_NAME, "Click".to_string()));
         let result = AgentActionResult::new("success", delta.clone());
         assert_eq!(result.status, "success");
         assert_eq!(result.delta.added.len(), 1);

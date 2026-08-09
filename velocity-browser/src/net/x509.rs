@@ -85,7 +85,11 @@ fn read_tlv(data: &[u8]) -> Result<Tlv<'_>, X509Error> {
     if end > data.len() {
         return Err(X509Error::Truncated);
     }
-    Ok(Tlv { tag, contents: &data[header..end], total: end })
+    Ok(Tlv {
+        tag,
+        contents: &data[header..end],
+        total: end,
+    })
 }
 
 const TAG_INTEGER: u8 = 0x02;
@@ -166,7 +170,7 @@ pub fn parse_certificate(der: &[u8]) -> Result<ParsedCertificate, X509Error> {
     // subjectPublicKeyInfo SEQ
     let spki = read_tlv(cur)?;
     out.spki = der[..0].to_vec(); // placeholder; replaced below with real bytes
-    // Reconstruct the full SPKI TLV bytes (tag+len+contents) for future use.
+                                  // Reconstruct the full SPKI TLV bytes (tag+len+contents) for future use.
     {
         let start = der.len() - cur.len();
         let end = start + spki.total;
@@ -305,9 +309,8 @@ fn parse_time(tag: u8, bytes: &[u8]) -> Result<i64, X509Error> {
         }
         _ => return Err(X509Error::UnexpectedTag(tag)),
     };
-    let two = |sl: &str| -> Result<i64, X509Error> {
-        sl.parse::<i64>().map_err(|_| X509Error::BadTime)
-    };
+    let two =
+        |sl: &str| -> Result<i64, X509Error> { sl.parse::<i64>().map_err(|_| X509Error::BadTime) };
     if rest.len() < 8 {
         return Err(X509Error::BadTime);
     }
@@ -315,7 +318,11 @@ fn parse_time(tag: u8, bytes: &[u8]) -> Result<i64, X509Error> {
     let day = two(&rest[2..4])?;
     let hour = two(&rest[4..6])?;
     let min = two(&rest[6..8])?;
-    let sec = if rest.len() >= 10 { two(&rest[8..10])? } else { 0 };
+    let sec = if rest.len() >= 10 {
+        two(&rest[8..10])?
+    } else {
+        0
+    };
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return Err(X509Error::BadTime);
     }
@@ -515,7 +522,12 @@ mod tests {
 
     #[test]
     fn verify_ok_within_window_and_hostname() {
-        let der = build_cert("240101000000", "260101000000", "example.com", &["example.com"]);
+        let der = build_cert(
+            "240101000000",
+            "260101000000",
+            "example.com",
+            &["example.com"],
+        );
         let cert = parse_certificate(&der).unwrap();
         let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
         let v = verify(&cert, "example.com", now);
@@ -528,7 +540,12 @@ mod tests {
 
     #[test]
     fn verify_rejects_expired() {
-        let der = build_cert("200101000000", "210101000000", "example.com", &["example.com"]);
+        let der = build_cert(
+            "200101000000",
+            "210101000000",
+            "example.com",
+            &["example.com"],
+        );
         let cert = parse_certificate(&der).unwrap();
         let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
         let v = verify(&cert, "example.com", now);
@@ -538,7 +555,12 @@ mod tests {
 
     #[test]
     fn verify_rejects_wrong_hostname() {
-        let der = build_cert("240101000000", "260101000000", "example.com", &["example.com"]);
+        let der = build_cert(
+            "240101000000",
+            "260101000000",
+            "example.com",
+            &["example.com"],
+        );
         let cert = parse_certificate(&der).unwrap();
         let now = civil_to_unix(2025, 6, 1, 0, 0, 0);
         let v = verify(&cert, "evil.com", now);
@@ -557,7 +579,12 @@ mod tests {
     #[test]
     fn san_takes_precedence_over_cn() {
         // CN says example.com but SAN only lists other.com → example.com fails.
-        let der = build_cert("240101000000", "260101000000", "example.com", &["other.com"]);
+        let der = build_cert(
+            "240101000000",
+            "260101000000",
+            "example.com",
+            &["other.com"],
+        );
         let cert = parse_certificate(&der).unwrap();
         assert!(!matches_hostname(&cert, "example.com"));
         assert!(matches_hostname(&cert, "other.com"));
@@ -572,7 +599,12 @@ mod tests {
 
     #[test]
     fn verify_before_validity_window() {
-        let der = build_cert("250101000000", "260101000000", "example.com", &["example.com"]);
+        let der = build_cert(
+            "250101000000",
+            "260101000000",
+            "example.com",
+            &["example.com"],
+        );
         let cert = parse_certificate(&der).unwrap();
         // now = 2024-06-01, which is before notBefore (2025-01-01)
         let now = civil_to_unix(2024, 6, 1, 0, 0, 0);
@@ -620,7 +652,12 @@ mod tests {
 
     #[test]
     fn verify_at_exact_boundaries() {
-        let der = build_cert("240101000000", "260101000000", "example.com", &["example.com"]);
+        let der = build_cert(
+            "240101000000",
+            "260101000000",
+            "example.com",
+            &["example.com"],
+        );
         let cert = parse_certificate(&der).unwrap();
         // At notBefore exactly
         let v = verify(&cert, "example.com", cert.not_before);

@@ -23,7 +23,7 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
         return None;
     }
 
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         return None;
     }
@@ -53,11 +53,7 @@ fn parse_request(reader: &mut BufReader<&mut dyn IoRead>) -> Option<HttpRequest>
         reader.read_exact(&mut body).ok()?;
     }
 
-    Some(HttpRequest {
-        method,
-        path,
-        body,
-    })
+    Some(HttpRequest { method, path, body })
 }
 
 /// Write an HTTP response.
@@ -111,27 +107,23 @@ fn route_request(core: &DroneCore, req: &HttpRequest) -> (u16, String) {
         }
 
         // ── POST endpoints ──
-        ("POST", "/peer/pair") => {
-            match serde_json::from_slice::<serde_json::Value>(&req.body) {
-                Ok(data) => {
-                    let peer_id = data["peer_id"].as_str().unwrap_or("");
-                    let name = data["name"].as_str().unwrap_or("unknown");
-                    let result = core.handle_pair(peer_id, name);
-                    (200, result.to_string())
-                }
-                Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
+        ("POST", "/peer/pair") => match serde_json::from_slice::<serde_json::Value>(&req.body) {
+            Ok(data) => {
+                let peer_id = data["peer_id"].as_str().unwrap_or("");
+                let name = data["name"].as_str().unwrap_or("unknown");
+                let result = core.handle_pair(peer_id, name);
+                (200, result.to_string())
             }
-        }
+            Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
+        },
 
-        ("POST", "/peer/message") => {
-            match serde_json::from_slice::<serde_json::Value>(&req.body) {
-                Ok(data) => {
-                    let result = core.handle_message(data);
-                    (200, result.to_string())
-                }
-                Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
+        ("POST", "/peer/message") => match serde_json::from_slice::<serde_json::Value>(&req.body) {
+            Ok(data) => {
+                let result = core.handle_message(data);
+                (200, result.to_string())
             }
-        }
+            Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
+        },
 
         ("POST", "/peer/file/start") => {
             match serde_json::from_slice::<serde_json::Value>(&req.body) {
@@ -163,15 +155,13 @@ fn route_request(core: &DroneCore, req: &HttpRequest) -> (u16, String) {
             }
         }
 
-        ("POST", "/peer/task") => {
-            match serde_json::from_slice::<serde_json::Value>(&req.body) {
-                Ok(data) => {
-                    let result = core.handle_task(&data);
-                    (200, result.to_string())
-                }
-                Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
+        ("POST", "/peer/task") => match serde_json::from_slice::<serde_json::Value>(&req.body) {
+            Ok(data) => {
+                let result = core.handle_task(&data);
+                (200, result.to_string())
             }
-        }
+            Err(e) => (400, format!(r#"{{"error":"Invalid JSON: {e}"}}"#)),
+        },
 
         // ── Fallback ──
         _ => (404, r#"{"error":"Not found"}"#.into()),
@@ -267,8 +257,11 @@ mod tests {
 
     fn http_get(port: u16, path: &str) -> (u16, String) {
         let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
-        let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
         stream.write_all(request.as_bytes()).unwrap();
         stream.flush().unwrap();
 
@@ -292,18 +285,16 @@ mod tests {
             .unwrap_or(0);
 
         // Extract body (after \r\n\r\n).
-        let body = response
-            .split("\r\n\r\n")
-            .nth(1)
-            .unwrap_or("")
-            .to_string();
+        let body = response.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
 
         (status, body)
     }
 
     fn http_post(port: u16, path: &str, body: &str) -> (u16, String) {
         let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
         let request = format!(
             "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -329,11 +320,7 @@ mod tests {
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(0);
 
-        let body = response
-            .split("\r\n\r\n")
-            .nth(1)
-            .unwrap_or("")
-            .to_string();
+        let body = response.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
 
         (status, body)
     }

@@ -666,4 +666,3 @@ pub fn submit_current_form(
     state.filled_fields.clear();
     Ok(())
 }
-

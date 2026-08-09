@@ -204,7 +204,11 @@ pub(super) fn fold_by_predicate(mut lines: Vec<(u16, String)>) -> Vec<String> {
 /// a page_text call.
 pub(super) fn content_change_signal(delta: &NdaDelta) -> Option<(usize, usize)> {
     use velocity_browser::predicates::SESSION_CONTENT;
-    if let Some(c) = delta.changed.iter().find(|c| c.predicate == SESSION_CONTENT) {
+    if let Some(c) = delta
+        .changed
+        .iter()
+        .find(|c| c.predicate == SESSION_CONTENT)
+    {
         return Some((c.old.chars().count(), c.new.chars().count()));
     }
     let added = delta
@@ -241,7 +245,12 @@ pub(super) fn render_delta(delta: &NdaDelta) -> String {
     let added: Vec<(u16, String)> = delta
         .added
         .iter()
-        .map(|(s, p, o)| (*p, format!("  + {} {} = {}", s, predicate_name(*p), fact_snippet(o))))
+        .map(|(s, p, o)| {
+            (
+                *p,
+                format!("  + {} {} = {}", s, predicate_name(*p), fact_snippet(o)),
+            )
+        })
         .collect();
     for line in fold_by_predicate(added) {
         out.push_str(&line);
@@ -250,7 +259,12 @@ pub(super) fn render_delta(delta: &NdaDelta) -> String {
     let removed: Vec<(u16, String)> = delta
         .removed
         .iter()
-        .map(|(s, p, o)| (*p, format!("  - {} {} = {}", s, predicate_name(*p), fact_snippet(o))))
+        .map(|(s, p, o)| {
+            (
+                *p,
+                format!("  - {} {} = {}", s, predicate_name(*p), fact_snippet(o)),
+            )
+        })
         .collect();
     for line in fold_by_predicate(removed) {
         out.push_str(&line);

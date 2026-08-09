@@ -80,12 +80,15 @@ impl FoldState {
         self.regions_hash = h;
         self.regions = detect_fold_regions(content);
         // Remove collapsed entries that no longer have valid regions
-        self.collapsed.retain(|line| self.regions.iter().any(|r| r.start_line == *line));
+        self.collapsed
+            .retain(|line| self.regions.iter().any(|r| r.start_line == *line));
     }
 
     /// Get visible line numbers (filtering out hidden lines).
     pub fn visible_lines(&self, total_lines: usize) -> Vec<usize> {
-        (0..total_lines).filter(|l| !self.is_line_hidden(*l)).collect()
+        (0..total_lines)
+            .filter(|l| !self.is_line_hidden(*l))
+            .collect()
     }
 
     /// Count of hidden lines for display (e.g., "... 5 lines").
@@ -119,8 +122,12 @@ pub fn detect_fold_regions(content: &str) -> Vec<FoldRegion> {
         if trimmed.ends_with('{') || trimmed.ends_with("(") || trimmed.ends_with("[") {
             brace_stack.push(i);
         }
-        if trimmed.starts_with('}') || trimmed.starts_with(')') || trimmed.starts_with(']')
-            || trimmed == "}" || trimmed == ")" || trimmed == "]"
+        if trimmed.starts_with('}')
+            || trimmed.starts_with(')')
+            || trimmed.starts_with(']')
+            || trimmed == "}"
+            || trimmed == ")"
+            || trimmed == "]"
         {
             if let Some(start) = brace_stack.pop() {
                 if i > start + 1 {
@@ -137,9 +144,10 @@ pub fn detect_fold_regions(content: &str) -> Vec<FoldRegion> {
     // Strategy 2: Indentation-based folding (for languages without braces)
     // Only add if we found few brace-based regions
     if regions.len() < 3 {
-        let indents: Vec<usize> = lines.iter().map(|l| {
-            l.len() - l.trim_start().len()
-        }).collect();
+        let indents: Vec<usize> = lines
+            .iter()
+            .map(|l| l.len() - l.trim_start().len())
+            .collect();
 
         let mut i = 0;
         while i < lines.len() {

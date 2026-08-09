@@ -138,26 +138,32 @@ impl DapClient {
         self.state = DebugState::Starting;
 
         // Send initialize request
-        self.send_request("initialize", serde_json::json!({
-            "clientID": "velocity-ide",
-            "clientName": "Velocity IDE",
-            "adapterID": "codelldb",
-            "pathFormat": "path",
-            "linesStartAt1": true,
-            "columnsStartAt1": true,
-            "supportsVariableType": true,
-            "supportsVariablePaging": false,
-            "supportsRunInTerminalRequest": false,
-        }))?;
+        self.send_request(
+            "initialize",
+            serde_json::json!({
+                "clientID": "velocity-ide",
+                "clientName": "Velocity IDE",
+                "adapterID": "codelldb",
+                "pathFormat": "path",
+                "linesStartAt1": true,
+                "columnsStartAt1": true,
+                "supportsVariableType": true,
+                "supportsVariablePaging": false,
+                "supportsRunInTerminalRequest": false,
+            }),
+        )?;
 
         // Send launch request
-        self.send_request("launch", serde_json::json!({
-            "program": config.program,
-            "args": config.args,
-            "cwd": config.cwd,
-            "env": config.env,
-            "stopOnEntry": config.stop_on_entry,
-        }))?;
+        self.send_request(
+            "launch",
+            serde_json::json!({
+                "program": config.program,
+                "args": config.args,
+                "cwd": config.cwd,
+                "env": config.env,
+                "stopOnEntry": config.stop_on_entry,
+            }),
+        )?;
 
         self.state = DebugState::Running;
         Ok(())
@@ -165,14 +171,18 @@ impl DapClient {
 
     /// Set breakpoints for a file.
     pub fn set_breakpoints(&mut self, file: &Path, lines: &[usize]) -> Result<(), String> {
-        let source_bps: Vec<Value> = lines.iter().map(|&line| {
-            serde_json::json!({ "line": line })
-        }).collect();
+        let source_bps: Vec<Value> = lines
+            .iter()
+            .map(|&line| serde_json::json!({ "line": line }))
+            .collect();
 
-        self.send_request("setBreakpoints", serde_json::json!({
-            "source": { "path": file.display().to_string() },
-            "breakpoints": source_bps,
-        }))
+        self.send_request(
+            "setBreakpoints",
+            serde_json::json!({
+                "source": { "path": file.display().to_string() },
+                "breakpoints": source_bps,
+            }),
+        )
         .map(|_| ())
     }
 
@@ -214,7 +224,10 @@ impl DapClient {
 
     /// Stop (terminate) the debug session.
     pub fn stop(&mut self) -> Result<(), String> {
-        let _ = self.send_request("disconnect", serde_json::json!({ "terminateDebuggee": true }));
+        let _ = self.send_request(
+            "disconnect",
+            serde_json::json!({ "terminateDebuggee": true }),
+        );
         self.state = DebugState::Stopped;
         if let Some(ref mut child) = self.process {
             let _ = child.kill();
@@ -249,12 +262,17 @@ impl DapClient {
 
     /// Remove a breakpoint.
     pub fn remove_breakpoint(&mut self, file: &Path, line: usize) {
-        self.breakpoints.retain(|bp| !(bp.file == file && bp.line == line));
+        self.breakpoints
+            .retain(|bp| !(bp.file == file && bp.line == line));
     }
 
     /// Toggle a breakpoint at file:line.
     pub fn toggle_breakpoint(&mut self, file: PathBuf, line: usize) {
-        if self.breakpoints.iter().any(|bp| bp.file == file && bp.line == line) {
+        if self
+            .breakpoints
+            .iter()
+            .any(|bp| bp.file == file && bp.line == line)
+        {
             self.remove_breakpoint(&file, line);
         } else {
             self.add_breakpoint(file, line);
@@ -263,17 +281,25 @@ impl DapClient {
 
     /// Check if a breakpoint exists at file:line.
     pub fn has_breakpoint(&self, file: &Path, line: usize) -> bool {
-        self.breakpoints.iter().any(|bp| bp.file == file && bp.line == line && bp.enabled)
+        self.breakpoints
+            .iter()
+            .any(|bp| bp.file == file && bp.line == line && bp.enabled)
     }
 
     /// Get breakpoints for a specific file.
     pub fn file_breakpoints(&self, file: &Path) -> Vec<&Breakpoint> {
-        self.breakpoints.iter().filter(|bp| bp.file == file).collect()
+        self.breakpoints
+            .iter()
+            .filter(|bp| bp.file == file)
+            .collect()
     }
 
     /// Add a watch expression.
     pub fn add_watch(&mut self, expression: String) {
-        self.watches.push(WatchExpression { expression, result: None });
+        self.watches.push(WatchExpression {
+            expression,
+            result: None,
+        });
     }
 
     fn send_request(&mut self, command: &str, arguments: Value) -> Result<i64, String> {
@@ -290,8 +316,12 @@ impl DapClient {
 
         if let Some(ref mut child) = self.process {
             if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(header.as_bytes()).map_err(|e| e.to_string())?;
-                stdin.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(header.as_bytes())
+                    .map_err(|e| e.to_string())?;
+                stdin
+                    .write_all(body.as_bytes())
+                    .map_err(|e| e.to_string())?;
                 stdin.flush().map_err(|e| e.to_string())?;
             }
         }

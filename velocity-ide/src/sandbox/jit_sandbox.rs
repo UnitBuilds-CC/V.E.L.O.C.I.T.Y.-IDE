@@ -1,12 +1,12 @@
 // sandbox/jit_sandbox.rs — Executing NDA opcode trees with nda_jit compiler
-use crate::site_map::{NdaNode, SiteMap};
-use crate::sandbox::SandboxResult;
 use crate::compiler::nda_jit::JitProgram;
 use crate::safety::SafeMutex;
+use crate::sandbox::SandboxResult;
+use crate::site_map::{NdaNode, SiteMap};
 
-use std::sync::{Arc, LazyLock, Mutex};
 use std::collections::HashMap;
 use std::hash::Hasher;
+use std::sync::{Arc, LazyLock, Mutex};
 
 static JIT_CACHE: LazyLock<Mutex<HashMap<u64, Arc<JitProgram>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -14,7 +14,13 @@ static JIT_CACHE: LazyLock<Mutex<HashMap<u64, Arc<JitProgram>>>> =
 fn fast_hash_node(node: &NdaNode, state: &mut std::collections::hash_map::DefaultHasher) {
     use std::hash::Hasher;
     match node {
-        NdaNode::Matrix { rows, cols, scale, sign, extra } => {
+        NdaNode::Matrix {
+            rows,
+            cols,
+            scale,
+            sign,
+            extra,
+        } => {
             state.write(b"M");
             state.write_u16(*rows);
             state.write_u16(*cols);
@@ -59,7 +65,11 @@ fn fast_hash_node(node: &NdaNode, state: &mut std::collections::hash_map::Defaul
                 fast_hash_node(child, state);
             }
         }
-        NdaNode::If { cond, then_body, else_body } => {
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             state.write(b"IF");
             fast_hash_node(cond, state);
             state.write_usize(then_body.len());
@@ -184,12 +194,19 @@ fn fast_hash_node(node: &NdaNode, state: &mut std::collections::hash_map::Defaul
             state.write(b"FRE");
             fast_hash_node(addr, state);
         }
-        NdaNode::RegInt { vector, handler_hash } => {
+        NdaNode::RegInt {
+            vector,
+            handler_hash,
+        } => {
             state.write(b"RGI");
             state.write_u32(*vector);
             state.write_u64(*handler_hash);
         }
-        NdaNode::Cast { from_type, to_type, operand } => {
+        NdaNode::Cast {
+            from_type,
+            to_type,
+            operand,
+        } => {
             state.write(b"CST");
             state.write_u8(*from_type as u8);
             state.write_u8(*to_type as u8);
@@ -203,7 +220,11 @@ fn fast_hash_node(node: &NdaNode, state: &mut std::collections::hash_map::Defaul
                 fast_hash_node(arg, state);
             }
         }
-        NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+        NdaNode::Triple {
+            subject_hash,
+            predicate_id,
+            object_hash,
+        } => {
             state.write(b"TPL");
             state.write_u64(*subject_hash);
             state.write_u16(*predicate_id);
@@ -216,11 +237,7 @@ pub struct NdaJitSandbox;
 
 impl NdaJitSandbox {
     /// Execute the sequence of NDA nodes using the JIT compiler.
-    pub fn run(
-        nodes: &[NdaNode],
-        conditioning_vec: &[f32],
-        site_map: &SiteMap,
-    ) -> SandboxResult {
+    pub fn run(nodes: &[NdaNode], conditioning_vec: &[f32], site_map: &SiteMap) -> SandboxResult {
         // Calculate structural hash of AST nodes using the fast default hasher
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for node in nodes {
@@ -231,7 +248,8 @@ impl NdaJitSandbox {
         // Retrieve from cache or compile
         let program = {
             let mut cache = JIT_CACHE.lock_safe();
-            cache.entry(program_hash)
+            cache
+                .entry(program_hash)
                 .or_insert_with(|| Arc::new(crate::compiler::nda_jit::compile(nodes)))
                 .clone()
         };
@@ -249,7 +267,8 @@ mod tests {
     #[test]
     fn jit_sandbox_chains_matrix_output_to_norm_input() {
         let input = vec![1.0f32; 896];
-        let site_map = SiteMap::open(&std::env::temp_dir().join("jit_sandbox_test_sm_1"), 0).unwrap();
+        let site_map =
+            SiteMap::open(&std::env::temp_dir().join("jit_sandbox_test_sm_1"), 0).unwrap();
 
         let m1 = NdaNode::Matrix {
             rows: 128,
@@ -275,7 +294,8 @@ mod tests {
     #[test]
     fn jit_sandbox_catches_shape_panic() {
         let input = vec![1.0f32; 896];
-        let site_map = SiteMap::open(&std::env::temp_dir().join("jit_sandbox_test_sm_2"), 0).unwrap();
+        let site_map =
+            SiteMap::open(&std::env::temp_dir().join("jit_sandbox_test_sm_2"), 0).unwrap();
 
         let m1 = NdaNode::Matrix {
             rows: 128,

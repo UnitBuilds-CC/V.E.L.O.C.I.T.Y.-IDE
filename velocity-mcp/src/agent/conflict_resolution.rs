@@ -202,7 +202,9 @@ impl ConflictResolver {
                 })
             }
             // Shared lock: fails if an exclusive lock exists.
-            (LockKind::Shared, Some(locks)) if locks.iter().any(|l| l.kind == LockKind::Exclusive) => {
+            (LockKind::Shared, Some(locks))
+                if locks.iter().any(|l| l.kind == LockKind::Exclusive) =>
+            {
                 Err(LockError::AlreadyLocked {
                     resource: resource.to_string(),
                     holder: locks[0].holder_id.clone(),
@@ -217,7 +219,8 @@ impl ConflictResolver {
                     expires_at,
                     kind,
                 };
-                self.locks.entry(resource.to_string())
+                self.locks
+                    .entry(resource.to_string())
                     .or_default()
                     .push(lock);
                 Ok(())
@@ -242,12 +245,16 @@ impl ConflictResolver {
 
     /// Check if a resource is locked.
     pub fn is_locked(&self, resource: &str) -> bool {
-        self.locks.get(resource).map(|l| !l.is_empty()).unwrap_or(false)
+        self.locks
+            .get(resource)
+            .map(|l| !l.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get who holds the lock on a resource.
     pub fn lock_holder(&self, resource: &str) -> Option<&str> {
-        self.locks.get(resource)
+        self.locks
+            .get(resource)
             .and_then(|locks| locks.first())
             .map(|l| l.holder_id.as_str())
     }
@@ -322,12 +329,16 @@ impl ConflictResolver {
 
     /// Get unresolved conflicts.
     pub fn unresolved(&self) -> Vec<&OperationConflict> {
-        self.conflicts.iter().filter(|c| c.resolution.is_none()).collect()
+        self.conflicts
+            .iter()
+            .filter(|c| c.resolution.is_none())
+            .collect()
     }
 
     /// Get unresolved conflicts for a specific resource.
     pub fn unresolved_for(&self, resource: &str) -> Vec<&OperationConflict> {
-        self.unresolved().into_iter()
+        self.unresolved()
+            .into_iter()
             .filter(|c| c.resource == resource)
             .collect()
     }
@@ -344,7 +355,9 @@ impl ConflictResolver {
     fn count_by_resource_type(&self) -> HashMap<String, usize> {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for conflict in &self.conflicts {
-            *counts.entry(conflict.resource_type.label().to_string()).or_default() += 1;
+            *counts
+                .entry(conflict.resource_type.label().to_string())
+                .or_default() += 1;
         }
         counts
     }
@@ -364,7 +377,9 @@ impl ConflictResolver {
     /// Load resolver state from disk.
     pub fn load(workspace_root: &Path) -> Self {
         let mut resolver = Self::new();
-        let path = workspace_root.join(".velocity").join("conflict_history.json");
+        let path = workspace_root
+            .join(".velocity")
+            .join("conflict_history.json");
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(conflicts) = serde_json::from_slice::<Vec<OperationConflict>>(&bytes) {
                 resolver.conflicts = conflicts;
@@ -421,7 +436,9 @@ mod tests {
     #[test]
     fn exclusive_lock() {
         let mut resolver = ConflictResolver::new();
-        assert!(resolver.try_lock("file.rs", "user1", LockKind::Exclusive).is_ok());
+        assert!(resolver
+            .try_lock("file.rs", "user1", LockKind::Exclusive)
+            .is_ok());
         assert!(resolver.is_locked("file.rs"));
         assert_eq!(resolver.lock_holder("file.rs"), Some("user1"));
     }
@@ -429,7 +446,9 @@ mod tests {
     #[test]
     fn exclusive_lock_conflict() {
         let mut resolver = ConflictResolver::new();
-        resolver.try_lock("file.rs", "user1", LockKind::Exclusive).unwrap();
+        resolver
+            .try_lock("file.rs", "user1", LockKind::Exclusive)
+            .unwrap();
         let result = resolver.try_lock("file.rs", "user2", LockKind::Exclusive);
         assert!(result.is_err());
     }
@@ -437,21 +456,31 @@ mod tests {
     #[test]
     fn same_actor_relock() {
         let mut resolver = ConflictResolver::new();
-        resolver.try_lock("file.rs", "user1", LockKind::Exclusive).unwrap();
-        assert!(resolver.try_lock("file.rs", "user1", LockKind::Exclusive).is_ok());
+        resolver
+            .try_lock("file.rs", "user1", LockKind::Exclusive)
+            .unwrap();
+        assert!(resolver
+            .try_lock("file.rs", "user1", LockKind::Exclusive)
+            .is_ok());
     }
 
     #[test]
     fn shared_locks_coexist() {
         let mut resolver = ConflictResolver::new();
-        resolver.try_lock("file.rs", "user1", LockKind::Shared).unwrap();
-        assert!(resolver.try_lock("file.rs", "user2", LockKind::Shared).is_ok());
+        resolver
+            .try_lock("file.rs", "user1", LockKind::Shared)
+            .unwrap();
+        assert!(resolver
+            .try_lock("file.rs", "user2", LockKind::Shared)
+            .is_ok());
     }
 
     #[test]
     fn shared_lock_blocks_exclusive() {
         let mut resolver = ConflictResolver::new();
-        resolver.try_lock("file.rs", "user1", LockKind::Shared).unwrap();
+        resolver
+            .try_lock("file.rs", "user1", LockKind::Shared)
+            .unwrap();
         let result = resolver.try_lock("file.rs", "user2", LockKind::Exclusive);
         assert!(result.is_err());
     }
@@ -459,7 +488,9 @@ mod tests {
     #[test]
     fn unlock_releases() {
         let mut resolver = ConflictResolver::new();
-        resolver.try_lock("file.rs", "user1", LockKind::Exclusive).unwrap();
+        resolver
+            .try_lock("file.rs", "user1", LockKind::Exclusive)
+            .unwrap();
         assert!(resolver.unlock("file.rs", "user1"));
         assert!(!resolver.is_locked("file.rs"));
     }
@@ -467,24 +498,28 @@ mod tests {
     #[test]
     fn detect_write_write_conflict() {
         assert!(ConflictResolver::operations_conflict(
-            &OperationKind::Update, &OperationKind::Update
+            &OperationKind::Update,
+            &OperationKind::Update
         ));
     }
 
     #[test]
     fn no_read_read_conflict() {
         assert!(!ConflictResolver::operations_conflict(
-            &OperationKind::Read, &OperationKind::Read
+            &OperationKind::Read,
+            &OperationKind::Read
         ));
     }
 
     #[test]
     fn detect_delete_conflicts() {
         assert!(ConflictResolver::operations_conflict(
-            &OperationKind::Delete, &OperationKind::Read
+            &OperationKind::Delete,
+            &OperationKind::Read
         ));
         assert!(ConflictResolver::operations_conflict(
-            &OperationKind::Create, &OperationKind::Delete
+            &OperationKind::Create,
+            &OperationKind::Delete
         ));
     }
 
@@ -504,12 +539,18 @@ mod tests {
     #[test]
     fn unresolved_for_resource() {
         let mut resolver = ConflictResolver::new();
-        resolver.record_conflict("a.rs", ResourceType::File,
+        resolver.record_conflict(
+            "a.rs",
+            ResourceType::File,
             make_op("u1", OperationKind::Update),
-            make_op("u2", OperationKind::Update));
-        resolver.record_conflict("b.rs", ResourceType::File,
+            make_op("u2", OperationKind::Update),
+        );
+        resolver.record_conflict(
+            "b.rs",
+            ResourceType::File,
             make_op("u1", OperationKind::Update),
-            make_op("u2", OperationKind::Update));
+            make_op("u2", OperationKind::Update),
+        );
 
         assert_eq!(resolver.unresolved_for("a.rs").len(), 1);
         assert_eq!(resolver.unresolved_for("c.rs").len(), 0);
@@ -518,12 +559,18 @@ mod tests {
     #[test]
     fn conflict_stats() {
         let mut resolver = ConflictResolver::new();
-        resolver.record_conflict("f.rs", ResourceType::File,
+        resolver.record_conflict(
+            "f.rs",
+            ResourceType::File,
             make_op("u1", OperationKind::Update),
-            make_op("u2", OperationKind::Update));
-        resolver.record_conflict("w1", ResourceType::Workflow,
+            make_op("u2", OperationKind::Update),
+        );
+        resolver.record_conflict(
+            "w1",
+            ResourceType::Workflow,
             make_op("u1", OperationKind::Execute),
-            make_op("u2", OperationKind::Update));
+            make_op("u2", OperationKind::Update),
+        );
 
         let stats = resolver.stats();
         assert_eq!(stats.total, 2);

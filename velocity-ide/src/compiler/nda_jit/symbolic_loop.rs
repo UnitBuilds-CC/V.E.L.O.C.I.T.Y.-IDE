@@ -1,6 +1,6 @@
-use crate::site_map::NdaNode;
 use super::types::VarRegistry;
 use super::x86_emitter::X86Emitter;
+use crate::site_map::NdaNode;
 
 pub fn detect_and_compile_symbolic_loop(
     count: u32,
@@ -71,8 +71,7 @@ pub fn detect_and_compile_symbolic_loop(
         }
     }
 
-    if let (Some((i_hash, step)), Some((sum_hash, added_hash))) = (increment_var, accumulator_var)
-    {
+    if let (Some((i_hash, step)), Some((sum_hash, added_hash))) = (increment_var, accumulator_var) {
         if added_hash == i_hash && sum_hash != i_hash {
             let i_slot = registry.get_or_create_slot(i_hash);
             let sum_slot = registry.get_or_create_slot(sum_hash);

@@ -180,8 +180,8 @@ mod os {
 
     /// Derive a machine-specific protection key from hostname + uid.
     fn machine_key() -> [u8; 32] {
-        let hostname = std::fs::read_to_string("/etc/hostname")
-            .unwrap_or_else(|_| "localhost".to_string());
+        let hostname =
+            std::fs::read_to_string("/etc/hostname").unwrap_or_else(|_| "localhost".to_string());
         let uid = unsafe { libc::getuid() };
         let mut seed = hostname.into_bytes();
         seed.extend_from_slice(&uid.to_le_bytes());

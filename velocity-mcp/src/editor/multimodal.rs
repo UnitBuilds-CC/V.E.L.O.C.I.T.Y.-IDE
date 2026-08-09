@@ -140,8 +140,11 @@ pub fn assemble_content_parts(
                 ImageDelivery::OcrText => {
                     if let Some(t) = att.fallback_text() {
                         if !t.trim().is_empty() {
-                            extra_text
-                                .push_str(&format!("\n\n[image: {}]\n{}", att.path.display(), t));
+                            extra_text.push_str(&format!(
+                                "\n\n[image: {}]\n{}",
+                                att.path.display(),
+                                t
+                            ));
                         }
                     }
                 }
@@ -292,8 +295,7 @@ pub fn generate_image(
         .unwrap_or_else(|| format!("generated/image-{}.png", now_secs()));
     let out_path = workspace_root.join(&rel);
     if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("creating output dir failed: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("creating output dir failed: {e}"))?;
     }
     std::fs::write(&out_path, &bytes).map_err(|e| format!("writing image failed: {e}"))?;
     Ok(out_path)
@@ -353,7 +355,10 @@ mod tests {
         assert_eq!(guess_mime(Path::new("a.JPG")), "image/jpeg");
         assert_eq!(guess_mime(Path::new("a.pdf")), "application/pdf");
         assert_eq!(guess_mime(Path::new("a.wav")), "audio/wav");
-        assert_eq!(guess_mime(Path::new("a.unknown")), "application/octet-stream");
+        assert_eq!(
+            guess_mime(Path::new("a.unknown")),
+            "application/octet-stream"
+        );
 
         assert_eq!(kind_for_mime("image/png"), AttachmentKind::Image);
         assert_eq!(kind_for_mime("audio/wav"), AttachmentKind::Audio);

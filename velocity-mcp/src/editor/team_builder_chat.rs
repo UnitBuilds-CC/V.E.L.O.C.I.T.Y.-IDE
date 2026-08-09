@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::agent::{HeadlessSubAgentProgress, HeadlessSubAgentRequest, AiProvider};
+use crate::agent::{AiProvider, HeadlessSubAgentProgress, HeadlessSubAgentRequest};
 
 /// System prompt injected into the headless sub-agent that powers team creation.
 pub const TEAM_BUILDER_SYSTEM_PROMPT: &str = r#"You are the Team Builder assistant for Velocity IDE. Your ONLY job is to create expert teams and skill files using the available tools.
@@ -99,12 +99,7 @@ impl Default for TeamBuilderChat {
 
 impl TeamBuilderChat {
     /// Submit the current input as a user message and spawn a headless sub-agent.
-    pub fn send(
-        &mut self,
-        workspace_root: &std::path::Path,
-        provider: AiProvider,
-        model: &str,
-    ) {
+    pub fn send(&mut self, workspace_root: &std::path::Path, provider: AiProvider, model: &str) {
         let user_input = self.input.trim().to_string();
         if user_input.is_empty() {
             return;
@@ -156,12 +151,14 @@ impl TeamBuilderChat {
         for event in events.iter().skip(self.events_consumed) {
             match event.kind {
                 crate::agent::HeadlessSubAgentEventKind::Status => {
-                    self.messages.push(TeamBuilderMessage::status(&event.message));
+                    self.messages
+                        .push(TeamBuilderMessage::status(&event.message));
                 }
                 crate::agent::HeadlessSubAgentEventKind::ToolStarted => {
-                    self.messages.push(TeamBuilderMessage::status(
-                        &format!("Running tool: {}", event.message),
-                    ));
+                    self.messages.push(TeamBuilderMessage::status(&format!(
+                        "Running tool: {}",
+                        event.message
+                    )));
                 }
                 crate::agent::HeadlessSubAgentEventKind::ToolFinished => {
                     should_reload = true;
@@ -175,7 +172,9 @@ impl TeamBuilderChat {
         let transcript = &guard.transcript;
         if transcript.len() > self.transcript_rendered {
             let new_text = &transcript[self.transcript_rendered..];
-            let needs_new = self.messages.last()
+            let needs_new = self
+                .messages
+                .last()
                 .map(|m| m.role != "streaming")
                 .unwrap_or(true);
             if needs_new {
@@ -200,7 +199,8 @@ impl TeamBuilderChat {
             // Replace streaming message with final assistant message
             self.messages.retain(|m| m.role != "streaming");
             if !transcript.trim().is_empty() {
-                self.messages.push(TeamBuilderMessage::assistant(&transcript));
+                self.messages
+                    .push(TeamBuilderMessage::assistant(&transcript));
             }
             self.progress = None;
             return true;

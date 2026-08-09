@@ -595,7 +595,9 @@ impl UsageTracker {
 }
 
 pub fn provider_settings_path(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".velocity").join("provider-settings.json")
+    workspace_root
+        .join(".velocity")
+        .join("provider-settings.json")
 }
 
 pub fn load_workspace_provider_settings(workspace_root: &Path) -> WorkspaceProviderSettings {
@@ -759,8 +761,8 @@ pub fn load_azure_accounts_from_env() -> Vec<AzureOpenAiAccount> {
         let endpoint_var = format!("AZURE_OPENAI_ACCOUNT_{i}_ENDPOINT");
         let deployment_var = format!("AZURE_OPENAI_ACCOUNT_{i}_DEPLOYMENT");
         if let (Ok(key), Ok(endpoint)) = (std::env::var(&key_var), std::env::var(&endpoint_var)) {
-            let deployment = std::env::var(&deployment_var)
-                .unwrap_or_else(|_| "gpt-4o".to_string());
+            let deployment =
+                std::env::var(&deployment_var).unwrap_or_else(|_| "gpt-4o".to_string());
             let api_version = std::env::var(format!("AZURE_OPENAI_ACCOUNT_{i}_API_VERSION"))
                 .unwrap_or_else(|_| "2024-06-01".to_string());
             let label = std::env::var(format!("AZURE_OPENAI_ACCOUNT_{i}_LABEL"))
@@ -783,8 +785,8 @@ pub fn load_azure_accounts_from_env() -> Vec<AzureOpenAiAccount> {
             std::env::var("AZURE_OPENAI_API_KEY"),
             std::env::var("AZURE_OPENAI_ENDPOINT"),
         ) {
-            let deployment = std::env::var("AZURE_OPENAI_DEPLOYMENT")
-                .unwrap_or_else(|_| "gpt-4o".to_string());
+            let deployment =
+                std::env::var("AZURE_OPENAI_DEPLOYMENT").unwrap_or_else(|_| "gpt-4o".to_string());
             let api_version = std::env::var("AZURE_OPENAI_API_VERSION")
                 .unwrap_or_else(|_| "2024-06-01".to_string());
             accounts.push(AzureOpenAiAccount {
@@ -803,7 +805,8 @@ pub fn load_azure_accounts_from_env() -> Vec<AzureOpenAiAccount> {
 
 pub fn load_local_ollama_accounts_from_env() -> Vec<LocalOllamaAccount> {
     dotenvy::dotenv().ok();
-    let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let host =
+        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
     let default_model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
     vec![LocalOllamaAccount {
         host,

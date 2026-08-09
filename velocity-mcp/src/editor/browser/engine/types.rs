@@ -3,7 +3,6 @@ use crate::editor::browser::truncate_string;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-
 pub fn summarize_workflow(workflow: BrowserWorkflow) -> BrowserWorkflowSummary {
     BrowserWorkflowSummary {
         name: workflow.name,
@@ -66,7 +65,6 @@ pub struct BrowserHttpResponse {
     pub runtime_state: Vec<BrowserRuntimeState>,
     pub protocol_events: Vec<BrowserProtocolEvent>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct RuntimeCaptureApiRequestRecord {
@@ -153,8 +151,6 @@ pub struct RuntimeCaptureApiCanvasEntry {
     #[serde(default)]
     pub text_sample: String,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct RuntimeCaptureApiResponse {
@@ -435,7 +431,9 @@ pub fn parse_runtime_session_capture_response(
                                 .get("expiresUnix")
                                 .or_else(|| object.get("expires_unix"))
                                 .or_else(|| object.get("expires"))
-                                .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|v| v as i64))),
+                                .and_then(|value| {
+                                    value.as_i64().or_else(|| value.as_f64().map(|v| v as i64))
+                                }),
                             session: object
                                 .get("session")
                                 .and_then(serde_json::Value::as_bool)
@@ -451,10 +449,8 @@ pub fn parse_runtime_session_capture_response(
                                 .and_then(serde_json::Value::as_i64),
                         })
                     } else {
-                        item.as_str().map(|raw| {
-                            
-                            parse_runtime_session_cookie_value(raw)
-                        })
+                        item.as_str()
+                            .map(|raw| parse_runtime_session_cookie_value(raw))
                     }
                 })
                 .collect::<Vec<_>>()

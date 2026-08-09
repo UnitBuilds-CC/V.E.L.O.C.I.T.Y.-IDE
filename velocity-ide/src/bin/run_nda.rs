@@ -10,10 +10,10 @@ use std::env;
 use std::fs;
 use std::sync::Arc;
 
-use velocity_ide::compiler::nda_parser::compile;
 use velocity_ide::compiler::nda_jit;
-use velocity_ide::site_map::{SiteMap, NdaNode};
+use velocity_ide::compiler::nda_parser::compile;
 use velocity_ide::sandbox::NdaSandbox;
+use velocity_ide::site_map::{NdaNode, SiteMap};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -37,50 +37,81 @@ fn main() {
 
     // ── Load source ────────────────────────────────────────────────────────────
     let source = match fs::read_to_string(file_path) {
-        Ok(s)  => s,
-        Err(e) => { eprintln!("Error reading '{}': {}", file_path, e); std::process::exit(1); }
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading '{}': {}", file_path, e);
+            std::process::exit(1);
+        }
     };
 
     println!("[compiler] Compiling '{}' → NDA AST ...", file_path);
 
     let (program, final_hashes) = match compile(&source) {
-        Ok(r)  => r,
-        Err(e) => { eprintln!("Compilation Error: {}", e); std::process::exit(1); }
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Compilation Error: {}", e);
+            std::process::exit(1);
+        }
     };
 
     // ── Build site map (Merkle KV store) ───────────────────────────────────────
     let sm_dir = env::temp_dir().join("nda_run_sm");
-    if sm_dir.exists() { let _ = fs::remove_dir_all(&sm_dir); }
+    if sm_dir.exists() {
+        let _ = fs::remove_dir_all(&sm_dir);
+    }
     let mut site_map = SiteMap::open(&sm_dir, 0).expect("Failed to initialise SiteMap");
 
     let mut func_count = 0;
     if let NdaNode::Scope { children } = &program {
         for func in children {
-            site_map.put_program(func).expect("Failed to register function");
+            site_map
+                .put_program(func)
+                .expect("Failed to register function");
             func_count += 1;
         }
     }
     site_map.flush().expect("Failed to flush site map");
-    println!("[compiler] Registered {} function(s) in Merkle site map.", func_count);
+    println!(
+        "[compiler] Registered {} function(s) in Merkle site map.",
+        func_count
+    );
 
     // ── Locate main ────────────────────────────────────────────────────────────
     let main_hash = match final_hashes.get("main") {
         Some(&h) => h,
-        None     => { eprintln!("Runtime Error: no 'main' function found."); std::process::exit(1); }
+        None => {
+            eprintln!("Runtime Error: no 'main' function found.");
+            std::process::exit(1);
+        }
     };
 
-    let main_node = site_map.get_node(main_hash).expect("Failed to retrieve main node");
+    let main_node = site_map
+        .get_node(main_hash)
+        .expect("Failed to retrieve main node");
     let nodes = match &main_node {
         NdaNode::Scope { children } => children.clone(),
-        _ => { eprintln!("Runtime Error: 'main' is not a Scope."); std::process::exit(1); }
+        _ => {
+            eprintln!("Runtime Error: 'main' is not a Scope.");
+            std::process::exit(1);
+        }
     };
 
     let conditioning_vec = vec![1.0f32; dim];
     println!("AST Nodes: {:#?}", nodes);
 
-    println!("[runtime] Execution mode : {}", if use_sandbox { "Interpreter (sandbox)" } else { "JIT" });
+    println!(
+        "[runtime] Execution mode : {}",
+        if use_sandbox {
+            "Interpreter (sandbox)"
+        } else {
+            "JIT"
+        }
+    );
     println!("[runtime] JIT tier       : {}", nda_jit::jit_tier_info());
-    println!("[runtime] Starting 'main' (hash: {:016x}) with input dim {}...", main_hash, dim);
+    println!(
+        "[runtime] Starting 'main' (hash: {:016x}) with input dim {}...",
+        main_hash, dim
+    );
     println!("─────────────────────────────────────────────────────────────");
 
     if use_sandbox {
@@ -97,15 +128,28 @@ fn main() {
         println!("  Norm ops       : {}", res.norm_count);
         println!("  Duration       : {} µs", res.elapsed_us);
         println!("  Output dim     : {}", res.output_dim);
-        println!("  Output vector  : {:?}", &res.output_vec[..res.output_vec.len().min(8)]);
+        println!(
+            "  Output vector  : {:?}",
+            &res.output_vec[..res.output_vec.len().min(8)]
+        );
     } else {
         // ── JIT path ──────────────────────────────────────────────────────────
         println!("[jit] Compiling AST to native closure chain...");
         let t_compile = std::time::Instant::now();
         let program = nda_jit::compile(&nodes);
         let compile_us = t_compile.elapsed().as_micros();
-        println!("[jit] Compiled {} node(s) in {} µs.", program.nodes_compiled, compile_us);
-        println!("[jit] Native ASM kernel : {}", if program.has_asm_kernel { "YES (x86-64 AVX2)" } else { "NO (pure-Rust fallback)" });
+        println!(
+            "[jit] Compiled {} node(s) in {} µs.",
+            program.nodes_compiled, compile_us
+        );
+        println!(
+            "[jit] Native ASM kernel : {}",
+            if program.has_asm_kernel {
+                "YES (x86-64 AVX2)"
+            } else {
+                "NO (pure-Rust fallback)"
+            }
+        );
 
         let res = program.run(&conditioning_vec, &site_map);
 
@@ -119,6 +163,9 @@ fn main() {
         println!("  Compile time   : {} µs", compile_us);
         println!("  Run duration   : {} µs", res.elapsed_us);
         println!("  Output dim     : {}", res.output_dim);
-        println!("  Output vector  : {:?}", &res.output_vec[..res.output_vec.len().min(8)]);
+        println!(
+            "  Output vector  : {:?}",
+            &res.output_vec[..res.output_vec.len().min(8)]
+        );
     }
 }

@@ -73,7 +73,15 @@ impl SyntheticEventDispatcher {
     }
 
     /// Register an event listener on a node.
-    pub fn add_event_listener(&mut self, node_id: usize, event_type: &str, callback_id: usize, capture: bool, once: bool, passive: bool) {
+    pub fn add_event_listener(
+        &mut self,
+        node_id: usize,
+        event_type: &str,
+        callback_id: usize,
+        capture: bool,
+        once: bool,
+        passive: bool,
+    ) {
         let listeners = self.listeners.entry(node_id).or_default();
         listeners.push(EventListener {
             event_type: event_type.to_string(),
@@ -85,7 +93,12 @@ impl SyntheticEventDispatcher {
     }
 
     /// Remove an event listener from a node.
-    pub fn remove_event_listener(&mut self, node_id: usize, event_type: &str, callback_id: usize) -> bool {
+    pub fn remove_event_listener(
+        &mut self,
+        node_id: usize,
+        event_type: &str,
+        callback_id: usize,
+    ) -> bool {
         if let Some(listeners) = self.listeners.get_mut(&node_id) {
             let before = listeners.len();
             listeners.retain(|l| !(l.event_type == event_type && l.callback_id == callback_id));
@@ -96,7 +109,11 @@ impl SyntheticEventDispatcher {
     }
 
     /// Static dispatch for backward compatibility (no listener tracking).
-    pub fn dispatch_pointer_event_static(tree: &mut DomTree, target_node_id: usize, event: PointerEvent) -> PointerEvent {
+    pub fn dispatch_pointer_event_static(
+        tree: &mut DomTree,
+        target_node_id: usize,
+        event: PointerEvent,
+    ) -> PointerEvent {
         let mut path = Vec::new();
         let mut curr = Some(target_node_id);
 
@@ -107,7 +124,9 @@ impl SyntheticEventDispatcher {
 
         // 1. Capturing Phase (Root -> Parent)
         for &_node_id in path.iter().rev().skip(1) {
-            if event.propagation_stopped { break; }
+            if event.propagation_stopped {
+                break;
+            }
             // Capture phase listeners (no-op in static mode)
         }
 
@@ -119,7 +138,9 @@ impl SyntheticEventDispatcher {
         // 3. Bubbling Phase (Parent -> Root)
         if event.bubbles {
             for &_node_id in path.iter().skip(1) {
-                if event.propagation_stopped { break; }
+                if event.propagation_stopped {
+                    break;
+                }
                 // Bubble phase listeners (no-op in static mode)
             }
         }
@@ -128,7 +149,12 @@ impl SyntheticEventDispatcher {
     }
 
     /// Dispatch a pointer event through the DOM tree with listener tracking.
-    pub fn dispatch_pointer_event(&mut self, tree: &mut DomTree, target_node_id: usize, event: PointerEvent) -> PointerEvent {
+    pub fn dispatch_pointer_event(
+        &mut self,
+        tree: &mut DomTree,
+        target_node_id: usize,
+        event: PointerEvent,
+    ) -> PointerEvent {
         let mut path = Vec::new();
         let mut curr = Some(target_node_id);
 
@@ -141,21 +167,42 @@ impl SyntheticEventDispatcher {
 
         // 1. Capturing Phase (Root -> Parent)
         for &node_id in path.iter().rev() {
-            if node_id == target_node_id { break; } // Stop before target
-            if event.propagation_stopped { break; }
-            self.invoke_listeners(node_id, &event.event_type, EventPhase::Capture, &mut event.default_prevented);
+            if node_id == target_node_id {
+                break;
+            } // Stop before target
+            if event.propagation_stopped {
+                break;
+            }
+            self.invoke_listeners(
+                node_id,
+                &event.event_type,
+                EventPhase::Capture,
+                &mut event.default_prevented,
+            );
         }
 
         // 2. Target Phase
         if !event.propagation_stopped {
-            self.invoke_listeners(target_node_id, &event.event_type, EventPhase::Target, &mut event.default_prevented);
+            self.invoke_listeners(
+                target_node_id,
+                &event.event_type,
+                EventPhase::Target,
+                &mut event.default_prevented,
+            );
         }
 
         // 3. Bubbling Phase (Parent -> Root)
         if event.bubbles {
             for &node_id in path.iter().skip(1) {
-                if event.propagation_stopped { break; }
-                self.invoke_listeners(node_id, &event.event_type, EventPhase::Bubble, &mut event.default_prevented);
+                if event.propagation_stopped {
+                    break;
+                }
+                self.invoke_listeners(
+                    node_id,
+                    &event.event_type,
+                    EventPhase::Bubble,
+                    &mut event.default_prevented,
+                );
             }
         }
 
@@ -163,7 +210,12 @@ impl SyntheticEventDispatcher {
     }
 
     /// Dispatch a keyboard event through the DOM tree.
-    pub fn dispatch_keyboard_event(&mut self, tree: &mut DomTree, target_node_id: usize, event: KeyboardEvent) -> KeyboardEvent {
+    pub fn dispatch_keyboard_event(
+        &mut self,
+        tree: &mut DomTree,
+        target_node_id: usize,
+        event: KeyboardEvent,
+    ) -> KeyboardEvent {
         let mut path = Vec::new();
         let mut curr = Some(target_node_id);
 
@@ -176,21 +228,42 @@ impl SyntheticEventDispatcher {
 
         // 1. Capturing Phase
         for &node_id in path.iter().rev() {
-            if node_id == target_node_id { break; }
-            if event.propagation_stopped { break; }
-            self.invoke_listeners(node_id, &event.event_type, EventPhase::Capture, &mut event.default_prevented);
+            if node_id == target_node_id {
+                break;
+            }
+            if event.propagation_stopped {
+                break;
+            }
+            self.invoke_listeners(
+                node_id,
+                &event.event_type,
+                EventPhase::Capture,
+                &mut event.default_prevented,
+            );
         }
 
         // 2. Target Phase
         if !event.propagation_stopped {
-            self.invoke_listeners(target_node_id, &event.event_type, EventPhase::Target, &mut event.default_prevented);
+            self.invoke_listeners(
+                target_node_id,
+                &event.event_type,
+                EventPhase::Target,
+                &mut event.default_prevented,
+            );
         }
 
         // 3. Bubbling Phase
         if event.bubbles {
             for &node_id in path.iter().skip(1) {
-                if event.propagation_stopped { break; }
-                self.invoke_listeners(node_id, &event.event_type, EventPhase::Bubble, &mut event.default_prevented);
+                if event.propagation_stopped {
+                    break;
+                }
+                self.invoke_listeners(
+                    node_id,
+                    &event.event_type,
+                    EventPhase::Bubble,
+                    &mut event.default_prevented,
+                );
             }
         }
 
@@ -198,7 +271,13 @@ impl SyntheticEventDispatcher {
     }
 
     /// Invoke listeners for a node and event type.
-    fn invoke_listeners(&mut self, node_id: usize, event_type: &str, phase: EventPhase, _default_prevented: &mut bool) {
+    fn invoke_listeners(
+        &mut self,
+        node_id: usize,
+        event_type: &str,
+        phase: EventPhase,
+        _default_prevented: &mut bool,
+    ) {
         let listeners = match self.listeners.get(&node_id) {
             Some(l) => l,
             None => return,
@@ -206,11 +285,15 @@ impl SyntheticEventDispatcher {
 
         let mut to_remove = Vec::new();
         for (idx, listener) in listeners.iter().enumerate() {
-            if listener.event_type != event_type { continue; }
-            let is_capture_match = (phase == EventPhase::Capture && listener.capture) ||
-                                   (phase == EventPhase::Target) ||
-                                   (phase == EventPhase::Bubble && !listener.capture);
-            if !is_capture_match { continue; }
+            if listener.event_type != event_type {
+                continue;
+            }
+            let is_capture_match = (phase == EventPhase::Capture && listener.capture)
+                || (phase == EventPhase::Target)
+                || (phase == EventPhase::Bubble && !listener.capture);
+            if !is_capture_match {
+                continue;
+            }
 
             self.dispatch_log.push(DispatchRecord {
                 node_id,

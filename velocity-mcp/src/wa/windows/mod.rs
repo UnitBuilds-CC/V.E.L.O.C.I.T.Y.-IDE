@@ -73,10 +73,17 @@ mod tests {
         assert_eq!(report.target_window_title, "Sign in");
         assert_eq!(report.snapshot.url, "windows://uia/process/4242");
         assert_eq!(report.snapshot.title, "Sign in");
-        assert_eq!(report.snapshot.focus_node_id.as_deref(), Some("email-field"));
+        assert_eq!(
+            report.snapshot.focus_node_id.as_deref(),
+            Some("email-field")
+        );
         assert_eq!(report.snapshot.nodes.len(), 2);
-        assert!(report.snapshot_nda_path.contains(".velocity/wa-snapshots/desktop-auth--live-window.nda"));
-        assert!(report.session_nda_path.contains(".velocity/wa-sessions/desktop-auth.nda"));
+        assert!(report
+            .snapshot_nda_path
+            .contains(".velocity/wa-snapshots/desktop-auth--live-window.nda"));
+        assert!(report
+            .session_nda_path
+            .contains(".velocity/wa-sessions/desktop-auth.nda"));
 
         let saved = crate::wa::read_snapshot_report(&root, "desktop-auth", "live-window").unwrap();
         assert_eq!(saved.snapshot.nodes[1].id, "continue-button");
@@ -149,8 +156,13 @@ mod tests {
         assert_eq!(report.executed_node_id, "continue-button");
         assert_eq!(report.execution_status, "executed");
         assert_eq!(report.target_process_id, Some(4242));
-        assert!(report.preconditions.iter().any(|value| value == "supports:click"));
-        assert!(report.snapshot_nda_path.contains(".velocity/wa-snapshots/desktop-auth--login-form.nda"));
+        assert!(report
+            .preconditions
+            .iter()
+            .any(|value| value == "supports:click"));
+        assert!(report
+            .snapshot_nda_path
+            .contains(".velocity/wa-snapshots/desktop-auth--login-form.nda"));
     }
 
     #[test]
@@ -211,6 +223,8 @@ mod tests {
         assert_eq!(report.elapsed_ms, 120);
         assert_eq!(report.target_process_id, Some(4242));
         assert_eq!(report.matched.id, "email-field");
-        assert!(report.snapshot_nda_path.contains(".velocity/wa-snapshots/desktop-auth--login-form.nda"));
+        assert!(report
+            .snapshot_nda_path
+            .contains(".velocity/wa-snapshots/desktop-auth--login-form.nda"));
     }
 }

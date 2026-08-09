@@ -1,12 +1,12 @@
-use eframe::egui;
-use egui_dock::TabViewer;
 use super::types::*;
+use crate::automation::AgentTaskKind;
 use crate::editor::chat_panel::render_chat_panel;
 use crate::editor::code_editor::CodeEditor;
 use crate::editor::task_timeline::{render_mission_activity_feed, TaskTimelineSnapshot};
 use crate::editor::theme::{Density, ThemeVariant, WorkspaceProfile};
 use crate::editor::usage_panel::render_usage_panel;
-use crate::automation::AgentTaskKind;
+use eframe::egui;
+use egui_dock::TabViewer;
 
 pub struct TabViewerImpl<'a> {
     pub app: &'a mut super::VelocityApp,
@@ -72,67 +72,72 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                 } else {
                                     ui.available_width()
                                 };
-                                ui.allocate_ui(egui::Vec2::new(editor_width, ui.available_height()), |ui| {
-                                    let mut editor = CodeEditor::new("code_editor");
-                                    let locks = path
-                                        .as_deref()
-                                        .map(|p| self.app.mediator.get_locks_for_file(p))
-                                        .unwrap_or_default();
-                                    buf.refresh_diff_marks();
-                                    let diff_marks = buf.diff_marks.clone();
-                                    let options = crate::editor::code_editor::EditorOptions {
-                                        cursor_offset: 0,
-                                        diagnostic_lines: self.app.diagnostics.lines_for_file(
-                                            path.as_deref().unwrap_or(std::path::Path::new(""))
-                                        ),
-                                        breakpoints: buf.breakpoints.clone(),
-                                        collapsed_lines: buf.fold_state.collapsed_lines(),
-                                        word_wrap: self.app.word_wrap,
-                                    };
-                                    editor.show_enhanced(
-                                        ui,
-                                        buf.content_mut(),
-                                        path.as_deref(),
-                                        self.app.pending_cursor_line,
-                                        &locks,
-                                        self.app.appearance,
-                                        &diff_marks,
-                                        &options,
-                                    );
-                                    if self.app.pending_cursor_line.is_some() {
-                                        self.app.pending_cursor_line = None;
-                                    }
-
-                                    // Show inline diagnostic popup if cursor is on a diagnostic line.
-                                    if let Some(file_path) = path.as_deref() {
-                                        let cursor_line = self.app.current_cursor_line;
-                                        let palette = self.app.appearance.palette();
-                                        // Use the editor's cursor position for popup placement.
-                                        let cursor_pos = ui.cursor().min;
-                                        self.app.diagnostics.render_inline_popup_at_line(
+                                ui.allocate_ui(
+                                    egui::Vec2::new(editor_width, ui.available_height()),
+                                    |ui| {
+                                        let mut editor = CodeEditor::new("code_editor");
+                                        let locks = path
+                                            .as_deref()
+                                            .map(|p| self.app.mediator.get_locks_for_file(p))
+                                            .unwrap_or_default();
+                                        buf.refresh_diff_marks();
+                                        let diff_marks = buf.diff_marks.clone();
+                                        let options = crate::editor::code_editor::EditorOptions {
+                                            cursor_offset: 0,
+                                            diagnostic_lines: self.app.diagnostics.lines_for_file(
+                                                path.as_deref().unwrap_or(std::path::Path::new("")),
+                                            ),
+                                            breakpoints: buf.breakpoints.clone(),
+                                            collapsed_lines: buf.fold_state.collapsed_lines(),
+                                            word_wrap: self.app.word_wrap,
+                                        };
+                                        editor.show_enhanced(
                                             ui,
-                                            file_path,
-                                            cursor_line,
-                                            cursor_pos,
-                                            &palette,
+                                            buf.content_mut(),
+                                            path.as_deref(),
+                                            self.app.pending_cursor_line,
+                                            &locks,
+                                            self.app.appearance,
+                                            &diff_marks,
+                                            &options,
                                         );
-                                    }
-                                });
+                                        if self.app.pending_cursor_line.is_some() {
+                                            self.app.pending_cursor_line = None;
+                                        }
+
+                                        // Show inline diagnostic popup if cursor is on a diagnostic line.
+                                        if let Some(file_path) = path.as_deref() {
+                                            let cursor_line = self.app.current_cursor_line;
+                                            let palette = self.app.appearance.palette();
+                                            // Use the editor's cursor position for popup placement.
+                                            let cursor_pos = ui.cursor().min;
+                                            self.app.diagnostics.render_inline_popup_at_line(
+                                                ui,
+                                                file_path,
+                                                cursor_line,
+                                                cursor_pos,
+                                                &palette,
+                                            );
+                                        }
+                                    },
+                                );
 
                                 // Minimap
                                 if self.app.show_minimap {
                                     let palette = self.app.appearance.palette();
-                                    let highlights: Vec<crate::editor::minimap::MinimapHighlight> = buf.breakpoints.iter()
-                                        .map(|&line| crate::editor::minimap::MinimapHighlight {
-                                            line,
-                                            color: palette.error,
-                                        })
-                                        .collect();
+                                    let highlights: Vec<crate::editor::minimap::MinimapHighlight> =
+                                        buf.breakpoints
+                                            .iter()
+                                            .map(|&line| crate::editor::minimap::MinimapHighlight {
+                                                line,
+                                                color: palette.error,
+                                            })
+                                            .collect();
                                     crate::editor::minimap::render_minimap(
                                         ui,
                                         &buf.content,
                                         self.app.minimap_config,
-                                        0, // viewport_start_line
+                                        0,  // viewport_start_line
                                         30, // viewport_end_line
                                         &highlights,
                                         &palette,
@@ -188,7 +193,10 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     &self.app.usage_date,
                     self.app.palette(),
                     || {
-                        let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::RefreshUsage);
+                        let _ = self
+                            .app
+                            .agent_tx
+                            .send(crate::agent::UiToAgentMessage::RefreshUsage);
                     },
                 );
             }
@@ -196,10 +204,10 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 self.app.search_panel(ui);
             }
             TabKind::Graph => {
-                let action = self
-                    .app
-                    .graph_view
-                    .ui(ui, &self.app.workspace_root, self.app.palette());
+                let action =
+                    self.app
+                        .graph_view
+                        .ui(ui, &self.app.workspace_root, self.app.palette());
                 if let Some(crate::editor::graph_view::GraphAction::NavigateToSymbol(name)) = action
                 {
                     self.app.push_nav_location();
@@ -220,11 +228,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         .agent_tx
                         .send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
                     self.app.toggle_panel(TabKind::Chat);
-                    self.app
-                        .toasts
-                        .push(crate::editor::toast::Toast::info(
-                            "Detail request sent to agent — see Chat",
-                        ));
+                    self.app.toasts.push(crate::editor::toast::Toast::info(
+                        "Detail request sent to agent — see Chat",
+                    ));
                 }
             }
             TabKind::Settings => {
@@ -264,11 +270,7 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                 let palette = self.app.palette();
                 let tab_id = tab.id.clone();
                 let workspace_root = self.app.workspace_root.clone();
-                let view = self
-                    .app
-                    .nda_docs
-                    .entry(tab_id)
-                    .or_default();
+                let view = self.app.nda_docs.entry(tab_id).or_default();
                 let open_path = view.ui(ui, &workspace_root, &mut self.app.toasts, palette);
                 if let Some(p) = open_path {
                     crate::editor::nda_document::open_in_browser(&p);
@@ -302,32 +304,67 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     TabKind::Terminal => {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(4.0);
-                            ui.label(egui::RichText::new("$ Terminal").monospace().size(11.0).color(palette.accent));
+                            ui.label(
+                                egui::RichText::new("$ Terminal")
+                                    .monospace()
+                                    .size(11.0)
+                                    .color(palette.accent),
+                            );
                             ui.add_space(4.0);
                             if self.app.command_output.is_empty() {
-                                ui.label(egui::RichText::new("Ready.").monospace().size(10.0).color(palette.text_muted));
+                                ui.label(
+                                    egui::RichText::new("Ready.")
+                                        .monospace()
+                                        .size(10.0)
+                                        .color(palette.text_muted),
+                                );
                             } else {
-                                ui.label(egui::RichText::new(&self.app.command_output).monospace().size(10.0).color(palette.text));
+                                ui.label(
+                                    egui::RichText::new(&self.app.command_output)
+                                        .monospace()
+                                        .size(10.0)
+                                        .color(palette.text),
+                                );
                             }
                         });
                     }
                     TabKind::Logs => {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("≣ Execution Logs").size(14.0).strong().color(palette.accent));
+                            ui.label(
+                                egui::RichText::new("≣ Execution Logs")
+                                    .size(14.0)
+                                    .strong()
+                                    .color(palette.accent),
+                            );
                             ui.add_space(8.0);
-                            let snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.app.task_timeline);
-                            crate::editor::task_timeline::render_task_timeline(ui, &snapshot, palette);
+                            let snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(
+                                &self.app.task_timeline,
+                            );
+                            crate::editor::task_timeline::render_task_timeline(
+                                ui, &snapshot, palette,
+                            );
                         });
                     }
                     TabKind::Agents => {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("⊙ Agent Roster").size(14.0).strong().color(palette.accent));
+                            ui.label(
+                                egui::RichText::new("⊙ Agent Roster")
+                                    .size(14.0)
+                                    .strong()
+                                    .color(palette.accent),
+                            );
                             ui.add_space(8.0);
                             let snapshot = self.app.orchestrator.dashboard_snapshot();
                             if snapshot.tasks.is_empty() {
-                                ui.label(egui::RichText::new("No agents running. Deploy via the toolbar.").size(11.0).color(palette.text_muted));
+                                ui.label(
+                                    egui::RichText::new(
+                                        "No agents running. Deploy via the toolbar.",
+                                    )
+                                    .size(11.0)
+                                    .color(palette.text_muted),
+                                );
                             } else {
                                 for t in &snapshot.tasks {
                                     let color = match t.status_label.as_str() {
@@ -338,8 +375,16 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                                     };
                                     ui.horizontal(|ui| {
                                         ui.label(egui::RichText::new("●").color(color));
-                                        ui.label(egui::RichText::new(&t.title).size(11.0).color(palette.text));
-                                        ui.label(egui::RichText::new(&t.status_label).size(9.0).color(color));
+                                        ui.label(
+                                            egui::RichText::new(&t.title)
+                                                .size(11.0)
+                                                .color(palette.text),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(&t.status_label)
+                                                .size(9.0)
+                                                .color(color),
+                                        );
                                     });
                                 }
                             }
@@ -348,66 +393,154 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                     TabKind::Queue => {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("⊞ Task Queue").size(14.0).strong().color(palette.accent));
+                            ui.label(
+                                egui::RichText::new("⊞ Task Queue")
+                                    .size(14.0)
+                                    .strong()
+                                    .color(palette.accent),
+                            );
                             ui.add_space(8.0);
                             let snapshot = self.app.orchestrator.dashboard_snapshot();
-                            ui.label(egui::RichText::new(format!("{} pending · {} running · {} done · {} failed",
-                                snapshot.pending_tasks, snapshot.running_tasks, snapshot.done_tasks, snapshot.failed_tasks
-                            )).size(10.0).color(palette.text_muted));
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} pending · {} running · {} done · {} failed",
+                                    snapshot.pending_tasks,
+                                    snapshot.running_tasks,
+                                    snapshot.done_tasks,
+                                    snapshot.failed_tasks
+                                ))
+                                .size(10.0)
+                                .color(palette.text_muted),
+                            );
                             ui.add_space(8.0);
                             for t in &snapshot.tasks {
                                 ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(format!("#{}", t.id)).size(9.0).color(palette.text_muted));
-                                    ui.label(egui::RichText::new(&t.title).size(10.0).color(palette.text));
-                                    ui.label(egui::RichText::new(&t.status_label).size(9.0).color(palette.accent));
+                                    ui.label(
+                                        egui::RichText::new(format!("#{}", t.id))
+                                            .size(9.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&t.title)
+                                            .size(10.0)
+                                            .color(palette.text),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&t.status_label)
+                                            .size(9.0)
+                                            .color(palette.accent),
+                                    );
                                 });
                             }
                         });
                     }
                     TabKind::Timeline => {
-                        let snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(&self.app.task_timeline);
+                        let snapshot = crate::editor::task_timeline::TaskTimelineSnapshot::new(
+                            &self.app.task_timeline,
+                        );
                         crate::editor::task_timeline::render_task_timeline(ui, &snapshot, palette);
                     }
                     TabKind::Metrics => {
                         let snapshot = self.app.orchestrator.dashboard_snapshot();
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("⊿ Mission Metrics").size(14.0).strong().color(palette.accent));
+                            ui.label(
+                                egui::RichText::new("⊿ Mission Metrics")
+                                    .size(14.0)
+                                    .strong()
+                                    .color(palette.accent),
+                            );
                             ui.add_space(8.0);
-                            egui::Grid::new("panel_metrics_grid").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
-                                ui.label(egui::RichText::new("Pending:").size(11.0).color(palette.text_muted));
-                                ui.label(egui::RichText::new(format!("{}", snapshot.pending_tasks)).size(11.0).color(palette.warning));
-                                ui.end_row();
-                                ui.label(egui::RichText::new("Running:").size(11.0).color(palette.text_muted));
-                                ui.label(egui::RichText::new(format!("{}", snapshot.running_tasks)).size(11.0).color(palette.success));
-                                ui.end_row();
-                                ui.label(egui::RichText::new("Done:").size(11.0).color(palette.text_muted));
-                                ui.label(egui::RichText::new(format!("{}", snapshot.done_tasks)).size(11.0).color(palette.text));
-                                ui.end_row();
-                                ui.label(egui::RichText::new("Failed:").size(11.0).color(palette.text_muted));
-                                ui.label(egui::RichText::new(format!("{}", snapshot.failed_tasks)).size(11.0).color(palette.error));
-                                ui.end_row();
-                                ui.label(egui::RichText::new("Active workers:").size(11.0).color(palette.text_muted));
-                                ui.label(egui::RichText::new(format!("{}", snapshot.active_workers)).size(11.0).color(palette.accent));
-                                ui.end_row();
-                            });
+                            egui::Grid::new("panel_metrics_grid")
+                                .num_columns(2)
+                                .spacing([16.0, 6.0])
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new("Pending:")
+                                            .size(11.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", snapshot.pending_tasks))
+                                            .size(11.0)
+                                            .color(palette.warning),
+                                    );
+                                    ui.end_row();
+                                    ui.label(
+                                        egui::RichText::new("Running:")
+                                            .size(11.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", snapshot.running_tasks))
+                                            .size(11.0)
+                                            .color(palette.success),
+                                    );
+                                    ui.end_row();
+                                    ui.label(
+                                        egui::RichText::new("Done:")
+                                            .size(11.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", snapshot.done_tasks))
+                                            .size(11.0)
+                                            .color(palette.text),
+                                    );
+                                    ui.end_row();
+                                    ui.label(
+                                        egui::RichText::new("Failed:")
+                                            .size(11.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", snapshot.failed_tasks))
+                                            .size(11.0)
+                                            .color(palette.error),
+                                    );
+                                    ui.end_row();
+                                    ui.label(
+                                        egui::RichText::new("Active workers:")
+                                            .size(11.0)
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", snapshot.active_workers))
+                                            .size(11.0)
+                                            .color(palette.accent),
+                                    );
+                                    ui.end_row();
+                                });
                         });
                     }
                     TabKind::Changes => {
                         // Recent changes timeline with git log and uncommitted changes.
-                        let mut git_state = crate::editor::git_ui::GitState::from_workspace(&self.app.workspace_root);
+                        let mut git_state = crate::editor::git_ui::GitState::from_workspace(
+                            &self.app.workspace_root,
+                        );
                         git_state.refresh_log(&self.app.workspace_root);
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             ui.add_space(8.0);
-                            crate::editor::git_ui::render_recent_changes_timeline(ui, &git_state, palette);
+                            crate::editor::git_ui::render_recent_changes_timeline(
+                                ui, &git_state, palette,
+                            );
                         });
                     }
                     _ => {
                         ui.vertical_centered(|ui| {
                             ui.add_space(32.0);
-                            ui.label(egui::RichText::new(&kind_label).size(16.0).strong().color(palette.accent));
+                            ui.label(
+                                egui::RichText::new(&kind_label)
+                                    .size(16.0)
+                                    .strong()
+                                    .color(palette.accent),
+                            );
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("Panel active in the current mode.").size(11.0).color(palette.text_muted));
+                            ui.label(
+                                egui::RichText::new("Panel active in the current mode.")
+                                    .size(11.0)
+                                    .color(palette.text_muted),
+                            );
                         });
                     }
                 }
@@ -457,35 +590,36 @@ impl<'a> TabViewerImpl<'a> {
             );
             ui.add_space(6.0);
         };
-        let text_row = |ui: &mut egui::Ui,
-                        label: &str,
-                        value: &mut String,
-                        hint: &str,
-                        secret: bool| {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                ui.add(
-                    egui::TextEdit::singleline(value)
-                        .desired_width(260.0)
-                        .hint_text(hint)
-                        .password(secret),
-                );
-            });
-        };
+        let text_row =
+            |ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str, secret: bool| {
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    ui.add(
+                        egui::TextEdit::singleline(value)
+                            .desired_width(260.0)
+                            .hint_text(hint)
+                            .password(secret),
+                    );
+                });
+            };
         let api_key_provider_row = |ui: &mut egui::Ui,
                                     name: &str,
                                     settings: &mut crate::usage::WorkspaceApiKeySettings,
                                     hint: &str| {
-            egui::CollapsingHeader::new(
-                provider_header(name, settings.is_configured()),
-            )
+            egui::CollapsingHeader::new(provider_header(name, settings.is_configured()))
                 .default_open(false)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         provider_badge(ui, settings.is_configured());
                     });
                     text_row(ui, "API key", &mut settings.api_key, hint, true);
-                    text_row(ui, "Label", &mut settings.label, &format!("{}-Default", name), false);
+                    text_row(
+                        ui,
+                        "Label",
+                        &mut settings.label,
+                        &format!("{}-Default", name),
+                        false,
+                    );
                 });
         };
 
@@ -505,7 +639,11 @@ impl<'a> TabViewerImpl<'a> {
                             .selected_text(selected_profile.label())
                             .show_ui(ui, |ui| {
                                 for profile in WorkspaceProfile::ALL {
-                                    ui.selectable_value(&mut selected_profile, profile, profile.label());
+                                    ui.selectable_value(
+                                        &mut selected_profile,
+                                        profile,
+                                        profile.label(),
+                                    );
                                 }
                             });
                         ui.label(
@@ -529,7 +667,11 @@ impl<'a> TabViewerImpl<'a> {
                                     .selected_text(theme.label())
                                     .show_ui(ui, |ui| {
                                         for variant in ThemeVariant::ALL {
-                                            ui.selectable_value(&mut theme, variant, variant.label());
+                                            ui.selectable_value(
+                                                &mut theme,
+                                                variant,
+                                                variant.label(),
+                                            );
                                         }
                                     });
                                 if theme != self.app.appearance.theme {
@@ -545,7 +687,11 @@ impl<'a> TabViewerImpl<'a> {
                                     .selected_text(density.label())
                                     .show_ui(ui, |ui| {
                                         for option in Density::ALL {
-                                            ui.selectable_value(&mut density, option, option.label());
+                                            ui.selectable_value(
+                                                &mut density,
+                                                option,
+                                                option.label(),
+                                            );
                                         }
                                     });
                                 if density != self.app.appearance.density {
@@ -559,10 +705,22 @@ impl<'a> TabViewerImpl<'a> {
                                 ui.label(egui::RichText::new("Scale").strong());
                                 let mut changed = false;
                                 changed |= ui
-                                    .add(egui::Slider::new(&mut self.app.appearance.ui_scale, 0.85..=1.35).text("UI scale"))
+                                    .add(
+                                        egui::Slider::new(
+                                            &mut self.app.appearance.ui_scale,
+                                            0.85..=1.35,
+                                        )
+                                        .text("UI scale"),
+                                    )
                                     .changed();
                                 changed |= ui
-                                    .add(egui::Slider::new(&mut self.app.appearance.code_scale, 0.85..=1.35).text("Code scale"))
+                                    .add(
+                                        egui::Slider::new(
+                                            &mut self.app.appearance.code_scale,
+                                            0.85..=1.35,
+                                        )
+                                        .text("Code scale"),
+                                    )
                                     .changed();
                                 if changed {
                                     self.app.apply_appearance(ui.ctx());
@@ -586,7 +744,10 @@ impl<'a> TabViewerImpl<'a> {
                         ui.add_space(8.0);
                         ui.group(|ui| {
                             section_header(ui, "Editor");
-                            ui.checkbox(&mut self.app.show_breadcrumbs, "Show breadcrumbs above editor");
+                            ui.checkbox(
+                                &mut self.app.show_breadcrumbs,
+                                "Show breadcrumbs above editor",
+                            );
                             ui.checkbox(&mut self.app.word_wrap, "Word wrap in editor");
                         });
                     });
@@ -619,7 +780,11 @@ impl<'a> TabViewerImpl<'a> {
                         let mut refresh_models = false;
 
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(egui::RichText::new("Provider").small().color(palette.text_muted));
+                            ui.label(
+                                egui::RichText::new("Provider")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
                             egui::ComboBox::from_id_salt("settings_agent_provider")
                                 .selected_text(provider.label())
                                 .width(180.0)
@@ -637,7 +802,11 @@ impl<'a> TabViewerImpl<'a> {
                                 });
 
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("Model").small().color(palette.text_muted));
+                            ui.label(
+                                egui::RichText::new("Model")
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
                             if self.app.available_models.is_empty() {
                                 ui.label(
                                     egui::RichText::new(truncate_model(&selected_model))
@@ -651,7 +820,11 @@ impl<'a> TabViewerImpl<'a> {
                                     .show_ui(ui, |ui| {
                                         for model in self.app.available_models.clone() {
                                             model_changed |= ui
-                                                .selectable_value(&mut selected_model, model.id.clone(), model.label)
+                                                .selectable_value(
+                                                    &mut selected_model,
+                                                    model.id.clone(),
+                                                    model.label,
+                                                )
                                                 .changed();
                                         }
                                     });
@@ -685,19 +858,27 @@ impl<'a> TabViewerImpl<'a> {
                             self.app.provider = provider;
                             self.app.chat.provider = provider;
                             self.app.models_loading = true;
-                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::SetProvider(provider));
+                            let _ = self
+                                .app
+                                .agent_tx
+                                .send(crate::agent::UiToAgentMessage::SetProvider(provider));
                             prefs_dirty = true;
                         }
                         if model_changed {
                             self.app.selected_model = selected_model.clone();
                             self.app.chat.selected_model = selected_model.clone();
-                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::SetModel(selected_model));
+                            let _ = self
+                                .app
+                                .agent_tx
+                                .send(crate::agent::UiToAgentMessage::SetModel(selected_model));
                             prefs_dirty = true;
                         }
                         if thinking_enabled != self.app.thinking_enabled {
                             self.app.thinking_enabled = thinking_enabled;
                             self.app.chat.thinking_enabled = thinking_enabled;
-                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::SetThinking(thinking_enabled));
+                            let _ = self.app.agent_tx.send(
+                                crate::agent::UiToAgentMessage::SetThinking(thinking_enabled),
+                            );
                             prefs_dirty = true;
                         }
                         if auto_approve != self.app.auto_approve {
@@ -711,7 +892,10 @@ impl<'a> TabViewerImpl<'a> {
                         }
                         if refresh_models {
                             self.app.models_loading = true;
-                            let _ = self.app.agent_tx.send(crate::agent::UiToAgentMessage::RefreshModels);
+                            let _ = self
+                                .app
+                                .agent_tx
+                                .send(crate::agent::UiToAgentMessage::RefreshModels);
                         }
                         if prefs_dirty {
                             self.app.save_workspace_preferences();
@@ -722,86 +906,261 @@ impl<'a> TabViewerImpl<'a> {
                     ui.group(|ui| {
                         section_header(ui, "Providers & credentials");
 
-                        egui::CollapsingHeader::new(
-                            provider_header("Cloudflare Workers AI", self.app.provider_settings.cloudflare.is_configured()),
-                        )
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    provider_badge(ui, self.app.provider_settings.cloudflare.is_configured());
-                                });
-                                text_row(ui, "Account ID", &mut self.app.provider_settings.cloudflare.account_id, "Cloudflare account ID", false);
-                                text_row(ui, "API token", &mut self.app.provider_settings.cloudflare.api_token, "Cloudflare API token", true);
-                                text_row(ui, "Tier", &mut self.app.provider_settings.cloudflare.tier, "free or paid", false);
-                                text_row(ui, "Label", &mut self.app.provider_settings.cloudflare.label, "default", false);
+                        egui::CollapsingHeader::new(provider_header(
+                            "Cloudflare Workers AI",
+                            self.app.provider_settings.cloudflare.is_configured(),
+                        ))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                provider_badge(
+                                    ui,
+                                    self.app.provider_settings.cloudflare.is_configured(),
+                                );
                             });
+                            text_row(
+                                ui,
+                                "Account ID",
+                                &mut self.app.provider_settings.cloudflare.account_id,
+                                "Cloudflare account ID",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "API token",
+                                &mut self.app.provider_settings.cloudflare.api_token,
+                                "Cloudflare API token",
+                                true,
+                            );
+                            text_row(
+                                ui,
+                                "Tier",
+                                &mut self.app.provider_settings.cloudflare.tier,
+                                "free or paid",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "Label",
+                                &mut self.app.provider_settings.cloudflare.label,
+                                "default",
+                                false,
+                            );
+                        });
 
-                        egui::CollapsingHeader::new(
-                            provider_header("OpenRouter", self.app.provider_settings.openrouter.is_configured()),
-                        )
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    provider_badge(ui, self.app.provider_settings.openrouter.is_configured());
-                                });
-                                text_row(ui, "API key", &mut self.app.provider_settings.openrouter.api_key, "OpenRouter API key", true);
-                                text_row(ui, "Tier", &mut self.app.provider_settings.openrouter.tier, "free or paid", false);
-                                text_row(ui, "Label", &mut self.app.provider_settings.openrouter.label, "OR-Default", false);
+                        egui::CollapsingHeader::new(provider_header(
+                            "OpenRouter",
+                            self.app.provider_settings.openrouter.is_configured(),
+                        ))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                provider_badge(
+                                    ui,
+                                    self.app.provider_settings.openrouter.is_configured(),
+                                );
                             });
+                            text_row(
+                                ui,
+                                "API key",
+                                &mut self.app.provider_settings.openrouter.api_key,
+                                "OpenRouter API key",
+                                true,
+                            );
+                            text_row(
+                                ui,
+                                "Tier",
+                                &mut self.app.provider_settings.openrouter.tier,
+                                "free or paid",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "Label",
+                                &mut self.app.provider_settings.openrouter.label,
+                                "OR-Default",
+                                false,
+                            );
+                        });
 
-                        egui::CollapsingHeader::new(
-                            provider_header("Azure OpenAI", self.app.provider_settings.azure_openai.is_configured()),
-                        )
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    provider_badge(ui, self.app.provider_settings.azure_openai.is_configured());
-                                });
-                                text_row(ui, "Endpoint", &mut self.app.provider_settings.azure_openai.endpoint, "https://your-resource.openai.azure.com", false);
-                                text_row(ui, "API key", &mut self.app.provider_settings.azure_openai.api_key, "Azure OpenAI key", true);
-                                text_row(ui, "Deployment", &mut self.app.provider_settings.azure_openai.deployment, "gpt-4o", false);
-                                text_row(ui, "API version", &mut self.app.provider_settings.azure_openai.api_version, "2024-06-01", false);
-                                text_row(ui, "Tier", &mut self.app.provider_settings.azure_openai.tier, "paid", false);
-                                text_row(ui, "Label", &mut self.app.provider_settings.azure_openai.label, "Azure-Default", false);
+                        egui::CollapsingHeader::new(provider_header(
+                            "Azure OpenAI",
+                            self.app.provider_settings.azure_openai.is_configured(),
+                        ))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                provider_badge(
+                                    ui,
+                                    self.app.provider_settings.azure_openai.is_configured(),
+                                );
                             });
+                            text_row(
+                                ui,
+                                "Endpoint",
+                                &mut self.app.provider_settings.azure_openai.endpoint,
+                                "https://your-resource.openai.azure.com",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "API key",
+                                &mut self.app.provider_settings.azure_openai.api_key,
+                                "Azure OpenAI key",
+                                true,
+                            );
+                            text_row(
+                                ui,
+                                "Deployment",
+                                &mut self.app.provider_settings.azure_openai.deployment,
+                                "gpt-4o",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "API version",
+                                &mut self.app.provider_settings.azure_openai.api_version,
+                                "2024-06-01",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "Tier",
+                                &mut self.app.provider_settings.azure_openai.tier,
+                                "paid",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "Label",
+                                &mut self.app.provider_settings.azure_openai.label,
+                                "Azure-Default",
+                                false,
+                            );
+                        });
 
-                        egui::CollapsingHeader::new(
-                            provider_header("Local Ollama", self.app.provider_settings.ollama.is_configured()),
-                        )
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    provider_badge(ui, self.app.provider_settings.ollama.is_configured());
-                                });
-                                text_row(ui, "Host", &mut self.app.provider_settings.ollama.host, "http://localhost:11434", false);
-                                text_row(ui, "Default model", &mut self.app.provider_settings.ollama.default_model, "llama3.2", false);
-                                text_row(ui, "Label", &mut self.app.provider_settings.ollama.label, "Local-Ollama", false);
+                        egui::CollapsingHeader::new(provider_header(
+                            "Local Ollama",
+                            self.app.provider_settings.ollama.is_configured(),
+                        ))
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                provider_badge(
+                                    ui,
+                                    self.app.provider_settings.ollama.is_configured(),
+                                );
                             });
+                            text_row(
+                                ui,
+                                "Host",
+                                &mut self.app.provider_settings.ollama.host,
+                                "http://localhost:11434",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "Default model",
+                                &mut self.app.provider_settings.ollama.default_model,
+                                "llama3.2",
+                                false,
+                            );
+                            text_row(
+                                ui,
+                                "Label",
+                                &mut self.app.provider_settings.ollama.label,
+                                "Local-Ollama",
+                                false,
+                            );
+                        });
 
                         // ── API-key providers ──
-                        api_key_provider_row(ui, "OpenAI", &mut self.app.provider_settings.openai, "OpenAI API key");
-                        api_key_provider_row(ui, "Google Vertex / Gemini", &mut self.app.provider_settings.google, "Google API key");
-                        api_key_provider_row(ui, "Deepseek", &mut self.app.provider_settings.deepseek, "Deepseek API key");
-                        api_key_provider_row(ui, "Groq", &mut self.app.provider_settings.groq, "Groq API key");
-                        api_key_provider_row(ui, "Mistral AI", &mut self.app.provider_settings.mistral, "Mistral API key");
-                        api_key_provider_row(ui, "Alibaba Qwen", &mut self.app.provider_settings.alibaba, "DashScope API key");
-                        api_key_provider_row(ui, "Together AI", &mut self.app.provider_settings.together, "Together API key");
-                        api_key_provider_row(ui, "Fireworks AI", &mut self.app.provider_settings.fireworks, "Fireworks API key");
-                        api_key_provider_row(ui, "Perplexity", &mut self.app.provider_settings.perplexity, "Perplexity API key");
-                        api_key_provider_row(ui, "Cerebras", &mut self.app.provider_settings.cerebras, "Cerebras API key");
-                        api_key_provider_row(ui, "AWS Bedrock", &mut self.app.provider_settings.bedrock, "Bedrock proxy API key (set BEDROCK_PROXY_URL env var)");
-                        api_key_provider_row(ui, "Anthropic", &mut self.app.provider_settings.anthropic, "Anthropic API key");
+                        api_key_provider_row(
+                            ui,
+                            "OpenAI",
+                            &mut self.app.provider_settings.openai,
+                            "OpenAI API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Google Vertex / Gemini",
+                            &mut self.app.provider_settings.google,
+                            "Google API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Deepseek",
+                            &mut self.app.provider_settings.deepseek,
+                            "Deepseek API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Groq",
+                            &mut self.app.provider_settings.groq,
+                            "Groq API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Mistral AI",
+                            &mut self.app.provider_settings.mistral,
+                            "Mistral API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Alibaba Qwen",
+                            &mut self.app.provider_settings.alibaba,
+                            "DashScope API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Together AI",
+                            &mut self.app.provider_settings.together,
+                            "Together API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Fireworks AI",
+                            &mut self.app.provider_settings.fireworks,
+                            "Fireworks API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Perplexity",
+                            &mut self.app.provider_settings.perplexity,
+                            "Perplexity API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Cerebras",
+                            &mut self.app.provider_settings.cerebras,
+                            "Cerebras API key",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "AWS Bedrock",
+                            &mut self.app.provider_settings.bedrock,
+                            "Bedrock proxy API key (set BEDROCK_PROXY_URL env var)",
+                        );
+                        api_key_provider_row(
+                            ui,
+                            "Anthropic",
+                            &mut self.app.provider_settings.anthropic,
+                            "Anthropic API key",
+                        );
 
                         ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {
-                            let save = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new("Save provider settings")
-                                        .color(palette.success)
-                                        .strong(),
+                            let save = ui.add(egui::Button::new(
+                                egui::RichText::new("Save provider settings")
+                                    .color(palette.success)
+                                    .strong(),
+                            ));
+                            if save
+                                .on_hover_text(
+                                    "Writes credentials to the workspace provider settings file",
                                 )
-                            );
-                            if save.on_hover_text("Writes credentials to the workspace provider settings file").clicked() {
+                                .clicked()
+                            {
                                 self.app.save_provider_settings();
                             }
                             if ui.button("Reload").clicked() {
@@ -882,10 +1241,14 @@ impl<'a> TabViewerImpl<'a> {
                                         palette.text
                                     };
                                     ui.label(
-                                        egui::RichText::new(if line.is_empty() { " " } else { line })
-                                            .monospace()
-                                            .size(13.0)
-                                            .color(color),
+                                        egui::RichText::new(if line.is_empty() {
+                                            " "
+                                        } else {
+                                            line
+                                        })
+                                        .monospace()
+                                        .size(13.0)
+                                        .color(color),
                                     );
                                 }
                             });
@@ -895,11 +1258,7 @@ impl<'a> TabViewerImpl<'a> {
 
                     let mut run_command = false;
                     ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("> ")
-                                .monospace()
-                                .color(palette.accent),
-                        );
+                        ui.label(egui::RichText::new("> ").monospace().color(palette.accent));
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.app.terminal_input)
                                 .font(code_font)

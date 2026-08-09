@@ -59,16 +59,24 @@ impl Default for VisualFingerprinter {
 
 impl VisualFingerprinter {
     pub fn new() -> Self {
-        Self { luminance_threshold: 128 }
+        Self {
+            luminance_threshold: 128,
+        }
     }
 
     pub fn with_threshold(threshold: u8) -> Self {
-        Self { luminance_threshold: threshold }
+        Self {
+            luminance_threshold: threshold,
+        }
     }
 
     /// Produce a full visual fingerprint from a sub-region of a pixel buffer.
     /// Region is (x, y, width, height).
-    pub fn fingerprint(&self, buffer: &PixelBuffer, region: (usize, usize, usize, usize)) -> VisualFingerprint {
+    pub fn fingerprint(
+        &self,
+        buffer: &PixelBuffer,
+        region: (usize, usize, usize, usize),
+    ) -> VisualFingerprint {
         let (rx, ry, rw, rh) = region;
         let rw = rw.min(buffer.width.saturating_sub(rx)).max(1);
         let rh = rh.min(buffer.height.saturating_sub(ry)).max(1);
@@ -83,8 +91,14 @@ impl VisualFingerprinter {
             density as u64,
             symmetry_score as u64,
             region_count as u64,
-            grid_signature.map(|(r, c)| (r as u64) << 8 | c as u64).unwrap_or(0),
-            match aspect_bucket { AspectBucket::Wide => 1, AspectBucket::Square => 2, AspectBucket::Tall => 3 },
+            grid_signature
+                .map(|(r, c)| (r as u64) << 8 | c as u64)
+                .unwrap_or(0),
+            match aspect_bucket {
+                AspectBucket::Wide => 1,
+                AspectBucket::Square => 2,
+                AspectBucket::Tall => 3,
+            },
         ]);
 
         VisualFingerprint {
@@ -99,7 +113,14 @@ impl VisualFingerprinter {
 
     /// Detect grid structure via projection profile analysis.
     /// Returns (rows, cols) if a regular grid is detected.
-    pub fn detect_grid(&self, buffer: &PixelBuffer, rx: usize, ry: usize, rw: usize, rh: usize) -> Option<(u8, u8)> {
+    pub fn detect_grid(
+        &self,
+        buffer: &PixelBuffer,
+        rx: usize,
+        ry: usize,
+        rw: usize,
+        rh: usize,
+    ) -> Option<(u8, u8)> {
         if rw < 30 || rh < 30 {
             return None;
         }
@@ -114,8 +135,16 @@ impl VisualFingerprinter {
         let row_gaps = Self::find_regular_gaps(&row_profile, rh);
 
         // Need at least 2 gaps in each direction to form a grid
-        let cols = if col_gaps >= 2 { col_gaps + 1 } else { return None; };
-        let rows = if row_gaps >= 2 { row_gaps + 1 } else { return None; };
+        let cols = if col_gaps >= 2 {
+            col_gaps + 1
+        } else {
+            return None;
+        };
+        let rows = if row_gaps >= 2 {
+            row_gaps + 1
+        } else {
+            return None;
+        };
 
         // Sanity: grids are typically 2x2 to 5x5
         if (2..=5).contains(&rows) && (2..=5).contains(&cols) {
@@ -153,7 +182,14 @@ impl VisualFingerprinter {
 
     // --- Internal helpers ---
 
-    fn compute_density(&self, buffer: &PixelBuffer, rx: usize, ry: usize, rw: usize, rh: usize) -> u8 {
+    fn compute_density(
+        &self,
+        buffer: &PixelBuffer,
+        rx: usize,
+        ry: usize,
+        rw: usize,
+        rh: usize,
+    ) -> u8 {
         let mut dark_count = 0u32;
         let mut total = 0u32;
         for y in (ry..ry + rh).step_by(4) {
@@ -166,12 +202,23 @@ impl VisualFingerprinter {
                 total += 1;
             }
         }
-        if total == 0 { return 0; }
+        if total == 0 {
+            return 0;
+        }
         ((dark_count as f64 / total as f64) * 255.0) as u8
     }
 
-    fn compute_symmetry(&self, buffer: &PixelBuffer, rx: usize, ry: usize, rw: usize, rh: usize) -> u8 {
-        if rw < 4 { return 128; }
+    fn compute_symmetry(
+        &self,
+        buffer: &PixelBuffer,
+        rx: usize,
+        ry: usize,
+        rw: usize,
+        rh: usize,
+    ) -> u8 {
+        if rw < 4 {
+            return 128;
+        }
         let half_w = rw / 2;
         let mut matches = 0u32;
         let mut total = 0u32;
@@ -189,11 +236,20 @@ impl VisualFingerprinter {
                 total += 1;
             }
         }
-        if total == 0 { return 128; }
+        if total == 0 {
+            return 128;
+        }
         ((matches as f64 / total as f64) * 255.0) as u8
     }
 
-    fn count_regions(&self, buffer: &PixelBuffer, rx: usize, ry: usize, rw: usize, rh: usize) -> u8 {
+    fn count_regions(
+        &self,
+        buffer: &PixelBuffer,
+        rx: usize,
+        ry: usize,
+        rw: usize,
+        rh: usize,
+    ) -> u8 {
         // Simplified connected-component count via run-length transitions
         let mut regions = 0u8;
         let mut in_region = false;
@@ -214,7 +270,14 @@ impl VisualFingerprinter {
         regions
     }
 
-    fn vertical_projection(&self, buffer: &PixelBuffer, rx: usize, ry: usize, rw: usize, rh: usize) -> Vec<u32> {
+    fn vertical_projection(
+        &self,
+        buffer: &PixelBuffer,
+        rx: usize,
+        ry: usize,
+        rw: usize,
+        rh: usize,
+    ) -> Vec<u32> {
         let mut profile = vec![0u32; rw];
         for (x, count) in profile.iter_mut().enumerate() {
             for y in (0..rh).step_by(2) {
@@ -228,7 +291,14 @@ impl VisualFingerprinter {
         profile
     }
 
-    fn horizontal_projection(&self, buffer: &PixelBuffer, rx: usize, ry: usize, rw: usize, rh: usize) -> Vec<u32> {
+    fn horizontal_projection(
+        &self,
+        buffer: &PixelBuffer,
+        rx: usize,
+        ry: usize,
+        rw: usize,
+        rh: usize,
+    ) -> Vec<u32> {
         let mut profile = vec![0u32; rh];
         for (y, count) in profile.iter_mut().enumerate() {
             for x in (0..rw).step_by(2) {
@@ -245,7 +315,9 @@ impl VisualFingerprinter {
     /// Find regularly-spaced gaps in a projection profile.
     /// A "gap" is a run of near-zero values. Returns the number of internal gaps.
     fn find_regular_gaps(profile: &[u32], size: usize) -> usize {
-        if size < 20 { return 0; }
+        if size < 20 {
+            return 0;
+        }
         let threshold = 2u32; // near-zero
         let min_gap_width = size / 20; // gaps must be at least 5% of dimension
         let mut gaps = 0;
@@ -340,7 +412,11 @@ mod tests {
         buf.fill_rect(80, 20, 40, 10, 20, 20, 20, 255);
         let fp = VisualFingerprinter::new();
         let result = fp.fingerprint(&buf, (0, 0, 200, 50));
-        assert!(result.symmetry_score > 200, "symmetric content should have high symmetry, got {}", result.symmetry_score);
+        assert!(
+            result.symmetry_score > 200,
+            "symmetric content should have high symmetry, got {}",
+            result.symmetry_score
+        );
     }
 
     #[test]
@@ -351,7 +427,11 @@ mod tests {
         buf.fill_rect(140, 140, 50, 50, 20, 20, 20, 255);
         let fp = VisualFingerprinter::new();
         let result = fp.fingerprint(&buf, (0, 0, 200, 200));
-        assert!(result.symmetry_score < 200, "asymmetric content should have lower symmetry, got {}", result.symmetry_score);
+        assert!(
+            result.symmetry_score < 200,
+            "asymmetric content should have lower symmetry, got {}",
+            result.symmetry_score
+        );
     }
 
     #[test]
@@ -361,19 +441,36 @@ mod tests {
         buf.fill_rect(0, 0, 100, 100, 10, 10, 10, 255);
         let fp = VisualFingerprinter::new();
         let result = fp.fingerprint(&buf, (0, 0, 100, 100));
-        assert!(result.density > 200, "dark buffer should have high density, got {}", result.density);
+        assert!(
+            result.density > 200,
+            "dark buffer should have high density, got {}",
+            result.density
+        );
 
         // Mostly white buffer
         let buf2 = PixelBuffer::new(100, 100);
         let result2 = fp.fingerprint(&buf2, (0, 0, 100, 100));
-        assert!(result2.density < 50, "white buffer should have low density, got {}", result2.density);
+        assert!(
+            result2.density < 50,
+            "white buffer should have low density, got {}",
+            result2.density
+        );
     }
 
     #[test]
     fn aspect_bucket_classification() {
-        assert_eq!(VisualFingerprinter::classify_aspect(300, 100), AspectBucket::Wide);
-        assert_eq!(VisualFingerprinter::classify_aspect(100, 100), AspectBucket::Square);
-        assert_eq!(VisualFingerprinter::classify_aspect(100, 300), AspectBucket::Tall);
+        assert_eq!(
+            VisualFingerprinter::classify_aspect(300, 100),
+            AspectBucket::Wide
+        );
+        assert_eq!(
+            VisualFingerprinter::classify_aspect(100, 100),
+            AspectBucket::Square
+        );
+        assert_eq!(
+            VisualFingerprinter::classify_aspect(100, 300),
+            AspectBucket::Tall
+        );
     }
 
     #[test]

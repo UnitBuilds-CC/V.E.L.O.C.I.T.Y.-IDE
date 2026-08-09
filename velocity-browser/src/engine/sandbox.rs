@@ -112,7 +112,11 @@ impl TabSandbox {
 
     pub fn check_network_access(&mut self, host: &str) -> Result<(), String> {
         if self.capabilities.allow_network_hosts.is_empty()
-            || self.capabilities.allow_network_hosts.iter().any(|allowed| host.contains(allowed))
+            || self
+                .capabilities
+                .allow_network_hosts
+                .iter()
+                .any(|allowed| host.contains(allowed))
         {
             Ok(())
         } else {
@@ -172,7 +176,10 @@ impl TabSandbox {
 
     /// Get violations by category.
     pub fn violations_by_category(&self, category: &ViolationCategory) -> Vec<&SandboxViolation> {
-        self.typed_violations.iter().filter(|v| &v.category == category).collect()
+        self.typed_violations
+            .iter()
+            .filter(|v| &v.category == category)
+            .collect()
     }
 
     /// Total violation count.
@@ -223,10 +230,15 @@ pub struct ContentSecurityPolicy {
 impl ContentSecurityPolicy {
     /// Parse a CSP header string into directives.
     pub fn parse(header: &str, report_only: bool) -> Self {
-        let mut csp = ContentSecurityPolicy { report_only, ..Default::default() };
+        let mut csp = ContentSecurityPolicy {
+            report_only,
+            ..Default::default()
+        };
         for directive in header.split(';') {
             let parts: Vec<&str> = directive.split_whitespace().collect();
-            if parts.is_empty() { continue; }
+            if parts.is_empty() {
+                continue;
+            }
             let (name, values) = (parts[0], &parts[1..]);
             let src_list: Vec<String> = values.iter().map(|s| s.to_string()).collect();
             match name {
@@ -247,7 +259,9 @@ impl ContentSecurityPolicy {
 
     /// Check if a URL is allowed by a given source list.
     fn is_allowed(source_list: &[String], url: &str) -> bool {
-        if source_list.is_empty() { return true; } // no restriction
+        if source_list.is_empty() {
+            return true;
+        } // no restriction
         for src in source_list {
             if src == "'self'" {
                 // Allow same-origin (simplified: same scheme+host)
@@ -265,37 +279,65 @@ impl ContentSecurityPolicy {
 
     /// Check if a script load is allowed.
     pub fn allows_script(&self, url: &str) -> bool {
-        let list = if !self.script_src.is_empty() { &self.script_src } else { &self.default_src };
+        let list = if !self.script_src.is_empty() {
+            &self.script_src
+        } else {
+            &self.default_src
+        };
         Self::is_allowed(list, url)
     }
 
     /// Check if a style load is allowed.
     pub fn allows_style(&self, url: &str) -> bool {
-        let list = if !self.style_src.is_empty() { &self.style_src } else { &self.default_src };
+        let list = if !self.style_src.is_empty() {
+            &self.style_src
+        } else {
+            &self.default_src
+        };
         Self::is_allowed(list, url)
     }
 
     /// Check if an image load is allowed.
     pub fn allows_image(&self, url: &str) -> bool {
-        let list = if !self.img_src.is_empty() { &self.img_src } else { &self.default_src };
+        let list = if !self.img_src.is_empty() {
+            &self.img_src
+        } else {
+            &self.default_src
+        };
         Self::is_allowed(list, url)
     }
 
     /// Check if a fetch/XHR connection is allowed.
     pub fn allows_connect(&self, url: &str) -> bool {
-        let list = if !self.connect_src.is_empty() { &self.connect_src } else { &self.default_src };
+        let list = if !self.connect_src.is_empty() {
+            &self.connect_src
+        } else {
+            &self.default_src
+        };
         Self::is_allowed(list, url)
     }
 
     /// Serialize back to a CSP header string.
     pub fn to_header_string(&self) -> String {
         let mut parts = Vec::new();
-        if !self.default_src.is_empty() { parts.push(format!("default-src {}", self.default_src.join(" "))); }
-        if !self.script_src.is_empty() { parts.push(format!("script-src {}", self.script_src.join(" "))); }
-        if !self.style_src.is_empty() { parts.push(format!("style-src {}", self.style_src.join(" "))); }
-        if !self.img_src.is_empty() { parts.push(format!("img-src {}", self.img_src.join(" "))); }
-        if !self.connect_src.is_empty() { parts.push(format!("connect-src {}", self.connect_src.join(" "))); }
-        if let Some(uri) = &self.report_uri { parts.push(format!("report-uri {}", uri)); }
+        if !self.default_src.is_empty() {
+            parts.push(format!("default-src {}", self.default_src.join(" ")));
+        }
+        if !self.script_src.is_empty() {
+            parts.push(format!("script-src {}", self.script_src.join(" ")));
+        }
+        if !self.style_src.is_empty() {
+            parts.push(format!("style-src {}", self.style_src.join(" ")));
+        }
+        if !self.img_src.is_empty() {
+            parts.push(format!("img-src {}", self.img_src.join(" ")));
+        }
+        if !self.connect_src.is_empty() {
+            parts.push(format!("connect-src {}", self.connect_src.join(" ")));
+        }
+        if let Some(uri) = &self.report_uri {
+            parts.push(format!("report-uri {}", uri));
+        }
         parts.join("; ")
     }
 }
@@ -332,8 +374,15 @@ mod tests {
         let _ = sb.check_network_access("blocked1.com");
         let _ = sb.check_network_access("blocked2.com");
         let _ = sb.check_file_access("/secret");
-        assert_eq!(sb.violations_by_category(&ViolationCategory::Network).len(), 2);
-        assert_eq!(sb.violations_by_category(&ViolationCategory::FileSystem).len(), 1);
+        assert_eq!(
+            sb.violations_by_category(&ViolationCategory::Network).len(),
+            2
+        );
+        assert_eq!(
+            sb.violations_by_category(&ViolationCategory::FileSystem)
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -350,10 +399,7 @@ mod tests {
 
     #[test]
     fn test_csp_allows_script() {
-        let csp = ContentSecurityPolicy::parse(
-            "script-src https://cdn.example.com 'self'",
-            false,
-        );
+        let csp = ContentSecurityPolicy::parse("script-src https://cdn.example.com 'self'", false);
         assert!(csp.allows_script("https://cdn.example.com/app.js"));
         assert!(!csp.allows_script("https://evil.com/malware.js"));
     }
@@ -374,7 +420,8 @@ mod tests {
 
     #[test]
     fn test_csp_to_header() {
-        let csp = ContentSecurityPolicy::parse("default-src 'self'; script-src https://cdn.com", false);
+        let csp =
+            ContentSecurityPolicy::parse("default-src 'self'; script-src https://cdn.com", false);
         let header = csp.to_header_string();
         assert!(header.contains("default-src"));
         assert!(header.contains("script-src"));
@@ -412,7 +459,10 @@ mod tests {
         caps.allow_storage_access = false;
         let mut sb = TabSandbox::new("s2", caps);
         assert!(sb.check_storage_access("cookie").is_err());
-        assert_eq!(sb.violations_by_category(&ViolationCategory::Storage).len(), 1);
+        assert_eq!(
+            sb.violations_by_category(&ViolationCategory::Storage).len(),
+            1
+        );
     }
 
     #[test]
@@ -422,7 +472,10 @@ mod tests {
         let mut sb = TabSandbox::new("p1", caps);
         let err = sb.check_popup("https://ads.example.com").unwrap_err();
         assert!(err.contains("Popup"));
-        assert_eq!(sb.violations_by_category(&ViolationCategory::Popup).len(), 1);
+        assert_eq!(
+            sb.violations_by_category(&ViolationCategory::Popup).len(),
+            1
+        );
     }
 
     #[test]
@@ -482,7 +535,10 @@ mod tests {
             "default-src 'self'; report-uri https://report.example.com/csp",
             false,
         );
-        assert_eq!(csp.report_uri, Some("https://report.example.com/csp".to_string()));
+        assert_eq!(
+            csp.report_uri,
+            Some("https://report.example.com/csp".to_string())
+        );
     }
 
     #[test]

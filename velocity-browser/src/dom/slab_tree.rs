@@ -159,7 +159,9 @@ impl SlabDomTree {
     /// Get an attribute value for a node.
     pub fn get_attribute(&self, slot_id: u32, key: &str) -> Option<&str> {
         if (slot_id as usize) < self.arena.attributes.len() {
-            self.arena.attributes[slot_id as usize].get(key).map(|s| s.as_str())
+            self.arena.attributes[slot_id as usize]
+                .get(key)
+                .map(|s| s.as_str())
         } else {
             None
         }
@@ -230,12 +232,16 @@ impl SlabDomTree {
 
     /// Find all nodes matching a tag hash.
     pub fn query_by_tag_hash(&self, tag_hash: u64) -> Vec<u32> {
-        self.dfs().into_iter().filter(|&s| self.tag_hash(s) == tag_hash).collect()
+        self.dfs()
+            .into_iter()
+            .filter(|&s| self.tag_hash(s) == tag_hash)
+            .collect()
     }
 
     /// Collect all text content from the tree (DFS order).
     pub fn collect_all_text(&self) -> Vec<String> {
-        self.dfs().into_iter()
+        self.dfs()
+            .into_iter()
             .filter(|&s| !self.text_content(s).is_empty())
             .map(|s| self.text_content(s).to_string())
             .collect()

@@ -21,10 +21,18 @@ impl Default for StorageEventBroadcaster {
 
 impl StorageEventBroadcaster {
     pub fn new() -> Self {
-        Self { history: Vec::new() }
+        Self {
+            history: Vec::new(),
+        }
     }
 
-    pub fn set_item(&mut self, storage: &mut HashMap<String, String>, key: &str, value: &str, url: &str) {
+    pub fn set_item(
+        &mut self,
+        storage: &mut HashMap<String, String>,
+        key: &str,
+        value: &str,
+        url: &str,
+    ) {
         let old = storage.insert(key.to_string(), value.to_string());
         self.history.push(StorageEventRecord {
             key: key.to_string(),

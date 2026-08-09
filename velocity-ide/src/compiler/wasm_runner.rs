@@ -406,9 +406,7 @@ impl WasmPluginRunner {
         let mut out = Vec::with_capacity(count);
         for _ in 0..count {
             let name_len = read_uleb(body, &mut pos)? as usize;
-            let name_bytes = body
-                .get(pos..pos + name_len)
-                .ok_or("EOF in export name")?;
+            let name_bytes = body.get(pos..pos + name_len).ok_or("EOF in export name")?;
             let name = String::from_utf8_lossy(name_bytes).to_string();
             pos += name_len;
             let kind = *body.get(pos).ok_or("EOF in export kind")?;
@@ -544,10 +542,21 @@ impl Val {
 enum In {
     Unreachable,
     Nop,
-    Block { end: usize, arity: usize },
-    Loop { body: usize },
-    If { else_: Option<usize>, end: usize, arity: usize },
-    Else { end: usize },
+    Block {
+        end: usize,
+        arity: usize,
+    },
+    Loop {
+        body: usize,
+    },
+    If {
+        else_: Option<usize>,
+        end: usize,
+        arity: usize,
+    },
+    Else {
+        end: usize,
+    },
     End,
     Br(u32),
     BrIf(u32),
@@ -560,8 +569,14 @@ enum In {
     LocalSet(u32),
     LocalTee(u32),
     Const(Val),
-    MemLoad { op: u8, offset: u32 },
-    MemStore { op: u8, offset: u32 },
+    MemLoad {
+        op: u8,
+        offset: u32,
+    },
+    MemStore {
+        op: u8,
+        offset: u32,
+    },
     MemSize,
     MemGrow,
     Op(u8),
@@ -656,7 +671,11 @@ impl<'a> Interp<'a> {
                             ctrl.push((1, idx));
                         }
                         _ => {
-                            prog.push(In::If { else_: None, end: 0, arity });
+                            prog.push(In::If {
+                                else_: None,
+                                end: 0,
+                                arity,
+                            });
                             ctrl.push((2, idx));
                         }
                     }
@@ -899,13 +918,15 @@ impl<'a> Interp<'a> {
                 }
                 In::Const(v) => stack.push(*v),
                 In::MemLoad { op, offset } => {
-                    let addr = stack.pop().ok_or("load: empty")?.as_i32() as usize + *offset as usize;
+                    let addr =
+                        stack.pop().ok_or("load: empty")?.as_i32() as usize + *offset as usize;
                     let v = self.mem_load(*op, addr)?;
                     stack.push(v);
                 }
                 In::MemStore { op, offset } => {
                     let v = stack.pop().ok_or("store: empty value")?;
-                    let addr = stack.pop().ok_or("store: empty addr")?.as_i32() as usize + *offset as usize;
+                    let addr = stack.pop().ok_or("store: empty addr")?.as_i32() as usize
+                        + *offset as usize;
                     self.mem_store(*op, addr, v)?;
                 }
                 In::MemSize => {
@@ -965,7 +986,9 @@ impl<'a> Interp<'a> {
 
     fn mem_load(&self, op: u8, addr: usize) -> Result<Val, String> {
         let read = |n: usize| -> Result<&[u8], String> {
-            self.memory.get(addr..addr + n).ok_or_else(|| "memory load OOB".to_string())
+            self.memory
+                .get(addr..addr + n)
+                .ok_or_else(|| "memory load OOB".to_string())
         };
         Ok(match op {
             0x28 => Val::I32(i32::from_le_bytes(read(4)?.try_into().unwrap())),

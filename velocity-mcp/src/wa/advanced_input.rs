@@ -315,14 +315,10 @@ pub fn build_input_sequence_script(sequence: &InputSequence) -> String {
                 }
             }
             InputEvent::KeyDown { vk_code } => {
-                ps_commands.push(format!(
-                    "[InputSender]::keybd_event({}, 0, 0, 0)", vk_code
-                ));
+                ps_commands.push(format!("[InputSender]::keybd_event({}, 0, 0, 0)", vk_code));
             }
             InputEvent::KeyUp { vk_code } => {
-                ps_commands.push(format!(
-                    "[InputSender]::keybd_event({}, 0, 2, 0)", vk_code
-                ));
+                ps_commands.push(format!("[InputSender]::keybd_event({}, 0, 2, 0)", vk_code));
             }
             InputEvent::KeyPress { vk_code } => {
                 ps_commands.push(format!(
@@ -333,16 +329,15 @@ pub fn build_input_sequence_script(sequence: &InputSequence) -> String {
             InputEvent::TypeText { text } => {
                 let escaped = text.replace("'", "''");
                 ps_commands.push(format!(
-                    "[System.Windows.Forms.SendKeys]::SendWait('{}')", escaped
+                    "[System.Windows.Forms.SendKeys]::SendWait('{}')",
+                    escaped
                 ));
             }
             InputEvent::Combo(combo) => {
                 // Press modifiers
                 for modifier in &combo.modifiers {
                     for vk in modifier_vk_codes(*modifier) {
-                        ps_commands.push(format!(
-                            "[InputSender]::keybd_event({}, 0, 0, 0)", vk
-                        ));
+                        ps_commands.push(format!("[InputSender]::keybd_event({}, 0, 0, 0)", vk));
                     }
                 }
                 // Press key
@@ -355,9 +350,7 @@ pub fn build_input_sequence_script(sequence: &InputSequence) -> String {
                 // Release modifiers (reverse order)
                 for modifier in combo.modifiers.iter().rev() {
                     for vk in modifier_vk_codes(*modifier).iter().rev() {
-                        ps_commands.push(format!(
-                            "[InputSender]::keybd_event({}, 0, 2, 0)", vk
-                        ));
+                        ps_commands.push(format!("[InputSender]::keybd_event({}, 0, 2, 0)", vk));
                     }
                 }
             }
@@ -469,7 +462,8 @@ pub fn execute_sequence_native(sequence: &InputSequence) -> InputExecutionResult
                     native_send_mouse(0x0800, (scroll.vertical * 120) as u32); // MOUSEEVENTF_WHEEL
                 }
                 if scroll.horizontal != 0 {
-                    native_send_mouse(0x1000, (scroll.horizontal * 120) as u32); // MOUSEEVENTF_HWHEEL
+                    native_send_mouse(0x1000, (scroll.horizontal * 120) as u32);
+                    // MOUSEEVENTF_HWHEEL
                 }
                 events_sent += 1;
             }
@@ -489,7 +483,9 @@ pub fn execute_sequence_native(sequence: &InputSequence) -> InputExecutionResult
             }
             InputEvent::TypeText { text } => {
                 for ch in text.chars() {
-                    let vk = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(ch as u16) };
+                    let vk = unsafe {
+                        windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(ch as u16)
+                    };
                     let vk_code = (vk & 0xFF) as u16;
                     let shift_needed = (vk >> 8) & 1 != 0;
                     if shift_needed {
@@ -542,9 +538,9 @@ pub fn execute_sequence_native(sequence: &InputSequence) -> InputExecutionResult
 #[cfg(target_os = "windows")]
 fn native_mouse_button_flags(button: &MouseButton) -> (u32, u32) {
     match button {
-        MouseButton::Left => (0x0002, 0x0004),     // LEFTDOWN, LEFTUP
-        MouseButton::Right => (0x0008, 0x0010),    // RIGHTDOWN, RIGHTUP
-        MouseButton::Middle => (0x0020, 0x0040),   // MIDDLEDOWN, MIDDLEUP
+        MouseButton::Left => (0x0002, 0x0004),   // LEFTDOWN, LEFTUP
+        MouseButton::Right => (0x0008, 0x0010),  // RIGHTDOWN, RIGHTUP
+        MouseButton::Middle => (0x0020, 0x0040), // MIDDLEDOWN, MIDDLEUP
         _ => (0x0002, 0x0004),
     }
 }
@@ -584,14 +580,23 @@ fn native_send_key(vk_code: u16, key_up: bool) {
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -621,7 +626,10 @@ mod tests {
     fn modifier_codes() {
         assert_eq!(modifier_vk_codes(KeyModifier::Ctrl), vec![0x11]);
         assert_eq!(modifier_vk_codes(KeyModifier::CtrlShift), vec![0x11, 0x10]);
-        assert_eq!(modifier_vk_codes(KeyModifier::CtrlShiftAlt), vec![0x11, 0x10, 0x12]);
+        assert_eq!(
+            modifier_vk_codes(KeyModifier::CtrlShiftAlt),
+            vec![0x11, 0x10, 0x12]
+        );
     }
 
     #[test]

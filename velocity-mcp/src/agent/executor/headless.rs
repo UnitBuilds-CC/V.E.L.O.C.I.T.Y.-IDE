@@ -42,7 +42,10 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
     let scoped_files = request.scoped_files.clone().unwrap_or_default();
     let precomp_context = if !scoped_files.is_empty() {
         let precomp_result = precompute_files(&request.workspace_root, &scoped_files);
-        format!("\n\n## Pre-indexed Workspace Context\n{}", precomp_result.context_summary())
+        format!(
+            "\n\n## Pre-indexed Workspace Context\n{}",
+            precomp_result.context_summary()
+        )
     } else {
         String::new()
     };
@@ -86,9 +89,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
         while let Ok(msg) = agent_event_rx.recv() {
             match msg {
                 AgentToUiMessage::StatusUpdate(status) => {
-                    status_updates_collector
-                        .lock_safe()
-                        .push(status.clone());
+                    status_updates_collector.lock_safe().push(status.clone());
                     if let Some(progress) = &progress_collector {
                         let mut progress = progress.lock_safe();
                         progress.status_updates.push(status.clone());
@@ -128,9 +129,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                     arguments,
                 } => {
                     let status = format!("Auto-approving tool: {tool_name}");
-                    status_updates_collector
-                        .lock_safe()
-                        .push(status.clone());
+                    status_updates_collector.lock_safe().push(status.clone());
                     if let Some(progress) = &progress_collector {
                         let mut progress = progress.lock_safe();
                         progress.status_updates.push(status.clone());
@@ -143,10 +142,7 @@ pub fn run_headless_subagent(request: HeadlessSubAgentRequest) -> HeadlessSubAge
                             message: status,
                         });
                     }
-                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool {
-                        id,
-                        arguments,
-                    });
+                    let _ = auto_approve_tx.send(UiToAgentMessage::ApproveTool { id, arguments });
                 }
                 AgentToUiMessage::ToolExecutionStarted { tool_name } => {
                     if let Some(progress) = &progress_collector {

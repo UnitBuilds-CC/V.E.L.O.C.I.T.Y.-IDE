@@ -123,7 +123,11 @@ impl TemplateStore {
             .iter()
             .filter_map(|h| self.by_hash.get(h))
             .filter(|t| t.descriptor.variant == descriptor.variant)
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     }
 
     /// Store a new template (or update an existing one).
@@ -198,12 +202,7 @@ impl TemplateStore {
     pub fn templates_for_provider(&self, provider: &str) -> Vec<&SolveTemplate> {
         self.by_provider
             .get(provider)
-            .map(|hashes| {
-                hashes
-                    .iter()
-                    .filter_map(|h| self.by_hash.get(h))
-                    .collect()
-            })
+            .map(|hashes| hashes.iter().filter_map(|h| self.by_hash.get(h)).collect())
             .unwrap_or_default()
     }
 }
@@ -215,8 +214,8 @@ mod tests {
     use crate::engine::captcha::state_machine::ChallengeAction;
 
     fn make_template(hash: u64, provider: &str, variant: &str) -> SolveTemplate {
-        let desc = ChallengeDescriptor::from_known_provider(provider, variant)
-            .with_visual_hash(hash);
+        let desc =
+            ChallengeDescriptor::from_known_provider(provider, variant).with_visual_hash(hash);
         let seq = vec![
             ("shown".to_string(), ChallengeAction::click("checkbox")),
             ("solved".to_string(), ChallengeAction::submit()),

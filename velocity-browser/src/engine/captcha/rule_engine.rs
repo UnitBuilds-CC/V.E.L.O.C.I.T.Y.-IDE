@@ -86,7 +86,10 @@ impl RuleCondition {
                     _ => false,
                 }
             }
-            RuleCondition::ClassifiedAs { class, min_confidence } => cell
+            RuleCondition::ClassifiedAs {
+                class,
+                min_confidence,
+            } => cell
                 .classification
                 .as_ref()
                 .map(|(c, conf)| c.eq_ignore_ascii_case(class) && *conf >= *min_confidence)
@@ -121,7 +124,11 @@ pub struct SolveRule {
 
 impl SolveRule {
     pub fn new(name: &str, condition: RuleCondition, priority: i32) -> Self {
-        Self { name: name.to_string(), condition, priority }
+        Self {
+            name: name.to_string(),
+            condition,
+            priority,
+        }
     }
 }
 
@@ -142,7 +149,9 @@ impl RuleEngine {
         let mut engine = Self::new();
         engine.add_rule(SolveRule::new(
             "target-class",
-            RuleCondition::ClassifiedAsTarget { min_confidence: 0.6 },
+            RuleCondition::ClassifiedAsTarget {
+                min_confidence: 0.6,
+            },
             100,
         ));
         engine.add_rule(SolveRule::new(
@@ -232,7 +241,10 @@ mod tests {
         ctx.push_cell(ObservedCell::new(0, 0, 0));
         ctx.push_cell(changing);
         let engine = RuleEngine::with_defaults();
-        assert_eq!(engine.evaluate(&ctx), vec![SolveAction::ClickCell { index: 4 }]);
+        assert_eq!(
+            engine.evaluate(&ctx),
+            vec![SolveAction::ClickCell { index: 4 }]
+        );
     }
 
     #[test]
@@ -247,13 +259,19 @@ mod tests {
         ctx.push_cell(only_change);
         // Highest-priority firing rule is target-class, which selects only cell 0.
         let engine = RuleEngine::with_defaults();
-        assert_eq!(engine.evaluate(&ctx), vec![SolveAction::ClickCell { index: 0 }]);
+        assert_eq!(
+            engine.evaluate(&ctx),
+            vec![SolveAction::ClickCell { index: 0 }]
+        );
     }
 
     #[test]
     fn empty_context_defers_to_llm() {
         let engine = RuleEngine::with_defaults();
-        assert_eq!(engine.evaluate(&SolveContext::new()), vec![SolveAction::DeferToLlm]);
+        assert_eq!(
+            engine.evaluate(&SolveContext::new()),
+            vec![SolveAction::DeferToLlm]
+        );
     }
 
     #[test]
@@ -261,12 +279,18 @@ mod tests {
         let mut engine = RuleEngine::new();
         engine.add_rule(SolveRule::new(
             "pick-cars",
-            RuleCondition::ClassifiedAs { class: "car".to_string(), min_confidence: 0.5 },
+            RuleCondition::ClassifiedAs {
+                class: "car".to_string(),
+                min_confidence: 0.5,
+            },
             10,
         ));
         let mut ctx = SolveContext::new();
         ctx.push_cell(classified_cell(3, "car", 0.8));
-        assert_eq!(engine.evaluate(&ctx), vec![SolveAction::ClickCell { index: 3 }]);
+        assert_eq!(
+            engine.evaluate(&ctx),
+            vec![SolveAction::ClickCell { index: 3 }]
+        );
     }
 
     #[test]

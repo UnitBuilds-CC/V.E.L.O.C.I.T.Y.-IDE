@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use crate::dom::DomTree;
 use crate::nda::NdaTriple;
 use crate::parser::html::{DomNode, NodeType};
-use crate::style::{AnimationManager, CssAnimation, StyleCascader, TransitionManager, TransitionSpec};
+use crate::style::{
+    AnimationManager, CssAnimation, StyleCascader, TransitionManager, TransitionSpec,
+};
 
 /// Viewport width used as the initial containing block.
 const VIEWPORT_WIDTH: f32 = 800.0;
@@ -75,7 +77,12 @@ impl LayoutEngine2D {
     }
 
     /// Start a CSS animation on a DOM node.
-    pub fn start_animation(&mut self, node_id: usize, animation: CssAnimation, now_ms: f64) -> bool {
+    pub fn start_animation(
+        &mut self,
+        node_id: usize,
+        animation: CssAnimation,
+        now_ms: f64,
+    ) -> bool {
         self.animations.start_animation(node_id, animation, now_ms)
     }
 
@@ -153,7 +160,9 @@ impl LayoutEngine2D {
                     return None;
                 }
                 let count = text.chars().count() as f32;
-                let width = (count * CHAR_WIDTH).min(avail_width.max(CHAR_WIDTH)).max(CHAR_WIDTH);
+                let width = (count * CHAR_WIDTH)
+                    .min(avail_width.max(CHAR_WIDTH))
+                    .max(CHAR_WIDTH);
                 let per_line = (avail_width / CHAR_WIDTH).floor().max(1.0);
                 let lines = (count / per_line).ceil().max(1.0);
                 Some(LayoutBox {
@@ -214,7 +223,10 @@ impl LayoutEngine2D {
                     None => used_height + padding[0] + padding[2],
                 };
 
-                let visible = style.get("visibility").map(|v| v != "hidden").unwrap_or(true);
+                let visible = style
+                    .get("visibility")
+                    .map(|v| v != "hidden")
+                    .unwrap_or(true);
 
                 Some(LayoutBox {
                     node_id: id,
@@ -291,7 +303,8 @@ impl LayoutEngine2D {
     fn computed_style_for(&self, node: &DomNode) -> HashMap<String, String> {
         let mut style = self.cascader.compute_computed_style(|sel| {
             sel.contains(&node.tag_name)
-                || node.attributes.get("id").map(|s| s.as_str()) == Some(sel.trim_start_matches('#'))
+                || node.attributes.get("id").map(|s| s.as_str())
+                    == Some(sel.trim_start_matches('#'))
         });
         // Merge animation/transition overrides produced by advance_animations.
         if let Some(ov) = self.dynamic_overrides.get(&node.id) {
@@ -308,8 +321,16 @@ impl LayoutEngine2D {
             let subject = format!("node_{}", b.node_id);
             let bounds_str = format!("{},{},{},{}", b.x, b.y, b.width, b.height);
             triples.push(NdaTriple::new(&subject, 70, &bounds_str));
-            triples.push(NdaTriple::new(&subject, 71, if b.is_visible { "visible" } else { "hidden" }));
-            triples.push(NdaTriple::new(&subject, 72, &format!("{:?}", b.display).to_lowercase()));
+            triples.push(NdaTriple::new(
+                &subject,
+                71,
+                if b.is_visible { "visible" } else { "hidden" },
+            ));
+            triples.push(NdaTriple::new(
+                &subject,
+                72,
+                &format!("{:?}", b.display).to_lowercase(),
+            ));
         }
         triples
     }
@@ -350,8 +371,23 @@ fn resolve_display(style: &HashMap<String, String>, tag: &str) -> DisplayMode {
 fn default_inline(tag: &str) -> bool {
     matches!(
         tag,
-        "span" | "a" | "b" | "i" | "em" | "strong" | "code" | "small" | "label" | "img" | "sub"
-            | "sup" | "u" | "mark" | "abbr" | "cite" | "q"
+        "span"
+            | "a"
+            | "b"
+            | "i"
+            | "em"
+            | "strong"
+            | "code"
+            | "small"
+            | "label"
+            | "img"
+            | "sub"
+            | "sup"
+            | "u"
+            | "mark"
+            | "abbr"
+            | "cite"
+            | "q"
     )
 }
 
@@ -416,7 +452,11 @@ mod tests {
     fn box_for_tag<'a>(tree: &DomTree, boxes: &'a [LayoutBox], tag: &str) -> &'a LayoutBox {
         boxes
             .iter()
-            .find(|b| tree.get_node(b.node_id).map(|n| n.tag_name == tag).unwrap_or(false))
+            .find(|b| {
+                tree.get_node(b.node_id)
+                    .map(|n| n.tag_name == tag)
+                    .unwrap_or(false)
+            })
             .expect("box for tag")
     }
 
@@ -425,10 +465,17 @@ mod tests {
         let (tree, boxes) = layout("<div>A</div><div>B</div>", StyleCascader::new());
         let divs: Vec<_> = boxes
             .iter()
-            .filter(|b| tree.get_node(b.node_id).map(|n| n.tag_name == "div").unwrap_or(false))
+            .filter(|b| {
+                tree.get_node(b.node_id)
+                    .map(|n| n.tag_name == "div")
+                    .unwrap_or(false)
+            })
             .collect();
         assert_eq!(divs.len(), 2);
-        assert!(divs[1].y > divs[0].y, "second block should be below the first");
+        assert!(
+            divs[1].y > divs[0].y,
+            "second block should be below the first"
+        );
     }
 
     #[test]
@@ -437,7 +484,10 @@ mod tests {
         let div = box_for_tag(&tree, &boxes, "div");
         let p = box_for_tag(&tree, &boxes, "p");
         assert!(p.x >= div.x && p.y >= div.y, "child origin inside parent");
-        assert!(p.y + p.height <= div.y + div.height + 0.01, "child fits vertically");
+        assert!(
+            p.y + p.height <= div.y + div.height + 0.01,
+            "child fits vertically"
+        );
         assert!(div.height > 0.0, "parent derives height from content");
     }
 
@@ -445,7 +495,10 @@ mod tests {
     fn text_contributes_height() {
         let (tree, boxes) = layout("<p>Hello world</p>", StyleCascader::new());
         let p = box_for_tag(&tree, &boxes, "p");
-        assert!(p.height >= LINE_HEIGHT, "text gives the paragraph a line box");
+        assert!(
+            p.height >= LINE_HEIGHT,
+            "text gives the paragraph a line box"
+        );
     }
 
     #[test]
@@ -456,9 +509,10 @@ mod tests {
         cascader.add_rule("div", decl);
         let (tree, boxes) = layout("<div>gone</div>", cascader);
         assert!(
-            boxes
-                .iter()
-                .all(|b| tree.get_node(b.node_id).map(|n| n.tag_name != "div").unwrap_or(true)),
+            boxes.iter().all(|b| tree
+                .get_node(b.node_id)
+                .map(|n| n.tag_name != "div")
+                .unwrap_or(true)),
             "display:none element produces no box"
         );
     }
@@ -478,7 +532,10 @@ mod tests {
 
     #[test]
     fn inline_tags_default_to_inline_display() {
-        let (tree, boxes) = layout("<span>hi</span><a href=\"#\">link</a>", StyleCascader::new());
+        let (tree, boxes) = layout(
+            "<span>hi</span><a href=\"#\">link</a>",
+            StyleCascader::new(),
+        );
         let span = box_for_tag(&tree, &boxes, "span");
         let a = box_for_tag(&tree, &boxes, "a");
         assert_eq!(span.display, DisplayMode::Inline);
@@ -511,7 +568,9 @@ mod tests {
 
     #[test]
     fn animation_overrides_drive_layout_geometry() {
-        use crate::style::{parse_keyframes, AnimationDirection, CssAnimation, FillMode, PlayState, TimingFunction};
+        use crate::style::{
+            parse_keyframes, AnimationDirection, CssAnimation, FillMode, PlayState, TimingFunction,
+        };
 
         let mut cascader = StyleCascader::new();
         let mut decl = HashMap::new();
@@ -527,7 +586,10 @@ mod tests {
             .expect("div node");
 
         let mut engine = LayoutEngine2D::new(cascader);
-        engine.register_keyframes(parse_keyframes("@keyframes grow { from { width: 0px; } to { width: 100px; } }").unwrap());
+        engine.register_keyframes(
+            parse_keyframes("@keyframes grow { from { width: 0px; } to { width: 100px; } }")
+                .unwrap(),
+        );
         engine.start_animation(
             div_id,
             CssAnimation {
@@ -547,14 +609,22 @@ mod tests {
         engine.advance_animations(&tree, 500.0);
         let boxes = engine.build_layout_tree(&tree);
         let div = box_for_tag(&tree, &boxes, "div");
-        assert!((div.width - 50.0).abs() < 0.5, "animated width ~50px, got {}", div.width);
+        assert!(
+            (div.width - 50.0).abs() < 0.5,
+            "animated width ~50px, got {}",
+            div.width
+        );
         assert_eq!(div.height, 50.0, "static height is unaffected");
 
         // Past the end, fill:forwards holds the final 100px width.
         engine.advance_animations(&tree, 1500.0);
         let boxes = engine.build_layout_tree(&tree);
         let div = box_for_tag(&tree, &boxes, "div");
-        assert!((div.width - 100.0).abs() < 0.5, "final width ~100px, got {}", div.width);
+        assert!(
+            (div.width - 100.0).abs() < 0.5,
+            "final width ~100px, got {}",
+            div.width
+        );
     }
 
     #[test]
@@ -565,7 +635,10 @@ mod tests {
         cascader.add_rule("div", decl);
         let (tree, boxes) = layout("<div>hidden</div>", cascader);
         let div = box_for_tag(&tree, &boxes, "div");
-        assert!(!div.is_visible, "visibility:hidden box should not be visible");
+        assert!(
+            !div.is_visible,
+            "visibility:hidden box should not be visible"
+        );
     }
 
     #[test]
@@ -617,9 +690,17 @@ mod tests {
     #[test]
     fn inline_boxes_share_same_y() {
         // Inline spans must share a parent to flow on the same line
-        let (tree, boxes) = layout("<div><span>a</span><span>b</span></div>", StyleCascader::new());
-        let spans: Vec<_> = boxes.iter()
-            .filter(|b| tree.get_node(b.node_id).map(|n| n.tag_name == "span").unwrap_or(false))
+        let (tree, boxes) = layout(
+            "<div><span>a</span><span>b</span></div>",
+            StyleCascader::new(),
+        );
+        let spans: Vec<_> = boxes
+            .iter()
+            .filter(|b| {
+                tree.get_node(b.node_id)
+                    .map(|n| n.tag_name == "span")
+                    .unwrap_or(false)
+            })
             .collect();
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].y, spans[1].y, "inline siblings share a baseline");
@@ -627,9 +708,17 @@ mod tests {
 
     #[test]
     fn inline_boxes_pack_horizontally() {
-        let (tree, boxes) = layout("<div><span>aa</span><span>bb</span></div>", StyleCascader::new());
-        let spans: Vec<_> = boxes.iter()
-            .filter(|b| tree.get_node(b.node_id).map(|n| n.tag_name == "span").unwrap_or(false))
+        let (tree, boxes) = layout(
+            "<div><span>aa</span><span>bb</span></div>",
+            StyleCascader::new(),
+        );
+        let spans: Vec<_> = boxes
+            .iter()
+            .filter(|b| {
+                tree.get_node(b.node_id)
+                    .map(|n| n.tag_name == "span")
+                    .unwrap_or(false)
+            })
             .collect();
         assert!(spans[1].x > spans[0].x, "second inline is to the right");
     }
@@ -649,10 +738,20 @@ mod tests {
     fn empty_text_node_produces_no_box() {
         let (tree, boxes) = layout("<div>  </div>", StyleCascader::new());
         // Whitespace-only text should be trimmed away
-        let text_boxes: Vec<_> = boxes.iter()
-            .filter(|b| b.display == DisplayMode::Inline && tree.get_node(b.node_id).map(|n| n.node_type == NodeType::Text).unwrap_or(false))
+        let text_boxes: Vec<_> = boxes
+            .iter()
+            .filter(|b| {
+                b.display == DisplayMode::Inline
+                    && tree
+                        .get_node(b.node_id)
+                        .map(|n| n.node_type == NodeType::Text)
+                        .unwrap_or(false)
+            })
             .collect();
-        assert!(text_boxes.is_empty(), "whitespace-only text should produce no box");
+        assert!(
+            text_boxes.is_empty(),
+            "whitespace-only text should produce no box"
+        );
     }
 
     #[test]
@@ -711,11 +810,14 @@ mod tests {
         let b = LayoutBox {
             node_id: 0,
             display: DisplayMode::Block,
-            x: 0.0, y: 0.0,
-            width: 100.0, height: 50.0,
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 50.0,
             padding: [0.0; 4],
             margin: [10.0, 5.0, 10.0, 5.0],
-            z_index: 0, is_visible: true,
+            z_index: 0,
+            is_visible: true,
             children: Vec::new(),
         };
         assert_eq!(b.margin_box_height(), 70.0); // 50 + 10 + 10

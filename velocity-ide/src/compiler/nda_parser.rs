@@ -4,10 +4,10 @@
 // Resolves function call targets dynamically via Merkle hash propagation.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use crate::compiler::nda_lexer::{Located, NdaLexer, Token};
+use crate::site_map::verifier::{CmpOp, NdaNode, VecOpKind};
 use sha2::{Digest, Sha256};
-use crate::site_map::verifier::{NdaNode, CmpOp, VecOpKind};
-use crate::compiler::nda_lexer::{Token, Located, NdaLexer};
+use std::collections::HashMap;
 
 /// Helper: compute 8-byte SHA-256 hash of a string name.
 pub fn hash_name(name: &str) -> u64 {
@@ -22,9 +22,19 @@ pub fn build_matrix_node(rows: usize, cols: usize) -> NdaNode {
     let rows = rows.clamp(1, 65535) as u16;
     let cols = cols.clamp(1, 65535) as u16;
     let bitmap_bytes = rows as usize * (cols as usize).div_ceil(8);
-    let sign: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
-    let extra: Vec<u8> = (0..bitmap_bytes).map(|i| if i % 2 == 0 { 0x55 } else { 0xAA }).collect();
-    NdaNode::Matrix { rows, cols, scale: 0, sign, extra }
+    let sign: Vec<u8> = (0..bitmap_bytes)
+        .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+        .collect();
+    let extra: Vec<u8> = (0..bitmap_bytes)
+        .map(|i| if i % 2 == 0 { 0x55 } else { 0xAA })
+        .collect();
+    NdaNode::Matrix {
+        rows,
+        cols,
+        scale: 0,
+        sign,
+        extra,
+    }
 }
 
 /// Helper: build synthetic norm node of shape size.
@@ -44,20 +54,40 @@ pub fn resolve_calls(
 ) -> NdaNode {
     match node {
         NdaNode::Scope { children } => NdaNode::Scope {
-            children: children.iter().map(|c| resolve_calls(c, fn_map, call_names)).collect(),
+            children: children
+                .iter()
+                .map(|c| resolve_calls(c, fn_map, call_names))
+                .collect(),
         },
         NdaNode::Loop { count, body } => NdaNode::Loop {
             count: *count,
-            body: body.iter().map(|c| resolve_calls(c, fn_map, call_names)).collect(),
+            body: body
+                .iter()
+                .map(|c| resolve_calls(c, fn_map, call_names))
+                .collect(),
         },
         NdaNode::While { cond, body } => NdaNode::While {
             cond: Box::new(resolve_calls(cond, fn_map, call_names)),
-            body: body.iter().map(|c| resolve_calls(c, fn_map, call_names)).collect(),
+            body: body
+                .iter()
+                .map(|c| resolve_calls(c, fn_map, call_names))
+                .collect(),
         },
-        NdaNode::If { cond, then_body, else_body } => NdaNode::If {
+        NdaNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => NdaNode::If {
             cond: Box::new(resolve_calls(cond, fn_map, call_names)),
-            then_body: then_body.iter().map(|c| resolve_calls(c, fn_map, call_names)).collect(),
-            else_body: else_body.as_ref().map(|eb| eb.iter().map(|c| resolve_calls(c, fn_map, call_names)).collect()),
+            then_body: then_body
+                .iter()
+                .map(|c| resolve_calls(c, fn_map, call_names))
+                .collect(),
+            else_body: else_body.as_ref().map(|eb| {
+                eb.iter()
+                    .map(|c| resolve_calls(c, fn_map, call_names))
+                    .collect()
+            }),
         },
         NdaNode::Compare { op, lhs, rhs } => NdaNode::Compare {
             op: *op,
@@ -102,7 +132,7 @@ pub fn compile(source: &str) -> Result<(NdaNode, HashMap<String, u64>), String> 
     let mut lexer = NdaLexer::new(source);
     let tokens = lexer.tokenize()?;
     let mut parser = NdaParser::new(tokens);
-    
+
     let mut functions = HashMap::new();
     let mut all_calls = HashMap::new();
 
@@ -116,11 +146,15 @@ pub fn compile(source: &str) -> Result<(NdaNode, HashMap<String, u64>), String> 
             all_calls.insert(name, calls);
         } else {
             let loc = parser.peek_loc().unwrap();
-            return Err(format!("{}:{}: Expected 'fn' keyword at top level", loc.line, loc.col));
+            return Err(format!(
+                "{}:{}: Expected 'fn' keyword at top level",
+                loc.line, loc.col
+            ));
         }
     }
 
-    let mut fn_hashes: HashMap<String, u64> = functions.keys()
+    let mut fn_hashes: HashMap<String, u64> = functions
+        .keys()
         .map(|name| (name.clone(), hash_name(name)))
         .collect();
 
@@ -183,10 +217,16 @@ impl NdaParser {
                 Ok(())
             } else {
                 let loc = self.peek_loc().unwrap();
-                Err(format!("{}:{}: Expected token {:?}, found {:?}", loc.line, loc.col, expected, tok))
+                Err(format!(
+                    "{}:{}: Expected token {:?}, found {:?}",
+                    loc.line, loc.col, expected, tok
+                ))
             }
         } else {
-            Err(format!("Expected token {:?}, reached End of File", expected))
+            Err(format!(
+                "Expected token {:?}, reached End of File",
+                expected
+            ))
         }
     }
 
@@ -196,7 +236,11 @@ impl NdaParser {
             self.advance();
             Ok(name)
         } else {
-            let loc = self.peek_loc().unwrap_or(&Located { token: Token::Eof, line: 0, col: 0 });
+            let loc = self.peek_loc().unwrap_or(&Located {
+                token: Token::Eof,
+                line: 0,
+                col: 0,
+            });
             Err(format!("{}:{}: Expected identifier", loc.line, loc.col))
         }
     }
@@ -207,8 +251,15 @@ impl NdaParser {
             self.advance();
             Ok(val)
         } else {
-            let loc = self.peek_loc().unwrap_or(&Located { token: Token::Eof, line: 0, col: 0 });
-            Err(format!("{}:{}: Expected integer literal", loc.line, loc.col))
+            let loc = self.peek_loc().unwrap_or(&Located {
+                token: Token::Eof,
+                line: 0,
+                col: 0,
+            });
+            Err(format!(
+                "{}:{}: Expected integer literal",
+                loc.line, loc.col
+            ))
         }
     }
 
@@ -226,12 +277,16 @@ impl NdaParser {
                 all_calls.insert(name, calls);
             } else {
                 let loc = self.peek_loc().unwrap();
-                return Err(format!("{}:{}: Expected 'fn' keyword at top level", loc.line, loc.col));
+                return Err(format!(
+                    "{}:{}: Expected 'fn' keyword at top level",
+                    loc.line, loc.col
+                ));
             }
         }
 
         // Resolve call targets iteratively
-        let mut fn_hashes: HashMap<String, u64> = functions.keys()
+        let mut fn_hashes: HashMap<String, u64> = functions
+            .keys()
             .map(|name| (name.clone(), hash_name(name)))
             .collect();
 
@@ -313,7 +368,10 @@ impl NdaParser {
                 }
                 _ => {
                     let loc = self.peek_loc().unwrap();
-                    Err(format!("{}:{}: Expected type keyword (vec, matrix, norm, int)", loc.line, loc.col))
+                    Err(format!(
+                        "{}:{}: Expected type keyword (vec, matrix, norm, int)",
+                        loc.line, loc.col
+                    ))
                 }
             }
         } else {
@@ -336,7 +394,10 @@ impl NdaParser {
         Ok(stmts)
     }
 
-    fn parse_statement(&mut self, calls: &mut HashMap<u64, String>) -> Result<Option<NdaNode>, String> {
+    fn parse_statement(
+        &mut self,
+        calls: &mut HashMap<u64, String>,
+    ) -> Result<Option<NdaNode>, String> {
         let tok = match self.peek() {
             Some(t) => t,
             None => return Err("Unexpected End of File inside statement".to_string()),
@@ -348,7 +409,9 @@ impl NdaParser {
                 let name = self.expect_ident()?;
                 self.match_token(Token::Assign)?;
                 let init = self.parse_expr(calls)?;
-                if self.peek() == Some(&Token::Semi) { self.advance(); }
+                if self.peek() == Some(&Token::Semi) {
+                    self.advance();
+                }
                 Some(NdaNode::Let {
                     name_hash: hash_name(&name),
                     init: Box::new(init),
@@ -369,12 +432,10 @@ impl NdaParser {
                 let body = self.parse_block(calls)?;
 
                 match expr {
-                    NdaNode::Int { value } if value >= 0 => {
-                        Some(NdaNode::Loop {
-                            count: value as u32,
-                            body,
-                        })
-                    }
+                    NdaNode::Int { value } if value >= 0 => Some(NdaNode::Loop {
+                        count: value as u32,
+                        body,
+                    }),
                     _ => {
                         // Count-down translation for dynamic loop
                         let temp_name = format!("_loop_cnt_{}", self.pos);
@@ -382,14 +443,18 @@ impl NdaParser {
 
                         let cond = NdaNode::Compare {
                             op: CmpOp::Gt,
-                            lhs: Box::new(NdaNode::Load { name_hash: temp_hash }),
+                            lhs: Box::new(NdaNode::Load {
+                                name_hash: temp_hash,
+                            }),
                             rhs: Box::new(NdaNode::Int { value: 0 }),
                         };
 
                         let decrement = NdaNode::Store {
                             name_hash: temp_hash,
                             value: Box::new(NdaNode::Add {
-                                lhs: Box::new(NdaNode::Load { name_hash: temp_hash }),
+                                lhs: Box::new(NdaNode::Load {
+                                    name_hash: temp_hash,
+                                }),
                                 rhs: Box::new(NdaNode::VecOp {
                                     op: VecOpKind::Negate,
                                     operand: Box::new(NdaNode::Int { value: 1 }),
@@ -439,12 +504,18 @@ impl NdaParser {
             Token::Return => {
                 self.advance();
                 let val = self.parse_expr(calls)?;
-                if self.peek() == Some(&Token::Semi) { self.advance(); }
-                Some(NdaNode::Return { value: Box::new(val) })
+                if self.peek() == Some(&Token::Semi) {
+                    self.advance();
+                }
+                Some(NdaNode::Return {
+                    value: Box::new(val),
+                })
             }
             Token::Break => {
                 self.advance();
-                if self.peek() == Some(&Token::Semi) { self.advance(); }
+                if self.peek() == Some(&Token::Semi) {
+                    self.advance();
+                }
                 Some(NdaNode::Break)
             }
             Token::Print => {
@@ -452,15 +523,23 @@ impl NdaParser {
                 self.match_token(Token::LParen)?;
                 let expr = self.parse_expr(calls)?;
                 self.match_token(Token::RParen)?;
-                if self.peek() == Some(&Token::Semi) { self.advance(); }
-                Some(NdaNode::Print { source: Box::new(expr) })
+                if self.peek() == Some(&Token::Semi) {
+                    self.advance();
+                }
+                Some(NdaNode::Print {
+                    source: Box::new(expr),
+                })
             }
-            Token::Ident(name) if self.tokens.get(self.pos + 1).map(|l| &l.token) == Some(&Token::Assign) => {
+            Token::Ident(name)
+                if self.tokens.get(self.pos + 1).map(|l| &l.token) == Some(&Token::Assign) =>
+            {
                 let name = name.clone();
                 self.advance(); // consume ident
                 self.advance(); // consume Assign '='
                 let val = self.parse_expr(calls)?;
-                if self.peek() == Some(&Token::Semi) { self.advance(); }
+                if self.peek() == Some(&Token::Semi) {
+                    self.advance();
+                }
                 Some(NdaNode::Store {
                     name_hash: hash_name(&name),
                     value: Box::new(val),
@@ -468,7 +547,9 @@ impl NdaParser {
             }
             _ => {
                 let expr = self.parse_expr(calls)?;
-                if self.peek() == Some(&Token::Semi) { self.advance(); }
+                if self.peek() == Some(&Token::Semi) {
+                    self.advance();
+                }
                 Some(expr)
             }
         };
@@ -610,12 +691,18 @@ impl NdaParser {
             Token::Matrix => {
                 self.advance();
                 let use_brackets = if self.peek() == Some(&Token::LBracket) {
-                    self.advance(); true
+                    self.advance();
+                    true
                 } else {
-                    self.match_token(Token::LParen)?; false
+                    self.match_token(Token::LParen)?;
+                    false
                 };
                 let rows = self.expect_int_lit()? as usize;
-                let delimiter = if self.peek() == Some(&Token::Semi) { Token::Semi } else { Token::Comma };
+                let delimiter = if self.peek() == Some(&Token::Semi) {
+                    Token::Semi
+                } else {
+                    Token::Comma
+                };
                 self.match_token(delimiter)?;
                 let cols = self.expect_int_lit()? as usize;
                 if use_brackets {
@@ -628,9 +715,11 @@ impl NdaParser {
             Token::Norm => {
                 self.advance();
                 let use_brackets = if self.peek() == Some(&Token::LBracket) {
-                    self.advance(); true
+                    self.advance();
+                    true
                 } else {
-                    self.match_token(Token::LParen)?; false
+                    self.match_token(Token::LParen)?;
+                    false
                 };
                 let size = self.expect_int_lit()? as usize;
                 if use_brackets {
@@ -643,9 +732,11 @@ impl NdaParser {
             Token::Vec => {
                 self.advance();
                 let use_brackets = if self.peek() == Some(&Token::LBracket) {
-                    self.advance(); true
+                    self.advance();
+                    true
                 } else {
-                    self.match_token(Token::LParen)?; false
+                    self.match_token(Token::LParen)?;
+                    false
                 };
                 let first_val = self.parse_expr(calls)?;
                 let mut len = 1;
@@ -685,7 +776,9 @@ impl NdaParser {
                     calls.insert(temp_call_target, name);
 
                     let mut children = args;
-                    children.push(NdaNode::Call { target: temp_call_target });
+                    children.push(NdaNode::Call {
+                        target: temp_call_target,
+                    });
 
                     Ok(NdaNode::Scope { children })
                 } else {
@@ -695,8 +788,15 @@ impl NdaParser {
                 }
             }
             _ => {
-                let loc = self.peek_loc().unwrap_or(&Located { token: Token::Eof, line: 0, col: 0 });
-                Err(format!("{}:{}: Unexpected token in expression: {:?}", loc.line, loc.col, tok))
+                let loc = self.peek_loc().unwrap_or(&Located {
+                    token: Token::Eof,
+                    line: 0,
+                    col: 0,
+                });
+                Err(format!(
+                    "{}:{}: Unexpected token in expression: {:?}",
+                    loc.line, loc.col, tok
+                ))
             }
         }
     }
@@ -737,7 +837,7 @@ mod tests {
             assert_eq!(children.len(), 2);
             let fib = &children[0];
             assert!(matches!(fib, NdaNode::Scope { .. }));
-            
+
             let main_fn = &children[1];
             assert!(matches!(main_fn, NdaNode::Scope { .. }));
         }
@@ -763,14 +863,23 @@ mod tests {
                 NdaNode::While { .. } => true,
                 NdaNode::Scope { children } => children.iter().any(has_while),
                 NdaNode::Loop { body, .. } => body.iter().any(has_while),
-                NdaNode::If { then_body, else_body, .. } => {
-                    then_body.iter().any(has_while) || else_body.as_ref().is_some_and(|eb| eb.iter().any(has_while))
+                NdaNode::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    then_body.iter().any(has_while)
+                        || else_body
+                            .as_ref()
+                            .is_some_and(|eb| eb.iter().any(has_while))
                 }
                 _ => false,
             }
         }
 
-        assert!(has_while(&program), "Dynamic loop should have been translated to a While loop");
+        assert!(
+            has_while(&program),
+            "Dynamic loop should have been translated to a While loop"
+        );
     }
 }
-

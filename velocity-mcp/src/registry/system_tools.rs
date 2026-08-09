@@ -28,17 +28,21 @@ pub fn resolve_workspace_path(
                 parent.canonicalize()
             })?;
             if !parent_canon.starts_with(root) {
-                return Err(format!("Access Denied: Path escapes workspace root ({})", rel_path).into());
+                return Err(
+                    format!("Access Denied: Path escapes workspace root ({})", rel_path).into(),
+                );
             }
         }
         Ok(target)
     } else {
-        let canon = target.canonicalize().map_err(|_| {
-            format!("File or directory not found in workspace: {}", rel_path)
-        })?;
+        let canon = target
+            .canonicalize()
+            .map_err(|_| format!("File or directory not found in workspace: {}", rel_path))?;
 
         if !canon.starts_with(root) {
-            return Err(format!("Access Denied: Path escapes workspace root ({})", rel_path).into());
+            return Err(
+                format!("Access Denied: Path escapes workspace root ({})", rel_path).into(),
+            );
         }
         Ok(canon)
     }
@@ -86,7 +90,9 @@ fn generate_test_stubs(source: &str, language: &str) -> Vec<String> {
             // Extract function/const arrow signatures
             for line in source.lines() {
                 let trimmed = line.trim();
-                let name = if trimmed.starts_with("export function ") || trimmed.starts_with("function ") {
+                let name = if trimmed.starts_with("export function ")
+                    || trimmed.starts_with("function ")
+                {
                     trimmed
                         .trim_start_matches("export ")
                         .trim_start_matches("function ")
@@ -94,10 +100,13 @@ fn generate_test_stubs(source: &str, language: &str) -> Vec<String> {
                         .next()
                         .map(|s| s.trim().to_string())
                 } else if trimmed.contains("= (") || trimmed.contains("= async (") {
-                    trimmed
-                        .split("= ")
-                        .next()
-                        .map(|s| s.trim().trim_start_matches("export ").trim_start_matches("const ").trim_start_matches("let ").to_string())
+                    trimmed.split("= ").next().map(|s| {
+                        s.trim()
+                            .trim_start_matches("export ")
+                            .trim_start_matches("const ")
+                            .trim_start_matches("let ")
+                            .to_string()
+                    })
                 } else {
                     None
                 };
@@ -152,7 +161,7 @@ pub fn handle_system_tool(
                 .as_str()
                 .ok_or("relativeFilePath is required")?;
             let full_path = resolve_workspace_path(root, rel_path, false)?;
-            
+
             fs::read_to_string(full_path)?
         }
         "write_file" => {
@@ -215,10 +224,7 @@ pub fn handle_system_tool(
             }
 
             fs::remove_file(&full_path)?;
-            format!(
-                "Success: File '{}' deleted successfully.",
-                rel_path
-            )
+            format!("Success: File '{}' deleted successfully.", rel_path)
         }
         "grep_search" => {
             let query = arguments["query"].as_str().ok_or("query is required")?;
@@ -305,9 +311,7 @@ pub fn handle_system_tool(
             }
         }
         "run_command" => {
-            let cmd_str = arguments["command"]
-                .as_str()
-                .ok_or("command is required")?;
+            let cmd_str = arguments["command"].as_str().ok_or("command is required")?;
 
             let (shell, arg) = if cfg!(target_os = "windows") {
                 ("cmd", "/C")
@@ -383,7 +387,8 @@ pub fn handle_system_tool(
             }))?
         }
         "wa_notifications_list" => {
-            let notifications = crate::wa::notifications::NotificationManager::get_visible_notifications();
+            let notifications =
+                crate::wa::notifications::NotificationManager::get_visible_notifications();
             let count = crate::wa::notifications::NotificationManager::get_notification_count();
             serde_json::to_string(&json!({
                 "count": count,
@@ -421,7 +426,9 @@ pub fn handle_system_tool(
         "wa_virtual_desktop_switch" => {
             let index = arguments["index"].as_u64().ok_or("index is required")? as u32;
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
-            let result = mgr.apply(&crate::wa::virtual_desktop::VDesktopOperation::SwitchTo(index));
+            let result = mgr.apply(&crate::wa::virtual_desktop::VDesktopOperation::SwitchTo(
+                index,
+            ));
             serde_json::to_string(&json!({
                 "success": result.success,
                 "detail": result.detail
@@ -440,7 +447,9 @@ pub fn handle_system_tool(
             }))?
         }
         "wa_process_launch" => {
-            let exe = arguments["executable"].as_str().ok_or("executable is required")?;
+            let exe = arguments["executable"]
+                .as_str()
+                .ok_or("executable is required")?;
             let mut config = crate::wa::process_mgmt::LaunchConfig::new(exe);
             if let Some(args_str) = arguments["arguments"].as_str() {
                 for arg in args_str.split_whitespace() {
@@ -460,14 +469,15 @@ pub fn handle_system_tool(
         }
         "wa_process_terminate" => {
             let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
-            let timeout = std::time::Duration::from_millis(
-                arguments["timeout_ms"].as_u64().unwrap_or(5000)
-            );
+            let timeout =
+                std::time::Duration::from_millis(arguments["timeout_ms"].as_u64().unwrap_or(5000));
             let success = crate::wa::process_mgmt::ProcessManager::terminate(pid, timeout);
             serde_json::to_string(&json!({ "success": success, "pid": pid }))?
         }
         "wa_screenshot" => {
-            let output_path = arguments["output_path"].as_str().unwrap_or("screenshot.png");
+            let output_path = arguments["output_path"]
+                .as_str()
+                .unwrap_or("screenshot.png");
             let target = if let Some(pid) = arguments["pid"].as_u64() {
                 crate::wa::screenshot::CaptureTarget::Window(pid as u32)
             } else if let Some(region) = arguments["region"].as_object() {
@@ -475,7 +485,10 @@ pub fn handle_system_tool(
                     x: region.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                     y: region.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                     width: region.get("width").and_then(|v| v.as_u64()).unwrap_or(1920) as u32,
-                    height: region.get("height").and_then(|v| v.as_u64()).unwrap_or(1080) as u32,
+                    height: region
+                        .get("height")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1080) as u32,
                 })
             } else {
                 crate::wa::screenshot::CaptureTarget::FullScreen
@@ -511,8 +524,18 @@ pub fn handle_system_tool(
             let y = arguments["y"].as_i64().unwrap_or(0) as i32;
             let w = arguments["width"].as_u64().unwrap_or(0) as u32;
             let h = arguments["height"].as_u64().unwrap_or(0) as u32;
-            let region = crate::wa::ocr::OcrRegion { x, y, width: w, height: h };
-            let config = crate::wa::ocr::OcrConfig { language: None, preprocess: true, scale_factor: 1.0, min_confidence: 0.5 };
+            let region = crate::wa::ocr::OcrRegion {
+                x,
+                y,
+                width: w,
+                height: h,
+            };
+            let config = crate::wa::ocr::OcrConfig {
+                language: None,
+                preprocess: true,
+                scale_factor: 1.0,
+                min_confidence: 0.5,
+            };
             let result = crate::wa::ocr::OcrEngine::recognize_region(&region, &config);
             serde_json::to_string(&json!({
                 "text": result.full_text,
@@ -538,7 +561,9 @@ pub fn handle_system_tool(
             }
         }
         "agent_checkpoint_restore" => {
-            let cp_id = arguments["checkpointId"].as_u64().ok_or("checkpointId is required")? as usize;
+            let cp_id = arguments["checkpointId"]
+                .as_u64()
+                .ok_or("checkpointId is required")? as usize;
             let mut mgr = crate::agent::checkpoint::CheckpointManager::new(root);
             // Note: In a real session the same CheckpointManager instance should be reused.
             // This handler provides the MCP interface; the loop_runner holds the live instance.
@@ -555,13 +580,19 @@ pub fn handle_system_tool(
         }
         "agent_checkpoint_list" => {
             let mgr = crate::agent::checkpoint::CheckpointManager::new(root);
-            let list: Vec<Value> = mgr.list().iter().map(|cp| json!({
-                "id": cp.id,
-                "label": cp.label,
-                "gitRef": cp.git_ref,
-                "createdAt": cp.created_at,
-                "dirtyFiles": cp.dirty_files
-            })).collect();
+            let list: Vec<Value> = mgr
+                .list()
+                .iter()
+                .map(|cp| {
+                    json!({
+                        "id": cp.id,
+                        "label": cp.label,
+                        "gitRef": cp.git_ref,
+                        "createdAt": cp.created_at,
+                        "dirtyFiles": cp.dirty_files
+                    })
+                })
+                .collect();
             serde_json::to_string(&json!({
                 "count": list.len(),
                 "checkpoints": list
@@ -590,13 +621,18 @@ pub fn handle_system_tool(
             let limit = arguments["limit"].as_u64().unwrap_or(5) as usize;
             let mem = crate::agent::memory_store::PersistentMemory::open(root);
             let hits = mem.recall(query, limit);
-            let results: Vec<Value> = hits.iter().map(|h| json!({
-                "key": h.entry.key,
-                "content": h.entry.content,
-                "tags": h.entry.tags,
-                "score": h.entry.score,
-                "similarity": h.similarity
-            })).collect();
+            let results: Vec<Value> = hits
+                .iter()
+                .map(|h| {
+                    json!({
+                        "key": h.entry.key,
+                        "content": h.entry.content,
+                        "tags": h.entry.tags,
+                        "score": h.entry.score,
+                        "similarity": h.similarity
+                    })
+                })
+                .collect();
             serde_json::to_string(&json!({
                 "count": results.len(),
                 "results": results
@@ -677,11 +713,15 @@ pub fn handle_system_tool(
                     let (files, chunks) = kb.ingest_dir(root, &target);
                     (format!("{rel} ({files} files)"), chunks)
                 } else {
-                    let n = kb.ingest_path(root, &target).map_err(|e| -> Box<dyn Error> { e.into() })?;
+                    let n = kb
+                        .ingest_path(root, &target)
+                        .map_err(|e| -> Box<dyn Error> { e.into() })?;
                     (rel.to_string(), n)
                 }
             } else {
-                return Err("knowledge_ingest requires 'text' (with optional 'source') or 'path'".into());
+                return Err(
+                    "knowledge_ingest requires 'text' (with optional 'source') or 'path'".into(),
+                );
             };
             kb.save(root).map_err(|e| -> Box<dyn Error> { e.into() })?;
             serde_json::to_string(&json!({
@@ -734,9 +774,7 @@ pub fn handle_system_tool(
                     .as_object()
                     .map(|m| {
                         m.iter()
-                            .map(|(k, v)| {
-                                (k.clone(), v.as_str().unwrap_or_default().to_string())
-                            })
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
                             .collect()
                     })
                     .unwrap_or_default(),
@@ -774,7 +812,9 @@ pub fn handle_system_tool(
 /// (text → wrapped DrawText lines + content triples; image → a DrawImage
 /// command carrying a data-url), with an optional seal toggle.
 fn native_convert_to_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Error>> {
-    let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+    let file_path = arguments["filePath"]
+        .as_str()
+        .ok_or("filePath is required")?;
     let output_path = arguments["outputPath"].as_str().unwrap_or("");
     let seal = arguments["seal"].as_bool().unwrap_or(false);
 
@@ -803,7 +843,10 @@ fn native_convert_to_nda(root: &Path, arguments: &Value) -> Result<String, Box<d
         &origin,
     );
     let outcome = crate::editor::nda_document::save_to_disk(root, &out, &doc, seal)?;
-    let effective_sealed = matches!(outcome, crate::editor::nda_document::SaveOutcome::Saved { sealed: true });
+    let effective_sealed = matches!(
+        outcome,
+        crate::editor::nda_document::SaveOutcome::Saved { sealed: true }
+    );
     let note = if outcome == crate::editor::nda_document::SaveOutcome::FellBackToPortable {
         " NOTE: seal unavailable (no key material); saved portable instead."
     } else {
@@ -841,7 +884,11 @@ fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
     ));
     out.push_str(&format!(
         "History chain: {}\n",
-        if doc.verify_history().is_ok() { "valid" } else { "BROKEN" }
+        if doc.verify_history().is_ok() {
+            "valid"
+        } else {
+            "BROKEN"
+        }
     ));
     for r in doc.revisions() {
         out.push_str(&format!(
@@ -860,10 +907,7 @@ fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
     Ok(out)
 }
 
-fn execute_csharp_mcp_tool(
-    tool_name: &str,
-    arguments: &Value,
-) -> Result<String, Box<dyn Error>> {
+fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
     let exe_path = "C:\\WUIAS\\velocity_nda\\VelocityMcpServer.exe";
 
     if !Path::new(exe_path).exists() {

@@ -126,7 +126,11 @@ impl Html5Tokenizer {
                         self.state = Html5State::SelfClosingStartTag;
                     } else if ch == '>' {
                         tokens.push(Html5Token {
-                            kind: if is_end_tag { TokenKind::EndTag } else { TokenKind::StartTag },
+                            kind: if is_end_tag {
+                                TokenKind::EndTag
+                            } else {
+                                TokenKind::StartTag
+                            },
                             name: current_tag.clone(),
                             attributes: current_attrs.clone(),
                             data: String::new(),
@@ -143,7 +147,11 @@ impl Html5Tokenizer {
                         // Continue
                     } else if ch == '>' {
                         tokens.push(Html5Token {
-                            kind: if is_end_tag { TokenKind::EndTag } else { TokenKind::StartTag },
+                            kind: if is_end_tag {
+                                TokenKind::EndTag
+                            } else {
+                                TokenKind::StartTag
+                            },
                             name: current_tag.clone(),
                             attributes: current_attrs.clone(),
                             data: String::new(),
@@ -166,7 +174,11 @@ impl Html5Tokenizer {
                         current_attrs.insert(current_attr_key.clone(), String::new());
                         if ch == '>' {
                             tokens.push(Html5Token {
-                                kind: if is_end_tag { TokenKind::EndTag } else { TokenKind::StartTag },
+                                kind: if is_end_tag {
+                                    TokenKind::EndTag
+                                } else {
+                                    TokenKind::StartTag
+                                },
                                 name: current_tag.clone(),
                                 attributes: current_attrs.clone(),
                                 data: String::new(),
@@ -216,7 +228,11 @@ impl Html5Tokenizer {
                         current_attrs.insert(current_attr_key.clone(), current_attr_val.clone());
                         if ch == '>' {
                             tokens.push(Html5Token {
-                                kind: if is_end_tag { TokenKind::EndTag } else { TokenKind::StartTag },
+                                kind: if is_end_tag {
+                                    TokenKind::EndTag
+                                } else {
+                                    TokenKind::StartTag
+                                },
                                 name: current_tag.clone(),
                                 attributes: current_attrs.clone(),
                                 data: String::new(),
@@ -233,7 +249,11 @@ impl Html5Tokenizer {
                 Html5State::AfterAttributeValueQuoted => {
                     if ch == '>' {
                         tokens.push(Html5Token {
-                            kind: if is_end_tag { TokenKind::EndTag } else { TokenKind::StartTag },
+                            kind: if is_end_tag {
+                                TokenKind::EndTag
+                            } else {
+                                TokenKind::StartTag
+                            },
                             name: current_tag.clone(),
                             attributes: current_attrs.clone(),
                             data: String::new(),
@@ -417,7 +437,10 @@ mod tests {
     fn test_nested_elements() {
         let mut tok = Html5Tokenizer::new("<ul><li>Item 1</li><li>Item 2</li></ul>");
         let tokens = tok.tokenize();
-        let start_tags: Vec<_> = tokens.iter().filter(|t| t.kind == TokenKind::StartTag).collect();
+        let start_tags: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.kind == TokenKind::StartTag)
+            .collect();
         assert_eq!(start_tags.len(), 3);
         assert_eq!(start_tags[0].name, "ul");
         assert_eq!(start_tags[1].name, "li");
@@ -434,8 +457,14 @@ mod tests {
         );
         let tokens = tok.tokenize();
         let select = tokens.iter().find(|t| t.is_start_tag("select")).unwrap();
-        assert!(!select.self_closing, "select must not inherit self_closing from the input");
+        assert!(
+            !select.self_closing,
+            "select must not inherit self_closing from the input"
+        );
         let option = tokens.iter().find(|t| t.is_start_tag("option")).unwrap();
-        assert!(!option.self_closing, "option must not inherit self_closing either");
+        assert!(
+            !option.self_closing,
+            "option must not inherit self_closing either"
+        );
     }
 }

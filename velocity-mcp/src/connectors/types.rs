@@ -58,7 +58,11 @@ pub struct ConnectorConfig {
 // `requires_secret` backs build_request.
 impl ConnectorConfig {
     /// A minimal generic REST connector with no auth.
-    pub fn generic(id: impl Into<String>, name: impl Into<String>, base_url: impl Into<String>) -> Self {
+    pub fn generic(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -72,7 +76,11 @@ impl ConnectorConfig {
 
     /// GitHub REST preset: `https://api.github.com`, bearer auth, JSON accept
     /// header. `auth_secret` should name a stored token handle.
-    pub fn github(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+    pub fn github(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        auth_secret: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -81,7 +89,10 @@ impl ConnectorConfig {
             auth_secret,
             auth: AuthScheme::Bearer,
             headers: vec![
-                ("Accept".to_string(), "application/vnd.github+json".to_string()),
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github+json".to_string(),
+                ),
                 ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string()),
             ],
         }
@@ -89,7 +100,11 @@ impl ConnectorConfig {
 
     /// Slack Web API preset: `https://slack.com/api`, bearer auth.
     /// `auth_secret` should name a stored bot/user token handle.
-    pub fn slack(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+    pub fn slack(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        auth_secret: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -102,23 +117,32 @@ impl ConnectorConfig {
     }
 
     /// GitLab REST preset: `https://gitlab.com/api/v4`, private-token header auth.
-    pub fn gitlab(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+    pub fn gitlab(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        auth_secret: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
             kind: ConnectorKind::GitLab,
             base_url: "https://gitlab.com/api/v4".to_string(),
             auth_secret,
-            auth: AuthScheme::Header { name: "PRIVATE-TOKEN".to_string() },
-            headers: vec![
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ],
+            auth: AuthScheme::Header {
+                name: "PRIVATE-TOKEN".to_string(),
+            },
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         }
     }
 
     /// Jira Cloud REST preset: `https://api.atlassian.com/ex/jira`, basic auth
     /// via bearer (cloud API token). `auth_secret` should name a stored token.
-    pub fn jira(id: impl Into<String>, name: impl Into<String>, cloud_id: &str, auth_secret: Option<String>) -> Self {
+    pub fn jira(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        cloud_id: &str,
+        auth_secret: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -134,7 +158,11 @@ impl ConnectorConfig {
     }
 
     /// Discord webhook/API preset: `https://discord.com/api/v10`, bearer auth.
-    pub fn discord(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+    pub fn discord(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        auth_secret: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -142,15 +170,17 @@ impl ConnectorConfig {
             base_url: "https://discord.com/api/v10".to_string(),
             auth_secret,
             auth: AuthScheme::Bearer,
-            headers: vec![
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ],
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         }
     }
 
     /// Notion API preset: `https://api.notion.com/v1`, bearer auth with
     /// Notion-Version header.
-    pub fn notion(id: impl Into<String>, name: impl Into<String>, auth_secret: Option<String>) -> Self {
+    pub fn notion(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        auth_secret: Option<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -174,9 +204,7 @@ impl ConnectorConfig {
             base_url: url.into(),
             auth_secret: None,
             auth: AuthScheme::None,
-            headers: vec![
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ],
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         }
     }
 

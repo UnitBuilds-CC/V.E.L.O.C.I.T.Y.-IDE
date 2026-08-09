@@ -245,15 +245,12 @@ pub fn parse_nda_registry(
                     match field {
                         "label" => template.label = unescape_value(value)?,
                         "task_kind" => {
-                            template.task_kind = AgentTaskKind::parse(value).ok_or_else(|| {
-                                format!("Unknown template task kind '{value}'")
-                            })?;
+                            template.task_kind = AgentTaskKind::parse(value)
+                                .ok_or_else(|| format!("Unknown template task kind '{value}'"))?;
                         }
                         "system_prompt" => template.system_prompt = unescape_value(value)?,
                         _ => {
-                            return Err(format!(
-                                "Unknown template field '{field}' on line: {line}"
-                            ))
+                            return Err(format!("Unknown template field '{field}' on line: {line}"))
                         }
                     }
                 }
@@ -294,18 +291,12 @@ pub fn parse_nda_registry(
                             policy.task_kind = AgentTaskKind::parse(value)
                                 .ok_or_else(|| format!("Unknown policy task kind '{value}'"))?;
                         }
-                        "template" => {
-                            policy.instruction_template_id = unescape_value(value)?
-                        }
+                        "template" => policy.instruction_template_id = unescape_value(value)?,
                         "decomposition_style" => {
                             policy.decomposition_style = DecompositionStyle::parse(value)
                                 .ok_or_else(|| format!("Unknown decomposition style '{value}'"))?;
                         }
-                        _ => {
-                            return Err(format!(
-                                "Unknown policy field '{field}' on line: {line}"
-                            ))
-                        }
+                        _ => return Err(format!("Unknown policy field '{field}' on line: {line}")),
                     }
                 }
                 "policy_expectation" => {
@@ -324,9 +315,9 @@ pub fn parse_nda_registry(
                     let task_kind = *parts.get(1).ok_or_else(|| {
                         format!("Missing preferred policy task kind on line: {line}")
                     })?;
-                    let policy_id = *parts.get(2).ok_or_else(|| {
-                        format!("Missing preferred policy id on line: {line}")
-                    })?;
+                    let policy_id = *parts
+                        .get(2)
+                        .ok_or_else(|| format!("Missing preferred policy id on line: {line}"))?;
                     preferred_policies.push(PreferredPolicy {
                         task_kind: AgentTaskKind::parse(task_kind).ok_or_else(|| {
                             format!("Unknown preferred policy task kind '{task_kind}'")
@@ -416,9 +407,8 @@ pub fn parse_nda_registry(
                 .next()
                 .ok_or_else(|| format!("Missing preferred policy id on line: {line}"))?;
             preferred_policies.push(PreferredPolicy {
-                task_kind: AgentTaskKind::parse(task_kind).ok_or_else(|| {
-                    format!("Unknown preferred policy task kind '{task_kind}'")
-                })?,
+                task_kind: AgentTaskKind::parse(task_kind)
+                    .ok_or_else(|| format!("Unknown preferred policy task kind '{task_kind}'"))?,
                 policy_id: unescape_value(policy_id)?,
             });
             continue;

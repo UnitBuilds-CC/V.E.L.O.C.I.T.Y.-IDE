@@ -36,9 +36,15 @@ pub enum SolveResult {
     /// Solved via template replay (zero tokens).
     TemplateReplay { visual_hash: u64, confidence: f32 },
     /// Solved natively by learned shape rules + transient detection (zero tokens).
-    NativeSolve { clicked_cells: Vec<usize>, target: String },
+    NativeSolve {
+        clicked_cells: Vec<usize>,
+        target: String,
+    },
     /// Solved via full analysis (tokens spent).
-    FullSolve { descriptor: ChallengeDescriptor, steps: u32 },
+    FullSolve {
+        descriptor: ChallengeDescriptor,
+        steps: u32,
+    },
     /// Failed to solve.
     Failed { reason: String },
     /// No challenge detected.
@@ -115,7 +121,10 @@ impl CaptchaOrchestrator {
         ));
 
         // Step 3: Template lookup (zero-token fast path)
-        let template_hit = self.template_store.lookup(fp.hash).map(|t| (t.is_reliable(), t.confidence));
+        let template_hit = self
+            .template_store
+            .lookup(fp.hash)
+            .map(|t| (t.is_reliable(), t.confidence));
         if let Some((is_reliable, confidence)) = template_hit {
             if is_reliable {
                 // Fast path: replay stored solution
@@ -146,7 +155,11 @@ impl CaptchaOrchestrator {
         let snapshot = match snapshot {
             Some(s) => s,
             None => {
-                nda.push(NdaTriple::new(session_id, 260, "captcha_result:no_challenge"));
+                nda.push(NdaTriple::new(
+                    session_id,
+                    260,
+                    "captcha_result:no_challenge",
+                ));
                 return (SolveResult::NoChallenge, nda);
             }
         };
@@ -166,16 +179,17 @@ impl CaptchaOrchestrator {
             markers: snapshot.structural_markers.clone(),
         };
 
-        let descriptor = self.provider_fingerprinter.build_descriptor(
-            &provider,
-            fp.hash,
-            features,
-        );
+        let descriptor = self
+            .provider_fingerprinter
+            .build_descriptor(&provider, fp.hash, features);
 
         nda.push(NdaTriple::new(
             session_id,
             252,
-            &format!("captcha_provider:{}:{}", descriptor.provider, descriptor.variant),
+            &format!(
+                "captcha_provider:{}:{}",
+                descriptor.provider, descriptor.variant
+            ),
         ));
 
         // Step 5b: Native rule-based fast path (zero tokens).
@@ -198,13 +212,21 @@ impl CaptchaOrchestrator {
                         SolveAction::DeferToLlm => None,
                     })
                     .collect();
-                nda.push(NdaTriple::new(session_id, 255, "captcha_strategy:native_rules"));
+                nda.push(NdaTriple::new(
+                    session_id,
+                    255,
+                    "captcha_strategy:native_rules",
+                ));
                 nda.push(NdaTriple::new(
                     session_id,
                     256,
                     &format!("captcha_native_clicks:{}", clicked_cells.len()),
                 ));
-                nda.push(NdaTriple::new(session_id, 260, "captcha_result:native_solved"));
+                nda.push(NdaTriple::new(
+                    session_id,
+                    260,
+                    "captcha_result:native_solved",
+                ));
                 return (
                     SolveResult::NativeSolve {
                         clicked_cells,
@@ -217,10 +239,8 @@ impl CaptchaOrchestrator {
 
         // Step 6: Classify archetype and init state machine
         let archetype = VisualFingerprinter::classify_archetype(&fp);
-        let mut state_machine = ChallengeStateMachine::from_archetype(
-            descriptor.clone(),
-            &archetype,
-        );
+        let mut state_machine =
+            ChallengeStateMachine::from_archetype(descriptor.clone(), &archetype);
 
         nda.push(NdaTriple::new(
             session_id,
@@ -244,9 +264,11 @@ impl CaptchaOrchestrator {
             }
 
             // Pick the highest-confidence action
-            let best = actions
-                .iter()
-                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal));
+            let best = actions.iter().max_by(|a, b| {
+                a.confidence
+                    .partial_cmp(&b.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
             if let Some(transition) = best {
                 let action = transition.action.clone();
@@ -298,7 +320,10 @@ impl CaptchaOrchestrator {
 
     /// Get statistics about the template store: `(total, reliable)`.
     pub fn store_stats(&self) -> (usize, usize) {
-        (self.template_store.len(), self.template_store.reliable_count())
+        (
+            self.template_store.len(),
+            self.template_store.reliable_count(),
+        )
     }
 
     /// Export NDA triples for the current session's captcha activity.
@@ -333,7 +358,8 @@ impl CaptchaOrchestrator {
         cols: usize,
         timestamp_ms: u64,
     ) {
-        self.temporal.capture(buffer, region, rows, cols, timestamp_ms);
+        self.temporal
+            .capture(buffer, region, rows, cols, timestamp_ms);
     }
 
     /// The cell that changed most across observed frames (e.g. the tile that
@@ -424,7 +450,10 @@ fn parse_target_class(instruction: &str) -> Option<String> {
     let lower = instruction.to_lowercase();
     for marker in [" with ", " containing ", " of a ", " of "] {
         if let Some(pos) = lower.find(marker) {
-            let rest = lower[pos + marker.len()..].trim().trim_end_matches('.').trim();
+            let rest = lower[pos + marker.len()..]
+                .trim()
+                .trim_end_matches('.')
+                .trim();
             let cleaned = strip_article(rest).trim();
             if !cleaned.is_empty() {
                 return Some(cleaned.to_string());
@@ -432,7 +461,10 @@ fn parse_target_class(instruction: &str) -> Option<String> {
         }
     }
     if let Some(pos) = lower.find("select all ") {
-        let rest = lower[pos + "select all ".len()..].trim().trim_end_matches('.').trim();
+        let rest = lower[pos + "select all ".len()..]
+            .trim()
+            .trim_end_matches('.')
+            .trim();
         let cleaned = strip_article(rest).trim();
         // Guard against "select all images" being treated as the target.
         if !cleaned.is_empty() && cleaned != "images" && cleaned != "squares" {
@@ -468,7 +500,12 @@ mod tests {
         DomTree::new(vec![
             make_node(0, "div", &[("class", "page")], vec![1]),
             make_node(1, "div", &[("class", "h-captcha")], vec![2]),
-            make_node(2, "iframe", &[("src", "https://hcaptcha.com/1/api2/anchor")], vec![]),
+            make_node(
+                2,
+                "iframe",
+                &[("src", "https://hcaptcha.com/1/api2/anchor")],
+                vec![],
+            ),
         ])
     }
 
@@ -521,9 +558,12 @@ mod tests {
     #[test]
     fn no_challenge_detected() {
         let mut orch = CaptchaOrchestrator::new();
-        let tree = DomTree::new(vec![
-            make_node(0, "div", &[("class", "normal-page")], vec![]),
-        ]);
+        let tree = DomTree::new(vec![make_node(
+            0,
+            "div",
+            &[("class", "normal-page")],
+            vec![],
+        )]);
         let buf = PixelBuffer::new(100, 100);
 
         let (result, _) = orch.solve(&tree, &buf, (0, 0, 100, 100), "session1");
@@ -578,7 +618,12 @@ mod tests {
         let mut instr = make_node(5, "p", &[("class", "prompt")], vec![]);
         instr.text_content = instruction.to_string();
         DomTree::new(vec![
-            make_node(0, "div", &[("class", "captcha-container")], vec![1, 2, 3, 4, 5]),
+            make_node(
+                0,
+                "div",
+                &[("class", "captcha-container")],
+                vec![1, 2, 3, 4, 5],
+            ),
             make_node(1, "div", &[("class", "tile")], vec![]),
             make_node(2, "div", &[("class", "tile")], vec![]),
             make_node(3, "div", &[("class", "tile")], vec![]),
@@ -606,7 +651,10 @@ mod tests {
         }
         let (result, nda) = orch.solve(&tree, &buf, (0, 0, 200, 200), "s");
         match result {
-            SolveResult::NativeSolve { clicked_cells, target } => {
+            SolveResult::NativeSolve {
+                clicked_cells,
+                target,
+            } => {
                 assert_eq!(clicked_cells, vec![0]);
                 assert_eq!(target, "bus");
             }
@@ -648,7 +696,7 @@ mod tests {
         let orch = CaptchaOrchestrator::new();
         let mut buf = PixelBuffer::new(180, 60);
         buf.fill_rect(10, 10, 40, 40, 20, 20, 20, 255); // reference: square
-        // candidate 0 (region 60..120): disc
+                                                        // candidate 0 (region 60..120): disc
         for y in 0..60 {
             for x in 60..120 {
                 let dx = x as i32 - 90;
@@ -667,12 +715,18 @@ mod tests {
 
     #[test]
     fn parses_target_from_instructions() {
-        assert_eq!(parse_target_class("Select all images with a bus").as_deref(), Some("bus"));
+        assert_eq!(
+            parse_target_class("Select all images with a bus").as_deref(),
+            Some("bus")
+        );
         assert_eq!(
             parse_target_class("Click each image containing a traffic light").as_deref(),
             Some("traffic light")
         );
-        assert_eq!(parse_target_class("Select all buses").as_deref(), Some("buses"));
+        assert_eq!(
+            parse_target_class("Select all buses").as_deref(),
+            Some("buses")
+        );
         assert_eq!(parse_target_class("Verify you are human").as_deref(), None);
         assert_eq!(parse_target_class("Select all images").as_deref(), None);
     }
@@ -680,8 +734,17 @@ mod tests {
     #[test]
     fn cell_region_slicing_is_uniform() {
         // 2x2 grid over a 200x200 region → 100px cells.
-        assert_eq!(cell_region_of((0, 0, 200, 200), 2, 2, 0, 0), (0, 0, 100, 100));
-        assert_eq!(cell_region_of((0, 0, 200, 200), 2, 2, 1, 0), (0, 100, 100, 100));
-        assert_eq!(cell_region_of((0, 0, 200, 200), 2, 2, 0, 1), (100, 0, 100, 100));
+        assert_eq!(
+            cell_region_of((0, 0, 200, 200), 2, 2, 0, 0),
+            (0, 0, 100, 100)
+        );
+        assert_eq!(
+            cell_region_of((0, 0, 200, 200), 2, 2, 1, 0),
+            (0, 100, 100, 100)
+        );
+        assert_eq!(
+            cell_region_of((0, 0, 200, 200), 2, 2, 0, 1),
+            (100, 0, 100, 100)
+        );
     }
 }

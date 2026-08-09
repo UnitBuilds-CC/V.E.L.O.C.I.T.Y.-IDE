@@ -109,7 +109,9 @@ pub struct NotificationManager;
 impl NotificationManager {
     /// Get all currently visible notifications via PowerShell UIAutomation.
     pub fn get_visible_notifications() -> Vec<Notification> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let script = build_detect_notifications_script();
         match run_ps_script(&script) {
             Ok(json) => parse_notifications_result(&json),
@@ -123,10 +125,14 @@ impl NotificationManager {
     }
 
     /// Interact with a notification via PowerShell UIAutomation.
-    pub fn interact(notification: &Notification, action: &NotificationAction) -> NotificationResult {
+    pub fn interact(
+        notification: &Notification,
+        action: &NotificationAction,
+    ) -> NotificationResult {
         if !cfg!(target_os = "windows") {
             return NotificationResult {
-                success: false, action: "interact".into(),
+                success: false,
+                action: "interact".into(),
                 detail: "Notification interaction requires Windows".into(),
                 notifications_remaining: 0,
             };
@@ -164,22 +170,27 @@ if ($null -ne $w) {{
                 notification.app_name.replace('\'', "''"),
                 label.replace('\'', "''")
             ),
-            NotificationAction::Dismiss => build_dismiss_notifications_script(Some(&notification.app_name)),
+            NotificationAction::Dismiss => {
+                build_dismiss_notifications_script(Some(&notification.app_name))
+            }
             NotificationAction::DismissAll => build_dismiss_notifications_script(None),
         };
         match run_ps_script(&script) {
             Ok(json) => {
                 let remaining = Self::get_notification_count();
                 NotificationResult {
-                    success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                    success: json.contains("\"success\":true")
+                        || json.contains("\"success\": true"),
                     action: format!("{:?}", action),
                     detail: "executed via PowerShell".into(),
                     notifications_remaining: remaining,
                 }
             }
             Err(e) => NotificationResult {
-                success: false, action: format!("{:?}", action),
-                detail: e, notifications_remaining: Self::get_notification_count(),
+                success: false,
+                action: format!("{:?}", action),
+                detail: e,
+                notifications_remaining: Self::get_notification_count(),
             },
         }
     }
@@ -188,7 +199,8 @@ if ($null -ne $w) {{
     pub fn dismiss_all() -> NotificationResult {
         if !cfg!(target_os = "windows") {
             return NotificationResult {
-                success: false, action: "dismiss_all".into(),
+                success: false,
+                action: "dismiss_all".into(),
                 detail: "Notification dismissal requires Windows".into(),
                 notifications_remaining: 0,
             };
@@ -202,8 +214,10 @@ if ($null -ne $w) {{
                 notifications_remaining: 0,
             },
             Err(e) => NotificationResult {
-                success: false, action: "dismiss_all".into(),
-                detail: e, notifications_remaining: Self::get_notification_count(),
+                success: false,
+                action: "dismiss_all".into(),
+                detail: e,
+                notifications_remaining: Self::get_notification_count(),
             },
         }
     }
@@ -215,7 +229,8 @@ if ($null -ne $w) {{
     pub fn dismiss_matching(pattern: Option<&str>) -> NotificationResult {
         if !cfg!(target_os = "windows") {
             return NotificationResult {
-                success: false, action: "dismiss".into(),
+                success: false,
+                action: "dismiss".into(),
                 detail: "Notification dismissal requires Windows".into(),
                 notifications_remaining: 0,
             };
@@ -229,28 +244,37 @@ if ($null -ne $w) {{
             Ok(json) => {
                 let dismissed = parse_dismissed_count(&json);
                 NotificationResult {
-                    success: json.contains("\"success\":true") || json.contains("\"success\": true"),
+                    success: json.contains("\"success\":true")
+                        || json.contains("\"success\": true"),
                     action: "dismiss".into(),
                     detail: format!("dismissed {dismissed} notification(s) via PowerShell"),
                     notifications_remaining: Self::get_notification_count(),
                 }
             }
             Err(e) => NotificationResult {
-                success: false, action: "dismiss".into(),
-                detail: e, notifications_remaining: Self::get_notification_count(),
+                success: false,
+                action: "dismiss".into(),
+                detail: e,
+                notifications_remaining: Self::get_notification_count(),
             },
         }
     }
 
     /// Watch for notifications and optionally auto-dismiss.
     pub fn watch(config: &NotificationWatchConfig) -> Vec<Notification> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let start = SystemTime::now();
         let mut collected = Vec::new();
         while start.elapsed().unwrap_or(Duration::ZERO) < config.duration {
             let notifications = Self::get_visible_notifications();
             for n in &notifications {
-                if config.auto_dismiss_patterns.iter().any(|p| n.app_name.contains(p) || n.title.contains(p)) {
+                if config
+                    .auto_dismiss_patterns
+                    .iter()
+                    .any(|p| n.app_name.contains(p) || n.title.contains(p))
+                {
                     let _ = Self::interact(n, &NotificationAction::Dismiss);
                 } else if config.capture_content {
                     collected.push(n.clone());
@@ -263,7 +287,9 @@ if ($null -ne $w) {{
 
     /// Check if a UAC prompt is currently visible.
     pub fn is_uac_prompt_visible() -> bool {
-        if !cfg!(target_os = "windows") { return false; }
+        if !cfg!(target_os = "windows") {
+            return false;
+        }
         let script = r#"
 Add-Type -AssemblyName UIAutomationClient
 $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -271,12 +297,16 @@ $uac = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
     (New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'DirectUIHWND')))
 ConvertTo-Json @{ uac_visible = ($null -ne $uac) } -Compress"#;
-        run_ps_script(script).map(|o| o.contains("\"uac_visible\":true") || o.contains("\"uac_visible\": true")).unwrap_or(false)
+        run_ps_script(script)
+            .map(|o| o.contains("\"uac_visible\":true") || o.contains("\"uac_visible\": true"))
+            .unwrap_or(false)
     }
 
     /// Enumerate system tray icons via PowerShell.
     pub fn get_tray_icons() -> Vec<TrayIcon> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let script = build_enumerate_tray_script();
         match run_ps_script(&script) {
             Ok(json) => parse_tray_icons_result(&json),
@@ -288,7 +318,8 @@ ConvertTo-Json @{ uac_visible = ($null -ne $uac) } -Compress"#;
     pub fn click_tray_icon(tooltip: &str, action: &TrayAction) -> NotificationResult {
         if !cfg!(target_os = "windows") {
             return NotificationResult {
-                success: false, action: "tray_click".into(),
+                success: false,
+                action: "tray_click".into(),
                 detail: "Tray interaction requires Windows".into(),
                 notifications_remaining: 0,
             };
@@ -314,8 +345,10 @@ if ($null -ne $tray) {{
                 notifications_remaining: 0,
             },
             Err(e) => NotificationResult {
-                success: false, action: "tray_click".into(),
-                detail: e, notifications_remaining: 0,
+                success: false,
+                action: "tray_click".into(),
+                detail: e,
+                notifications_remaining: 0,
             },
         }
     }
@@ -428,14 +461,23 @@ ConvertTo-Json @{ icons = @($icons); count = $icons.Count } -Compress -Depth 2
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -459,16 +501,21 @@ fn parse_notifications_result(json: &str) -> Vec<Notification> {
         notifications: Option<Vec<PsNotification>>,
     }
     match serde_json::from_str::<PsResult>(json) {
-        Ok(r) => r.notifications.unwrap_or_default().into_iter().map(|n| Notification {
-            id: None,
-            app_name: n.app_name.unwrap_or_default(),
-            title: n.title.unwrap_or_default(),
-            body: n.body.unwrap_or_default(),
-            timestamp_ms: n.timestamp_ms.unwrap_or(0),
-            actions: n.actions.unwrap_or_default(),
-            is_visible: true,
-            is_system: false,
-        }).collect(),
+        Ok(r) => r
+            .notifications
+            .unwrap_or_default()
+            .into_iter()
+            .map(|n| Notification {
+                id: None,
+                app_name: n.app_name.unwrap_or_default(),
+                title: n.title.unwrap_or_default(),
+                body: n.body.unwrap_or_default(),
+                timestamp_ms: n.timestamp_ms.unwrap_or(0),
+                actions: n.actions.unwrap_or_default(),
+                is_visible: true,
+                is_system: false,
+            })
+            .collect(),
         Err(_) => Vec::new(),
     }
 }
@@ -495,11 +542,16 @@ fn parse_tray_icons_result(json: &str) -> Vec<TrayIcon> {
         icons: Option<Vec<PsIcon>>,
     }
     match serde_json::from_str::<PsResult>(json) {
-        Ok(r) => r.icons.unwrap_or_default().into_iter().map(|i| TrayIcon {
-            tooltip: i.tooltip.unwrap_or_default(),
-            process_id: i.process_id.unwrap_or(0),
-            is_visible: true,
-        }).collect(),
+        Ok(r) => r
+            .icons
+            .unwrap_or_default()
+            .into_iter()
+            .map(|i| TrayIcon {
+                tooltip: i.tooltip.unwrap_or_default(),
+                process_id: i.process_id.unwrap_or(0),
+                is_visible: true,
+            })
+            .collect(),
         Err(_) => Vec::new(),
     }
 }

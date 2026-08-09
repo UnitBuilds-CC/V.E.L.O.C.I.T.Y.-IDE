@@ -2,10 +2,10 @@
 //! Code completion engine — provides suggestions from sitemap symbols,
 //! keywords, and local identifiers.
 
-use std::path::Path;
-use std::collections::HashSet;
-use eframe::egui;
 use crate::editor::theme::IdePalette;
+use eframe::egui;
+use std::collections::HashSet;
+use std::path::Path;
 
 /// A single completion item.
 #[derive(Debug, Clone)]
@@ -94,7 +94,10 @@ impl CompletionState {
 
     pub fn refilter(&mut self) {
         let prefix_lower = self.prefix.to_lowercase();
-        self.filtered = self.items.iter().enumerate()
+        self.filtered = self
+            .items
+            .iter()
+            .enumerate()
             .filter(|(_, item)| {
                 if prefix_lower.is_empty() {
                     return true;
@@ -126,7 +129,9 @@ impl CompletionState {
 
     /// Get the currently selected item.
     pub fn current_item(&self) -> Option<&CompletionItem> {
-        self.filtered.get(self.selected).and_then(|&i| self.items.get(i))
+        self.filtered
+            .get(self.selected)
+            .and_then(|&i| self.items.get(i))
     }
 }
 
@@ -141,37 +146,78 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
 /// Language keywords for common languages.
 pub fn rust_keywords() -> Vec<CompletionItem> {
     let kws = [
-        "fn", "let", "mut", "const", "static", "struct", "enum", "impl", "trait",
-        "pub", "use", "mod", "crate", "self", "super", "where", "type", "async",
-        "await", "match", "if", "else", "for", "while", "loop", "break", "continue",
-        "return", "unsafe", "extern", "dyn", "Box", "Vec", "String", "Option",
-        "Result", "Some", "None", "Ok", "Err", "true", "false",
+        "fn", "let", "mut", "const", "static", "struct", "enum", "impl", "trait", "pub", "use",
+        "mod", "crate", "self", "super", "where", "type", "async", "await", "match", "if", "else",
+        "for", "while", "loop", "break", "continue", "return", "unsafe", "extern", "dyn", "Box",
+        "Vec", "String", "Option", "Result", "Some", "None", "Ok", "Err", "true", "false",
     ];
-    kws.iter().map(|kw| CompletionItem {
-        label: kw.to_string(),
-        kind: CompletionKind::Keyword,
-        detail: Some("keyword".to_string()),
-        insert_text: kw.to_string(),
-        sort_key: 100,
-    }).collect()
+    kws.iter()
+        .map(|kw| CompletionItem {
+            label: kw.to_string(),
+            kind: CompletionKind::Keyword,
+            detail: Some("keyword".to_string()),
+            insert_text: kw.to_string(),
+            sort_key: 100,
+        })
+        .collect()
 }
 
 pub fn typescript_keywords() -> Vec<CompletionItem> {
     let kws = [
-        "function", "const", "let", "var", "class", "interface", "type", "enum",
-        "import", "export", "from", "return", "if", "else", "for", "while",
-        "switch", "case", "break", "continue", "try", "catch", "finally",
-        "throw", "new", "this", "super", "extends", "implements", "async",
-        "await", "yield", "typeof", "instanceof", "void", "null", "undefined",
-        "true", "false", "string", "number", "boolean", "any", "never",
+        "function",
+        "const",
+        "let",
+        "var",
+        "class",
+        "interface",
+        "type",
+        "enum",
+        "import",
+        "export",
+        "from",
+        "return",
+        "if",
+        "else",
+        "for",
+        "while",
+        "switch",
+        "case",
+        "break",
+        "continue",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "new",
+        "this",
+        "super",
+        "extends",
+        "implements",
+        "async",
+        "await",
+        "yield",
+        "typeof",
+        "instanceof",
+        "void",
+        "null",
+        "undefined",
+        "true",
+        "false",
+        "string",
+        "number",
+        "boolean",
+        "any",
+        "never",
     ];
-    kws.iter().map(|kw| CompletionItem {
-        label: kw.to_string(),
-        kind: CompletionKind::Keyword,
-        detail: Some("keyword".to_string()),
-        insert_text: kw.to_string(),
-        sort_key: 100,
-    }).collect()
+    kws.iter()
+        .map(|kw| CompletionItem {
+            label: kw.to_string(),
+            kind: CompletionKind::Keyword,
+            detail: Some("keyword".to_string()),
+            insert_text: kw.to_string(),
+            sort_key: 100,
+        })
+        .collect()
 }
 
 /// Extract local identifiers from the current buffer for completion.
@@ -180,7 +226,13 @@ pub fn extract_local_identifiers(content: &str, current_word: &str) -> Vec<Compl
     let mut items = Vec::new();
 
     for word in content.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        if word.len() < 2 || word == current_word || !word.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
+        if word.len() < 2
+            || word == current_word
+            || !word
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+        {
             continue;
         }
         if seen.insert(word.to_string()) {
@@ -197,10 +249,17 @@ pub fn extract_local_identifiers(content: &str, current_word: &str) -> Vec<Compl
 }
 
 /// Build completion from sitemap symbols.
-pub fn from_sitemap_symbols(symbols: &[crate::editor::search::SymbolEntry], prefix: &str) -> Vec<CompletionItem> {
+pub fn from_sitemap_symbols(
+    symbols: &[crate::editor::search::SymbolEntry],
+    prefix: &str,
+) -> Vec<CompletionItem> {
     let prefix_lower = prefix.to_lowercase();
-    symbols.iter()
-        .filter(|s| s.name.to_lowercase().starts_with(&prefix_lower) || fuzzy_match(&s.name.to_lowercase(), &prefix_lower))
+    symbols
+        .iter()
+        .filter(|s| {
+            s.name.to_lowercase().starts_with(&prefix_lower)
+                || fuzzy_match(&s.name.to_lowercase(), &prefix_lower)
+        })
         .take(50)
         .map(|s| {
             let kind = if s.name.starts_with(|c: char| c.is_uppercase()) {
@@ -239,7 +298,11 @@ pub fn merge_completion_items(
             out.push(item);
         }
     }
-    out.sort_by(|a, b| a.sort_key.cmp(&b.sort_key).then_with(|| a.label.cmp(&b.label)));
+    out.sort_by(|a, b| {
+        a.sort_key
+            .cmp(&b.sort_key)
+            .then_with(|| a.label.cmp(&b.label))
+    });
     out
 }
 
@@ -255,7 +318,8 @@ pub fn keywords_for_extension(ext: &str) -> Vec<CompletionItem> {
 /// Determine the word prefix at a cursor position (for triggering completion).
 pub fn word_prefix_at(text: &str, cursor_offset: usize) -> (String, usize) {
     let before = &text[..cursor_offset.min(text.len())];
-    let start = before.rfind(|c: char| !c.is_alphanumeric() && c != '_')
+    let start = before
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
         .map(|i| i + 1)
         .unwrap_or(0);
     let prefix = before[start..].to_string();
@@ -270,11 +334,7 @@ pub fn extension_from_path(path: Option<&Path>) -> &str {
 }
 
 /// Render the completion popup below the editor.
-pub fn render_completion_popup(
-    ui: &mut egui::Ui,
-    state: &CompletionState,
-    palette: IdePalette,
-) {
+pub fn render_completion_popup(ui: &mut egui::Ui, state: &CompletionState, palette: IdePalette) {
     if state.filtered.is_empty() {
         return;
     }
@@ -341,12 +401,36 @@ mod tests {
     #[test]
     fn merge_dedupes_by_label_lsp_wins_and_sorts() {
         let lsp = vec![
-            CompletionItem { label: "shared".into(), kind: CompletionKind::Function, detail: Some("from lsp".into()), insert_text: "shared".into(), sort_key: 20 },
-            CompletionItem { label: "aaa_lsp".into(), kind: CompletionKind::Variable, detail: None, insert_text: "aaa_lsp".into(), sort_key: 20 },
+            CompletionItem {
+                label: "shared".into(),
+                kind: CompletionKind::Function,
+                detail: Some("from lsp".into()),
+                insert_text: "shared".into(),
+                sort_key: 20,
+            },
+            CompletionItem {
+                label: "aaa_lsp".into(),
+                kind: CompletionKind::Variable,
+                detail: None,
+                insert_text: "aaa_lsp".into(),
+                sort_key: 20,
+            },
         ];
         let local = vec![
-            CompletionItem { label: "shared".into(), kind: CompletionKind::Type, detail: Some("from sitemap".into()), insert_text: "shared".into(), sort_key: 30 },
-            CompletionItem { label: "zzz_local".into(), kind: CompletionKind::Keyword, detail: None, insert_text: "zzz_local".into(), sort_key: 100 },
+            CompletionItem {
+                label: "shared".into(),
+                kind: CompletionKind::Type,
+                detail: Some("from sitemap".into()),
+                insert_text: "shared".into(),
+                sort_key: 30,
+            },
+            CompletionItem {
+                label: "zzz_local".into(),
+                kind: CompletionKind::Keyword,
+                detail: None,
+                insert_text: "zzz_local".into(),
+                sort_key: 100,
+            },
         ];
         let merged = merge_completion_items(lsp, local);
         assert_eq!(merged.len(), 3);

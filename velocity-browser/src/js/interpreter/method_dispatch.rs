@@ -1,10 +1,10 @@
-use super::signal::*;
 use super::coercion::*;
-use super::function::call_function_with_this;
 use super::collections::*;
 use super::core_methods::*;
-use super::web_apis::*;
+use super::function::call_function_with_this;
 use super::intl::*;
+use super::signal::*;
+use super::web_apis::*;
 use crate::js::scope::ScopeRef;
 use crate::js::vm::JsValue;
 use std::collections::HashMap;
@@ -18,7 +18,10 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
         JsValue::String(s) => {
             // replace/replaceAll with a function replacement needs scope for the callback.
             if (method == "replace" || method == "replaceAll")
-                && matches!(args.get(1), Some(JsValue::Function { .. } | JsValue::NativeFunction(_)))
+                && matches!(
+                    args.get(1),
+                    Some(JsValue::Function { .. } | JsValue::NativeFunction(_))
+                )
             {
                 return string_replace_with_fn(s, method, args, scope);
             }
@@ -28,8 +31,14 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
             // Check for Map/Set/Promise builtins
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
-                Some("Map") | Some("WeakMap") => { let mut m = map.clone(); return call_map_method(&mut m, method, args, scope); }
-                Some("Set") | Some("WeakSet") => { let mut m = map.clone(); return call_set_method(&mut m, method, args, scope); }
+                Some("Map") | Some("WeakMap") => {
+                    let mut m = map.clone();
+                    return call_map_method(&mut m, method, args, scope);
+                }
+                Some("Set") | Some("WeakSet") => {
+                    let mut m = map.clone();
+                    return call_set_method(&mut m, method, args, scope);
+                }
                 Some("Promise") => return call_promise_method(map, method, args, scope),
                 Some("Date") => return call_date_method_enhanced(map, method, args),
                 Some("Generator") => return call_generator_method(map, method),
@@ -40,17 +49,29 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
                 Some("TextDecoder") => return call_text_decoder_method(map, method, args),
                 Some("Response") => return call_response_method(map, method, args),
                 Some("Blob") => return call_blob_method(map, method, args),
-                Some("Uint8Array") | Some("Int8Array") | Some("Uint16Array") | Some("Int16Array") |
-                Some("Uint32Array") | Some("Int32Array") | Some("Float32Array") | Some("Float64Array") |
-                Some("Uint8ClampedArray") => return call_typed_array_method(map, method, args),
+                Some("Uint8Array")
+                | Some("Int8Array")
+                | Some("Uint16Array")
+                | Some("Int16Array")
+                | Some("Uint32Array")
+                | Some("Int32Array")
+                | Some("Float32Array")
+                | Some("Float64Array")
+                | Some("Uint8ClampedArray") => return call_typed_array_method(map, method, args),
                 Some("DataView") => return call_dataview_method(map, method, args),
                 Some("Intl.Segmenter") => return call_segmenter_method(map, method, args),
                 Some("Intl.Collator") => return call_collator_method(map, method, args),
                 Some("Intl.NumberFormat") => return call_number_format_method(map, method, args),
-                Some("Intl.DateTimeFormat") => return call_datetime_format_method(map, method, args),
+                Some("Intl.DateTimeFormat") => {
+                    return call_datetime_format_method(map, method, args)
+                }
                 Some("Intl.PluralRules") => return call_plural_rules_method(map, method, args),
-                Some("Intl.RelativeTimeFormat") => return call_relative_time_format_method(map, method, args),
-                Some("Intl.DurationFormat") => return call_duration_format_method(map, method, args),
+                Some("Intl.RelativeTimeFormat") => {
+                    return call_relative_time_format_method(map, method, args)
+                }
+                Some("Intl.DurationFormat") => {
+                    return call_duration_format_method(map, method, args)
+                }
                 Some("Intl.ListFormat") => return call_list_format_method(map, method, args),
                 Some("Intl.DisplayNames") => return call_display_names_method(map, method, args),
                 Some("Segments") => {
@@ -66,7 +87,10 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
                         };
                         if index < segments.len() {
                             let mut updated = map.clone();
-                            updated.insert("__index__".to_string(), JsValue::Number((index + 1) as f64));
+                            updated.insert(
+                                "__index__".to_string(),
+                                JsValue::Number((index + 1) as f64),
+                            );
                             return Ok(JsValue::Object(updated));
                         }
                         let mut done = HashMap::new();
@@ -80,7 +104,10 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
                 Some("BoundFunction") => {
                     let target = map.get("__target__").cloned().unwrap_or(JsValue::Undefined);
                     let bound_this = map.get("__this__").cloned().unwrap_or(JsValue::Undefined);
-                    let bound_args = match map.get("__args__") { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
+                    let bound_args = match map.get("__args__") {
+                        Some(JsValue::Array(a)) => a.clone(),
+                        _ => Vec::new(),
+                    };
                     return match method {
                         "call" => {
                             let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -88,7 +115,10 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
                         }
                         "apply" => {
                             let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
-                            let call_args = match args.get(1) { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
+                            let call_args = match args.get(1) {
+                                Some(JsValue::Array(a)) => a.clone(),
+                                _ => Vec::new(),
+                            };
                             call_function_with_this(&target, &call_args, scope, Some(this_arg))
                         }
                         "bind" => {
@@ -96,7 +126,10 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
                             let mut bound = bound_args;
                             bound.extend(args.iter().skip(1).cloned());
                             let mut m = HashMap::new();
-                            m.insert("__type__".to_string(), JsValue::String("BoundFunction".to_string()));
+                            m.insert(
+                                "__type__".to_string(),
+                                JsValue::String("BoundFunction".to_string()),
+                            );
                             m.insert("__target__".to_string(), target);
                             m.insert("__this__".to_string(), this_arg);
                             m.insert("__args__".to_string(), JsValue::Array(bound));
@@ -117,30 +150,34 @@ pub fn call_method(obj: &JsValue, method: &str, args: &[JsValue], scope: &ScopeR
         JsValue::Boolean(b) => call_boolean_method(*b, method, args),
         JsValue::NativeFunction(name) => call_native_function_method(name, method, args),
         // Function.prototype.call / apply / bind.
-        JsValue::Function { .. } => {
-            match method {
-                "call" => {
-                    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
-                    call_function_with_this(obj, &args[1..], scope, Some(this_arg))
-                }
-                "apply" => {
-                    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
-                    let call_args = match args.get(1) { Some(JsValue::Array(a)) => a.clone(), _ => Vec::new() };
-                    call_function_with_this(obj, &call_args, scope, Some(this_arg))
-                }
-                "bind" => {
-                    let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
-                    let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
-                    let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("BoundFunction".to_string()));
-                    m.insert("__target__".to_string(), obj.clone());
-                    m.insert("__this__".to_string(), this_arg);
-                    m.insert("__args__".to_string(), JsValue::Array(bound_args));
-                    Ok(JsValue::Object(m))
-                }
-                _ => Ok(JsValue::Undefined),
+        JsValue::Function { .. } => match method {
+            "call" => {
+                let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                call_function_with_this(obj, &args[1..], scope, Some(this_arg))
             }
-        }
+            "apply" => {
+                let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                let call_args = match args.get(1) {
+                    Some(JsValue::Array(a)) => a.clone(),
+                    _ => Vec::new(),
+                };
+                call_function_with_this(obj, &call_args, scope, Some(this_arg))
+            }
+            "bind" => {
+                let this_arg = args.first().cloned().unwrap_or(JsValue::Undefined);
+                let bound_args: Vec<JsValue> = args.iter().skip(1).cloned().collect();
+                let mut m = HashMap::new();
+                m.insert(
+                    "__type__".to_string(),
+                    JsValue::String("BoundFunction".to_string()),
+                );
+                m.insert("__target__".to_string(), obj.clone());
+                m.insert("__this__".to_string(), this_arg);
+                m.insert("__args__".to_string(), JsValue::Array(bound_args));
+                Ok(JsValue::Object(m))
+            }
+            _ => Ok(JsValue::Undefined),
+        },
         _ => Ok(JsValue::Undefined),
     }
 }
@@ -210,9 +247,7 @@ mod tests {
 
     #[test]
     fn flatten_zero_depth_does_not_recurse() {
-        let arr = vec![
-            JsValue::Array(vec![JsValue::Number(1.0)]),
-        ];
+        let arr = vec![JsValue::Array(vec![JsValue::Number(1.0)])];
         let flat = flatten_array(&arr, 0);
         assert_eq!(flat.len(), 1);
         assert!(matches!(flat[0], JsValue::Array(_)));
@@ -220,11 +255,9 @@ mod tests {
 
     #[test]
     fn flatten_deep_nested() {
-        let arr = vec![
-            JsValue::Array(vec![
-                JsValue::Array(vec![JsValue::Number(1.0)]),
-            ]),
-        ];
+        let arr = vec![JsValue::Array(vec![JsValue::Array(vec![JsValue::Number(
+            1.0,
+        )])])];
         let flat = flatten_array(&arr, 3);
         assert_eq!(flat, vec![JsValue::Number(1.0)]);
     }

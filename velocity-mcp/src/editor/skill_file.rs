@@ -41,11 +41,16 @@ fn skill_path(workspace_root: &Path, id: &str) -> std::path::PathBuf {
 }
 
 pub fn serialize_skill_nda(skill: &SkillFile) -> String {
-    let lines = ["skill version 1".to_string(),
+    let lines = [
+        "skill version 1".to_string(),
         format!("field\tid\t{}", encode_nda_text(&skill.id)),
         format!("field\tname\t{}", encode_nda_text(&skill.name)),
-        format!("field\tdescription\t{}", encode_nda_text(&skill.description)),
-        format!("field\tbody\t{}", encode_nda_text(&skill.body))];
+        format!(
+            "field\tdescription\t{}",
+            encode_nda_text(&skill.description)
+        ),
+        format!("field\tbody\t{}", encode_nda_text(&skill.body)),
+    ];
     lines.join("\n") + "\n"
 }
 

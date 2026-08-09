@@ -56,8 +56,12 @@ impl FastCssParser {
                     let mut depth = 1;
                     pos += 1;
                     while pos < len && depth > 0 {
-                        if bytes[pos] == b'{' { depth += 1; }
-                        if bytes[pos] == b'}' { depth -= 1; }
+                        if bytes[pos] == b'{' {
+                            depth += 1;
+                        }
+                        if bytes[pos] == b'}' {
+                            depth -= 1;
+                        }
                         pos += 1;
                     }
                 } else if pos < len {
@@ -93,8 +97,12 @@ impl FastCssParser {
             let decl_start = pos;
             let mut depth = 1;
             while pos < len && depth > 0 {
-                if bytes[pos] == b'{' { depth += 1; }
-                if bytes[pos] == b'}' { depth -= 1; }
+                if bytes[pos] == b'{' {
+                    depth += 1;
+                }
+                if bytes[pos] == b'}' {
+                    depth -= 1;
+                }
                 pos += 1;
             }
             let decl_text = &cleaned[decl_start..pos.saturating_sub(1)];
@@ -108,7 +116,8 @@ impl FastCssParser {
 
             // Compute specificity for the selector
             let specificity = Self::compute_specificity(&selector_text);
-            let specificity_score = specificity.0 * 1000 + specificity.1 * 100 + specificity.2 * 10 + specificity.3;
+            let specificity_score =
+                specificity.0 * 1000 + specificity.1 * 100 + specificity.2 * 10 + specificity.3;
 
             // Compute hashes
             let selector_hash = crate::nda::hash_str(&selector_text);
@@ -173,8 +182,15 @@ impl FastCssParser {
             let inner = &rule.selector_text[1..rule.selector_text.len() - 1];
             if let Some(eq_pos) = inner.find('=') {
                 let attr_name = inner[..eq_pos].trim();
-                let attr_val = inner[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
-                return node.attributes.get(attr_name).map(|v| v == attr_val).unwrap_or(false);
+                let attr_val = inner[eq_pos + 1..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                return node
+                    .attributes
+                    .get(attr_name)
+                    .map(|v| v == attr_val)
+                    .unwrap_or(false);
             } else {
                 return node.attributes.contains_key(inner.trim());
             }
@@ -185,7 +201,9 @@ impl FastCssParser {
             let tag_part = &rule.selector_text[..dot_pos];
             let class_part = &rule.selector_text[dot_pos + 1..];
             let tag_match = tag_part.is_empty() || node.tag_name.to_lowercase() == *tag_part;
-            let class_match = node.attributes.get("class")
+            let class_match = node
+                .attributes
+                .get("class")
                 .map(|c| c.split_whitespace().any(|cls| cls == class_part))
                 .unwrap_or(false);
             return tag_match && class_match;
@@ -195,7 +213,11 @@ impl FastCssParser {
             let tag_part = &rule.selector_text[..hash_pos];
             let id_part = &rule.selector_text[hash_pos + 1..];
             let tag_match = tag_part.is_empty() || node.tag_name.to_lowercase() == *tag_part;
-            let id_match = node.attributes.get("id").map(|i| i == id_part).unwrap_or(false);
+            let id_match = node
+                .attributes
+                .get("id")
+                .map(|i| i == id_part)
+                .unwrap_or(false);
             return tag_match && id_match;
         }
 
@@ -217,10 +239,16 @@ impl FastCssParser {
             return true;
         }
         if let Some(id_sel) = selector.strip_prefix('#') {
-            return node.attributes.get("id").map(|i| i == id_sel).unwrap_or(false);
+            return node
+                .attributes
+                .get("id")
+                .map(|i| i == id_sel)
+                .unwrap_or(false);
         }
         if let Some(class_sel) = selector.strip_prefix('.') {
-            return node.attributes.get("class")
+            return node
+                .attributes
+                .get("class")
                 .map(|c| c.split_whitespace().any(|cls| cls == class_sel))
                 .unwrap_or(false);
         }
@@ -229,7 +257,11 @@ impl FastCssParser {
             if let Some(eq_pos) = inner.find('=') {
                 let attr_name = &inner[..eq_pos];
                 let attr_val = inner[eq_pos + 1..].trim_matches('"').trim_matches('\'');
-                return node.attributes.get(attr_name).map(|v| v == attr_val).unwrap_or(false);
+                return node
+                    .attributes
+                    .get(attr_name)
+                    .map(|v| v == attr_val)
+                    .unwrap_or(false);
             }
             return node.attributes.contains_key(inner);
         }
@@ -244,7 +276,7 @@ impl FastCssParser {
         while let Some(ch) = chars.next() {
             if ch == '/' && chars.peek() == Some(&'*') {
                 chars.next(); // consume '*'
-                // Skip until '*/'
+                              // Skip until '*/'
                 loop {
                     match chars.next() {
                         Some('*') if chars.peek() == Some(&'/') => {
@@ -279,7 +311,11 @@ impl FastCssParser {
                     (value_raw.to_string(), false)
                 };
                 if !property.is_empty() && !value.is_empty() {
-                    decls.push(CssDeclaration { property, value, important });
+                    decls.push(CssDeclaration {
+                        property,
+                        value,
+                        important,
+                    });
                 }
             }
         }
@@ -293,35 +329,49 @@ impl FastCssParser {
         let mut elements = 0u32;
 
         // Split by combinators to get compound selectors
-        for compound in selector.split(|c: char| c.is_whitespace() || c == '>' || c == '+' || c == '~') {
+        for compound in
+            selector.split(|c: char| c.is_whitespace() || c == '>' || c == '+' || c == '~')
+        {
             let compound = compound.trim();
-            if compound.is_empty() { continue; }
+            if compound.is_empty() {
+                continue;
+            }
             let mut rest = compound;
             while !rest.is_empty() {
                 if rest.starts_with('#') {
                     ids += 1;
-                    let end = rest[1..].find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-                        .map(|p| p + 1).unwrap_or(rest.len());
+                    let end = rest[1..]
+                        .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                        .map(|p| p + 1)
+                        .unwrap_or(rest.len());
                     rest = &rest[end..];
                 } else if rest.starts_with("::") {
                     elements += 1;
-                    let end = rest[2..].find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-                        .map(|p| p + 2).unwrap_or(rest.len());
+                    let end = rest[2..]
+                        .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                        .map(|p| p + 2)
+                        .unwrap_or(rest.len());
                     rest = &rest[end..];
                 } else if rest.starts_with(':') {
                     classes += 1;
-                    let end = rest[1..].find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-                        .map(|p| p + 1).unwrap_or(rest.len());
+                    let end = rest[1..]
+                        .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                        .map(|p| p + 1)
+                        .unwrap_or(rest.len());
                     rest = &rest[end..];
                 } else if rest.starts_with('[') {
                     classes += 1;
                     if let Some(close) = rest.find(']') {
                         rest = &rest[close + 1..];
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 } else if rest.starts_with('.') {
                     classes += 1;
-                    let end = rest[1..].find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-                        .map(|p| p + 1).unwrap_or(rest.len());
+                    let end = rest[1..]
+                        .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                        .map(|p| p + 1)
+                        .unwrap_or(rest.len());
                     rest = &rest[end..];
                 } else if rest.starts_with('*') {
                     rest = &rest[1..];
@@ -330,7 +380,8 @@ impl FastCssParser {
                     // when the fast scanner runs over raw page HTML around a
                     // <style> block) are skipped one at a time so this loop
                     // always advances instead of spinning forever.
-                    let end = rest.find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                    let end = rest
+                        .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
                         .unwrap_or(rest.len());
                     if end > 0 {
                         elements += 1;
@@ -348,7 +399,8 @@ impl FastCssParser {
 
     /// Extract tag name hash from selector.
     fn extract_tag_hash(selector: &str) -> u64 {
-        let tag = selector.split(|c: char| c == '.' || c == '#' || c == '[' || c.is_whitespace())
+        let tag = selector
+            .split(|c: char| c == '.' || c == '#' || c == '[' || c.is_whitespace())
             .next()
             .unwrap_or("");
         if tag.is_empty() || tag.starts_with('#') || tag.starts_with('.') || tag.starts_with('[') {
@@ -362,7 +414,8 @@ impl FastCssParser {
     fn extract_class_hash(selector: &str) -> u64 {
         if let Some(dot_pos) = selector.find('.') {
             let rest = &selector[dot_pos + 1..];
-            let class_name = rest.split(|c: char| c.is_whitespace() || c == '.' || c == '#' || c == '[')
+            let class_name = rest
+                .split(|c: char| c.is_whitespace() || c == '.' || c == '#' || c == '[')
                 .next()
                 .unwrap_or("");
             if !class_name.is_empty() {
@@ -391,7 +444,11 @@ impl FastCssParser {
         // Sort by specificity ascending (lowest first); at same specificity, earlier source order first
         matched.sort_by(|a, b| {
             let ord = a.0.cmp(&b.0); // lower specificity first
-            if ord == std::cmp::Ordering::Equal { a.1.cmp(&b.1) } else { ord } // earlier rule first at tie
+            if ord == std::cmp::Ordering::Equal {
+                a.1.cmp(&b.1)
+            } else {
+                ord
+            } // earlier rule first at tie
         });
 
         // Separate normal and !important declarations

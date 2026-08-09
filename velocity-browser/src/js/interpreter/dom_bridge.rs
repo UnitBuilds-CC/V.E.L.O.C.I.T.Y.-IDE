@@ -84,7 +84,9 @@ fn alloc_node(node: DomNode) -> usize {
 fn ensure_root() -> usize {
     DOM_ROOT.with(|root| {
         let mut root = root.borrow_mut();
-        if let Some(id) = *root { return id; }
+        if let Some(id) = *root {
+            return id;
+        }
         let html = alloc_node(DomNode::new_element("html"));
         let head = alloc_node(DomNode::new_element("head"));
         let body = alloc_node(DomNode::new_element("body"));
@@ -119,22 +121,28 @@ pub(super) fn snapshot_dom() -> (Vec<DomElementSnapshot>, usize) {
     let root = ensure_root();
     let snaps = DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
-        nodes.iter().enumerate().map(|(id, n)| DomElementSnapshot {
-            id,
-            tag: n.tag.clone(),
-            attributes: n.attributes.clone(),
-            children: n.children.clone(),
-            parent: n.parent,
-            text_content: n.text_content.clone(),
-            node_type: n.node_type,
-        }).collect()
+        nodes
+            .iter()
+            .enumerate()
+            .map(|(id, n)| DomElementSnapshot {
+                id,
+                tag: n.tag.clone(),
+                attributes: n.attributes.clone(),
+                children: n.children.clone(),
+                parent: n.parent,
+                text_content: n.text_content.clone(),
+                node_type: n.node_type,
+            })
+            .collect()
     });
     (snaps, root)
 }
 
 /// Get the root element ID.
 #[allow(dead_code)]
-pub(super) fn get_root_id() -> usize { ensure_root() }
+pub(super) fn get_root_id() -> usize {
+    ensure_root()
+}
 
 /// Get the total number of DOM nodes.
 #[allow(dead_code)]
@@ -153,15 +161,27 @@ pub fn reset_dom() {
 
 fn element_handle(id: usize) -> JsValue {
     let mut obj = HashMap::new();
-    obj.insert("__type__".to_string(), JsValue::String("Element".to_string()));
+    obj.insert(
+        "__type__".to_string(),
+        JsValue::String("Element".to_string()),
+    );
     obj.insert("__node_id__".to_string(), JsValue::Number(id as f64));
     // Expose common properties directly on the handle for fast access.
     DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
         if let Some(node) = nodes.get(id) {
-            obj.insert("tagName".to_string(), JsValue::String(node.tag.to_uppercase()));
-            obj.insert("nodeName".to_string(), JsValue::String(node.tag.to_uppercase()));
-            obj.insert("nodeType".to_string(), JsValue::Number(node.node_type as f64));
+            obj.insert(
+                "tagName".to_string(),
+                JsValue::String(node.tag.to_uppercase()),
+            );
+            obj.insert(
+                "nodeName".to_string(),
+                JsValue::String(node.tag.to_uppercase()),
+            );
+            obj.insert(
+                "nodeType".to_string(),
+                JsValue::Number(node.node_type as f64),
+            );
             if let Some(id_attr) = node.attributes.get("id") {
                 obj.insert("id".to_string(), JsValue::String(id_attr.clone()));
             }
@@ -188,7 +208,16 @@ fn node_id_from_handle(val: &JsValue) -> Option<usize> {
 pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
     match method {
         "createElement" => {
-            let tag = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("div");
+            let tag = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("div");
             if tag.eq_ignore_ascii_case("canvas") {
                 return super::canvas::make_canvas_element(300, 150);
             }
@@ -196,7 +225,16 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             element_handle(id)
         }
         "createTextNode" => {
-            let text = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let text = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             let id = alloc_node(DomNode::new_text(text));
             element_handle(id)
         }
@@ -205,45 +243,103 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             element_handle(id)
         }
         "getElementById" => {
-            let target_id = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let target_id = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             ensure_root();
             let found = DOM_NODES.with(|nodes| {
                 let nodes = nodes.borrow();
-                nodes.iter().position(|n| n.node_type == 1 && n.attributes.get("id").map(|s| s.as_str()) == Some(target_id))
+                nodes.iter().position(|n| {
+                    n.node_type == 1
+                        && n.attributes.get("id").map(|s| s.as_str()) == Some(target_id)
+                })
             });
             found.map(element_handle).unwrap_or(JsValue::Null)
         }
         "querySelector" => {
-            let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let selector = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             ensure_root();
             let found = query_first(selector);
             found.map(element_handle).unwrap_or(JsValue::Null)
         }
         "querySelectorAll" => {
-            let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let selector = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             ensure_root();
             let matches = query_all(selector);
             JsValue::Array(matches.into_iter().map(element_handle).collect())
         }
         "getElementsByClassName" => {
-            let class = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let class = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             ensure_root();
             let matches = DOM_NODES.with(|nodes| {
                 let nodes = nodes.borrow();
-                nodes.iter().enumerate()
-                    .filter(|(_, n)| n.node_type == 1 && n.attributes.get("class").map(|c| c.split_whitespace().any(|x| x == class)).unwrap_or(false))
+                nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, n)| {
+                        n.node_type == 1
+                            && n.attributes
+                                .get("class")
+                                .map(|c| c.split_whitespace().any(|x| x == class))
+                                .unwrap_or(false)
+                    })
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>()
             });
             JsValue::Array(matches.into_iter().map(element_handle).collect())
         }
         "getElementsByTagName" => {
-            let tag = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let tag = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             ensure_root();
             let tag_lower = tag.to_lowercase();
             let matches = DOM_NODES.with(|nodes| {
                 let nodes = nodes.borrow();
-                nodes.iter().enumerate()
+                nodes
+                    .iter()
+                    .enumerate()
                     .filter(|(_, n)| n.node_type == 1 && (n.tag == tag_lower || tag == "*"))
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>()
@@ -256,10 +352,17 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         }
         "getSelection" => make_selection(),
         "elementFromPoint" | "elementsFromPoint" => {
-            if method == "elementFromPoint" { JsValue::Null } else { JsValue::Array(Vec::new()) }
+            if method == "elementFromPoint" {
+                JsValue::Null
+            } else {
+                JsValue::Array(Vec::new())
+            }
         }
         "createComment" => {
-            let data = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let data = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             let id = alloc_node(DomNode::new_text(&data));
             element_handle(id)
         }
@@ -269,9 +372,15 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "getAnimations" => JsValue::Array(vec![]),
         "startViewTransition" => {
             let mut vt = HashMap::new();
-            vt.insert("__type__".to_string(), JsValue::String("ViewTransition".to_string()));
+            vt.insert(
+                "__type__".to_string(),
+                JsValue::String("ViewTransition".to_string()),
+            );
             let mut p = HashMap::new();
-            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+            p.insert(
+                "__type__".to_string(),
+                JsValue::String("Promise".to_string()),
+            );
             p.insert("__resolved__".to_string(), JsValue::Undefined);
             vt.insert("finished".to_string(), JsValue::Object(p.clone()));
             vt.insert("ready".to_string(), JsValue::Object(p.clone()));
@@ -281,17 +390,23 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         // ── Agent empowerment APIs ────────────────────────────────────────────
         "getInteractiveElements" => {
             let elements = super::agent_layer::get_interactive_elements();
-            let arr: Vec<JsValue> = elements.into_iter().map(|el| {
-                let mut obj = HashMap::new();
-                obj.insert("__type__".to_string(), JsValue::String("InteractiveElement".to_string()));
-                obj.insert("nodeId".to_string(), JsValue::Number(el.node_id as f64));
-                obj.insert("role".to_string(), JsValue::String(el.role.to_string()));
-                obj.insert("name".to_string(), JsValue::String(el.name));
-                obj.insert("value".to_string(), JsValue::String(el.value));
-                obj.insert("selector".to_string(), JsValue::String(el.selector));
-                obj.insert("disabled".to_string(), JsValue::Boolean(el.disabled));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = elements
+                .into_iter()
+                .map(|el| {
+                    let mut obj = HashMap::new();
+                    obj.insert(
+                        "__type__".to_string(),
+                        JsValue::String("InteractiveElement".to_string()),
+                    );
+                    obj.insert("nodeId".to_string(), JsValue::Number(el.node_id as f64));
+                    obj.insert("role".to_string(), JsValue::String(el.role.to_string()));
+                    obj.insert("name".to_string(), JsValue::String(el.name));
+                    obj.insert("value".to_string(), JsValue::String(el.value));
+                    obj.insert("selector".to_string(), JsValue::String(el.selector));
+                    obj.insert("disabled".to_string(), JsValue::Boolean(el.disabled));
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "getInteractiveElementsText" => {
@@ -300,30 +415,55 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         }
         "extractContent" => {
             let blocks = super::agent_layer::extract_main_content();
-            let arr: Vec<JsValue> = blocks.into_iter().map(|b| {
-                let mut obj = HashMap::new();
-                obj.insert("heading".to_string(), JsValue::String(b.heading));
-                obj.insert("text".to_string(), JsValue::String(b.text));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = blocks
+                .into_iter()
+                .map(|b| {
+                    let mut obj = HashMap::new();
+                    obj.insert("heading".to_string(), JsValue::String(b.heading));
+                    obj.insert("text".to_string(), JsValue::String(b.text));
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "summarizePage" => {
             let summary = super::agent_layer::summarize_page();
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("PageSummary".to_string()));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("PageSummary".to_string()),
+            );
             obj.insert("title".to_string(), JsValue::String(summary.title));
-            obj.insert("links".to_string(), JsValue::Number(summary.link_count as f64));
-            obj.insert("forms".to_string(), JsValue::Number(summary.form_count as f64));
-            obj.insert("interactive".to_string(), JsValue::Number(summary.interactive_count as f64));
-            obj.insert("images".to_string(), JsValue::Number(summary.image_count as f64));
-            obj.insert("textLength".to_string(), JsValue::Number(summary.total_text_length as f64));
-            let headings: Vec<JsValue> = summary.headings.into_iter().map(|(d, t)| {
-                let mut h = HashMap::new();
-                h.insert("depth".to_string(), JsValue::Number(d as f64));
-                h.insert("text".to_string(), JsValue::String(t));
-                JsValue::Object(h)
-            }).collect();
+            obj.insert(
+                "links".to_string(),
+                JsValue::Number(summary.link_count as f64),
+            );
+            obj.insert(
+                "forms".to_string(),
+                JsValue::Number(summary.form_count as f64),
+            );
+            obj.insert(
+                "interactive".to_string(),
+                JsValue::Number(summary.interactive_count as f64),
+            );
+            obj.insert(
+                "images".to_string(),
+                JsValue::Number(summary.image_count as f64),
+            );
+            obj.insert(
+                "textLength".to_string(),
+                JsValue::Number(summary.total_text_length as f64),
+            );
+            let headings: Vec<JsValue> = summary
+                .headings
+                .into_iter()
+                .map(|(d, t)| {
+                    let mut h = HashMap::new();
+                    h.insert("depth".to_string(), JsValue::Number(d as f64));
+                    h.insert("text".to_string(), JsValue::String(t));
+                    JsValue::Object(h)
+                })
+                .collect();
             obj.insert("headings".to_string(), JsValue::Array(headings));
             JsValue::Object(obj)
         }
@@ -334,60 +474,91 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "captureState" => {
             let state = super::agent_layer::capture_dom_state();
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("DomState".to_string()));
-            obj.insert("nodeCount".to_string(), JsValue::Number(state.node_count as f64));
-            obj.insert("interactiveCount".to_string(), JsValue::Number(state.interactive_count as f64));
-            obj.insert("textHash".to_string(), JsValue::Number(hash_to_js(state.body_text_hash)));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("DomState".to_string()),
+            );
+            obj.insert(
+                "nodeCount".to_string(),
+                JsValue::Number(state.node_count as f64),
+            );
+            obj.insert(
+                "interactiveCount".to_string(),
+                JsValue::Number(state.interactive_count as f64),
+            );
+            obj.insert(
+                "textHash".to_string(),
+                JsValue::Number(hash_to_js(state.body_text_hash)),
+            );
             JsValue::Object(obj)
         }
         "extractTables" => {
             let tables = super::agent_layer::extract_tables();
-            let arr: Vec<JsValue> = tables.into_iter().map(|t| {
-                let mut obj = HashMap::new();
-                obj.insert("caption".to_string(), JsValue::String(t.caption));
-                obj.insert("headers".to_string(), JsValue::Array(
-                    t.headers.into_iter().map(JsValue::String).collect()));
-                obj.insert("rows".to_string(), JsValue::Array(
-                    t.rows.into_iter().map(|r| JsValue::Array(
-                        r.into_iter().map(JsValue::String).collect())).collect()));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = tables
+                .into_iter()
+                .map(|t| {
+                    let mut obj = HashMap::new();
+                    obj.insert("caption".to_string(), JsValue::String(t.caption));
+                    obj.insert(
+                        "headers".to_string(),
+                        JsValue::Array(t.headers.into_iter().map(JsValue::String).collect()),
+                    );
+                    obj.insert(
+                        "rows".to_string(),
+                        JsValue::Array(
+                            t.rows
+                                .into_iter()
+                                .map(|r| {
+                                    JsValue::Array(r.into_iter().map(JsValue::String).collect())
+                                })
+                                .collect(),
+                        ),
+                    );
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "extractTablesText" => {
             let tables = super::agent_layer::extract_tables();
             JsValue::String(super::agent_layer::tables_to_text(&tables))
         }
-        "toMarkdown" => {
-            JsValue::String(super::agent_layer::page_to_markdown())
-        }
+        "toMarkdown" => JsValue::String(super::agent_layer::page_to_markdown()),
         "fillForm" => {
             // Accepts an object: { fieldName: value, ... }
             let mut pairs = Vec::new();
             if let Some(JsValue::Object(map)) = args.first() {
                 for (k, v) in map {
-                    if k.starts_with("__") { continue; }
+                    if k.starts_with("__") {
+                        continue;
+                    }
                     pairs.push((k.clone(), super::coercion::to_string(v)));
                 }
             }
             let results = super::agent_layer::fill_form(&pairs);
-            let arr: Vec<JsValue> = results.into_iter().map(|r| {
-                let mut obj = HashMap::new();
-                obj.insert("field".to_string(), JsValue::String(r.field));
-                obj.insert("ok".to_string(), JsValue::Boolean(r.ok));
-                obj.insert("reason".to_string(), JsValue::String(r.reason.to_string()));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = results
+                .into_iter()
+                .map(|r| {
+                    let mut obj = HashMap::new();
+                    obj.insert("field".to_string(), JsValue::String(r.field));
+                    obj.insert("ok".to_string(), JsValue::Boolean(r.ok));
+                    obj.insert("reason".to_string(), JsValue::String(r.reason.to_string()));
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "getLinks" => {
             let links = super::agent_layer::get_links();
-            let arr: Vec<JsValue> = links.into_iter().map(|l| {
-                let mut obj = HashMap::new();
-                obj.insert("text".to_string(), JsValue::String(l.text));
-                obj.insert("href".to_string(), JsValue::String(l.href));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = links
+                .into_iter()
+                .map(|l| {
+                    let mut obj = HashMap::new();
+                    obj.insert("text".to_string(), JsValue::String(l.text));
+                    obj.insert("href".to_string(), JsValue::String(l.href));
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "getLinksText" => {
@@ -395,22 +566,31 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             JsValue::String(super::agent_layer::links_to_text(&links))
         }
         "findByText" => {
-            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let query = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let matches = super::agent_layer::find_by_text(&query);
-            let arr: Vec<JsValue> = matches.into_iter().map(|m| {
-                let mut obj = HashMap::new();
-                if let JsValue::Object(handle) = element_handle(m.node_id) {
-                    obj = handle;
-                }
-                obj.insert("selector".to_string(), JsValue::String(m.selector));
-                obj.insert("exact".to_string(), JsValue::Boolean(m.exact));
-                obj.insert("interactive".to_string(), JsValue::Boolean(m.interactive));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = matches
+                .into_iter()
+                .map(|m| {
+                    let mut obj = HashMap::new();
+                    if let JsValue::Object(handle) = element_handle(m.node_id) {
+                        obj = handle;
+                    }
+                    obj.insert("selector".to_string(), JsValue::String(m.selector));
+                    obj.insert("exact".to_string(), JsValue::Boolean(m.exact));
+                    obj.insert("interactive".to_string(), JsValue::Boolean(m.interactive));
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "clickByText" => {
-            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let query = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             match super::agent_layer::resolve_click_target(&query) {
                 Some(id) => {
                     fire_event(id, "click");
@@ -427,16 +607,27 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // Binary NDA stream as a byte array — the wire format for sessions.
             let doc = super::agent_layer::export_agent_state_nda();
             let bytes = doc.to_binary_stream();
-            JsValue::Array(bytes.into_iter().map(|b| JsValue::Number(b as f64)).collect())
+            JsValue::Array(
+                bytes
+                    .into_iter()
+                    .map(|b| JsValue::Number(b as f64))
+                    .collect(),
+            )
         }
         "diffState" => {
             // Compare a previously captured state against the current DOM.
             let current = super::agent_layer::capture_dom_state();
             let (prev_nodes, prev_interactive, prev_hash) = match args.first() {
                 Some(JsValue::Object(m)) => (
-                    m.get("nodeCount").map(super::coercion::to_number).unwrap_or(0.0) as usize,
-                    m.get("interactiveCount").map(super::coercion::to_number).unwrap_or(0.0) as usize,
-                    m.get("textHash").map(super::coercion::to_number).unwrap_or(0.0),
+                    m.get("nodeCount")
+                        .map(super::coercion::to_number)
+                        .unwrap_or(0.0) as usize,
+                    m.get("interactiveCount")
+                        .map(super::coercion::to_number)
+                        .unwrap_or(0.0) as usize,
+                    m.get("textHash")
+                        .map(super::coercion::to_number)
+                        .unwrap_or(0.0),
                 ),
                 _ => (0, 0, 0.0),
             };
@@ -444,10 +635,15 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             let node_delta = current.node_count as f64 - prev_nodes as f64;
             let interactive_delta = current.interactive_count as f64 - prev_interactive as f64;
             let mut obj = HashMap::new();
-            obj.insert("changed".to_string(), JsValue::Boolean(
-                text_changed || node_delta != 0.0 || interactive_delta != 0.0));
+            obj.insert(
+                "changed".to_string(),
+                JsValue::Boolean(text_changed || node_delta != 0.0 || interactive_delta != 0.0),
+            );
             obj.insert("nodeDelta".to_string(), JsValue::Number(node_delta));
-            obj.insert("interactiveDelta".to_string(), JsValue::Number(interactive_delta));
+            obj.insert(
+                "interactiveDelta".to_string(),
+                JsValue::Number(interactive_delta),
+            );
             obj.insert("textChanged".to_string(), JsValue::Boolean(text_changed));
             JsValue::Object(obj)
         }
@@ -462,42 +658,65 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             let mut rounds = 0u32;
             while rounds < 10 {
                 let ran = super::browser_env::flush_timers();
-                if ran == 0 { break; }
+                if ran == 0 {
+                    break;
+                }
                 timers_run += ran;
                 rounds += 1;
             }
             let state = super::agent_layer::capture_dom_state();
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("Settlement".to_string()));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("Settlement".to_string()),
+            );
             obj.insert("settled".to_string(), JsValue::Boolean(rounds < 10));
             obj.insert("timersRun".to_string(), JsValue::Number(timers_run as f64));
-            obj.insert("lifecycleListenersRun".to_string(), JsValue::Number(lifecycle_listeners as f64));
-            obj.insert("nodeCount".to_string(), JsValue::Number(state.node_count as f64));
-            obj.insert("interactiveCount".to_string(), JsValue::Number(state.interactive_count as f64));
-            obj.insert("textHash".to_string(), JsValue::Number(hash_to_js(state.body_text_hash)));
+            obj.insert(
+                "lifecycleListenersRun".to_string(),
+                JsValue::Number(lifecycle_listeners as f64),
+            );
+            obj.insert(
+                "nodeCount".to_string(),
+                JsValue::Number(state.node_count as f64),
+            );
+            obj.insert(
+                "interactiveCount".to_string(),
+                JsValue::Number(state.interactive_count as f64),
+            );
+            obj.insert(
+                "textHash".to_string(),
+                JsValue::Number(hash_to_js(state.body_text_hash)),
+            );
             JsValue::Object(obj)
         }
-        "getConsoleText" => {
-            JsValue::String(super::console::console_output_text())
-        }
+        "getConsoleText" => JsValue::String(super::console::console_output_text()),
         "getNetworkLog" => {
             let entries = super::browser_env::fetch_log();
-            let arr: Vec<JsValue> = entries.into_iter().map(|e| {
-                let mut obj = HashMap::new();
-                obj.insert("url".to_string(), JsValue::String(e.url));
-                obj.insert("method".to_string(), JsValue::String(e.method));
-                obj.insert("status".to_string(), JsValue::Number(e.status as f64));
-                obj.insert("mocked".to_string(), JsValue::Boolean(e.mocked));
-                JsValue::Object(obj)
-            }).collect();
+            let arr: Vec<JsValue> = entries
+                .into_iter()
+                .map(|e| {
+                    let mut obj = HashMap::new();
+                    obj.insert("url".to_string(), JsValue::String(e.url));
+                    obj.insert("method".to_string(), JsValue::String(e.method));
+                    obj.insert("status".to_string(), JsValue::Number(e.status as f64));
+                    obj.insert("mocked".to_string(), JsValue::Boolean(e.mocked));
+                    JsValue::Object(obj)
+                })
+                .collect();
             JsValue::Array(arr)
         }
         "getNetworkLogText" => {
             let entries = super::browser_env::fetch_log();
             let mut out = String::with_capacity(entries.len() * 48);
             for e in &entries {
-                out.push_str(&format!("{} {} -> {}{}\n",
-                    e.method, e.url, e.status, if e.mocked { " (mocked)" } else { "" }));
+                out.push_str(&format!(
+                    "{} {} -> {}{}\n",
+                    e.method,
+                    e.url,
+                    e.status,
+                    if e.mocked { " (mocked)" } else { "" }
+                ));
             }
             JsValue::String(out)
         }
@@ -513,8 +732,15 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                 let mut entries: Vec<_> = fields.iter().collect();
                 entries.sort_by(|a, b| a.0.cmp(b.0));
                 for (label, value) in entries {
-                    let sub_method = if matches!(value, JsValue::Boolean(_)) { "checkByLabel" } else { "fillByLabel" };
-                    let ok = call_document_method(sub_method, &[JsValue::String(label.clone()), value.clone()]);
+                    let sub_method = if matches!(value, JsValue::Boolean(_)) {
+                        "checkByLabel"
+                    } else {
+                        "fillByLabel"
+                    };
+                    let ok = call_document_method(
+                        sub_method,
+                        &[JsValue::String(label.clone()), value.clone()],
+                    );
                     if ok == JsValue::Boolean(true) {
                         filled += 1;
                     } else {
@@ -531,10 +757,17 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // Snapshot every form control the agent could act on.
             let controls: Vec<JsValue> = super::agent_layer::get_interactive_elements()
                 .into_iter()
-                .filter(|el| super::agent_layer::is_fillable_role(el.role) || super::agent_layer::is_checkable_role(el.role))
+                .filter(|el| {
+                    super::agent_layer::is_fillable_role(el.role)
+                        || super::agent_layer::is_checkable_role(el.role)
+                })
                 .map(|el| {
                     let checked = DOM_NODES.with(|nodes| {
-                        nodes.borrow().get(el.node_id).map(|n| n.attributes.contains_key("checked")).unwrap_or(false)
+                        nodes
+                            .borrow()
+                            .get(el.node_id)
+                            .map(|n| n.attributes.contains_key("checked"))
+                            .unwrap_or(false)
                     });
                     let mut obj = HashMap::new();
                     obj.insert("label".to_string(), JsValue::String(el.name));
@@ -553,12 +786,22 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             for el in super::agent_layer::get_interactive_elements() {
                 let fillable = super::agent_layer::is_fillable_role(el.role);
                 let checkable = super::agent_layer::is_checkable_role(el.role);
-                if !fillable && !checkable { continue; }
+                if !fillable && !checkable {
+                    continue;
+                }
                 let state = if checkable {
                     let checked = DOM_NODES.with(|nodes| {
-                        nodes.borrow().get(el.node_id).map(|n| n.attributes.contains_key("checked")).unwrap_or(false)
+                        nodes
+                            .borrow()
+                            .get(el.node_id)
+                            .map(|n| n.attributes.contains_key("checked"))
+                            .unwrap_or(false)
                     });
-                    if checked { "checked".to_string() } else { "unchecked".to_string() }
+                    if checked {
+                        "checked".to_string()
+                    } else {
+                        "unchecked".to_string()
+                    }
                 } else {
                     el.value.clone()
                 };
@@ -575,7 +818,10 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // Fire the submit event on the first <form> — listeners see it
             // exactly as if the user pressed Enter.
             let form_id = DOM_NODES.with(|nodes| {
-                nodes.borrow().iter().position(|n| n.node_type == 1 && n.tag == "form")
+                nodes
+                    .borrow()
+                    .iter()
+                    .position(|n| n.node_type == 1 && n.tag == "form")
             });
             match form_id {
                 Some(id) => {
@@ -589,7 +835,10 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // Type into the focused element, one keystroke at a time:
             // keydown → value grows → input, per character. Requires focus
             // (use focusByLabel first) so agents model real keyboard flow.
-            let text = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let text = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let Some(id) = FOCUSED_NODE.with(|c| c.get()) else {
                 return JsValue::Boolean(false);
             };
@@ -610,7 +859,10 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // Press a named key on the focused element. Enter submits the
             // enclosing form; Tab advances focus to the next interactive
             // element in DOM order.
-            let key = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let key = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let Some(id) = FOCUSED_NODE.with(|c| c.get()) else {
                 return JsValue::Boolean(false);
             };
@@ -635,11 +887,16 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
                     }
                 }
                 "Tab" => {
-                    let mut interactive: Vec<usize> = super::agent_layer::get_interactive_elements()
-                        .into_iter().map(|el| el.node_id).collect();
+                    let mut interactive: Vec<usize> =
+                        super::agent_layer::get_interactive_elements()
+                            .into_iter()
+                            .map(|el| el.node_id)
+                            .collect();
                     interactive.sort_unstable();
                     if let Some(pos) = interactive.iter().position(|&n| n == id) {
-                        if let Some(&next) = interactive.get(pos + 1).or_else(|| interactive.first()) {
+                        if let Some(&next) =
+                            interactive.get(pos + 1).or_else(|| interactive.first())
+                        {
                             FOCUSED_NODE.with(|c| c.set(Some(next)));
                             fire_event(id, "blur");
                             fire_event(next, "focus");
@@ -654,7 +911,10 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "focusByLabel" => {
             // Move focus to any interactive element found by accessible name —
             // pairs with document.activeElement for keyboard-flow reasoning.
-            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let query = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             match super::agent_layer::resolve_focus_target(&query) {
                 Some(id) => {
                     FOCUSED_NODE.with(|c| c.set(Some(id)));
@@ -667,29 +927,56 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "selectByLabel" => {
             // Pick a dropdown option by visible text (or value) on a select
             // found by its accessible name — exact text wins over substring.
-            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
-            let wanted = args.get(1).map(super::coercion::to_string).unwrap_or_default();
+            let query = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
+            let wanted = args
+                .get(1)
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let needle = wanted.trim().to_lowercase();
             let Some(select_id) = super::agent_layer::resolve_fill_target(&query) else {
                 return JsValue::Boolean(false);
             };
             let options: Vec<usize> = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(select_id)
-                    .map(|n| n.children.iter().copied()
-                        .filter(|&c| nodes.borrow().get(c).map(|o| o.tag == "option").unwrap_or(false))
-                        .collect())
+                nodes
+                    .borrow()
+                    .get(select_id)
+                    .map(|n| {
+                        n.children
+                            .iter()
+                            .copied()
+                            .filter(|&c| {
+                                nodes
+                                    .borrow()
+                                    .get(c)
+                                    .map(|o| o.tag == "option")
+                                    .unwrap_or(false)
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default()
             });
             let mut best: Option<(usize, String, u8)> = None;
             for opt_id in options {
                 let text = collect_text_content(opt_id).trim().to_string();
-                let value = DOM_NODES.with(|nodes| {
-                    nodes.borrow().get(opt_id).and_then(|o| o.attributes.get("value").cloned())
-                }).unwrap_or_else(|| text.clone());
+                let value = DOM_NODES
+                    .with(|nodes| {
+                        nodes
+                            .borrow()
+                            .get(opt_id)
+                            .and_then(|o| o.attributes.get("value").cloned())
+                    })
+                    .unwrap_or_else(|| text.clone());
                 let text_lc = text.to_lowercase();
-                let rank = if text_lc == needle || value.to_lowercase() == needle { 2 }
-                    else if text_lc.contains(&needle) && !needle.is_empty() { 1 }
-                    else { continue };
+                let rank = if text_lc == needle || value.to_lowercase() == needle {
+                    2
+                } else if text_lc.contains(&needle) && !needle.is_empty() {
+                    1
+                } else {
+                    continue;
+                };
                 match best {
                     Some((_, _, r)) if r >= rank => {}
                     _ => best = Some((opt_id, value, rank)),
@@ -700,14 +987,18 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             };
             DOM_NODES.with(|nodes| {
                 let mut nodes = nodes.borrow_mut();
-                let siblings: Vec<usize> = nodes.get(select_id).map(|n| n.children.clone()).unwrap_or_default();
+                let siblings: Vec<usize> = nodes
+                    .get(select_id)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
                 for sib in siblings {
                     if let Some(opt) = nodes.get_mut(sib) {
                         opt.attributes.remove("selected");
                     }
                 }
                 if let Some(opt) = nodes.get_mut(chosen_id) {
-                    opt.attributes.insert("selected".to_string(), "selected".to_string());
+                    opt.attributes
+                        .insert("selected".to_string(), "selected".to_string());
                 }
                 if let Some(sel) = nodes.get_mut(select_id) {
                     sel.attributes.insert("value".to_string(), value);
@@ -720,8 +1011,14 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
             // Type into a form control found by its accessible name — the
             // agent's "fill the Email field" primitive. Fires input + change
             // like a real keystroke sequence would.
-            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
-            let value = args.get(1).map(super::coercion::to_string).unwrap_or_default();
+            let query = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
+            let value = args
+                .get(1)
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             match super::agent_layer::resolve_fill_target(&query) {
                 Some(id) => {
                     DOM_NODES.with(|nodes| {
@@ -739,14 +1036,21 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "checkByLabel" => {
             // Toggle a checkbox/radio/switch found by its accessible name.
             // Second argument sets the state explicitly (defaults to checked).
-            let query = args.first().map(super::coercion::to_string).unwrap_or_default();
-            let checked = args.get(1).map(|v| matches!(v, JsValue::Boolean(true))).unwrap_or(true);
+            let query = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
+            let checked = args
+                .get(1)
+                .map(|v| matches!(v, JsValue::Boolean(true)))
+                .unwrap_or(true);
             match super::agent_layer::resolve_check_target(&query) {
                 Some(id) => {
                     DOM_NODES.with(|nodes| {
                         if let Some(node) = nodes.borrow_mut().get_mut(id) {
                             if checked {
-                                node.attributes.insert("checked".to_string(), "checked".to_string());
+                                node.attributes
+                                    .insert("checked".to_string(), "checked".to_string());
                             } else {
                                 node.attributes.remove("checked");
                             }
@@ -761,20 +1065,33 @@ pub(super) fn call_document_method(method: &str, args: &[JsValue]) -> JsValue {
         "addEventListener" => {
             // Page-level events (DOMContentLoaded, load, custom) live in the
             // lifecycle registry shared with `window`.
-            let event_type = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let event_type = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let handler = args.get(1).cloned().unwrap_or(JsValue::Undefined);
             super::browser_env::add_lifecycle_listener(&event_type, handler);
             JsValue::Undefined
         }
         "removeEventListener" => {
-            let event_type = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let event_type = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             super::browser_env::remove_lifecycle_listeners(&event_type);
             JsValue::Undefined
         }
         "dispatchEvent" => {
-            let event_type = args.first().and_then(|v| {
-                if let JsValue::Object(m) = v { m.get("type").map(super::coercion::to_string) } else { None }
-            }).unwrap_or_default();
+            let event_type = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::Object(m) = v {
+                        m.get("type").map(super::coercion::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
             super::browser_env::fire_lifecycle_event(&event_type);
             JsValue::Boolean(true)
         }
@@ -806,18 +1123,21 @@ pub(super) fn get_document_property(prop: &str) -> JsValue {
             element_handle(root)
         }
         "cookie" => get_cookie_string(),
-        "activeElement" => {
-            match FOCUSED_NODE.with(|c| c.get()) {
-                Some(id) => element_handle(id),
-                None => JsValue::Null,
-            }
-        }
+        "activeElement" => match FOCUSED_NODE.with(|c| c.get()) {
+            Some(id) => element_handle(id),
+            None => JsValue::Null,
+        },
         "hasFocus" => JsValue::Boolean(true),
         // Document collections (empty in the in-memory DOM unless populated).
-        "forms" | "images" | "links" | "scripts" | "embeds" | "plugins" | "styleSheets" => JsValue::Array(Vec::new()),
+        "forms" | "images" | "links" | "scripts" | "embeds" | "plugins" | "styleSheets" => {
+            JsValue::Array(Vec::new())
+        }
         "all" => JsValue::Array(Vec::new()),
         // State properties.
-        "fullscreenElement" | "pointerLockElement" | "pictureInPictureElement" | "currentScript" => JsValue::Null,
+        "fullscreenElement"
+        | "pointerLockElement"
+        | "pictureInPictureElement"
+        | "currentScript" => JsValue::Null,
         "scrollingElement" => {
             let root = ensure_root();
             element_handle(root)
@@ -827,18 +1147,27 @@ pub(super) fn get_document_property(prop: &str) -> JsValue {
         "doctype" => JsValue::Null,
         "implementation" => {
             let mut dom_impl = HashMap::new();
-            dom_impl.insert("__type__".to_string(), JsValue::String("DOMImplementation".to_string()));
+            dom_impl.insert(
+                "__type__".to_string(),
+                JsValue::String("DOMImplementation".to_string()),
+            );
             JsValue::Object(dom_impl)
         }
         "timeline" => {
             let mut timeline = HashMap::new();
-            timeline.insert("__type__".to_string(), JsValue::String("DocumentTimeline".to_string()));
+            timeline.insert(
+                "__type__".to_string(),
+                JsValue::String("DocumentTimeline".to_string()),
+            );
             timeline.insert("currentTime".to_string(), JsValue::Number(0.0));
             JsValue::Object(timeline)
         }
         "fonts" => {
             let mut fonts = HashMap::new();
-            fonts.insert("__type__".to_string(), JsValue::String("FontFaceSet".to_string()));
+            fonts.insert(
+                "__type__".to_string(),
+                JsValue::String("FontFaceSet".to_string()),
+            );
             fonts.insert("status".to_string(), JsValue::String("loaded".to_string()));
             fonts.insert("size".to_string(), JsValue::Number(0.0));
             JsValue::Object(fonts)
@@ -889,24 +1218,57 @@ fn set_cookie(cookie_str: &str) {
 // ── Element Methods ──────────────────────────────────────────────────────────
 
 /// Dispatch a method call on an Element object.
-pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_element_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     let Some(id) = node_id_from_handle(&JsValue::Object(map.clone())) else {
         return JsValue::Undefined;
     };
 
     match method {
         "getAttribute" => {
-            let key = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let key = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
+                nodes
+                    .borrow()
+                    .get(id)
                     .and_then(|n| n.attributes.get(key))
                     .map(|v| JsValue::String(v.clone()))
                     .unwrap_or(JsValue::Null)
             })
         }
         "setAttribute" => {
-            let key = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.clone()) } else { None }).unwrap_or_default();
-            let val = args.get(1).map(|v| if let JsValue::String(s) = v { s.clone() } else { super::coercion::to_string(v) }).unwrap_or_default();
+            let key = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            let val = args
+                .get(1)
+                .map(|v| {
+                    if let JsValue::String(s) = v {
+                        s.clone()
+                    } else {
+                        super::coercion::to_string(v)
+                    }
+                })
+                .unwrap_or_default();
             DOM_NODES.with(|nodes| {
                 if let Some(node) = nodes.borrow_mut().get_mut(id) {
                     node.attributes.insert(key, val);
@@ -915,7 +1277,16 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             JsValue::Undefined
         }
         "removeAttribute" => {
-            let key = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let key = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             DOM_NODES.with(|nodes| {
                 if let Some(node) = nodes.borrow_mut().get_mut(id) {
                     node.attributes.remove(key);
@@ -924,9 +1295,22 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             JsValue::Undefined
         }
         "hasAttribute" => {
-            let key = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let key = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             let has = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id).map(|n| n.attributes.contains_key(key)).unwrap_or(false)
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.attributes.contains_key(key))
+                    .unwrap_or(false)
             });
             JsValue::Boolean(has)
         }
@@ -979,7 +1363,9 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
                         }
                     }
                     if let Some(parent) = nodes.get_mut(id) {
-                        let pos = ref_id.and_then(|rid| parent.children.iter().position(|&c| c == rid)).unwrap_or(parent.children.len());
+                        let pos = ref_id
+                            .and_then(|rid| parent.children.iter().position(|&c| c == rid))
+                            .unwrap_or(parent.children.len());
                         parent.children.insert(pos, new_id);
                     }
                     if let Some(child) = nodes.get_mut(new_id) {
@@ -1005,27 +1391,66 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             JsValue::Undefined
         }
         "querySelector" => {
-            let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let selector = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             let found = query_first_within(selector, id);
             found.map(element_handle).unwrap_or(JsValue::Null)
         }
         "querySelectorAll" => {
-            let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let selector = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             let matches = query_all_within(selector, id);
             JsValue::Array(matches.into_iter().map(element_handle).collect())
         }
         "addEventListener" => {
-            let event_type = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.clone()) } else { None }).unwrap_or_default();
+            let event_type = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
             let handler = args.get(1).cloned().unwrap_or(JsValue::Undefined);
             DOM_NODES.with(|nodes| {
                 if let Some(node) = nodes.borrow_mut().get_mut(id) {
-                    node.event_listeners.entry(event_type).or_default().push(handler);
+                    node.event_listeners
+                        .entry(event_type)
+                        .or_default()
+                        .push(handler);
                 }
             });
             JsValue::Undefined
         }
         "removeEventListener" => {
-            let event_type = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let event_type = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             DOM_NODES.with(|nodes| {
                 if let Some(node) = nodes.borrow_mut().get_mut(id) {
                     node.event_listeners.remove(event_type);
@@ -1035,22 +1460,44 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         }
         "dispatchEvent" => {
             // Fire listeners for the event type.
-            let event_type = args.first().and_then(|v| {
-                if let JsValue::Object(m) = v { m.get("type").and_then(|t| if let JsValue::String(s) = t { Some(s.clone()) } else { None }) } else { None }
-            }).unwrap_or_default();
+            let event_type = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::Object(m) = v {
+                        m.get("type").and_then(|t| {
+                            if let JsValue::String(s) = t {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
             let listeners = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
+                nodes
+                    .borrow()
+                    .get(id)
                     .and_then(|n| n.event_listeners.get(&event_type))
                     .cloned()
                     .unwrap_or_default()
             });
             for listener in listeners {
-                let _ = super::function::call_function(&listener, &[args.first().cloned().unwrap_or(JsValue::Undefined)], &crate::js::scope::Scope::new_global());
+                let _ = super::function::call_function(
+                    &listener,
+                    &[args.first().cloned().unwrap_or(JsValue::Undefined)],
+                    &crate::js::scope::Scope::new_global(),
+                );
             }
             JsValue::Boolean(true)
         }
         "cloneNode" => {
-            let deep = args.first().map(super::coercion::to_boolean).unwrap_or(false);
+            let deep = args
+                .first()
+                .map(super::coercion::to_boolean)
+                .unwrap_or(false);
             let new_id = clone_node(id, deep);
             element_handle(new_id)
         }
@@ -1062,7 +1509,16 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             }
         }
         "closest" => {
-            let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let selector = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             let mut current = Some(id);
             while let Some(cid) = current {
                 if matches_selector(cid, selector) {
@@ -1073,7 +1529,16 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             JsValue::Null
         }
         "matches" => {
-            let selector = args.first().and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }).unwrap_or("");
+            let selector = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             JsValue::Boolean(matches_selector(id, selector))
         }
         "click" => {
@@ -1097,20 +1562,35 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         "scrollIntoView" | "scrollTo" | "scrollBy" | "scroll" => JsValue::Undefined,
         // Insertion.
         "insertAdjacentHTML" => {
-            let position = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
-            let html = args.get(1).map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let position = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
+            let html = args
+                .get(1)
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             insert_adjacent_html(id, &position, &html);
             JsValue::Undefined
         }
         "insertAdjacentText" => {
-            let position = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
-            let text = args.get(1).map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let position = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
+            let text = args
+                .get(1)
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             let text_id = alloc_node(DomNode::new_text(&text));
             insert_adjacent_node(id, &position, text_id);
             JsValue::Undefined
         }
         "insertAdjacentElement" => {
-            let position = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let position = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             if let Some(child_id) = args.get(1).and_then(node_id_from_handle) {
                 insert_adjacent_node(id, &position, child_id);
                 args.get(1).cloned().unwrap_or(JsValue::Null)
@@ -1124,9 +1604,34 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
                     match method {
                         "before" => insert_adjacent_node(id, "beforebegin", child_id),
                         "after" => insert_adjacent_node(id, "afterend", child_id),
-                        "prepend" => { DOM_NODES.with(|n| { let mut n = n.borrow_mut(); if let Some(node) = n.get_mut(id) { node.children.insert(0, child_id); } let c = n.get_mut(child_id); if let Some(c) = c { c.parent = Some(id); } }); }
-                        "append" => { DOM_NODES.with(|n| { let mut n = n.borrow_mut(); if let Some(node) = n.get_mut(id) { node.children.push(child_id); } let c = n.get_mut(child_id); if let Some(c) = c { c.parent = Some(id); } }); }
-                        "replaceWith" => { insert_adjacent_node(id, "beforebegin", child_id); remove_node_from_parent(id); }
+                        "prepend" => {
+                            DOM_NODES.with(|n| {
+                                let mut n = n.borrow_mut();
+                                if let Some(node) = n.get_mut(id) {
+                                    node.children.insert(0, child_id);
+                                }
+                                let c = n.get_mut(child_id);
+                                if let Some(c) = c {
+                                    c.parent = Some(id);
+                                }
+                            });
+                        }
+                        "append" => {
+                            DOM_NODES.with(|n| {
+                                let mut n = n.borrow_mut();
+                                if let Some(node) = n.get_mut(id) {
+                                    node.children.push(child_id);
+                                }
+                                let c = n.get_mut(child_id);
+                                if let Some(c) = c {
+                                    c.parent = Some(id);
+                                }
+                            });
+                        }
+                        "replaceWith" => {
+                            insert_adjacent_node(id, "beforebegin", child_id);
+                            remove_node_from_parent(id);
+                        }
                         _ => {}
                     }
                 } else if let JsValue::String(s) = arg {
@@ -1134,8 +1639,30 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
                     match method {
                         "before" => insert_adjacent_node(id, "beforebegin", text_id),
                         "after" => insert_adjacent_node(id, "afterend", text_id),
-                        "prepend" => { DOM_NODES.with(|n| { let mut n = n.borrow_mut(); if let Some(node) = n.get_mut(id) { node.children.insert(0, text_id); } let c = n.get_mut(text_id); if let Some(c) = c { c.parent = Some(id); } }); }
-                        "append" => { DOM_NODES.with(|n| { let mut n = n.borrow_mut(); if let Some(node) = n.get_mut(id) { node.children.push(text_id); } let c = n.get_mut(text_id); if let Some(c) = c { c.parent = Some(id); } }); }
+                        "prepend" => {
+                            DOM_NODES.with(|n| {
+                                let mut n = n.borrow_mut();
+                                if let Some(node) = n.get_mut(id) {
+                                    node.children.insert(0, text_id);
+                                }
+                                let c = n.get_mut(text_id);
+                                if let Some(c) = c {
+                                    c.parent = Some(id);
+                                }
+                            });
+                        }
+                        "append" => {
+                            DOM_NODES.with(|n| {
+                                let mut n = n.borrow_mut();
+                                if let Some(node) = n.get_mut(id) {
+                                    node.children.push(text_id);
+                                }
+                                let c = n.get_mut(text_id);
+                                if let Some(c) = c {
+                                    c.parent = Some(id);
+                                }
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -1145,33 +1672,65 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         // Attribute helpers.
         "getAttributeNames" => {
             let names = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id).map(|n| n.attributes.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.attributes.keys().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()
             });
             JsValue::Array(names.into_iter().map(JsValue::String).collect())
         }
         "toggleAttribute" => {
-            let name = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
-            let force = args.get(1).map(crate::js::interpreter::coercion::to_boolean);
-            let has = DOM_NODES.with(|nodes| nodes.borrow().get(id).map(|n| n.attributes.contains_key(&name)).unwrap_or(false));
+            let name = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
+            let force = args
+                .get(1)
+                .map(crate::js::interpreter::coercion::to_boolean);
+            let has = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.attributes.contains_key(&name))
+                    .unwrap_or(false)
+            });
             let should_have = force.unwrap_or(!has);
             DOM_NODES.with(|nodes| {
                 let mut nodes = nodes.borrow_mut();
                 if let Some(node) = nodes.get_mut(id) {
-                    if should_have { node.attributes.entry(name.clone()).or_insert_with(String::new); }
-                    else { node.attributes.remove(&name); }
+                    if should_have {
+                        node.attributes
+                            .entry(name.clone())
+                            .or_insert_with(String::new);
+                    } else {
+                        node.attributes.remove(&name);
+                    }
                 }
             });
             JsValue::Boolean(should_have)
         }
         // Shadow DOM.
         "attachShadow" => {
-            let mode = args.first().and_then(|v| if let JsValue::Object(m) = v { m.get("mode").map(crate::js::interpreter::coercion::to_string) } else { None }).unwrap_or_else(|| "open".into());
+            let mode = args
+                .first()
+                .and_then(|v| {
+                    if let JsValue::Object(m) = v {
+                        m.get("mode")
+                            .map(crate::js::interpreter::coercion::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "open".into());
             let shadow_id = alloc_node(DomNode::new_element("shadow-root"));
             DOM_NODES.with(|nodes| {
                 let mut nodes = nodes.borrow_mut();
                 if let Some(node) = nodes.get_mut(id) {
-                    node.attributes.insert("__shadow_root__".to_string(), shadow_id.to_string());
-                    node.attributes.insert("__shadow_mode__".to_string(), mode.clone());
+                    node.attributes
+                        .insert("__shadow_root__".to_string(), shadow_id.to_string());
+                    node.attributes
+                        .insert("__shadow_mode__".to_string(), mode.clone());
                 }
                 if let Some(shadow) = nodes.get_mut(shadow_id) {
                     shadow.parent = Some(id);
@@ -1182,8 +1741,14 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         // Web Animations API stub.
         "animate" => {
             let mut anim = HashMap::new();
-            anim.insert("__type__".to_string(), JsValue::String("Animation".to_string()));
-            anim.insert("playState".to_string(), JsValue::String("running".to_string()));
+            anim.insert(
+                "__type__".to_string(),
+                JsValue::String("Animation".to_string()),
+            );
+            anim.insert(
+                "playState".to_string(),
+                JsValue::String("running".to_string()),
+            );
             anim.insert("currentTime".to_string(), JsValue::Number(0.0));
             anim.insert("playbackRate".to_string(), JsValue::Number(1.0));
             JsValue::Object(anim)
@@ -1194,7 +1759,13 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         "getBoundingClientRect" => super::web_platform::make_dom_rect(0.0, 0.0, 0.0, 0.0),
         // Node methods.
         "hasChildNodes" => {
-            let has = DOM_NODES.with(|nodes| nodes.borrow().get(id).map(|n| !n.children.is_empty()).unwrap_or(false));
+            let has = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| !n.children.is_empty())
+                    .unwrap_or(false)
+            });
             JsValue::Boolean(has)
         }
         "normalize" => {
@@ -1205,7 +1776,8 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
             // Walk up to find root.
             let mut current = id;
             loop {
-                let parent = DOM_NODES.with(|nodes| nodes.borrow().get(current).and_then(|n| n.parent));
+                let parent =
+                    DOM_NODES.with(|nodes| nodes.borrow().get(current).and_then(|n| n.parent));
                 match parent {
                     Some(p) => current = p,
                     None => break,
@@ -1225,8 +1797,12 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
                 if let Some(child_id) = node_id_from_handle(arg) {
                     DOM_NODES.with(|nodes| {
                         let mut nodes = nodes.borrow_mut();
-                        if let Some(node) = nodes.get_mut(id) { node.children.push(child_id); }
-                        if let Some(c) = nodes.get_mut(child_id) { c.parent = Some(id); }
+                        if let Some(node) = nodes.get_mut(id) {
+                            node.children.push(child_id);
+                        }
+                        if let Some(c) = nodes.get_mut(child_id) {
+                            c.parent = Some(id);
+                        }
                     });
                 }
             }
@@ -1245,7 +1821,10 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         // Fullscreen / Pointer Lock.
         "requestFullscreen" | "requestPointerLock" => {
             let mut p = HashMap::new();
-            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+            p.insert(
+                "__type__".to_string(),
+                JsValue::String("Promise".to_string()),
+            );
             p.insert("__resolved__".to_string(), JsValue::Undefined);
             JsValue::Object(p)
         }
@@ -1276,7 +1855,10 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         // Image.
         "decode" => {
             let mut p = HashMap::new();
-            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+            p.insert(
+                "__type__".to_string(),
+                JsValue::String("Promise".to_string()),
+            );
             p.insert("__resolved__".to_string(), JsValue::Undefined);
             JsValue::Object(p)
         }
@@ -1291,7 +1873,11 @@ pub(super) fn call_element_method(map: &HashMap<String, JsValue>, method: &str, 
         }
         "togglePopover" => {
             let has = get_node_attr(id, "open").is_some();
-            if has { remove_node_attr(id, "open"); } else { set_node_attr(id, "open", ""); }
+            if has {
+                remove_node_attr(id, "open");
+            } else {
+                set_node_attr(id, "open", "");
+            }
             JsValue::Undefined
         }
         _ => JsValue::Undefined,
@@ -1320,18 +1906,26 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
         "children" => {
             let children = DOM_NODES.with(|nodes| {
                 let nodes = nodes.borrow();
-                nodes.get(id).map(|n| {
-                    n.children.iter()
-                        .filter(|&&c| nodes.get(c).map(|cn| cn.node_type == 1).unwrap_or(false))
-                        .copied()
-                        .collect::<Vec<_>>()
-                }).unwrap_or_default()
+                nodes
+                    .get(id)
+                    .map(|n| {
+                        n.children
+                            .iter()
+                            .filter(|&&c| nodes.get(c).map(|cn| cn.node_type == 1).unwrap_or(false))
+                            .copied()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
             });
             JsValue::Array(children.into_iter().map(element_handle).collect())
         }
         "childNodes" => {
             let children = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id).map(|n| n.children.clone()).unwrap_or_default()
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default()
             });
             JsValue::Array(children.into_iter().map(element_handle).collect())
         }
@@ -1340,11 +1934,21 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
             parent.map(element_handle).unwrap_or(JsValue::Null)
         }
         "firstChild" | "firstElementChild" => {
-            let first = DOM_NODES.with(|nodes| nodes.borrow().get(id).and_then(|n| n.children.first().copied()));
+            let first = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .and_then(|n| n.children.first().copied())
+            });
             first.map(element_handle).unwrap_or(JsValue::Null)
         }
         "lastChild" | "lastElementChild" => {
-            let last = DOM_NODES.with(|nodes| nodes.borrow().get(id).and_then(|n| n.children.last().copied()));
+            let last = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .and_then(|n| n.children.last().copied())
+            });
             last.map(element_handle).unwrap_or(JsValue::Null)
         }
         "nextSibling" | "nextElementSibling" => {
@@ -1358,42 +1962,60 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
         "childElementCount" => {
             let count = DOM_NODES.with(|nodes| {
                 let nodes = nodes.borrow();
-                nodes.get(id).map(|n| {
-                    n.children.iter().filter(|&&c| nodes.get(c).map(|cn| cn.node_type == 1).unwrap_or(false)).count()
-                }).unwrap_or(0)
+                nodes
+                    .get(id)
+                    .map(|n| {
+                        n.children
+                            .iter()
+                            .filter(|&&c| nodes.get(c).map(|cn| cn.node_type == 1).unwrap_or(false))
+                            .count()
+                    })
+                    .unwrap_or(0)
             });
             JsValue::Number(count as f64)
         }
-        "value" | "checked" | "disabled" | "href" | "src" | "alt" | "title" | "type" | "name" | "placeholder" => {
-            DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get(prop))
-                    .map(|v| JsValue::String(v.clone()))
-                    .unwrap_or(JsValue::String(String::new()))
-            })
-        }
+        "value" | "checked" | "disabled" | "href" | "src" | "alt" | "title" | "type" | "name"
+        | "placeholder" => DOM_NODES.with(|nodes| {
+            nodes
+                .borrow()
+                .get(id)
+                .and_then(|n| n.attributes.get(prop))
+                .map(|v| JsValue::String(v.clone()))
+                .unwrap_or(JsValue::String(String::new()))
+        }),
         "classList" => {
             // Return a classList-like object.
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("DOMTokenList".to_string()));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("DOMTokenList".to_string()),
+            );
             obj.insert("__node_id__".to_string(), JsValue::Number(id as f64));
             JsValue::Object(obj)
         }
         "style" => {
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("CSSStyleDeclaration".to_string()));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("CSSStyleDeclaration".to_string()),
+            );
             obj.insert("__node_id__".to_string(), JsValue::Number(id as f64));
             JsValue::Object(obj)
         }
         "dataset" => {
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("DOMStringMap".to_string()));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("DOMStringMap".to_string()),
+            );
             obj.insert("__node_id__".to_string(), JsValue::Number(id as f64));
             JsValue::Object(obj)
         }
         "shadowRoot" => {
             let shadow_id = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
+                nodes
+                    .borrow()
+                    .get(id)
                     .and_then(|n| n.attributes.get("__shadow_root__"))
                     .and_then(|s| s.parse::<usize>().ok())
             });
@@ -1403,32 +2025,44 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
             }
         }
         "offsetWidth" | "offsetHeight" | "offsetTop" | "offsetLeft" => JsValue::Number(0.0),
-        "scrollWidth" | "scrollHeight" | "scrollTop" | "scrollLeft" | "clientWidth" | "clientHeight" => JsValue::Number(0.0),
+        "scrollWidth" | "scrollHeight" | "scrollTop" | "scrollLeft" | "clientWidth"
+        | "clientHeight" => JsValue::Number(0.0),
         "isConnected" => JsValue::Boolean(true),
         // Boolean properties (attribute-backed).
         "hidden" | "inert" | "draggable" | "spellcheck" | "contentEditable" => {
-            let has = DOM_NODES.with(|nodes| nodes.borrow().get(id).map(|n| n.attributes.contains_key(prop)).unwrap_or(false));
+            let has = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.attributes.contains_key(prop))
+                    .unwrap_or(false)
+            });
             JsValue::Boolean(has)
         }
         "tabIndex" => {
             let val = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
+                nodes
+                    .borrow()
+                    .get(id)
                     .and_then(|n| n.attributes.get("tabindex"))
                     .and_then(|v| v.parse::<f64>().ok())
             });
             JsValue::Number(val.unwrap_or(-1.0))
         }
-        "slot" | "accessKey" | "dir" | "lang" | "role" | "ariaLabel" => {
-            DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get(prop))
-                    .map(|v| JsValue::String(v.clone()))
-                    .unwrap_or(JsValue::String(String::new()))
-            })
-        }
+        "slot" | "accessKey" | "dir" | "lang" | "role" | "ariaLabel" => DOM_NODES.with(|nodes| {
+            nodes
+                .borrow()
+                .get(id)
+                .and_then(|n| n.attributes.get(prop))
+                .map(|v| JsValue::String(v.clone()))
+                .unwrap_or(JsValue::String(String::new()))
+        }),
         "part" => {
             let mut obj = HashMap::new();
-            obj.insert("__type__".to_string(), JsValue::String("DOMTokenList".to_string()));
+            obj.insert(
+                "__type__".to_string(),
+                JsValue::String("DOMTokenList".to_string()),
+            );
             obj.insert("__node_id__".to_string(), JsValue::Number(id as f64));
             obj.insert("__attr__".to_string(), JsValue::String("part".to_string()));
             JsValue::Object(obj)
@@ -1436,30 +2070,39 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
         "assignedSlot" => JsValue::Null,
         // Dialog properties.
         "open" => {
-            let has = DOM_NODES.with(|nodes| nodes.borrow().get(id).map(|n| n.attributes.contains_key("open")).unwrap_or(false));
+            let has = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.attributes.contains_key("open"))
+                    .unwrap_or(false)
+            });
             JsValue::Boolean(has)
         }
-        "returnValue" => {
-            DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get("data-returnvalue"))
-                    .map(|v| JsValue::String(v.clone()))
-                    .unwrap_or(JsValue::String(String::new()))
-            })
-        }
+        "returnValue" => DOM_NODES.with(|nodes| {
+            nodes
+                .borrow()
+                .get(id)
+                .and_then(|n| n.attributes.get("data-returnvalue"))
+                .map(|v| JsValue::String(v.clone()))
+                .unwrap_or(JsValue::String(String::new()))
+        }),
         // Popover.
-        "popover" => {
-            DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get("popover"))
-                    .map(|v| JsValue::String(v.clone()))
-                    .unwrap_or(JsValue::Null)
-            })
-        }
+        "popover" => DOM_NODES.with(|nodes| {
+            nodes
+                .borrow()
+                .get(id)
+                .and_then(|n| n.attributes.get("popover"))
+                .map(|v| JsValue::String(v.clone()))
+                .unwrap_or(JsValue::Null)
+        }),
         // Form properties.
         "validity" => {
             let mut v = HashMap::new();
-            v.insert("__type__".to_string(), JsValue::String("ValidityState".to_string()));
+            v.insert(
+                "__type__".to_string(),
+                JsValue::String("ValidityState".to_string()),
+            );
             v.insert("valid".to_string(), JsValue::Boolean(true));
             v.insert("valueMissing".to_string(), JsValue::Boolean(false));
             v.insert("typeMismatch".to_string(), JsValue::Boolean(false));
@@ -1482,20 +2125,29 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
         "indeterminate" => JsValue::Boolean(false),
         "required" | "readOnly" | "multiple" | "autofocus" | "noValidate" => {
             let attr = prop.to_lowercase();
-            let has = DOM_NODES.with(|nodes| nodes.borrow().get(id).map(|n| n.attributes.contains_key(&attr)).unwrap_or(false));
+            let has = DOM_NODES.with(|nodes| {
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.attributes.contains_key(&attr))
+                    .unwrap_or(false)
+            });
             JsValue::Boolean(has)
         }
-        "min" | "max" | "step" | "pattern" | "accept" | "autocomplete" | "inputMode" | "enterKeyHint" => {
-            DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get(prop))
-                    .map(|v| JsValue::String(v.clone()))
-                    .unwrap_or(JsValue::String(String::new()))
-            })
-        }
+        "min" | "max" | "step" | "pattern" | "accept" | "autocomplete" | "inputMode"
+        | "enterKeyHint" => DOM_NODES.with(|nodes| {
+            nodes
+                .borrow()
+                .get(id)
+                .and_then(|n| n.attributes.get(prop))
+                .map(|v| JsValue::String(v.clone()))
+                .unwrap_or(JsValue::String(String::new()))
+        }),
         "valueAsNumber" => {
             let val = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
+                nodes
+                    .borrow()
+                    .get(id)
                     .and_then(|n| n.attributes.get("value"))
                     .and_then(|v| v.parse::<f64>().ok())
             });
@@ -1511,25 +2163,29 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
         "size" => JsValue::Number(0.0),
         // Form-specific properties.
         "elements" => JsValue::Array(Vec::new()),
-        "action" | "method" | "enctype" | "target" | "encoding" => {
-            DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get(prop))
-                    .map(|v| JsValue::String(v.clone()))
-                    .unwrap_or(JsValue::String(String::new()))
-            })
-        }
+        "action" | "method" | "enctype" | "target" | "encoding" => DOM_NODES.with(|nodes| {
+            nodes
+                .borrow()
+                .get(id)
+                .and_then(|n| n.attributes.get(prop))
+                .map(|v| JsValue::String(v.clone()))
+                .unwrap_or(JsValue::String(String::new()))
+        }),
         // Image-specific.
         "naturalWidth" | "naturalHeight" => JsValue::Number(0.0),
         "complete" => JsValue::Boolean(true),
         "currentSrc" => JsValue::String(String::new()),
         // Anchor-specific (URL decomposition).
         "protocol" | "host" | "hostname" | "port" | "pathname" | "search" | "hash" | "origin" => {
-            let href = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id)
-                    .and_then(|n| n.attributes.get("href"))
-                    .cloned()
-            }).unwrap_or_default();
+            let href = DOM_NODES
+                .with(|nodes| {
+                    nodes
+                        .borrow()
+                        .get(id)
+                        .and_then(|n| n.attributes.get("href"))
+                        .cloned()
+                })
+                .unwrap_or_default();
             JsValue::String(href)
         }
         _ => {
@@ -1541,7 +2197,9 @@ pub(super) fn get_element_property(map: &HashMap<String, JsValue>, prop: &str) -
 
 /// Set a property on an Element (textContent, innerHTML, value, etc.)
 pub(super) fn set_element_property(map: &HashMap<String, JsValue>, prop: &str, value: &JsValue) {
-    let Some(id) = node_id_from_handle(&JsValue::Object(map.clone())) else { return; };
+    let Some(id) = node_id_from_handle(&JsValue::Object(map.clone())) else {
+        return;
+    };
 
     match prop {
         "textContent" | "innerText" => {
@@ -1565,7 +2223,8 @@ pub(super) fn set_element_property(map: &HashMap<String, JsValue>, prop: &str, v
             let html = super::coercion::to_string(value);
             set_inner_html(id, &html);
         }
-        "id" | "className" | "value" | "href" | "src" | "alt" | "title" | "type" | "name" | "placeholder" | "disabled" | "checked" => {
+        "id" | "className" | "value" | "href" | "src" | "alt" | "title" | "type" | "name"
+        | "placeholder" | "disabled" | "checked" => {
             let val = super::coercion::to_string(value);
             let attr_name = if prop == "className" { "class" } else { prop };
             DOM_NODES.with(|nodes| {
@@ -1583,14 +2242,18 @@ pub(super) fn set_element_property(map: &HashMap<String, JsValue>, prop: &str, v
 fn query_first(selector: &str) -> Option<usize> {
     DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
-        nodes.iter().position(|n| n.node_type == 1 && matches_selector_raw(n, selector))
+        nodes
+            .iter()
+            .position(|n| n.node_type == 1 && matches_selector_raw(n, selector))
     })
 }
 
 fn query_all(selector: &str) -> Vec<usize> {
     DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
-        nodes.iter().enumerate()
+        nodes
+            .iter()
+            .enumerate()
             .filter(|(_, n)| n.node_type == 1 && matches_selector_raw(n, selector))
             .map(|(i, _)| i)
             .collect()
@@ -1602,7 +2265,10 @@ fn query_first_within(selector: &str, ancestor: usize) -> Option<usize> {
     DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
         descendants.into_iter().find(|&id| {
-            nodes.get(id).map(|n| n.node_type == 1 && matches_selector_raw(n, selector)).unwrap_or(false)
+            nodes
+                .get(id)
+                .map(|n| n.node_type == 1 && matches_selector_raw(n, selector))
+                .unwrap_or(false)
         })
     })
 }
@@ -1611,8 +2277,14 @@ fn query_all_within(selector: &str, ancestor: usize) -> Vec<usize> {
     let descendants = get_descendants(ancestor);
     DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
-        descendants.into_iter()
-            .filter(|&id| nodes.get(id).map(|n| n.node_type == 1 && matches_selector_raw(n, selector)).unwrap_or(false))
+        descendants
+            .into_iter()
+            .filter(|&id| {
+                nodes
+                    .get(id)
+                    .map(|n| n.node_type == 1 && matches_selector_raw(n, selector))
+                    .unwrap_or(false)
+            })
             .collect()
     })
 }
@@ -1620,7 +2292,10 @@ fn query_all_within(selector: &str, ancestor: usize) -> Vec<usize> {
 fn matches_selector(id: usize, selector: &str) -> bool {
     DOM_NODES.with(|nodes| {
         let nodes = nodes.borrow();
-        nodes.get(id).map(|n| matches_selector_raw(n, selector)).unwrap_or(false)
+        nodes
+            .get(id)
+            .map(|n| matches_selector_raw(n, selector))
+            .unwrap_or(false)
     })
 }
 
@@ -1629,10 +2304,14 @@ fn matches_selector(id: usize, selector: &str) -> bool {
 fn matches_selector_raw(node: &DomNode, selector: &str) -> bool {
     // Handle comma-separated selectors.
     if selector.contains(',') {
-        return selector.split(',').any(|s| matches_selector_raw(node, s.trim()));
+        return selector
+            .split(',')
+            .any(|s| matches_selector_raw(node, s.trim()));
     }
     let sel = selector.trim();
-    if sel.is_empty() || sel == "*" { return true; }
+    if sel.is_empty() || sel == "*" {
+        return true;
+    }
 
     // Compound selectors (e.g., "div.foo#bar").
     // For simplicity, handle single-part selectors and basic compounds.
@@ -1641,10 +2320,14 @@ fn matches_selector_raw(node: &DomNode, selector: &str) -> bool {
     }
     if sel.starts_with('.') {
         let class = &sel[1..];
-        return node.attributes.get("class").map(|c| c.split_whitespace().any(|x| x == class)).unwrap_or(false);
+        return node
+            .attributes
+            .get("class")
+            .map(|c| c.split_whitespace().any(|x| x == class))
+            .unwrap_or(false);
     }
     if sel.starts_with('[') && sel.ends_with(']') {
-        let inner = &sel[1..sel.len()-1];
+        let inner = &sel[1..sel.len() - 1];
         if let Some((attr, val)) = inner.split_once('=') {
             let val = val.trim_matches('"').trim_matches('\'');
             return node.attributes.get(attr).map(|v| v.as_str()) == Some(val);
@@ -1677,7 +2360,9 @@ fn get_descendants(root: usize) -> Vec<usize> {
 fn is_descendant_of(child: usize, ancestor: usize) -> bool {
     let mut current = DOM_NODES.with(|nodes| nodes.borrow().get(child).and_then(|n| n.parent));
     while let Some(id) = current {
-        if id == ancestor { return true; }
+        if id == ancestor {
+            return true;
+        }
         current = DOM_NODES.with(|nodes| nodes.borrow().get(id).and_then(|n| n.parent));
     }
     false
@@ -1692,7 +2377,9 @@ fn get_sibling_node(id: usize, offset: i32) -> Option<usize> {
         let target = pos + offset;
         if target >= 0 && (target as usize) < parent.children.len() {
             Some(parent.children[target as usize])
-        } else { None }
+        } else {
+            None
+        }
     })
 }
 
@@ -1709,7 +2396,11 @@ fn clone_node(id: usize, deep: bool) -> usize {
         let new_id = alloc_node(new_node);
         if deep {
             let children = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(id).map(|n| n.children.clone()).unwrap_or_default()
+                nodes
+                    .borrow()
+                    .get(id)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default()
             });
             for child in children {
                 let cloned_child = clone_node(child, true);
@@ -1799,7 +2490,9 @@ fn serialize_node_inner(id: usize, nodes: &[DomNode], out: &mut String) {
 
 fn get_classes(node_id: usize) -> Vec<String> {
     DOM_NODES.with(|nodes| {
-        nodes.borrow().get(node_id)
+        nodes
+            .borrow()
+            .get(node_id)
             .and_then(|n| n.attributes.get("class"))
             .map(|c| c.split_whitespace().map(String::from).collect())
             .unwrap_or_default()
@@ -1819,8 +2512,21 @@ fn set_classes(node_id: usize, classes: &[String]) {
     });
 }
 
-pub(super) fn call_dom_token_list_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
-    let node_id = map.get("__node_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+pub(super) fn call_dom_token_list_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
+    let node_id = map
+        .get("__node_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     match method {
         "add" => {
             let mut classes = get_classes(node_id);
@@ -1843,33 +2549,66 @@ pub(super) fn call_dom_token_list_method(map: &HashMap<String, JsValue>, method:
             JsValue::Undefined
         }
         "toggle" => {
-            let cls = args.first().map(super::coercion::to_string).unwrap_or_default();
-            let force = args.get(1).and_then(|v| if let JsValue::Boolean(b) = v { Some(*b) } else { None });
+            let cls = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
+            let force = args.get(1).and_then(|v| {
+                if let JsValue::Boolean(b) = v {
+                    Some(*b)
+                } else {
+                    None
+                }
+            });
             let mut classes = get_classes(node_id);
             let has = classes.contains(&cls);
             let result = match force {
-                Some(true) => { if !has { classes.push(cls.clone()); } true }
-                Some(false) => { classes.retain(|c| c != &cls); false }
+                Some(true) => {
+                    if !has {
+                        classes.push(cls.clone());
+                    }
+                    true
+                }
+                Some(false) => {
+                    classes.retain(|c| c != &cls);
+                    false
+                }
                 None => {
-                    if has { classes.retain(|c| c != &cls); false }
-                    else { classes.push(cls.clone()); true }
+                    if has {
+                        classes.retain(|c| c != &cls);
+                        false
+                    } else {
+                        classes.push(cls.clone());
+                        true
+                    }
                 }
             };
             set_classes(node_id, &classes);
             JsValue::Boolean(result)
         }
         "contains" => {
-            let cls = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let cls = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             JsValue::Boolean(get_classes(node_id).contains(&cls))
         }
         "replace" => {
-            let old = args.first().map(super::coercion::to_string).unwrap_or_default();
-            let new = args.get(1).map(super::coercion::to_string).unwrap_or_default();
+            let old = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
+            let new = args
+                .get(1)
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let mut classes = get_classes(node_id);
             let found = classes.contains(&old);
             if found {
                 for c in classes.iter_mut() {
-                    if c == &old { *c = new.clone(); }
+                    if c == &old {
+                        *c = new.clone();
+                    }
                 }
                 set_classes(node_id, &classes);
             }
@@ -1879,7 +2618,10 @@ pub(super) fn call_dom_token_list_method(map: &HashMap<String, JsValue>, method:
         "item" => {
             let idx = args.first().map(super::coercion::to_number).unwrap_or(0.0) as usize;
             let classes = get_classes(node_id);
-            classes.get(idx).map(|c| JsValue::String(c.clone())).unwrap_or(JsValue::Null)
+            classes
+                .get(idx)
+                .map(|c| JsValue::String(c.clone()))
+                .unwrap_or(JsValue::Null)
         }
         "forEach" => JsValue::Undefined,
         "entries" | "keys" | "values" => {
@@ -1896,18 +2638,38 @@ pub(super) fn call_dom_token_list_method(map: &HashMap<String, JsValue>, method:
 }
 
 pub(super) fn dom_token_list_length(map: &HashMap<String, JsValue>) -> JsValue {
-    let node_id = map.get("__node_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+    let node_id = map
+        .get("__node_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     JsValue::Number(get_classes(node_id).len() as f64)
 }
 
 // ── DOMStringMap (dataset) ───────────────────────────────────────────────────
 
 pub(super) fn get_dataset_property(map: &HashMap<String, JsValue>, prop: &str) -> JsValue {
-    let node_id = map.get("__node_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+    let node_id = map
+        .get("__node_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     // Convert camelCase to kebab-case for data-* attribute lookup.
     let attr = format!("data-{}", camel_to_kebab(prop));
     DOM_NODES.with(|nodes| {
-        nodes.borrow().get(node_id)
+        nodes
+            .borrow()
+            .get(node_id)
             .and_then(|n| n.attributes.get(&attr))
             .map(|v| JsValue::String(v.clone()))
             .unwrap_or(JsValue::Undefined)
@@ -1915,7 +2677,16 @@ pub(super) fn get_dataset_property(map: &HashMap<String, JsValue>, prop: &str) -
 }
 
 pub(super) fn set_dataset_property(map: &HashMap<String, JsValue>, prop: &str, value: &JsValue) {
-    let node_id = map.get("__node_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+    let node_id = map
+        .get("__node_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     let attr = format!("data-{}", camel_to_kebab(prop));
     let val = super::coercion::to_string(value);
     DOM_NODES.with(|nodes| {
@@ -1999,16 +2770,44 @@ pub(super) fn set_inner_html(node_id: usize, html: &str) {
 
 pub(super) fn make_tree_walker(root_id: usize, _what_to_show: u32) -> JsValue {
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("TreeWalker".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("TreeWalker".to_string()),
+    );
     map.insert("__root_id__".to_string(), JsValue::Number(root_id as f64));
-    map.insert("__current_id__".to_string(), JsValue::Number(root_id as f64));
+    map.insert(
+        "__current_id__".to_string(),
+        JsValue::Number(root_id as f64),
+    );
     map.insert("currentNode".to_string(), element_handle(root_id));
     JsValue::Object(map)
 }
 
-pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> JsValue {
-    let current = map.get("__current_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
-    let root = map.get("__root_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+pub(super) fn call_tree_walker_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> JsValue {
+    let current = map
+        .get("__current_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+    let root = map
+        .get("__root_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     match method {
         "nextNode" => {
             // DFS next: first child, then next sibling, then ancestor's next sibling.
@@ -2016,21 +2815,29 @@ pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &s
                 let nodes = nodes.borrow();
                 fn find_next(id: usize, root: usize, nodes: &[DomNode]) -> Option<usize> {
                     if let Some(node) = nodes.get(id) {
-                        if let Some(&first) = node.children.first() { return Some(first); }
+                        if let Some(&first) = node.children.first() {
+                            return Some(first);
+                        }
                         let mut cur = id;
                         while cur != root {
                             if let Some(n) = nodes.get(cur) {
                                 if let Some(parent_id) = n.parent {
                                     if let Some(parent) = nodes.get(parent_id) {
-                                        if let Some(pos) = parent.children.iter().position(|&c| c == cur) {
+                                        if let Some(pos) =
+                                            parent.children.iter().position(|&c| c == cur)
+                                        {
                                             if pos + 1 < parent.children.len() {
                                                 return Some(parent.children[pos + 1]);
                                             }
                                         }
                                     }
                                     cur = parent_id;
-                                } else { break; }
-                            } else { break; }
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     None
@@ -2053,8 +2860,15 @@ pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &s
                                     // Go to last descendant of previous sibling.
                                     let mut target = parent.children[pos - 1];
                                     loop {
-                                        let children = nodes.get(target).map(|n| n.children.clone()).unwrap_or_default();
-                                        if let Some(&last) = children.last() { target = last; } else { break; }
+                                        let children = nodes
+                                            .get(target)
+                                            .map(|n| n.children.clone())
+                                            .unwrap_or_default();
+                                        if let Some(&last) = children.last() {
+                                            target = last;
+                                        } else {
+                                            break;
+                                        }
                                     }
                                     return Some(target);
                                 }
@@ -2071,9 +2885,7 @@ pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &s
             }
         }
         "parentNode" => {
-            let parent = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(current).and_then(|n| n.parent)
-            });
+            let parent = DOM_NODES.with(|nodes| nodes.borrow().get(current).and_then(|n| n.parent));
             match parent {
                 Some(id) if id != root => element_handle(id),
                 _ => JsValue::Null,
@@ -2081,7 +2893,10 @@ pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &s
         }
         "firstChild" => {
             let first = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(current).and_then(|n| n.children.first().copied())
+                nodes
+                    .borrow()
+                    .get(current)
+                    .and_then(|n| n.children.first().copied())
             });
             match first {
                 Some(id) => element_handle(id),
@@ -2090,7 +2905,10 @@ pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &s
         }
         "lastChild" => {
             let last = DOM_NODES.with(|nodes| {
-                nodes.borrow().get(current).and_then(|n| n.children.last().copied())
+                nodes
+                    .borrow()
+                    .get(current)
+                    .and_then(|n| n.children.last().copied())
             });
             match last {
                 Some(id) => element_handle(id),
@@ -2147,20 +2965,45 @@ pub(super) fn call_tree_walker_method(map: &HashMap<String, JsValue>, method: &s
 
 pub(super) fn make_node_iterator(root_id: usize) -> JsValue {
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("NodeIterator".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("NodeIterator".to_string()),
+    );
     map.insert("__root_id__".to_string(), JsValue::Number(root_id as f64));
     map.insert("__index__".to_string(), JsValue::Number(0.0));
     map.insert("referenceNode".to_string(), element_handle(root_id));
     JsValue::Object(map)
 }
 
-pub(super) fn call_node_iterator_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> JsValue {
-    let root = map.get("__root_id__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+pub(super) fn call_node_iterator_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> JsValue {
+    let root = map
+        .get("__root_id__")
+        .and_then(|v| {
+            if let JsValue::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
     match method {
         "nextNode" => {
             // Collect all nodes in DFS order from root, return next one.
             let all = collect_dfs(root);
-            let idx = map.get("__index__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+            let idx = map
+                .get("__index__")
+                .and_then(|v| {
+                    if let JsValue::Number(n) = v {
+                        Some(*n as usize)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
             if idx < all.len() {
                 let id = all[idx];
                 element_handle(id)
@@ -2170,7 +3013,16 @@ pub(super) fn call_node_iterator_method(map: &HashMap<String, JsValue>, method: 
         }
         "previousNode" => {
             let all = collect_dfs(root);
-            let idx = map.get("__index__").and_then(|v| if let JsValue::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
+            let idx = map
+                .get("__index__")
+                .and_then(|v| {
+                    if let JsValue::Number(n) = v {
+                        Some(*n as usize)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
             if idx > 0 && idx - 1 < all.len() {
                 let id = all[idx - 1];
                 element_handle(id)
@@ -2211,7 +3063,11 @@ pub(super) fn make_range() -> JsValue {
     JsValue::Object(map)
 }
 
-pub(super) fn call_range_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_range_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     match method {
         "setStart" | "setEnd" => {
             let mut m = map.clone();
@@ -2243,19 +3099,31 @@ pub(super) fn call_range_method(map: &HashMap<String, JsValue>, method: &str, ar
         "cloneRange" => JsValue::Object(map.clone()),
         "deleteContents" | "extractContents" => {
             let mut frag = HashMap::new();
-            frag.insert("__type__".to_string(), JsValue::String("DocumentFragment".to_string()));
+            frag.insert(
+                "__type__".to_string(),
+                JsValue::String("DocumentFragment".to_string()),
+            );
             JsValue::Object(frag)
         }
         "cloneContents" => {
             let mut frag = HashMap::new();
-            frag.insert("__type__".to_string(), JsValue::String("DocumentFragment".to_string()));
+            frag.insert(
+                "__type__".to_string(),
+                JsValue::String("DocumentFragment".to_string()),
+            );
             JsValue::Object(frag)
         }
         "insertNode" => JsValue::Undefined,
         "createContextualFragment" => {
-            let html = args.first().map(super::coercion::to_string).unwrap_or_default();
+            let html = args
+                .first()
+                .map(super::coercion::to_string)
+                .unwrap_or_default();
             let mut frag = HashMap::new();
-            frag.insert("__type__".to_string(), JsValue::String("DocumentFragment".to_string()));
+            frag.insert(
+                "__type__".to_string(),
+                JsValue::String("DocumentFragment".to_string()),
+            );
             frag.insert("__html__".to_string(), JsValue::String(html));
             JsValue::Object(frag)
         }
@@ -2274,7 +3142,10 @@ pub(super) fn call_range_method(map: &HashMap<String, JsValue>, method: &str, ar
 
 pub(super) fn make_selection() -> JsValue {
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("Selection".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("Selection".to_string()),
+    );
     map.insert("anchorOffset".to_string(), JsValue::Number(0.0));
     map.insert("focusOffset".to_string(), JsValue::Number(0.0));
     map.insert("isCollapsed".to_string(), JsValue::Boolean(true));
@@ -2283,7 +3154,11 @@ pub(super) fn make_selection() -> JsValue {
     JsValue::Object(map)
 }
 
-pub(super) fn call_selection_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> JsValue {
+pub(super) fn call_selection_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> JsValue {
     match method {
         "getRangeAt" => make_range(),
         "addRange" => {
@@ -2304,7 +3179,9 @@ pub(super) fn call_selection_method(map: &HashMap<String, JsValue>, method: &str
             m.insert("isCollapsed".to_string(), JsValue::Boolean(true));
             JsValue::Object(m)
         }
-        "extend" | "selectAllChildren" | "setBaseAndExtent" | "setPosition" => JsValue::Object(map.clone()),
+        "extend" | "selectAllChildren" | "setBaseAndExtent" | "setPosition" => {
+            JsValue::Object(map.clone())
+        }
         "toString" => JsValue::String(String::new()),
         "containsNode" => JsValue::Boolean(false),
         "deleteFromDocument" => JsValue::Undefined,
@@ -2319,7 +3196,10 @@ pub(super) fn call_document_traversal_method(method: &str, args: &[JsValue]) -> 
     match method {
         "createTreeWalker" => {
             let root_id = args.first().and_then(node_id_from_handle).unwrap_or(0);
-            let what_to_show = args.get(1).map(super::coercion::to_number).unwrap_or(0xFFFF_FFFF_u32 as f64) as u32;
+            let what_to_show = args
+                .get(1)
+                .map(super::coercion::to_number)
+                .unwrap_or(0xFFFF_FFFF_u32 as f64) as u32;
             Some(make_tree_walker(root_id, what_to_show))
         }
         "createNodeIterator" => {
@@ -2380,7 +3260,10 @@ pub(super) fn fire_event_with(target_id: usize, event_type: &str, extra: &[(&str
             let nodes = nodes.borrow();
             match nodes.get(id) {
                 Some(n) => (
-                    n.event_listeners.get(event_type).cloned().unwrap_or_default(),
+                    n.event_listeners
+                        .get(event_type)
+                        .cloned()
+                        .unwrap_or_default(),
                     n.parent,
                 ),
                 None => (Vec::new(), None),
@@ -2411,7 +3294,10 @@ pub(super) fn remove_node_attr(id: usize, key: &str) {
 
 fn get_node_attr(id: usize, key: &str) -> Option<String> {
     DOM_NODES.with(|nodes| {
-        nodes.borrow().get(id).and_then(|n| n.attributes.get(key).cloned())
+        nodes
+            .borrow()
+            .get(id)
+            .and_then(|n| n.attributes.get(key).cloned())
     })
 }
 
@@ -2426,10 +3312,14 @@ fn insert_adjacent_node(target_id: usize, position: &str, new_id: usize) {
                 let pos = parent.children.iter().position(|&c| c == target_id);
                 match position {
                     "beforebegin" => {
-                        if let Some(idx) = pos { parent.children.insert(idx, new_id); }
+                        if let Some(idx) = pos {
+                            parent.children.insert(idx, new_id);
+                        }
                     }
                     "afterend" => {
-                        if let Some(idx) = pos { parent.children.insert(idx + 1, new_id); }
+                        if let Some(idx) = pos {
+                            parent.children.insert(idx + 1, new_id);
+                        }
                     }
                     _ => {}
                 }
@@ -2474,7 +3364,9 @@ fn insert_adjacent_html(target_id: usize, position: &str, html: &str) {
                     if let Some(node) = nodes.get_mut(target_id) {
                         node.children.insert(0, nid);
                     }
-                    if let Some(n) = nodes.get_mut(nid) { n.parent = Some(target_id); }
+                    if let Some(n) = nodes.get_mut(nid) {
+                        n.parent = Some(target_id);
+                    }
                 });
             }
             "beforeend" => {
@@ -2483,7 +3375,9 @@ fn insert_adjacent_html(target_id: usize, position: &str, html: &str) {
                     if let Some(node) = nodes.get_mut(target_id) {
                         node.children.push(nid);
                     }
-                    if let Some(n) = nodes.get_mut(nid) { n.parent = Some(target_id); }
+                    if let Some(n) = nodes.get_mut(nid) {
+                        n.parent = Some(target_id);
+                    }
                 });
             }
             _ => {}

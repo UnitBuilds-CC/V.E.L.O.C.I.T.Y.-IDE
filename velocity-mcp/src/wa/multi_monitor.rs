@@ -117,25 +117,29 @@ impl MultiMonitorManager {
 
     /// Convert virtual-screen coordinates to monitor-local coordinates.
     pub fn to_local_coords(&self, virtual_x: i32, virtual_y: i32) -> Option<(u32, i32, i32)> {
-        self.monitor_at_point(virtual_x, virtual_y).map(|m| {
-            (
-                m.index,
-                virtual_x - m.bounds.x,
-                virtual_y - m.bounds.y,
-            )
-        })
+        self.monitor_at_point(virtual_x, virtual_y)
+            .map(|m| (m.index, virtual_x - m.bounds.x, virtual_y - m.bounds.y))
     }
 
     /// Convert monitor-local coordinates to virtual-screen coordinates.
-    pub fn to_virtual_coords(&self, monitor_index: u32, local_x: i32, local_y: i32) -> Option<(i32, i32)> {
-        self.get(monitor_index).map(|m| {
-            (m.bounds.x + local_x, m.bounds.y + local_y)
-        })
+    pub fn to_virtual_coords(
+        &self,
+        monitor_index: u32,
+        local_x: i32,
+        local_y: i32,
+    ) -> Option<(i32, i32)> {
+        self.get(monitor_index)
+            .map(|m| (m.bounds.x + local_x, m.bounds.y + local_y))
     }
 
     /// Apply DPI scaling to a coordinate on a specific monitor.
     /// Converts from logical pixels to physical pixels.
-    pub fn logical_to_physical(&self, monitor_index: u32, logical_x: i32, logical_y: i32) -> Option<(i32, i32)> {
+    pub fn logical_to_physical(
+        &self,
+        monitor_index: u32,
+        logical_x: i32,
+        logical_y: i32,
+    ) -> Option<(i32, i32)> {
         self.get(monitor_index).map(|m| {
             (
                 (logical_x as f64 * m.dpi_scale) as i32,
@@ -145,7 +149,12 @@ impl MultiMonitorManager {
     }
 
     /// Convert physical pixels to logical pixels for a specific monitor.
-    pub fn physical_to_logical(&self, monitor_index: u32, phys_x: i32, phys_y: i32) -> Option<(i32, i32)> {
+    pub fn physical_to_logical(
+        &self,
+        monitor_index: u32,
+        phys_x: i32,
+        phys_y: i32,
+    ) -> Option<(i32, i32)> {
         self.get(monitor_index).map(|m| {
             (
                 (phys_x as f64 / m.dpi_scale) as i32,
@@ -157,12 +166,27 @@ impl MultiMonitorManager {
     /// Get the total virtual screen bounding box.
     pub fn virtual_screen_bounds(&self) -> MonitorRect {
         if self.monitors.is_empty() {
-            return MonitorRect { x: 0, y: 0, width: 1920, height: 1080 };
+            return MonitorRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            };
         }
         let min_x = self.monitors.iter().map(|m| m.bounds.x).min().unwrap_or(0);
         let min_y = self.monitors.iter().map(|m| m.bounds.y).min().unwrap_or(0);
-        let max_x = self.monitors.iter().map(|m| m.bounds.x + m.bounds.width as i32).max().unwrap_or(1920);
-        let max_y = self.monitors.iter().map(|m| m.bounds.y + m.bounds.height as i32).max().unwrap_or(1080);
+        let max_x = self
+            .monitors
+            .iter()
+            .map(|m| m.bounds.x + m.bounds.width as i32)
+            .max()
+            .unwrap_or(1920);
+        let max_y = self
+            .monitors
+            .iter()
+            .map(|m| m.bounds.y + m.bounds.height as i32)
+            .max()
+            .unwrap_or(1080);
         MonitorRect {
             x: min_x,
             y: min_y,
@@ -199,14 +223,23 @@ impl MultiMonitorManager {
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -337,8 +370,18 @@ mod tests {
                 index: 0,
                 device_name: "\\\\.\\DISPLAY1".to_string(),
                 friendly_name: Some("Primary 4K".to_string()),
-                bounds: MonitorRect { x: 0, y: 0, width: 3840, height: 2160 },
-                work_area: MonitorRect { x: 0, y: 0, width: 3840, height: 2112 },
+                bounds: MonitorRect {
+                    x: 0,
+                    y: 0,
+                    width: 3840,
+                    height: 2160,
+                },
+                work_area: MonitorRect {
+                    x: 0,
+                    y: 0,
+                    width: 3840,
+                    height: 2112,
+                },
                 is_primary: true,
                 dpi_scale: 1.5,
                 dpi: 144,
@@ -351,8 +394,18 @@ mod tests {
                 index: 1,
                 device_name: "\\\\.\\DISPLAY2".to_string(),
                 friendly_name: Some("Secondary 1080p".to_string()),
-                bounds: MonitorRect { x: 3840, y: 0, width: 1920, height: 1080 },
-                work_area: MonitorRect { x: 3840, y: 0, width: 1920, height: 1040 },
+                bounds: MonitorRect {
+                    x: 3840,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                },
+                work_area: MonitorRect {
+                    x: 3840,
+                    y: 0,
+                    width: 1920,
+                    height: 1040,
+                },
                 is_primary: false,
                 dpi_scale: 1.0,
                 dpi: 96,

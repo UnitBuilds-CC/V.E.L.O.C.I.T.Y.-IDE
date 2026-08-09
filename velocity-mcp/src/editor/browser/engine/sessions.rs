@@ -102,7 +102,9 @@ pub fn browser_cookie_as_runtime_cookie(cookie: &BrowserCookie) -> RuntimeBrowse
     }
 }
 
-fn runtime_session_as_browser_session(runtime_session: &RuntimeBrowserSessionState) -> BrowserSessionState {
+fn runtime_session_as_browser_session(
+    runtime_session: &RuntimeBrowserSessionState,
+) -> BrowserSessionState {
     BrowserSessionState {
         id: runtime_session.id.clone(),
         current_url: runtime_session.current_url.clone(),
@@ -423,7 +425,11 @@ pub fn list_sessions(
             Err(err) => return Err(format!("read browser session dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser session: {err}"))?;
@@ -457,4 +463,3 @@ pub fn session_state_to_json(session: &BrowserSessionState) -> Result<String, St
     serde_json::to_string_pretty(session)
         .map_err(|err| format!("serialise browser session state: {err}"))
 }
-

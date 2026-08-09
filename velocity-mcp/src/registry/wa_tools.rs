@@ -17,8 +17,9 @@ pub fn handle_wa_tool(
                     .ok_or("sessionId is required")?,
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA session creation summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA session creation summary: {err}"))
+                })?
             } else {
                 format!(
                     "Created WA session '{}'\nSession NDA: {}",
@@ -32,16 +33,18 @@ pub fn handle_wa_tool(
                 .ok_or("sessionId is required")?;
             let report = crate::wa::get_session_report(root, session_id)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA session summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA session summary: {err}"))
+                })?
             } else {
                 serde_json::to_string_pretty(&report.session)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA session: {err}")))?
             }
         }
         "wa_list_sessions" => {
-            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(Box::<dyn Error>::from)?;
+            let sort_direction =
+                crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                    .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let sessions = crate::wa::list_sessions(
                 root,
@@ -72,8 +75,9 @@ pub fn handle_wa_tool(
                 nodes,
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA snapshot save summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA snapshot save summary: {err}"))
+                })?
             } else {
                 format!(
                     "Saved WA snapshot '{}' for session '{}'\nNodes: {}\nSnapshot NDA: {}",
@@ -93,16 +97,19 @@ pub fn handle_wa_tool(
                 .ok_or("snapshotName is required")?;
             let report = crate::wa::read_snapshot_report(root, session_id, snapshot_name)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA snapshot summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA snapshot summary: {err}"))
+                })?
             } else {
-                serde_json::to_string_pretty(&report.snapshot)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA snapshot: {err}")))?
+                serde_json::to_string_pretty(&report.snapshot).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA snapshot: {err}"))
+                })?
             }
         }
         "wa_capture_windows_snapshot" => {
             let max_depth = arguments["maxDepth"].as_u64().unwrap_or(3) as u32;
-            let max_children_per_node = arguments["maxChildrenPerNode"].as_u64().unwrap_or(64) as usize;
+            let max_children_per_node =
+                arguments["maxChildrenPerNode"].as_u64().unwrap_or(64) as usize;
             let process_id = arguments["processId"].as_u64().map(|value| value as u32);
             let report = crate::wa::capture_windows_snapshot_report(
                 root,
@@ -119,15 +126,17 @@ pub fn handle_wa_tool(
                 max_children_per_node,
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA Windows capture summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA Windows capture summary: {err}"))
+                })?
             } else {
                 crate::wa::render_windows_capture_report(&report)
             }
         }
         "wa_list_snapshots" => {
-            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(Box::<dyn Error>::from)?;
+            let sort_direction =
+                crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                    .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let snapshots = crate::wa::list_snapshots(
                 root,
@@ -152,8 +161,9 @@ pub fn handle_wa_tool(
                 steps,
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script save summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA script save summary: {err}"))
+                })?
             } else {
                 format!(
                     "Saved WA script '{}'\nNDA: {}",
@@ -168,16 +178,18 @@ pub fn handle_wa_tool(
             let full_path = super::system_tools::resolve_workspace_path(root, rel_path, false)?;
             let report = crate::wa::read_script_report(root, &full_path)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA script summary: {err}"))
+                })?
             } else {
                 serde_json::to_string_pretty(&report.script)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script: {err}")))?
             }
         }
         "wa_list_scripts" => {
-            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(Box::<dyn Error>::from)?;
+            let sort_direction =
+                crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                    .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let scripts = crate::wa::list_scripts(
                 root,
@@ -201,8 +213,9 @@ pub fn handle_wa_tool(
                 arguments["action"].as_str(),
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA selector resolution: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA selector resolution: {err}"))
+                })?
             } else {
                 crate::wa::render_resolve_selector_report(&report)
             }
@@ -214,17 +227,16 @@ pub fn handle_wa_tool(
                     .as_str()
                     .ok_or("sessionId is required")?,
                 arguments["snapshotName"].as_str(),
-                arguments["action"]
-                    .as_str()
-                    .ok_or("action is required")?,
+                arguments["action"].as_str().ok_or("action is required")?,
                 arguments["nodeId"].as_str(),
                 arguments["role"].as_str(),
                 arguments["name"].as_str(),
                 arguments["value"].as_str(),
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA action plan: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA action plan: {err}"))
+                })?
             } else {
                 crate::wa::render_plan_action_report(&report)
             }
@@ -236,17 +248,16 @@ pub fn handle_wa_tool(
                     .as_str()
                     .ok_or("sessionId is required")?,
                 arguments["snapshotName"].as_str(),
-                arguments["action"]
-                    .as_str()
-                    .ok_or("action is required")?,
+                arguments["action"].as_str().ok_or("action is required")?,
                 arguments["nodeId"].as_str(),
                 arguments["role"].as_str(),
                 arguments["name"].as_str(),
                 arguments["value"].as_str(),
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA Windows action report: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA Windows action report: {err}"))
+                })?
             } else {
                 crate::wa::render_windows_action_report(&report)
             }
@@ -269,8 +280,9 @@ pub fn handle_wa_tool(
                 arguments["pollIntervalMs"].as_u64().unwrap_or(100),
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA Windows wait report: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA Windows wait report: {err}"))
+                })?
             } else {
                 crate::wa::render_windows_wait_report(&report)
             }
@@ -290,8 +302,9 @@ pub fn handle_wa_tool(
                 arguments["startStepIndex"].as_u64().map(|v| v as usize),
             )?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA script run report: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA script run report: {err}"))
+                })?
             } else {
                 crate::wa::render_script_run_report(&report.run)
             }
@@ -303,16 +316,18 @@ pub fn handle_wa_tool(
             let full_path = super::system_tools::resolve_workspace_path(root, rel_path, false)?;
             let report = crate::wa::read_run_report(root, &full_path)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise WA run summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise WA run summary: {err}"))
+                })?
             } else {
                 serde_json::to_string_pretty(&report.run)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise WA run: {err}")))?
             }
         }
         "wa_list_runs" => {
-            let sort_direction = crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
-                .map_err(Box::<dyn Error>::from)?;
+            let sort_direction =
+                crate::wa::parse_list_sort_direction(arguments["sortDirection"].as_str())
+                    .map_err(Box::<dyn Error>::from)?;
             let limit = arguments["limit"].as_u64().map(|value| value as usize);
             let runs = crate::wa::list_runs(
                 root,
@@ -328,36 +343,54 @@ pub fn handle_wa_tool(
         "wa_clipboard_read" => {
             let state = crate::wa::clipboard::ClipboardManager::read();
             let content_str = match &state.content {
-                crate::wa::clipboard::ClipboardContent::Text(t) => format!("\"{}\"", t.replace('"', "\\\"").chars().take(500).collect::<String>()),
+                crate::wa::clipboard::ClipboardContent::Text(t) => format!(
+                    "\"{}\"",
+                    t.replace('"', "\\\"").chars().take(500).collect::<String>()
+                ),
                 crate::wa::clipboard::ClipboardContent::Files(f) => format!("{:?}", f),
                 _ => "null".to_string(),
             };
-            format!("{{\"sequence\":{},\"formats\":{:?},\"content\":{}}}",
-                state.sequence_number, state.available_formats, content_str)
+            format!(
+                "{{\"sequence\":{},\"formats\":{:?},\"content\":{}}}",
+                state.sequence_number, state.available_formats, content_str
+            )
         }
         "wa_clipboard_write" => {
             if let Some(text) = arguments["text"].as_str() {
                 let result = crate::wa::clipboard::ClipboardManager::write_text(text);
-                format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail)
+                format!(
+                    "{{\"success\":{},\"detail\":\"{}\"}}",
+                    result.success, result.detail
+                )
             } else if let Some(html) = arguments["html"].as_str() {
                 let result = crate::wa::clipboard::ClipboardManager::write_html(html, None);
-                format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail)
+                format!(
+                    "{{\"success\":{},\"detail\":\"{}\"}}",
+                    result.success, result.detail
+                )
             } else {
                 "{\"error\":\"provide text, html, or files\"}".to_string()
             }
         }
         "wa_clipboard_clear" => {
             let result = crate::wa::clipboard::ClipboardManager::clear();
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail)
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success, result.detail
+            )
         }
         // ─── Process Management ───────────────────────────────────────────────────
         "wa_process_launch" => {
             let exe = arguments["exePath"].as_str().ok_or("exePath is required")?;
             let config = crate::wa::process_mgmt::LaunchConfig::new(exe);
             let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
-            format!("{{\"success\":{},\"pid\":{},\"detail\":\"{}\"}}",
+            format!(
+                "{{\"success\":{},\"pid\":{},\"detail\":\"{}\"}}",
                 result.success,
-                result.pid.map(|p| p.to_string()).unwrap_or_else(|| "null".to_string()),
+                result
+                    .pid
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
                 result.detail.replace('"', "\\\"")
             )
         }
@@ -374,15 +407,26 @@ pub fn handle_wa_tool(
             let filter = arguments["nameContains"].as_str();
             let processes = crate::wa::process_mgmt::ProcessManager::enumerate();
             let filtered: Vec<_> = if let Some(f) = filter {
-                processes.into_iter().filter(|p| p.name.to_lowercase().contains(&f.to_lowercase())).collect()
+                processes
+                    .into_iter()
+                    .filter(|p| p.name.to_lowercase().contains(&f.to_lowercase()))
+                    .collect()
             } else {
                 processes
             };
-            serde_json::to_string(&filtered.iter().map(|p| serde_json::json!({
-                "pid": p.pid,
-                "name": p.name,
-                "has_window": p.has_window,
-            })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string())
+            serde_json::to_string(
+                &filtered
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "pid": p.pid,
+                            "name": p.name,
+                            "has_window": p.has_window,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_else(|_| "[]".to_string())
         }
         "wa_process_kill" => {
             let pid = arguments["pid"].as_u64().ok_or("pid is required")? as u32;
@@ -411,7 +455,8 @@ pub fn handle_wa_tool(
                     "has_window": p.has_window,
                     "cpu_percent": p.cpu_percent,
                     "memory_bytes": p.memory_bytes,
-                })).unwrap_or_else(|_| "{}".to_string()),
+                }))
+                .unwrap_or_else(|_| "{}".to_string()),
                 None => format!("{{\"pid\":{},\"found\":false}}", pid),
             }
         }
@@ -434,13 +479,18 @@ pub fn handle_wa_tool(
                 "{{\"condition_met\":{},\"elapsed_ms\":{},\"exit_code\":{},\"detail\":\"{}\"}}",
                 result.condition_met,
                 result.elapsed.as_millis(),
-                result.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "null".to_string()),
+                result
+                    .exit_code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "null".to_string()),
                 result.detail.replace('"', "\\\"")
             )
         }
         // ─── UIA Direct (cached-tree lookup / invoke) ─────────────────────────
         "wa_uia_tree" => {
-            let pid = arguments["processId"].as_u64().ok_or("processId is required")? as u32;
+            let pid = arguments["processId"]
+                .as_u64()
+                .ok_or("processId is required")? as u32;
             let max_depth = arguments["maxDepth"].as_u64().unwrap_or(4) as u32;
             let max_children = arguments["maxChildren"].as_u64().unwrap_or(64) as u32;
             let mut client = crate::wa::uia_ffi::UiaDirectClient::initialize_for_process(pid)
@@ -452,10 +502,13 @@ pub fn handle_wa_tool(
                 "process_id": tree.process_id,
                 "element_count": tree.element_count,
                 "fresh": tree.is_fresh(),
-            })).unwrap_or_else(|_| "{}".to_string())
+            }))
+            .unwrap_or_else(|_| "{}".to_string())
         }
         "wa_uia_lookup" => {
-            let pid = arguments["processId"].as_u64().ok_or("processId is required")? as u32;
+            let pid = arguments["processId"]
+                .as_u64()
+                .ok_or("processId is required")? as u32;
             let max_depth = arguments["maxDepth"].as_u64().unwrap_or(4) as u32;
             let max_children = arguments["maxChildren"].as_u64().unwrap_or(64) as u32;
             let mut client = crate::wa::uia_ffi::UiaDirectClient::initialize_for_process(pid)
@@ -472,8 +525,12 @@ pub fn handle_wa_tool(
             } else if let Some(name) = arguments["name"].as_str() {
                 let matches = tree.find_by_name(name);
                 serde_json::to_string(
-                    &matches.iter().map(|el| uia_element_json(el)).collect::<Vec<_>>(),
-                ).unwrap_or_else(|_| "[]".to_string())
+                    &matches
+                        .iter()
+                        .map(|el| uia_element_json(el))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap_or_else(|_| "[]".to_string())
             } else if arguments["x"].is_number() && arguments["y"].is_number() {
                 let x = arguments["x"].as_f64().unwrap_or(0.0);
                 let y = arguments["y"].as_f64().unwrap_or(0.0);
@@ -489,7 +546,9 @@ pub fn handle_wa_tool(
             }
         }
         "wa_uia_invoke" => {
-            let pid = arguments["processId"].as_u64().ok_or("processId is required")? as u32;
+            let pid = arguments["processId"]
+                .as_u64()
+                .ok_or("processId is required")? as u32;
             let pattern_str = arguments["pattern"].as_str().ok_or("pattern is required")?;
             let pattern = crate::wa::uia_ffi::UiaPattern::from_str(pattern_str)
                 .ok_or_else(|| format!("unknown UIA pattern '{pattern_str}'"))?;
@@ -515,7 +574,9 @@ pub fn handle_wa_tool(
                 ));
             };
             let Some(element) = element else {
-                return Err(Box::<dyn Error>::from("target element not found in UIA tree"));
+                return Err(Box::<dyn Error>::from(
+                    "target element not found in UIA tree",
+                ));
             };
             match client.invoke_pattern(&element, pattern, value) {
                 Ok(()) => format!(
@@ -533,13 +594,21 @@ pub fn handle_wa_tool(
         // ─── Window Management ────────────────────────────────────────────────────
         "wa_window_list" => {
             let windows = crate::wa::window_mgmt::WindowManager::enumerate_windows();
-            serde_json::to_string(&windows.iter().map(|w| serde_json::json!({
-                "hwnd": w.hwnd,
-                "title": w.title,
-                "class_name": w.class_name,
-                "pid": w.process_id,
-                "is_foreground": w.is_foreground,
-            })).collect::<Vec<_>>()).unwrap_or_else(|_| "[]".to_string())
+            serde_json::to_string(
+                &windows
+                    .iter()
+                    .map(|w| {
+                        serde_json::json!({
+                            "hwnd": w.hwnd,
+                            "title": w.title,
+                            "class_name": w.class_name,
+                            "pid": w.process_id,
+                            "is_foreground": w.is_foreground,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_else(|_| "[]".to_string())
         }
         "wa_window_action" => {
             let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;
@@ -551,19 +620,32 @@ pub fn handle_wa_tool(
             let op = match action {
                 "move" => crate::wa::window_mgmt::WindowOperation::Move { x, y },
                 "resize" => crate::wa::window_mgmt::WindowOperation::Resize { width, height },
-                "move_resize" | "moveresize" => crate::wa::window_mgmt::WindowOperation::MoveResize { x, y, width, height },
+                "move_resize" | "moveresize" => {
+                    crate::wa::window_mgmt::WindowOperation::MoveResize {
+                        x,
+                        y,
+                        width,
+                        height,
+                    }
+                }
                 "minimize" => crate::wa::window_mgmt::WindowOperation::Minimize,
                 "maximize" => crate::wa::window_mgmt::WindowOperation::Maximize,
                 "restore" => crate::wa::window_mgmt::WindowOperation::Restore,
                 "close" => crate::wa::window_mgmt::WindowOperation::Close,
-                "focus" | "activate" | "bring_to_front" => crate::wa::window_mgmt::WindowOperation::BringToFront,
+                "focus" | "activate" | "bring_to_front" => {
+                    crate::wa::window_mgmt::WindowOperation::BringToFront
+                }
                 "send_to_back" => crate::wa::window_mgmt::WindowOperation::SendToBack,
                 "topmost" => crate::wa::window_mgmt::WindowOperation::SetTopMost(true),
                 "untopmost" => crate::wa::window_mgmt::WindowOperation::SetTopMost(false),
                 "opacity" => crate::wa::window_mgmt::WindowOperation::SetOpacity(
                     arguments["opacity"].as_u64().unwrap_or(255) as u8,
                 ),
-                other => return Err(Box::<dyn Error>::from(format!("unknown window action '{other}'"))),
+                other => {
+                    return Err(Box::<dyn Error>::from(format!(
+                        "unknown window action '{other}'"
+                    )))
+                }
             };
             let result = crate::wa::window_mgmt::WindowManager::apply_operation(hwnd, &op);
             let new_rect = match result.new_rect {
@@ -586,7 +668,10 @@ pub fn handle_wa_tool(
         "wa_virtual_desktop_list" => {
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
             let state = mgr.enumerate();
-            format!("{{\"total\":{},\"current_index\":{}}}", state.total_count, state.current_index)
+            format!(
+                "{{\"total\":{},\"current_index\":{}}}",
+                state.total_count, state.current_index
+            )
         }
         "wa_virtual_desktop_switch" => {
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
@@ -598,7 +683,10 @@ pub fn handle_wa_tool(
                 return Err(Box::<dyn Error>::from("provide index or name"));
             };
             let result = mgr.apply(&op);
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\"")
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.detail.replace('"', "\\\"")
             )
         }
         // ─── OCR ─────────────────────────────────────────────────────────────────
@@ -618,21 +706,32 @@ pub fn handle_wa_tool(
                 language: Some(language.to_string()),
                 ..Default::default()
             };
-            let default_region = crate::wa::ocr::OcrRegion { x: 0, y: 0, width: 1920, height: 1080 };
+            let default_region = crate::wa::ocr::OcrRegion {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            };
             let r = region.as_ref().unwrap_or(&default_region);
             let result = crate::wa::ocr::OcrEngine::recognize_region(r, &config);
-            let blocks: Vec<serde_json::Value> = result.blocks.iter().map(|b| serde_json::json!({
-                "text": b.text,
-                "confidence": b.confidence,
-                "line_index": b.line_index,
-                "word_index": b.word_index,
-                "bounds": {
-                    "x": b.bounds.x,
-                    "y": b.bounds.y,
-                    "width": b.bounds.width,
-                    "height": b.bounds.height,
-                },
-            })).collect();
+            let blocks: Vec<serde_json::Value> = result
+                .blocks
+                .iter()
+                .map(|b| {
+                    serde_json::json!({
+                        "text": b.text,
+                        "confidence": b.confidence,
+                        "line_index": b.line_index,
+                        "word_index": b.word_index,
+                        "bounds": {
+                            "x": b.bounds.x,
+                            "y": b.bounds.y,
+                            "width": b.bounds.width,
+                            "height": b.bounds.height,
+                        },
+                    })
+                })
+                .collect();
             let block_count = blocks.len();
             serde_json::to_string(&serde_json::json!({
                 "success": true,
@@ -682,15 +781,17 @@ pub fn handle_wa_tool(
                 "detail": result.detail,
                 "notifications_remaining": result.notifications_remaining,
             }))
-            .map_err(|err| Box::<dyn Error>::from(format!("serialise notifications dismiss: {err}")))?
+            .map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise notifications dismiss: {err}"))
+            })?
         }
         // ─── Registry ─────────────────────────────────────────────────────────────
         "wa_registry_read" => {
             let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
             let path = arguments["path"].as_str().ok_or("path is required")?;
             let name = arguments["name"].as_str().ok_or("name is required")?;
-            let hive = crate::wa::registry::RegistryHive::from_str(hive_str)
-                .ok_or("invalid hive")?;
+            let hive =
+                crate::wa::registry::RegistryHive::from_str(hive_str).ok_or("invalid hive")?;
             let result = crate::wa::registry::RegistryManager::read(hive, path, name);
             let value_json = match &result.value {
                 Some(crate::wa::registry::RegistryValue::String(s))
@@ -703,7 +804,11 @@ pub fn handle_wa_tool(
                 Some(crate::wa::registry::RegistryValue::MultiString(m)) => serde_json::json!(m),
                 None => serde_json::Value::Null,
             };
-            let vtype = result.value.as_ref().map(|v| v.as_ps_type()).unwrap_or("none");
+            let vtype = result
+                .value
+                .as_ref()
+                .map(|v| v.as_ps_type())
+                .unwrap_or("none");
             serde_json::to_string(&serde_json::json!({
                 "success": result.success,
                 "operation": result.operation,
@@ -714,7 +819,9 @@ pub fn handle_wa_tool(
                 "value": value_json,
                 "detail": result.detail,
             }))
-            .map_err(|err| Box::<dyn Error>::from(format!("serialise registry read result: {err}")))?
+            .map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise registry read result: {err}"))
+            })?
         }
         "wa_registry_write" => {
             let hive_str = arguments["hive"].as_str().ok_or("hive is required")?;
@@ -739,7 +846,9 @@ pub fn handle_wa_tool(
                         "enabled": enabled,
                         "detail": result.detail,
                     }))
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise dark mode set: {err}")))?
+                    .map_err(|err| {
+                        Box::<dyn Error>::from(format!("serialise dark mode set: {err}"))
+                    })?
                 }
                 // Query mode: read the current dark mode state (read-only).
                 None => {
@@ -749,7 +858,9 @@ pub fn handle_wa_tool(
                         "operation": "query",
                         "dark_mode": dark_mode,
                     }))
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise dark mode query: {err}")))?
+                    .map_err(|err| {
+                        Box::<dyn Error>::from(format!("serialise dark mode query: {err}"))
+                    })?
                 }
             }
         }
@@ -757,27 +868,43 @@ pub fn handle_wa_tool(
         "wa_trigger_register" => {
             let name = arguments["name"].as_str().ok_or("name is required")?;
             let kind = arguments["kind"].as_str().ok_or("kind is required")?;
-            let _action_script = arguments["actionScript"].as_str().ok_or("actionScript is required")?;
-            format!("{{\"action\":\"register\",\"name\":\"{}\",\"kind\":\"{}\",\"ready\":true}}",
-                name, kind)
+            let _action_script = arguments["actionScript"]
+                .as_str()
+                .ok_or("actionScript is required")?;
+            format!(
+                "{{\"action\":\"register\",\"name\":\"{}\",\"kind\":\"{}\",\"ready\":true}}",
+                name, kind
+            )
         }
-        "wa_trigger_list" => {
-            "{\"action\":\"list_triggers\",\"count\":0}".to_string()
-        }
+        "wa_trigger_list" => "{\"action\":\"list_triggers\",\"count\":0}".to_string(),
         "wa_trigger_fire" => {
-            let trigger_id = arguments["triggerId"].as_str().ok_or("triggerId is required")?;
+            let trigger_id = arguments["triggerId"]
+                .as_str()
+                .ok_or("triggerId is required")?;
             let mut mgr = crate::wa::triggers::TriggerManager::new();
             match mgr.fire(trigger_id) {
-                Some(result) => format!("{{\"success\":{},\"trigger_id\":\"{}\",\"detail\":\"{}\"}}",
-                    result.success, trigger_id, result.detail.replace('"', "\\\"")),
-                None => format!("{{\"success\":false,\"error\":\"Trigger '{}' not found\"}}", trigger_id),
+                Some(result) => format!(
+                    "{{\"success\":{},\"trigger_id\":\"{}\",\"detail\":\"{}\"}}",
+                    result.success,
+                    trigger_id,
+                    result.detail.replace('"', "\\\"")
+                ),
+                None => format!(
+                    "{{\"success\":false,\"error\":\"Trigger '{}' not found\"}}",
+                    trigger_id
+                ),
             }
         }
         "wa_trigger_remove" => {
-            let trigger_id = arguments["triggerId"].as_str().ok_or("triggerId is required")?;
+            let trigger_id = arguments["triggerId"]
+                .as_str()
+                .ok_or("triggerId is required")?;
             let mut mgr = crate::wa::triggers::TriggerManager::new();
             let removed = mgr.remove(trigger_id);
-            format!("{{\"success\":{},\"trigger_id\":\"{}\"}}", removed, trigger_id)
+            format!(
+                "{{\"success\":{},\"trigger_id\":\"{}\"}}",
+                removed, trigger_id
+            )
         }
         // ─── Recovery ──────────────────────────────────────────────────────────
         "wa_recovery_set_policy" => {
@@ -795,11 +922,17 @@ pub fn handle_wa_tool(
         "wa_recovery_get_status" => {
             let mut breaker = crate::wa::recovery::CircuitBreaker::default();
             let allowed = breaker.should_allow();
-            format!("{{\"circuit_closed\":{},\"state\":\"{}\"}}", allowed, if allowed { "closed" } else { "open" })
+            format!(
+                "{{\"circuit_closed\":{},\"state\":\"{}\"}}",
+                allowed,
+                if allowed { "closed" } else { "open" }
+            )
         }
         // ─── Events ────────────────────────────────────────────────────────────
         "wa_event_subscribe" => {
-            let event_kind = arguments["eventKind"].as_str().ok_or("eventKind is required")?;
+            let event_kind = arguments["eventKind"]
+                .as_str()
+                .ok_or("eventKind is required")?;
             let timeout_ms = arguments["timeoutMs"].as_u64().unwrap_or(5000);
             let kind = match event_kind {
                 "window_opened" => crate::wa::events::UiaEventKind::WindowEvent { is_open: true },
@@ -816,21 +949,27 @@ pub fn handle_wa_tool(
             };
             let mut listener = crate::wa::events::EventListener::new();
             let result = listener.listen(&subscription);
-            format!("{{\"subscribed\":true,\"event_kind\":\"{}\",\"events_captured\":{}}}",
-                event_kind, result.events.len())
+            format!(
+                "{{\"subscribed\":true,\"event_kind\":\"{}\",\"events_captured\":{}}}",
+                event_kind,
+                result.events.len()
+            )
         }
         "wa_event_poll" => {
             let max_events = arguments["maxEvents"].as_u64().unwrap_or(20) as usize;
-            let buffer = crate::wa::events::EventBuffer::new(max_events, std::time::Duration::from_millis(100));
+            let buffer = crate::wa::events::EventBuffer::new(
+                max_events,
+                std::time::Duration::from_millis(100),
+            );
             let events = buffer.recent(max_events);
             format!("{{\"count\":{},\"events\":[]}}", events.len())
         }
-        "wa_event_unsubscribe" => {
-            "{\"success\":true,\"detail\":\"Listener stopped\"}".to_string()
-        }
+        "wa_event_unsubscribe" => "{\"success\":true,\"detail\":\"Listener stopped\"}".to_string(),
         // ─── File Dialog ───────────────────────────────────────────────────────
         "wa_file_dialog_open" => {
-            let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+            let file_path = arguments["filePath"]
+                .as_str()
+                .ok_or("filePath is required")?;
             let target = crate::wa::file_dialog::FileDialogTarget {
                 process_id: arguments["processId"].as_u64().map(|v| v as u32),
                 ..Default::default()
@@ -840,15 +979,25 @@ pub fn handle_wa_tool(
                 crate::wa::file_dialog::FileDialogKind::Open,
             );
             let _ = &target;
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.detail.replace('"', "\\\"")
+            )
         }
         "wa_file_dialog_save" => {
-            let file_path = arguments["filePath"].as_str().ok_or("filePath is required")?;
+            let file_path = arguments["filePath"]
+                .as_str()
+                .ok_or("filePath is required")?;
             let result = crate::wa::file_dialog::FileDialogManager::quick_set_path(
                 std::path::Path::new(file_path),
                 crate::wa::file_dialog::FileDialogKind::SaveAs,
             );
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.detail.replace('"', "\\\"")
+            )
         }
         // ─── Virtual Desktop Extended ──────────────────────────────────────────
         "wa_vdesktop_create" => {
@@ -856,22 +1005,39 @@ pub fn handle_wa_tool(
             let name = arguments["name"].as_str().map(|s| s.to_string());
             let op = crate::wa::virtual_desktop::VDesktopOperation::Create { name };
             let result = mgr.apply(&op);
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.detail.replace('"', "\\\"")
+            )
         }
         "wa_vdesktop_remove" => {
             let index = arguments["index"].as_u64().ok_or("index is required")? as u32;
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
             let op = crate::wa::virtual_desktop::VDesktopOperation::Remove(index);
             let result = mgr.apply(&op);
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.detail.replace('"', "\\\"")
+            )
         }
         "wa_vdesktop_move_window" => {
             let hwnd = arguments["hwnd"].as_u64().ok_or("hwnd is required")?;
-            let desktop_index = arguments["targetIndex"].as_u64().ok_or("targetIndex is required")? as u32;
+            let desktop_index = arguments["targetIndex"]
+                .as_u64()
+                .ok_or("targetIndex is required")? as u32;
             let mut mgr = crate::wa::virtual_desktop::VirtualDesktopManager::new();
-            let op = crate::wa::virtual_desktop::VDesktopOperation::MoveWindow { hwnd, desktop_index };
+            let op = crate::wa::virtual_desktop::VDesktopOperation::MoveWindow {
+                hwnd,
+                desktop_index,
+            };
             let result = mgr.apply(&op);
-            format!("{{\"success\":{},\"detail\":\"{}\"}}", result.success, result.detail.replace('"', "\\\""))
+            format!(
+                "{{\"success\":{},\"detail\":\"{}\"}}",
+                result.success,
+                result.detail.replace('"', "\\\"")
+            )
         }
         // ─── Window Tiling ─────────────────────────────────────────────────────
         "wa_window_tile" => {
@@ -913,16 +1079,31 @@ pub fn handle_wa_tool(
             };
             let config = crate::wa::process_mgmt::LaunchConfig::new(exe).arg(url);
             let result = crate::wa::process_mgmt::ProcessManager::launch(&config);
-            format!("{{\"success\":{},\"browser\":\"{}\",\"url\":\"{}\",\"pid\":{}}}",
-                result.success, browser, url,
-                result.pid.map(|p| p.to_string()).unwrap_or_else(|| "null".to_string()))
+            format!(
+                "{{\"success\":{},\"browser\":\"{}\",\"url\":\"{}\",\"pid\":{}}}",
+                result.success,
+                browser,
+                url,
+                result
+                    .pid
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "null".to_string())
+            )
         }
         "wa_browser_screenshot" => {
-            let output_path = arguments["outputPath"].as_str().unwrap_or("browser_screenshot.png");
-            let img = crate::wa::screenshot::capture(&crate::wa::screenshot::CaptureTarget::FullScreen);
+            let output_path = arguments["outputPath"]
+                .as_str()
+                .unwrap_or("browser_screenshot.png");
+            let img =
+                crate::wa::screenshot::capture(&crate::wa::screenshot::CaptureTarget::FullScreen);
             let _ = img.save_bmp(std::path::Path::new(output_path));
-            format!("{{\"success\":{},\"path\":\"{}\",\"width\":{},\"height\":{}}}",
-                img.pixel_count() > 0, output_path, img.width, img.height)
+            format!(
+                "{{\"success\":{},\"path\":\"{}\",\"width\":{},\"height\":{}}}",
+                img.pixel_count() > 0,
+                output_path,
+                img.width,
+                img.height
+            )
         }
         _ => return Ok(None),
     };

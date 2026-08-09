@@ -3,7 +3,12 @@ pub mod font_shaper;
 pub mod scoped_css;
 pub mod transitions;
 
-pub use cascade::{CssRule, CssAnimation, KeyframesRule, KeyframeStop, AnimationInstance, AnimationManager, AnimationState, FillMode, AnimationDirection, PlayState, TimingFunction, StepPosition, MediaFeature, MediaQuery, Specificity, StyleCascader, ViewportConfig, interpolate_value, parse_keyframes};
+pub use cascade::{
+    interpolate_value, parse_keyframes, AnimationDirection, AnimationInstance, AnimationManager,
+    AnimationState, CssAnimation, CssRule, FillMode, KeyframeStop, KeyframesRule, MediaFeature,
+    MediaQuery, PlayState, Specificity, StepPosition, StyleCascader, TimingFunction,
+    ViewportConfig,
+};
 pub use font_shaper::{FontShaperEngine, GlyphMetric};
 pub use scoped_css::ScopedCssMatcher;
-pub use transitions::{TransitionSpec, TransitionInstance, TransitionState, TransitionManager};
+pub use transitions::{TransitionInstance, TransitionManager, TransitionSpec, TransitionState};

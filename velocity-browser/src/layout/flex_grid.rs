@@ -58,7 +58,14 @@ impl FlexLayoutEngine {
         children: &mut [LayoutBox],
         direction: FlexDirection,
     ) {
-        Self::compute_flex_children_full(parent_box, children, &direction, &FlexAlignItems::Stretch, &FlexWrap::NoWrap, &[]);
+        Self::compute_flex_children_full(
+            parent_box,
+            children,
+            &direction,
+            &FlexAlignItems::Stretch,
+            &FlexWrap::NoWrap,
+            &[],
+        );
     }
 
     /// Full flexbox computation with alignment, wrapping, and order.
@@ -70,17 +77,36 @@ impl FlexLayoutEngine {
         _wrap: &FlexWrap,
         item_data: &[FlexItemData],
     ) {
-        if children.is_empty() { return; }
+        if children.is_empty() {
+            return;
+        }
 
         let is_row = matches!(direction, FlexDirection::Row | FlexDirection::RowReverse);
-        let is_reverse = matches!(direction, FlexDirection::RowReverse | FlexDirection::ColumnReverse);
-        let container_main = if is_row { parent_box.width } else { parent_box.height };
-        let _container_cross = if is_row { parent_box.height } else { parent_box.width };
+        let is_reverse = matches!(
+            direction,
+            FlexDirection::RowReverse | FlexDirection::ColumnReverse
+        );
+        let container_main = if is_row {
+            parent_box.width
+        } else {
+            parent_box.height
+        };
+        let _container_cross = if is_row {
+            parent_box.height
+        } else {
+            parent_box.width
+        };
 
         // Sort by order
         let mut indices: Vec<usize> = (0..children.len()).collect();
         if !item_data.is_empty() {
-            indices.sort_by_key(|&i| if i < item_data.len() { item_data[i].order } else { 0 });
+            indices.sort_by_key(|&i| {
+                if i < item_data.len() {
+                    item_data[i].order
+                } else {
+                    0
+                }
+            });
         }
 
         // Compute flex basis and determine main sizes
@@ -104,12 +130,23 @@ impl FlexLayoutEngine {
         let free_space = container_main - total_main;
         if free_space > 0.0 {
             // Grow
-            let total_grow: f32 = indices.iter()
-                .map(|&i| if i < item_data.len() { item_data[i].flex_grow } else { 0.0 })
+            let total_grow: f32 = indices
+                .iter()
+                .map(|&i| {
+                    if i < item_data.len() {
+                        item_data[i].flex_grow
+                    } else {
+                        0.0
+                    }
+                })
                 .sum();
             if total_grow > 0.0 {
                 for (j, &i) in indices.iter().enumerate() {
-                    let grow = if i < item_data.len() { item_data[i].flex_grow } else { 0.0 };
+                    let grow = if i < item_data.len() {
+                        item_data[i].flex_grow
+                    } else {
+                        0.0
+                    };
                     if grow > 0.0 {
                         main_sizes[j] += free_space * grow / total_grow;
                     }
@@ -117,20 +154,34 @@ impl FlexLayoutEngine {
             }
         } else if free_space < 0.0 {
             // Shrink
-            let total_shrink: f32 = indices.iter()
-                .map(|&i| if i < item_data.len() { item_data[i].flex_shrink } else { 1.0 })
+            let total_shrink: f32 = indices
+                .iter()
+                .map(|&i| {
+                    if i < item_data.len() {
+                        item_data[i].flex_shrink
+                    } else {
+                        1.0
+                    }
+                })
                 .sum();
             if total_shrink > 0.0 {
                 for (j, &i) in indices.iter().enumerate() {
-                    let shrink = if i < item_data.len() { item_data[i].flex_shrink } else { 1.0 };
+                    let shrink = if i < item_data.len() {
+                        item_data[i].flex_shrink
+                    } else {
+                        1.0
+                    };
                     main_sizes[j] = (main_sizes[j] + free_space * shrink / total_shrink).max(0.0);
                 }
             }
         }
 
         // Position children along main axis
-        let mut cursor = if is_row { parent_box.x + parent_box.padding[3] }
-                         else { parent_box.y + parent_box.padding[0] };
+        let mut cursor = if is_row {
+            parent_box.x + parent_box.padding[3]
+        } else {
+            parent_box.y + parent_box.padding[0]
+        };
 
         let ordered_indices: Vec<usize> = if is_reverse {
             indices.iter().rev().cloned().collect()
@@ -157,7 +208,10 @@ impl FlexLayoutEngine {
         for &i in &ordered_indices {
             let child = &mut children[i];
             let align = if i < item_data.len() {
-                item_data[i].align_self.clone().unwrap_or_else(|| align_items.clone())
+                item_data[i]
+                    .align_self
+                    .clone()
+                    .unwrap_or_else(|| align_items.clone())
             } else {
                 align_items.clone()
             };
@@ -169,10 +223,12 @@ impl FlexLayoutEngine {
                         child.y = parent_box.y + (parent_box.height - child.height) / 2.0;
                     }
                     FlexAlignItems::FlexEnd => {
-                        child.y = parent_box.y + parent_box.height - parent_box.padding[2] - child.height;
+                        child.y =
+                            parent_box.y + parent_box.height - parent_box.padding[2] - child.height;
                     }
                     FlexAlignItems::Stretch => {
-                        child.height = parent_box.height - parent_box.padding[0] - parent_box.padding[2];
+                        child.height =
+                            parent_box.height - parent_box.padding[0] - parent_box.padding[2];
                     }
                     _ => {} // FlexStart, Baseline — default position
                 }
@@ -183,10 +239,12 @@ impl FlexLayoutEngine {
                         child.x = parent_box.x + (parent_box.width - child.width) / 2.0;
                     }
                     FlexAlignItems::FlexEnd => {
-                        child.x = parent_box.x + parent_box.width - parent_box.padding[1] - child.width;
+                        child.x =
+                            parent_box.x + parent_box.width - parent_box.padding[1] - child.width;
                     }
                     FlexAlignItems::Stretch => {
-                        child.width = parent_box.width - parent_box.padding[1] - parent_box.padding[3];
+                        child.width =
+                            parent_box.width - parent_box.padding[1] - parent_box.padding[3];
                     }
                     _ => {}
                 }
@@ -202,9 +260,17 @@ mod tests {
 
     fn make_box(node_id: usize, w: f32, h: f32) -> LayoutBox {
         LayoutBox {
-            node_id, display: DisplayMode::Flex, x: 0.0, y: 0.0,
-            width: w, height: h, padding: [0.0; 4], margin: [0.0; 4],
-            z_index: 0, is_visible: true, children: Vec::new(),
+            node_id,
+            display: DisplayMode::Flex,
+            x: 0.0,
+            y: 0.0,
+            width: w,
+            height: h,
+            padding: [0.0; 4],
+            margin: [0.0; 4],
+            z_index: 0,
+            is_visible: true,
+            children: Vec::new(),
         }
     }
 
@@ -231,10 +297,29 @@ mod tests {
         let parent = make_box(0, 300.0, 100.0);
         let mut children = vec![make_box(1, 100.0, 50.0), make_box(2, 100.0, 50.0)];
         let item_data = vec![
-            FlexItemData { flex_grow: 1.0, flex_shrink: 1.0, flex_basis: 0.0, order: 0, align_self: None },
-            FlexItemData { flex_grow: 2.0, flex_shrink: 1.0, flex_basis: 0.0, order: 0, align_self: None },
+            FlexItemData {
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                flex_basis: 0.0,
+                order: 0,
+                align_self: None,
+            },
+            FlexItemData {
+                flex_grow: 2.0,
+                flex_shrink: 1.0,
+                flex_basis: 0.0,
+                order: 0,
+                align_self: None,
+            },
         ];
-        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::Stretch, &FlexWrap::NoWrap, &item_data);
+        FlexLayoutEngine::compute_flex_children_full(
+            &parent,
+            &mut children,
+            &FlexDirection::Row,
+            &FlexAlignItems::Stretch,
+            &FlexWrap::NoWrap,
+            &item_data,
+        );
         assert!((children[0].width - 100.0).abs() < 0.01);
         assert!((children[1].width - 200.0).abs() < 0.01);
     }
@@ -243,7 +328,14 @@ mod tests {
     fn test_align_center() {
         let parent = make_box(0, 300.0, 100.0);
         let mut children = vec![make_box(1, 50.0, 30.0)];
-        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::Center, &FlexWrap::NoWrap, &[]);
+        FlexLayoutEngine::compute_flex_children_full(
+            &parent,
+            &mut children,
+            &FlexDirection::Row,
+            &FlexAlignItems::Center,
+            &FlexWrap::NoWrap,
+            &[],
+        );
         assert!((children[0].y - 35.0).abs() < 0.01); // (100 - 30) / 2
     }
 
@@ -261,10 +353,29 @@ mod tests {
         let parent = make_box(0, 300.0, 100.0);
         let mut children = vec![make_box(1, 100.0, 50.0), make_box(2, 100.0, 50.0)];
         let item_data = vec![
-            FlexItemData { flex_grow: 0.0, flex_shrink: 1.0, flex_basis: 100.0, order: 2, align_self: None },
-            FlexItemData { flex_grow: 0.0, flex_shrink: 1.0, flex_basis: 100.0, order: 1, align_self: None },
+            FlexItemData {
+                flex_grow: 0.0,
+                flex_shrink: 1.0,
+                flex_basis: 100.0,
+                order: 2,
+                align_self: None,
+            },
+            FlexItemData {
+                flex_grow: 0.0,
+                flex_shrink: 1.0,
+                flex_basis: 100.0,
+                order: 1,
+                align_self: None,
+            },
         ];
-        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::Stretch, &FlexWrap::NoWrap, &item_data);
+        FlexLayoutEngine::compute_flex_children_full(
+            &parent,
+            &mut children,
+            &FlexDirection::Row,
+            &FlexAlignItems::Stretch,
+            &FlexWrap::NoWrap,
+            &item_data,
+        );
         // Child with order=1 (index 1) should be positioned first
         assert!(children[1].x <= children[0].x);
     }
@@ -281,7 +392,11 @@ mod tests {
     fn test_column_reverse() {
         let parent = make_box(0, 300.0, 300.0);
         let mut children = vec![make_box(1, 100.0, 50.0), make_box(2, 100.0, 50.0)];
-        FlexLayoutEngine::compute_flex_children(&parent, &mut children, FlexDirection::ColumnReverse);
+        FlexLayoutEngine::compute_flex_children(
+            &parent,
+            &mut children,
+            FlexDirection::ColumnReverse,
+        );
         // In column-reverse, second item should be above first
         assert!(children[1].y < children[0].y);
     }
@@ -290,7 +405,14 @@ mod tests {
     fn test_flex_end_alignment() {
         let parent = make_box(0, 300.0, 100.0);
         let mut children = vec![make_box(1, 50.0, 30.0)];
-        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::FlexEnd, &FlexWrap::NoWrap, &[]);
+        FlexLayoutEngine::compute_flex_children_full(
+            &parent,
+            &mut children,
+            &FlexDirection::Row,
+            &FlexAlignItems::FlexEnd,
+            &FlexWrap::NoWrap,
+            &[],
+        );
         assert!((children[0].y - 70.0).abs() < 0.01); // 100 - 30
     }
 
@@ -298,7 +420,14 @@ mod tests {
     fn test_flex_start_alignment() {
         let parent = make_box(0, 300.0, 100.0);
         let mut children = vec![make_box(1, 50.0, 30.0)];
-        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::FlexStart, &FlexWrap::NoWrap, &[]);
+        FlexLayoutEngine::compute_flex_children_full(
+            &parent,
+            &mut children,
+            &FlexDirection::Row,
+            &FlexAlignItems::FlexStart,
+            &FlexWrap::NoWrap,
+            &[],
+        );
         assert_eq!(children[0].y, 0.0);
     }
 
@@ -306,7 +435,14 @@ mod tests {
     fn test_stretch_alignment() {
         let parent = make_box(0, 300.0, 100.0);
         let mut children = vec![make_box(1, 50.0, 30.0)];
-        FlexLayoutEngine::compute_flex_children_full(&parent, &mut children, &FlexDirection::Row, &FlexAlignItems::Stretch, &FlexWrap::NoWrap, &[]);
+        FlexLayoutEngine::compute_flex_children_full(
+            &parent,
+            &mut children,
+            &FlexDirection::Row,
+            &FlexAlignItems::Stretch,
+            &FlexWrap::NoWrap,
+            &[],
+        );
         assert_eq!(children[0].y, 0.0);
         assert_eq!(children[0].height, 100.0); // stretched to parent height
     }

@@ -27,7 +27,9 @@ pub struct FlexAlignmentSolver;
 
 impl FlexAlignmentSolver {
     pub fn align_main_axis(parent_width: f32, children: &mut [LayoutBox], mode: JustifyContent) {
-        if children.is_empty() { return; }
+        if children.is_empty() {
+            return;
+        }
 
         let total_child_width: f32 = children.iter().map(|c| c.width).sum();
         let remaining_space = (parent_width - total_child_width).max(0.0);
@@ -78,12 +80,10 @@ impl FlexAlignmentSolver {
     }
 
     /// Align children along the cross axis (vertical) within a container of given height.
-    pub fn align_cross_axis(
-        parent_height: f32,
-        children: &mut [LayoutBox],
-        mode: AlignItems,
-    ) {
-        if children.is_empty() { return; }
+    pub fn align_cross_axis(parent_height: f32, children: &mut [LayoutBox], mode: AlignItems) {
+        if children.is_empty() {
+            return;
+        }
 
         for child in children {
             let child_height = child.height;
@@ -114,7 +114,9 @@ impl FlexAlignmentSolver {
         parent_width: f32,
         wrap: FlexWrap,
     ) -> Vec<Vec<usize>> {
-        if children.is_empty() { return vec![]; }
+        if children.is_empty() {
+            return vec![];
+        }
         if wrap == FlexWrap::NoWrap {
             return vec![(0..children.len()).collect()];
         }
@@ -188,7 +190,11 @@ mod tests {
 
     #[test]
     fn space_between_distributes_evenly() {
-        let mut children = vec![make_box(100.0, 50.0), make_box(100.0, 50.0), make_box(100.0, 50.0)];
+        let mut children = vec![
+            make_box(100.0, 50.0),
+            make_box(100.0, 50.0),
+            make_box(100.0, 50.0),
+        ];
         FlexAlignmentSolver::align_main_axis(600.0, &mut children, JustifyContent::SpaceBetween);
         assert_eq!(children[0].x, 0.0);
         assert_eq!(children[1].x, 250.0);
@@ -242,7 +248,11 @@ mod tests {
 
     #[test]
     fn flex_wrap_wraps_to_multiple_lines() {
-        let children = vec![make_box(100.0, 50.0), make_box(100.0, 50.0), make_box(100.0, 50.0)];
+        let children = vec![
+            make_box(100.0, 50.0),
+            make_box(100.0, 50.0),
+            make_box(100.0, 50.0),
+        ];
         let lines = FlexAlignmentSolver::compute_flex_wrap(&children, 150.0, FlexWrap::Wrap);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], vec![0]);

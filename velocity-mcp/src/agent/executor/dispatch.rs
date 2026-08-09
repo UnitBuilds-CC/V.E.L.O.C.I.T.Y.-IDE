@@ -1,6 +1,8 @@
 use super::super::models::*;
 use super::utils::send_usage_update;
-use crate::usage::{AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker};
+use crate::usage::{
+    AzureOpenAiAccount, CloudflareAccount, LocalOllamaAccount, OpenRouterAccount, UsageTracker,
+};
 use crossbeam_channel::Sender;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -64,20 +66,24 @@ pub fn execute_openrouter_request<'a>(
                         if let Some(acct) = active_acct {
                             usage_tracker.mark_or_exhausted(acct.n, &acct.label, &acct.tier);
                             send_usage_update(usage_tracker, accounts, or_accounts, ui_tx);
-                            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                                "OpenRouter account '{}' quota exhausted — trying next…",
-                                acct.label
-                            ))).ok();
+                            ui_tx
+                                .send(AgentToUiMessage::StatusUpdate(format!(
+                                    "OpenRouter account '{}' quota exhausted — trying next…",
+                                    acct.label
+                                )))
+                                .ok();
                         }
                         account_exhausted = true;
                         break;
                     } else if attempt < max_attempts {
                         let wait_secs = attempt * 2;
-                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(format!(
                             "OpenRouter rate limit (429) on '{}'. Retrying in {}s (Attempt {}/{})…",
                             active_acct.map(|a| a.label.as_str()).unwrap_or("default"),
                             wait_secs, attempt, max_attempts
-                        ))).ok();
+                        )))
+                            .ok();
                         std::thread::sleep(Duration::from_secs(wait_secs as u64));
                     }
                 }
@@ -93,17 +99,19 @@ pub fn execute_openrouter_request<'a>(
                     if attempt < max_attempts {
                         std::thread::sleep(Duration::from_secs(1));
                     } else {
-                        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                            "OpenRouter connection error: {:?}", e
-                        ))).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(format!(
+                                "OpenRouter connection error: {:?}",
+                                e
+                            )))
+                            .ok();
                     }
                 }
             }
         }
-        if (final_res.is_some() || account_exhausted)
-            && final_res.is_some() {
-                break;
-            }
+        if (final_res.is_some() || account_exhausted) && final_res.is_some() {
+            break;
+        }
     }
     (final_res, used_acct)
 }
@@ -116,7 +124,11 @@ pub fn execute_cloudflare_request<'a>(
     ui_tx: &Sender<AgentToUiMessage>,
 ) -> (Option<ureq::Response>, Option<&'a CloudflareAccount>) {
     if accounts.is_empty() {
-        ui_tx.send(AgentToUiMessage::StatusUpdate("No Cloudflare accounts configured.".to_string())).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(
+                "No Cloudflare accounts configured.".to_string(),
+            ))
+            .ok();
         return (None, None);
     }
     let start_idx = usage_tracker
@@ -179,7 +191,11 @@ pub fn execute_azure_request(
     ui_tx: &Sender<AgentToUiMessage>,
 ) -> Option<ureq::Response> {
     if azure_accounts.is_empty() {
-        ui_tx.send(AgentToUiMessage::StatusUpdate("No Azure OpenAI accounts configured.".to_string())).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(
+                "No Azure OpenAI accounts configured.".to_string(),
+            ))
+            .ok();
         return None;
     }
     let account = &azure_accounts[0];
@@ -205,14 +221,23 @@ pub fn execute_azure_request(
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let body = resp.into_string().unwrap_or_default();
-                ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Azure OpenAI HTTP {code} error: {body}"))).ok();
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Azure OpenAI HTTP {code} error: {body}"
+                    )))
+                    .ok();
                 break;
             }
             Err(e) => {
                 if attempt < max_attempts {
                     std::thread::sleep(Duration::from_secs(1));
                 } else {
-                    ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Azure OpenAI connection error: {:?}", e))).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!(
+                            "Azure OpenAI connection error: {:?}",
+                            e
+                        )))
+                        .ok();
                 }
             }
         }
@@ -237,7 +262,12 @@ pub fn execute_ollama_request(
     {
         Ok(res) => Some(res),
         Err(e) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Local Ollama connection error at {host}: {:?}", e))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Local Ollama connection error at {host}: {:?}",
+                    e
+                )))
+                .ok();
             None
         }
     }
@@ -261,9 +291,11 @@ fn execute_openai_compatible_request(
 ) -> Option<ureq::Response> {
     let api_key = std::env::var(api_key_env_var).unwrap_or_default();
     if api_key.trim().is_empty() {
-        ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-            "{provider_name} API key not set. Export {api_key_env_var} to use this provider."
-        ))).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(format!(
+                "{provider_name} API key not set. Export {api_key_env_var} to use this provider."
+            )))
+            .ok();
         return None;
     }
     match ureq::post(api_url)
@@ -274,21 +306,28 @@ fn execute_openai_compatible_request(
     {
         Ok(res) => Some(res),
         Err(ureq::Error::Status(401, _)) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                "{provider_name} authentication failed. Check your {api_key_env_var} API key."
-            ))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "{provider_name} authentication failed. Check your {api_key_env_var} API key."
+                )))
+                .ok();
             None
         }
         Err(ureq::Error::Status(429, _)) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                "{provider_name} rate limit exceeded (429). Try again shortly."
-            ))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "{provider_name} rate limit exceeded (429). Try again shortly."
+                )))
+                .ok();
             None
         }
         Err(e) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                "{provider_name} request error: {:?}", e
-            ))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "{provider_name} request error: {:?}",
+                    e
+                )))
+                .ok();
             None
         }
     }
@@ -377,12 +416,16 @@ pub fn execute_google_request(
 ) -> Option<ureq::Response> {
     let api_key = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
     if api_key.trim().is_empty() {
-        ui_tx.send(AgentToUiMessage::StatusUpdate(
-            "Google API key not set. Export GOOGLE_API_KEY to use this provider.".to_string()
-        )).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(
+                "Google API key not set. Export GOOGLE_API_KEY to use this provider.".to_string(),
+            ))
+            .ok();
         return None;
     }
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={api_key}");
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions?key={api_key}"
+    );
     match ureq::post(&url)
         .timeout(Duration::from_secs(60))
         .set("Content-Type", "application/json")
@@ -390,15 +433,20 @@ pub fn execute_google_request(
     {
         Ok(res) => Some(res),
         Err(ureq::Error::Status(401, _)) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(
-                "Google authentication failed. Check your GOOGLE_API_KEY.".to_string()
-            )).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Google authentication failed. Check your GOOGLE_API_KEY.".to_string(),
+                ))
+                .ok();
             None
         }
         Err(e) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(format!(
-                "Google request error: {:?}", e
-            ))).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Google request error: {:?}",
+                    e
+                )))
+                .ok();
             None
         }
     }
@@ -474,10 +522,7 @@ pub fn execute_bedrock_request(
     // If a proxy URL is configured, use it as an OpenAI-compatible endpoint.
     if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {
         if !proxy_url.trim().is_empty() {
-            let url = format!(
-                "{}/chat/completions",
-                proxy_url.trim_end_matches('/')
-            );
+            let url = format!("{}/chat/completions", proxy_url.trim_end_matches('/'));
             return execute_openai_compatible_request(
                 &url,
                 "BEDROCK_API_KEY",
@@ -505,25 +550,33 @@ pub fn execute_anthropic_request(
 ) -> Option<ureq::Response> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
     if api_key.trim().is_empty() {
-        ui_tx.send(AgentToUiMessage::StatusUpdate(
-            "Anthropic API key not set. Export ANTHROPIC_API_KEY to use this provider.".to_string()
-        )).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(
+                "Anthropic API key not set. Export ANTHROPIC_API_KEY to use this provider."
+                    .to_string(),
+            ))
+            .ok();
         return None;
     }
     // Convert OpenAI-format messages to Anthropic format:
     // Extract system message separately, keep user/assistant messages.
     let messages = request_body.get("messages").and_then(|m| m.as_array());
     let Some(messages) = messages else {
-        ui_tx.send(AgentToUiMessage::StatusUpdate(
-            "Anthropic request failed: no messages in request body.".to_string()
-        )).ok();
+        ui_tx
+            .send(AgentToUiMessage::StatusUpdate(
+                "Anthropic request failed: no messages in request body.".to_string(),
+            ))
+            .ok();
         return None;
     };
     let mut system_text = String::new();
     let mut anthropic_messages = Vec::new();
     for msg in messages {
         let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        let content = msg.get("content").cloned().unwrap_or(Value::String(String::new()));
+        let content = msg
+            .get("content")
+            .cloned()
+            .unwrap_or(Value::String(String::new()));
         match role {
             "system" => {
                 if let Some(s) = content.as_str() {
@@ -547,7 +600,8 @@ pub fn execute_anthropic_request(
                     if let Some(text) = content.as_str() {
                         if !text.is_empty() {
                             let mut text_block = serde_json::Map::new();
-                            text_block.insert("type".to_string(), Value::String("text".to_string()));
+                            text_block
+                                .insert("type".to_string(), Value::String("text".to_string()));
                             text_block.insert("text".to_string(), Value::String(text.to_string()));
                             blocks.push(Value::Object(text_block));
                         }
@@ -558,14 +612,16 @@ pub fn execute_anthropic_request(
                             None => continue,
                         };
                         let mut tool_block = serde_json::Map::new();
-                        tool_block.insert("type".to_string(), Value::String("tool_use".to_string()));
+                        tool_block
+                            .insert("type".to_string(), Value::String("tool_use".to_string()));
                         if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
                             tool_block.insert("id".to_string(), Value::String(id.to_string()));
                         }
                         if let Some(name) = func.get("name").and_then(|n| n.as_str()) {
                             tool_block.insert("name".to_string(), Value::String(name.to_string()));
                         }
-                        let input: Value = func.get("arguments")
+                        let input: Value = func
+                            .get("arguments")
                             .and_then(|a| a.as_str())
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_else(|| json!({}));
@@ -580,17 +636,24 @@ pub fn execute_anthropic_request(
             }
             "tool" => {
                 // OpenAI tool results → Anthropic user message with tool_result block
-                let tool_call_id = msg.get("tool_call_id")
+                let tool_call_id = msg
+                    .get("tool_call_id")
                     .and_then(|id| id.as_str())
                     .unwrap_or("unknown");
                 let result_text = content.as_str().unwrap_or("").to_string();
                 let mut result_block = serde_json::Map::new();
                 result_block.insert("type".to_string(), Value::String("tool_result".to_string()));
-                result_block.insert("tool_use_id".to_string(), Value::String(tool_call_id.to_string()));
+                result_block.insert(
+                    "tool_use_id".to_string(),
+                    Value::String(tool_call_id.to_string()),
+                );
                 result_block.insert("content".to_string(), Value::String(result_text));
                 let mut entry = serde_json::Map::new();
                 entry.insert("role".to_string(), Value::String("user".to_string()));
-                entry.insert("content".to_string(), Value::Array(vec![Value::Object(result_block)]));
+                entry.insert(
+                    "content".to_string(),
+                    Value::Array(vec![Value::Object(result_block)]),
+                );
                 anthropic_messages.push(Value::Object(entry));
             }
             _ => {}
@@ -610,8 +673,14 @@ pub fn execute_anthropic_request(
         entry.insert("content".to_string(), Value::String(fallback_content));
         anthropic_messages.push(Value::Object(entry));
     }
-    let model = request_body.get("model").and_then(|m| m.as_str()).unwrap_or("claude-sonnet-4-20250514");
-    let max_tokens = request_body.get("max_tokens").and_then(|t| t.as_u64()).unwrap_or(4096);
+    let model = request_body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("claude-sonnet-4-20250514");
+    let max_tokens = request_body
+        .get("max_tokens")
+        .and_then(|t| t.as_u64())
+        .unwrap_or(4096);
     let mut body = serde_json::Map::new();
     body.insert("model".to_string(), Value::String(model.to_string()));
     body.insert("max_tokens".to_string(), Value::Number(max_tokens.into()));
@@ -623,20 +692,24 @@ pub fn execute_anthropic_request(
     // OpenAI: {"type":"function","function":{"name","description","parameters"}}
     // Anthropic: {"name","description","input_schema"}
     if let Some(tools) = request_body.get("tools").and_then(|t| t.as_array()) {
-        let anthropic_tools: Vec<Value> = tools.iter().filter_map(|tool| {
-            let func = tool.get("function")?;
-            let name = func.get("name")?.as_str()?;
-            let mut entry = serde_json::Map::new();
-            entry.insert("name".to_string(), Value::String(name.to_string()));
-            if let Some(desc) = func.get("description").and_then(|d| d.as_str()) {
-                entry.insert("description".to_string(), Value::String(desc.to_string()));
-            }
-            let schema = func.get("parameters")
-                .cloned()
-                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
-            entry.insert("input_schema".to_string(), schema);
-            Some(Value::Object(entry))
-        }).collect();
+        let anthropic_tools: Vec<Value> = tools
+            .iter()
+            .filter_map(|tool| {
+                let func = tool.get("function")?;
+                let name = func.get("name")?.as_str()?;
+                let mut entry = serde_json::Map::new();
+                entry.insert("name".to_string(), Value::String(name.to_string()));
+                if let Some(desc) = func.get("description").and_then(|d| d.as_str()) {
+                    entry.insert("description".to_string(), Value::String(desc.to_string()));
+                }
+                let schema = func
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+                entry.insert("input_schema".to_string(), schema);
+                Some(Value::Object(entry))
+            })
+            .collect();
         if !anthropic_tools.is_empty() {
             body.insert("tools".to_string(), Value::Array(anthropic_tools));
         }
@@ -656,21 +729,27 @@ pub fn execute_anthropic_request(
     {
         Ok(res) => Some(res),
         Err(ureq::Error::Status(401, _)) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(
-                "Anthropic authentication failed. Check your ANTHROPIC_API_KEY.".to_string()
-            )).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Anthropic authentication failed. Check your ANTHROPIC_API_KEY.".to_string(),
+                ))
+                .ok();
             None
         }
         Err(ureq::Error::Status(429, _)) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(
-                "Anthropic rate limit exceeded (429). Try again shortly.".to_string()
-            )).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(
+                    "Anthropic rate limit exceeded (429). Try again shortly.".to_string(),
+                ))
+                .ok();
             None
         }
         Err(e) => {
-            ui_tx.send(AgentToUiMessage::StatusUpdate(
-                format!("Anthropic request failed: {e}")
-            )).ok();
+            ui_tx
+                .send(AgentToUiMessage::StatusUpdate(format!(
+                    "Anthropic request failed: {e}"
+                )))
+                .ok();
             None
         }
     }

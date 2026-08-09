@@ -39,17 +39,39 @@ pub use geolocation::{Geocoordinates, GeolocationProvider};
 pub use gpu_compositor::{GpuLayer, GpuTileCompositor};
 pub use interstitial::{InterstitialClassifier, InterstitialKind};
 pub use network::{NetworkRequest, NetworkTracker};
-pub use payment::{PaymentItem, PaymentRequestEngine, ShippingOption, PaymentMethodFilter, PaymentMethodType, PaymentAddress, PaymentValidationErrors};
+pub use payment::{
+    PaymentAddress, PaymentItem, PaymentMethodFilter, PaymentMethodType, PaymentRequestEngine,
+    PaymentValidationErrors, ShippingOption,
+};
 pub use pdf_extractor::PdfMediaExtractor;
 pub use profile::DeviceProfile;
-pub use push_notifications::{PushNotificationManager, PushSubscription, PushEvent, NotificationRecord};
+pub use push_notifications::{
+    NotificationRecord, PushEvent, PushNotificationManager, PushSubscription,
+};
 pub use rasterizer::{PixelBuffer, SoftwareRasterizer};
-pub use sandbox::{SandboxCapabilities, TabSandbox, SandboxViolation, ViolationCategory};
-pub use service_worker::{CacheStorageEngine, CachedResponse, ServiceWorkerManager, ServiceWorkerState, FetchInterceptResult, FetchInterceptRule, CacheStrategy, BackgroundSyncRegistration, PushMessage};
+pub use sandbox::{SandboxCapabilities, SandboxViolation, TabSandbox, ViolationCategory};
+pub use service_worker::{
+    BackgroundSyncRegistration, CacheStorageEngine, CacheStrategy, CachedResponse,
+    FetchInterceptResult, FetchInterceptRule, PushMessage, ServiceWorkerManager,
+    ServiceWorkerState,
+};
 pub use shadow_dom::{FrameTarget, ShadowFrameExtractor, ShadowHost};
 pub use stealth_human::{BezierPoint, StealthHumanBehavior};
-pub use svg::{SvgPathCommand, SvgVectorEngine, SvgShape, SvgTransform, SvgPathBuilder};
-pub use trace::{ConsoleTraceRecord, DomMutationTraceRecord, TraceCollector, PerformanceTraceRecord, NetworkTraceRecord};
-pub use webcodecs::{VelocityCodecsEngine, VelocityFrameRingBuffer, VelocityRemotePacketStreamer, VideoFrame, AudioFrame, CodecKind, EncodedPacket, CodecStats};
-pub use webgl::{Matrix4x4, WebGLContext, ShaderProgram, ShaderUniform, Texture2D, TextureFormat as WebGLTextureFormat, TextureFilter, TextureWrap, Framebuffer, IndexBuffer, IndexType, Viewport};
-pub use webgpu::{WebGpuComputeBuffer, WebGpuComputeEngine, RenderPipeline, GpuTexture, BindGroup, BindGroupEntry, BindResource, CommandEncoder, TextureUsage, PrimitiveTopology, VertexFormat, TextureFormat as GpuTextureFormat};
+pub use svg::{SvgPathBuilder, SvgPathCommand, SvgShape, SvgTransform, SvgVectorEngine};
+pub use trace::{
+    ConsoleTraceRecord, DomMutationTraceRecord, NetworkTraceRecord, PerformanceTraceRecord,
+    TraceCollector,
+};
+pub use webcodecs::{
+    AudioFrame, CodecKind, CodecStats, EncodedPacket, VelocityCodecsEngine,
+    VelocityFrameRingBuffer, VelocityRemotePacketStreamer, VideoFrame,
+};
+pub use webgl::{
+    Framebuffer, IndexBuffer, IndexType, Matrix4x4, ShaderProgram, ShaderUniform, Texture2D,
+    TextureFilter, TextureFormat as WebGLTextureFormat, TextureWrap, Viewport, WebGLContext,
+};
+pub use webgpu::{
+    BindGroup, BindGroupEntry, BindResource, CommandEncoder, GpuTexture, PrimitiveTopology,
+    RenderPipeline, TextureFormat as GpuTextureFormat, TextureUsage, VertexFormat,
+    WebGpuComputeBuffer, WebGpuComputeEngine,
+};

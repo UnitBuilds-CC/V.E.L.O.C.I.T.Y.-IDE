@@ -101,7 +101,10 @@ impl GitState {
             self.branch = output.trim().to_string();
         }
         // Ahead/behind
-        if let Some(output) = run_git(root, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]) {
+        if let Some(output) = run_git(
+            root,
+            &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+        ) {
             let parts: Vec<&str> = output.split_whitespace().collect();
             self.ahead = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             self.behind = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -112,7 +115,9 @@ impl GitState {
         self.entries.clear();
         if let Some(output) = run_git(root, &["status", "--porcelain=v1"]) {
             for line in output.lines() {
-                if line.len() < 4 { continue; }
+                if line.len() < 4 {
+                    continue;
+                }
                 let index_status = line.as_bytes()[0] as char;
                 let worktree_status = line.as_bytes()[1] as char;
                 let file_path = PathBuf::from(line[3..].trim());
@@ -129,7 +134,11 @@ impl GitState {
                     _ => continue,
                 };
 
-                self.entries.push(GitStatusEntry { path: file_path, status, staged });
+                self.entries.push(GitStatusEntry {
+                    path: file_path,
+                    status,
+                    staged,
+                });
             }
         }
     }
@@ -142,7 +151,10 @@ impl GitState {
 
     /// Unstage a file.
     pub fn unstage_file(&mut self, workspace_root: &Path, path: &Path) {
-        run_git(workspace_root, &["restore", "--staged", &path.display().to_string()]);
+        run_git(
+            workspace_root,
+            &["restore", "--staged", &path.display().to_string()],
+        );
         self.refresh_status(workspace_root);
     }
 
@@ -171,7 +183,10 @@ impl GitState {
     pub fn diff_file(&mut self, workspace_root: &Path, path: &Path) {
         if let Some(output) = run_git(workspace_root, &["diff", &path.display().to_string()]) {
             self.diff_output = output;
-        } else if let Some(output) = run_git(workspace_root, &["diff", "--cached", &path.display().to_string()]) {
+        } else if let Some(output) = run_git(
+            workspace_root,
+            &["diff", "--cached", &path.display().to_string()],
+        ) {
             self.diff_output = output;
         }
     }
@@ -179,7 +194,10 @@ impl GitState {
     /// Get blame for a file.
     pub fn blame_file(workspace_root: &Path, path: &Path) -> Vec<BlameLine> {
         let mut results = Vec::new();
-        if let Some(output) = run_git(workspace_root, &["blame", "--porcelain", &path.display().to_string()]) {
+        if let Some(output) = run_git(
+            workspace_root,
+            &["blame", "--porcelain", &path.display().to_string()],
+        ) {
             let mut current_hash = String::new();
             let mut current_author = String::new();
             let mut current_date = String::new();
@@ -207,7 +225,10 @@ impl GitState {
     /// Get recent log entries.
     pub fn refresh_log(&mut self, workspace_root: &Path) {
         self.log.clear();
-        if let Some(output) = run_git(workspace_root, &["log", "--oneline", "-30", "--format=%H|%h|%an|%ar|%s"]) {
+        if let Some(output) = run_git(
+            workspace_root,
+            &["log", "--oneline", "-30", "--format=%H|%h|%an|%ar|%s"],
+        ) {
             for line in output.lines() {
                 let parts: Vec<&str> = line.splitn(5, '|').collect();
                 if parts.len() == 5 {
@@ -225,22 +246,29 @@ impl GitState {
 
     /// Get list of branches.
     pub fn branches(workspace_root: &Path) -> Vec<String> {
-        run_git(workspace_root, &["branch", "--list", "--format=%(refname:short)"])
-            .map(|output| output.lines().map(|l| l.trim().to_string()).collect())
-            .unwrap_or_default()
+        run_git(
+            workspace_root,
+            &["branch", "--list", "--format=%(refname:short)"],
+        )
+        .map(|output| output.lines().map(|l| l.trim().to_string()).collect())
+        .unwrap_or_default()
     }
 
     /// Switch to a branch.
     pub fn checkout_branch(&mut self, workspace_root: &Path, branch: &str) -> Result<(), String> {
         run_git(workspace_root, &["checkout", branch])
-            .map(|_| { self.refresh(workspace_root); })
+            .map(|_| {
+                self.refresh(workspace_root);
+            })
             .ok_or_else(|| "Checkout failed".to_string())
     }
 
     /// Create and switch to a new branch.
     pub fn create_branch(&mut self, workspace_root: &Path, name: &str) -> Result<(), String> {
         run_git(workspace_root, &["checkout", "-b", name])
-            .map(|_| { self.refresh(workspace_root); })
+            .map(|_| {
+                self.refresh(workspace_root);
+            })
             .ok_or_else(|| "Branch creation failed".to_string())
     }
 
@@ -280,41 +308,41 @@ pub fn render_recent_changes_timeline(
         );
         ui.add_space(4.0);
 
-        egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-            for entry in &state.entries {
-                let name = entry.path.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| entry.path.to_string_lossy().to_string());
-                let status_color = match entry.status {
-                    GitFileStatus::Modified => palette.warning,
-                    GitFileStatus::Added => palette.success,
-                    GitFileStatus::Deleted => palette.error,
-                    GitFileStatus::Untracked => palette.text_muted,
-                    _ => palette.text_muted,
-                };
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(entry.status.icon())
-                            .monospace()
-                            .size(10.0)
-                            .strong()
-                            .color(status_color),
-                    );
-                    ui.label(
-                        egui::RichText::new(&name)
-                            .size(9.0)
-                            .color(palette.text),
-                    );
-                    if entry.staged {
+        egui::ScrollArea::vertical()
+            .max_height(120.0)
+            .show(ui, |ui| {
+                for entry in &state.entries {
+                    let name = entry
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| entry.path.to_string_lossy().to_string());
+                    let status_color = match entry.status {
+                        GitFileStatus::Modified => palette.warning,
+                        GitFileStatus::Added => palette.success,
+                        GitFileStatus::Deleted => palette.error,
+                        GitFileStatus::Untracked => palette.text_muted,
+                        _ => palette.text_muted,
+                    };
+                    ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new("staged")
-                                .size(8.0)
-                                .color(palette.success.gamma_multiply(0.7)),
+                            egui::RichText::new(entry.status.icon())
+                                .monospace()
+                                .size(10.0)
+                                .strong()
+                                .color(status_color),
                         );
-                    }
-                });
-            }
-        });
+                        ui.label(egui::RichText::new(&name).size(9.0).color(palette.text));
+                        if entry.staged {
+                            ui.label(
+                                egui::RichText::new("staged")
+                                    .size(8.0)
+                                    .color(palette.success.gamma_multiply(0.7)),
+                            );
+                        }
+                    });
+                }
+            });
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(8.0);
@@ -339,61 +367,63 @@ pub fn render_recent_changes_timeline(
         );
         ui.add_space(4.0);
 
-        egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-            for (i, commit) in state.log.iter().enumerate() {
-                // Timeline dot and line
-                ui.horizontal(|ui| {
-                    // Timeline indicator
-                    let dot_color = if i == 0 { palette.accent } else { palette.text_muted };
-                    ui.label(
-                        egui::RichText::new("●")
-                            .size(10.0)
-                            .color(dot_color),
-                    );
+        egui::ScrollArea::vertical()
+            .max_height(200.0)
+            .show(ui, |ui| {
+                for (i, commit) in state.log.iter().enumerate() {
+                    // Timeline dot and line
+                    ui.horizontal(|ui| {
+                        // Timeline indicator
+                        let dot_color = if i == 0 {
+                            palette.accent
+                        } else {
+                            palette.text_muted
+                        };
+                        ui.label(egui::RichText::new("●").size(10.0).color(dot_color));
 
-                    // Commit info
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(&commit.short_hash)
-                                    .monospace()
-                                    .size(9.0)
-                                    .strong()
-                                    .color(palette.accent),
-                            );
-                            ui.label(
-                                egui::RichText::new(&commit.message)
-                                    .size(9.0)
-                                    .color(palette.text),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(&commit.author)
-                                    .size(8.0)
-                                    .color(palette.text_muted),
-                            );
-                            ui.label(
-                                egui::RichText::new(&commit.date)
-                                    .size(8.0)
-                                    .color(palette.text_muted.gamma_multiply(0.7)),
-                            );
+                        // Commit info
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&commit.short_hash)
+                                        .monospace()
+                                        .size(9.0)
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                                ui.label(
+                                    egui::RichText::new(&commit.message)
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&commit.author)
+                                        .size(8.0)
+                                        .color(palette.text_muted),
+                                );
+                                ui.label(
+                                    egui::RichText::new(&commit.date)
+                                        .size(8.0)
+                                        .color(palette.text_muted.gamma_multiply(0.7)),
+                                );
+                            });
                         });
                     });
-                });
 
-                // Connecting line (except for last item)
-                if i < state.log.len() - 1 {
-                    ui.indent("timeline_line", |ui| {
-                        ui.label(
-                            egui::RichText::new("│")
-                                .size(8.0)
-                                .color(palette.text_muted.gamma_multiply(0.4)),
-                        );
-                    });
+                    // Connecting line (except for last item)
+                    if i < state.log.len() - 1 {
+                        ui.indent("timeline_line", |ui| {
+                            ui.label(
+                                egui::RichText::new("│")
+                                    .size(8.0)
+                                    .color(palette.text_muted.gamma_multiply(0.4)),
+                            );
+                        });
+                    }
                 }
-            }
-        });
+            });
     }
 }
 
@@ -437,9 +467,21 @@ mod tests {
     fn staged_counts() {
         let state = GitState {
             entries: vec![
-                GitStatusEntry { path: PathBuf::from("a"), status: GitFileStatus::Modified, staged: true },
-                GitStatusEntry { path: PathBuf::from("b"), status: GitFileStatus::Added, staged: true },
-                GitStatusEntry { path: PathBuf::from("c"), status: GitFileStatus::Modified, staged: false },
+                GitStatusEntry {
+                    path: PathBuf::from("a"),
+                    status: GitFileStatus::Modified,
+                    staged: true,
+                },
+                GitStatusEntry {
+                    path: PathBuf::from("b"),
+                    status: GitFileStatus::Added,
+                    staged: true,
+                },
+                GitStatusEntry {
+                    path: PathBuf::from("c"),
+                    status: GitFileStatus::Modified,
+                    staged: false,
+                },
             ],
             ..Default::default()
         };

@@ -149,7 +149,9 @@ impl DeviceProfile {
 
     /// Whether this profile represents a mobile device.
     pub fn is_mobile(&self) -> bool {
-        self.user_agent.contains("Mobile") || self.user_agent.contains("iPhone") || self.user_agent.contains("Android")
+        self.user_agent.contains("Mobile")
+            || self.user_agent.contains("iPhone")
+            || self.user_agent.contains("Android")
     }
 
     /// Effective screen size accounting for pixel ratio.
@@ -179,28 +181,30 @@ impl DeviceProfile {
     /// Parse a user-agent string into a DeviceProfile with best-effort detection.
     pub fn from_user_agent(ua: &str) -> Self {
         let lower = ua.to_lowercase();
-        let is_mobile = lower.contains("mobile") || lower.contains("iphone") || lower.contains("android");
+        let is_mobile =
+            lower.contains("mobile") || lower.contains("iphone") || lower.contains("android");
         let is_touch = is_mobile || lower.contains("ipad") || lower.contains("tablet");
 
-        let (platform, viewport_w, viewport_h, pixel_ratio) = if lower.contains("windows") || lower.contains("win64") {
-            ("Win32", 1920u32, 1080u32, 1.0f32)
-        } else if lower.contains("iphone") {
-            ("iPhone", 390, 844, 3.0)
-        } else if lower.contains("ipad") {
-            ("iPad", 810, 1080, 2.0)
-        } else if lower.contains("macintosh") || lower.contains("mac os") {
-            ("MacIntel", 1440, 900, 2.0)
-        } else if lower.contains("android") {
-            if lower.contains("mobile") {
-                ("Linux armv8l", 412, 915, 2.625)
+        let (platform, viewport_w, viewport_h, pixel_ratio) =
+            if lower.contains("windows") || lower.contains("win64") {
+                ("Win32", 1920u32, 1080u32, 1.0f32)
+            } else if lower.contains("iphone") {
+                ("iPhone", 390, 844, 3.0)
+            } else if lower.contains("ipad") {
+                ("iPad", 810, 1080, 2.0)
+            } else if lower.contains("macintosh") || lower.contains("mac os") {
+                ("MacIntel", 1440, 900, 2.0)
+            } else if lower.contains("android") {
+                if lower.contains("mobile") {
+                    ("Linux armv8l", 412, 915, 2.625)
+                } else {
+                    ("Linux armv8l", 800, 1280, 2.0)
+                }
+            } else if lower.contains("linux") {
+                ("Linux x86_64", 1920, 1080, 1.0)
             } else {
-                ("Linux armv8l", 800, 1280, 2.0)
-            }
-        } else if lower.contains("linux") {
-            ("Linux x86_64", 1920, 1080, 1.0)
-        } else {
-            ("unknown", 1024, 768, 1.0)
-        };
+                ("unknown", 1024, 768, 1.0)
+            };
 
         let touch_points = if is_touch { 5 } else { 0 };
 
@@ -226,13 +230,31 @@ impl DeviceProfile {
     pub fn export_profile_nda(&self, session_id: &str) -> Vec<NdaTriple> {
         vec![
             NdaTriple::new(session_id, 110, &self.user_agent),
-            NdaTriple::new(session_id, 111, &format!("{}x{}", self.viewport_width, self.viewport_height)),
+            NdaTriple::new(
+                session_id,
+                111,
+                &format!("{}x{}", self.viewport_width, self.viewport_height),
+            ),
             NdaTriple::new(session_id, 112, &self.timezone),
             NdaTriple::new(session_id, 113, &self.locale),
             NdaTriple::new(session_id, 114, &self.platform),
-            NdaTriple::new(session_id, 115, &format!("cores:{}:mem:{:.0}gb", self.hardware_concurrency, self.device_memory_gb)),
+            NdaTriple::new(
+                session_id,
+                115,
+                &format!(
+                    "cores:{}:mem:{:.0}gb",
+                    self.hardware_concurrency, self.device_memory_gb
+                ),
+            ),
             NdaTriple::new(session_id, 116, &self.languages.join(",")),
-            NdaTriple::new(session_id, 117, &format!("touch:{}:dnt:{}:wd:{}", self.max_touch_points, self.do_not_track as u8, self.webdriver as u8)),
+            NdaTriple::new(
+                session_id,
+                117,
+                &format!(
+                    "touch:{}:dnt:{}:wd:{}",
+                    self.max_touch_points, self.do_not_track as u8, self.webdriver as u8
+                ),
+            ),
         ]
     }
 }

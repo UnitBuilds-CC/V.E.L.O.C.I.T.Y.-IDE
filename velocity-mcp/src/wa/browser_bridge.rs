@@ -36,7 +36,10 @@ pub enum BrowserAction {
     /// Type into an element.
     Type { selector: String, text: String },
     /// Trigger file download.
-    Download { url: String, expected_filename: Option<String> },
+    Download {
+        url: String,
+        expected_filename: Option<String>,
+    },
     /// Trigger file upload (opens file dialog).
     TriggerUpload { input_selector: String },
     /// Execute JavaScript.
@@ -70,9 +73,15 @@ pub enum CrossContextCondition {
     /// Wait for a file to appear on disk (e.g., after download).
     FileAppears { path: PathBuf, timeout: Duration },
     /// Wait for a window to appear (after launching from browser).
-    WindowAppears { title_contains: String, timeout: Duration },
+    WindowAppears {
+        title_contains: String,
+        timeout: Duration,
+    },
     /// Wait for the browser to navigate to a URL pattern.
-    BrowserNavigates { url_contains: String, timeout: Duration },
+    BrowserNavigates {
+        url_contains: String,
+        timeout: Duration,
+    },
     /// Wait for clipboard to contain specific text.
     ClipboardContains { text: String, timeout: Duration },
     /// Wait for a process to start.
@@ -83,11 +92,20 @@ pub enum CrossContextCondition {
 #[derive(Debug, Clone)]
 pub enum DataTransferOp {
     /// Copy text from browser element to clipboard, then paste in desktop app.
-    BrowserToDesktop { browser_selector: String, desktop_target: String },
+    BrowserToDesktop {
+        browser_selector: String,
+        desktop_target: String,
+    },
     /// Copy from desktop app to clipboard, then paste in browser element.
-    DesktopToBrowser { desktop_source: String, browser_selector: String },
+    DesktopToBrowser {
+        desktop_source: String,
+        browser_selector: String,
+    },
     /// Save downloaded file and open with desktop app.
-    DownloadAndOpen { download_url: String, app_exe: Option<String> },
+    DownloadAndOpen {
+        download_url: String,
+        app_exe: Option<String>,
+    },
     /// Read text from desktop app for use in browser.
     ReadDesktopText { element_name: String },
 }
@@ -194,9 +212,18 @@ impl BridgeExecutor {
         }
     }
 
-    fn execute_step_inner(&self, step: &BridgeStep, _index: usize) -> (String, bool, String, Option<String>) {
+    fn execute_step_inner(
+        &self,
+        step: &BridgeStep,
+        _index: usize,
+    ) -> (String, bool, String, Option<String>) {
         if !cfg!(target_os = "windows") {
-            return ("unknown".into(), false, "Bridge executor requires Windows runtime".into(), None);
+            return (
+                "unknown".into(),
+                false,
+                "Bridge executor requires Windows runtime".into(),
+                None,
+            );
         }
         match step {
             BridgeStep::Browser(action) => self.execute_browser_action(action),
@@ -206,30 +233,60 @@ impl BridgeExecutor {
         }
     }
 
-    fn execute_browser_action(&self, action: &BrowserAction) -> (String, bool, String, Option<String>) {
+    fn execute_browser_action(
+        &self,
+        action: &BrowserAction,
+    ) -> (String, bool, String, Option<String>) {
         // Browser actions are delegated to the CDP layer; here we generate
         // the instruction payload for the browser bridge to pick up.
         match action {
-            BrowserAction::Navigate { url } =>
-                ("browser".into(), true, format!("navigate:{}", url), None),
-            BrowserAction::Click { selector } =>
-                ("browser".into(), true, format!("click:{}", selector), None),
-            BrowserAction::Type { selector, text } =>
-                ("browser".into(), true, format!("type:{}:{}", selector, text), None),
-            BrowserAction::Download { url, expected_filename } => {
+            BrowserAction::Navigate { url } => {
+                ("browser".into(), true, format!("navigate:{}", url), None)
+            }
+            BrowserAction::Click { selector } => {
+                ("browser".into(), true, format!("click:{}", selector), None)
+            }
+            BrowserAction::Type { selector, text } => (
+                "browser".into(),
+                true,
+                format!("type:{}:{}", selector, text),
+                None,
+            ),
+            BrowserAction::Download {
+                url,
+                expected_filename,
+            } => {
                 let detail = format!("download:{}", url);
                 ("browser".into(), true, detail, expected_filename.clone())
             }
-            BrowserAction::TriggerUpload { input_selector } =>
-                ("browser".into(), true, format!("trigger_upload:{}", input_selector), None),
-            BrowserAction::EvalJs { script } =>
-                ("browser".into(), true, format!("eval:{}", script.chars().take(100).collect::<String>()), None),
-            BrowserAction::WaitForElement { selector, timeout_ms } =>
-                ("browser".into(), true, format!("wait_element:{}:{}ms", selector, timeout_ms), None),
+            BrowserAction::TriggerUpload { input_selector } => (
+                "browser".into(),
+                true,
+                format!("trigger_upload:{}", input_selector),
+                None,
+            ),
+            BrowserAction::EvalJs { script } => (
+                "browser".into(),
+                true,
+                format!("eval:{}", script.chars().take(100).collect::<String>()),
+                None,
+            ),
+            BrowserAction::WaitForElement {
+                selector,
+                timeout_ms,
+            } => (
+                "browser".into(),
+                true,
+                format!("wait_element:{}:{}ms", selector, timeout_ms),
+                None,
+            ),
         }
     }
 
-    fn execute_desktop_action(&self, action: &DesktopAction) -> (String, bool, String, Option<String>) {
+    fn execute_desktop_action(
+        &self,
+        action: &DesktopAction,
+    ) -> (String, bool, String, Option<String>) {
         match action {
             DesktopAction::OpenFile { path } => {
                 let script = build_open_file_script(path);
@@ -335,7 +392,10 @@ if ($null -eq $el) {{
         }
     }
 
-    fn execute_cross_wait(&self, condition: &CrossContextCondition) -> (String, bool, String, Option<String>) {
+    fn execute_cross_wait(
+        &self,
+        condition: &CrossContextCondition,
+    ) -> (String, bool, String, Option<String>) {
         match condition {
             CrossContextCondition::FileAppears { path, timeout } => {
                 let script = build_wait_for_file_script(path, timeout.as_millis() as u64);
@@ -344,7 +404,10 @@ if ($null -eq $el) {{
                     Err(e) => ("cross".into(), false, e, None),
                 }
             }
-            CrossContextCondition::WindowAppears { title_contains, timeout } => {
+            CrossContextCondition::WindowAppears {
+                title_contains,
+                timeout,
+            } => {
                 let deadline_ms = timeout.as_millis() as u64;
                 let script = format!(
                     "$deadline = [Environment]::TickCount64 + {deadline_ms}; \
@@ -362,8 +425,19 @@ if ($null -eq $el) {{
                     Err(e) => ("cross".into(), false, e, None),
                 }
             }
-            CrossContextCondition::BrowserNavigates { url_contains, timeout } =>
-                ("cross".into(), true, format!("wait_browser_nav:{}:{}ms", url_contains, timeout.as_millis()), None),
+            CrossContextCondition::BrowserNavigates {
+                url_contains,
+                timeout,
+            } => (
+                "cross".into(),
+                true,
+                format!(
+                    "wait_browser_nav:{}:{}ms",
+                    url_contains,
+                    timeout.as_millis()
+                ),
+                None,
+            ),
             CrossContextCondition::ClipboardContains { text, timeout } => {
                 let script = format!(
                     "Add-Type -AssemblyName System.Windows.Forms; \
@@ -404,24 +478,42 @@ if ($null -eq $el) {{
         }
     }
 
-    fn execute_data_transfer(&self, transfer: &DataTransferOp) -> (String, bool, String, Option<String>) {
+    fn execute_data_transfer(
+        &self,
+        transfer: &DataTransferOp,
+    ) -> (String, bool, String, Option<String>) {
         match transfer {
-            DataTransferOp::BrowserToDesktop { browser_selector, .. } => {
+            DataTransferOp::BrowserToDesktop {
+                browser_selector, ..
+            } => {
                 // Copy from browser (delegated), then paste on desktop
                 let copy_script = build_clipboard_transfer_script("copy", 300);
                 match run_ps_script(&copy_script) {
-                    Ok(json) => ("cross".into(), true, format!("browser_to_desktop:{}", browser_selector), Some(json)),
+                    Ok(json) => (
+                        "cross".into(),
+                        true,
+                        format!("browser_to_desktop:{}", browser_selector),
+                        Some(json),
+                    ),
                     Err(e) => ("cross".into(), false, e, None),
                 }
             }
             DataTransferOp::DesktopToBrowser { desktop_source, .. } => {
                 let paste_script = build_clipboard_transfer_script("paste", 300);
                 match run_ps_script(&paste_script) {
-                    Ok(json) => ("cross".into(), true, format!("desktop_to_browser:{}", desktop_source), Some(json)),
+                    Ok(json) => (
+                        "cross".into(),
+                        true,
+                        format!("desktop_to_browser:{}", desktop_source),
+                        Some(json),
+                    ),
                     Err(e) => ("cross".into(), false, e, None),
                 }
             }
-            DataTransferOp::DownloadAndOpen { download_url, app_exe } => {
+            DataTransferOp::DownloadAndOpen {
+                download_url,
+                app_exe,
+            } => {
                 // Determine filename from URL
                 let filename = download_url.rsplit('/').next().unwrap_or("download");
                 let dest = self.download_dir.join(filename);
@@ -549,14 +641,23 @@ if ($direction -eq 'copy') {{
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -597,10 +698,7 @@ mod tests {
 
     #[test]
     fn wait_for_file_script_includes_path() {
-        let script = build_wait_for_file_script(
-            &PathBuf::from("C:\\Downloads\\test.pdf"),
-            10000,
-        );
+        let script = build_wait_for_file_script(&PathBuf::from("C:\\Downloads\\test.pdf"), 10000);
         assert!(script.contains("test.pdf"));
         assert!(script.contains("Test-Path"));
         assert!(script.contains("10000"));

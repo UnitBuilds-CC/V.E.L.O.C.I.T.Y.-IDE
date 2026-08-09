@@ -93,7 +93,10 @@ impl SiteVectorStore {
         let mut matches: Vec<_> = self
             .nodes
             .iter()
-            .filter(|node| node.text.to_lowercase().contains(&query_lower) || node.url.to_lowercase().contains(&query_lower))
+            .filter(|node| {
+                node.text.to_lowercase().contains(&query_lower)
+                    || node.url.to_lowercase().contains(&query_lower)
+            })
             .collect();
         matches.truncate(limit);
         matches
@@ -107,7 +110,9 @@ impl SiteVectorStore {
             return Vec::new();
         }
 
-        let mut scored: Vec<_> = self.nodes.iter()
+        let mut scored: Vec<_> = self
+            .nodes
+            .iter()
             .map(|node| {
                 let node_tfidf = self.apply_idf(&node.embedding);
                 let sim = cosine_similarity(&query_embedding, &node_tfidf);
@@ -129,7 +134,9 @@ impl SiteVectorStore {
         };
         let source_tfidf = self.apply_idf(&source.embedding);
 
-        let mut scored: Vec<_> = self.nodes.iter()
+        let mut scored: Vec<_> = self
+            .nodes
+            .iter()
             .filter(|n| n.id != node_id)
             .map(|node| {
                 let node_tfidf = self.apply_idf(&node.embedding);
@@ -146,7 +153,9 @@ impl SiteVectorStore {
 
     /// Search by tag.
     pub fn search_by_tag(&self, tag: &str, limit: usize) -> Vec<&VectorMemoryNode> {
-        let mut results: Vec<_> = self.nodes.iter()
+        let mut results: Vec<_> = self
+            .nodes
+            .iter()
             .filter(|n| n.tags.iter().any(|t| t == tag))
             .collect();
         results.truncate(limit);
@@ -155,7 +164,8 @@ impl SiteVectorStore {
 
     /// Get nodes with outcome scores above threshold (successful interactions).
     pub fn successful_interactions(&self, threshold: f64) -> Vec<&VectorMemoryNode> {
-        self.nodes.iter()
+        self.nodes
+            .iter()
             .filter(|n| n.outcome_score >= threshold)
             .collect()
     }
@@ -207,7 +217,8 @@ impl SiteVectorStore {
             }
         }
 
-        self.idf_table = doc_freq.into_iter()
+        self.idf_table = doc_freq
+            .into_iter()
             .map(|(term, df)| {
                 let idf = (n / (df as f64 + 1.0)).ln() + 1.0;
                 (term, idf)
@@ -230,7 +241,11 @@ impl SiteVectorStore {
             for tag in &node.tags {
                 doc.push_str(&node.id, MEMORY_TAG, tag);
             }
-            doc.push_int(&node.id, MEMORY_OUTCOME, (node.outcome_score * 10_000.0).round() as i64);
+            doc.push_int(
+                &node.id,
+                MEMORY_OUTCOME,
+                (node.outcome_score * 10_000.0).round() as i64,
+            );
         }
         doc
     }
@@ -257,7 +272,9 @@ impl SiteVectorStore {
         let mut order: Vec<String> = Vec::new();
         let mut partial: HashMap<String, Partial> = HashMap::new();
         for fact in &doc.facts {
-            let Some(subject) = doc.subject_str(fact) else { continue };
+            let Some(subject) = doc.subject_str(fact) else {
+                continue;
+            };
             if !partial.contains_key(subject) {
                 order.push(subject.to_string());
             }
@@ -285,7 +302,9 @@ impl SiteVectorStore {
 
         let mut restored = 0usize;
         for subject in order {
-            let Some(p) = partial.remove(&subject) else { continue };
+            let Some(p) = partial.remove(&subject) else {
+                continue;
+            };
             let (Some(session_id), Some(url), Some(text), Some(triple_hash)) =
                 (p.session_id, p.url, p.text, p.triple_hash)
             else {
@@ -303,7 +322,8 @@ impl SiteVectorStore {
 
 /// Compute cosine similarity between two sparse vectors.
 fn cosine_similarity(a: &HashMap<String, f64>, b: &HashMap<String, f64>) -> f64 {
-    let dot: f64 = a.iter()
+    let dot: f64 = a
+        .iter()
         .filter_map(|(k, v)| b.get(k).map(|bv| v * bv))
         .sum();
 
@@ -327,15 +347,59 @@ fn tokenize(text: &str) -> Vec<String> {
 
 /// Common English stopwords to filter out.
 fn is_stopword(word: &str) -> bool {
-    matches!(word,
-        "the" | "and" | "for" | "are" | "but" | "not" | "you" |
-        "all" | "can" | "had" | "her" | "was" | "one" | "our" |
-        "out" | "has" | "have" | "been" | "from" | "this" | "that" |
-        "with" | "they" | "will" | "each" | "which" | "their" |
-        "there" | "what" | "about" | "would" | "make" | "like" |
-        "just" | "over" | "such" | "take" | "than" | "them" |
-        "very" | "some" | "could" | "into" | "other" | "then" |
-        "these" | "also" | "after" | "should" | "well" | "only"
+    matches!(
+        word,
+        "the"
+            | "and"
+            | "for"
+            | "are"
+            | "but"
+            | "not"
+            | "you"
+            | "all"
+            | "can"
+            | "had"
+            | "her"
+            | "was"
+            | "one"
+            | "our"
+            | "out"
+            | "has"
+            | "have"
+            | "been"
+            | "from"
+            | "this"
+            | "that"
+            | "with"
+            | "they"
+            | "will"
+            | "each"
+            | "which"
+            | "their"
+            | "there"
+            | "what"
+            | "about"
+            | "would"
+            | "make"
+            | "like"
+            | "just"
+            | "over"
+            | "such"
+            | "take"
+            | "than"
+            | "them"
+            | "very"
+            | "some"
+            | "could"
+            | "into"
+            | "other"
+            | "then"
+            | "these"
+            | "also"
+            | "after"
+            | "should"
+            | "well"
+            | "only"
     )
 }
 
@@ -346,8 +410,18 @@ mod tests {
     #[test]
     fn insert_and_keyword_search() {
         let mut store = SiteVectorStore::new();
-        store.insert("s1", "https://example.com", "login form with email and password", 100);
-        store.insert("s1", "https://example.com/dashboard", "dashboard showing user stats", 200);
+        store.insert(
+            "s1",
+            "https://example.com",
+            "login form with email and password",
+            100,
+        );
+        store.insert(
+            "s1",
+            "https://example.com/dashboard",
+            "dashboard showing user stats",
+            200,
+        );
 
         let results = store.search("login", 10);
         assert_eq!(results.len(), 1);
@@ -357,15 +431,34 @@ mod tests {
     #[test]
     fn semantic_search_finds_related() {
         let mut store = SiteVectorStore::new();
-        store.insert("s1", "https://a.com", "user authentication login form email password", 1);
-        store.insert("s1", "https://a.com", "product catalog listing items prices", 2);
-        store.insert("s1", "https://a.com", "sign in credentials username password auth", 3);
+        store.insert(
+            "s1",
+            "https://a.com",
+            "user authentication login form email password",
+            1,
+        );
+        store.insert(
+            "s1",
+            "https://a.com",
+            "product catalog listing items prices",
+            2,
+        );
+        store.insert(
+            "s1",
+            "https://a.com",
+            "sign in credentials username password auth",
+            3,
+        );
 
         let results = store.semantic_search("login authentication password", 5);
         assert!(results.len() >= 2);
         // The auth-related pages should rank higher than product catalog
         let top_text = &results[0].0.text;
-        assert!(top_text.contains("auth") || top_text.contains("login") || top_text.contains("password"));
+        assert!(
+            top_text.contains("auth")
+                || top_text.contains("login")
+                || top_text.contains("password")
+        );
     }
 
     #[test]
@@ -390,8 +483,22 @@ mod tests {
     #[test]
     fn search_by_tag() {
         let mut store = SiteVectorStore::new();
-        store.insert_rich("s1", "https://a.com", "page content", 1, vec!["login".into()], 0.9);
-        store.insert_rich("s1", "https://b.com", "other page", 2, vec!["checkout".into()], 0.8);
+        store.insert_rich(
+            "s1",
+            "https://a.com",
+            "page content",
+            1,
+            vec!["login".into()],
+            0.9,
+        );
+        store.insert_rich(
+            "s1",
+            "https://b.com",
+            "other page",
+            2,
+            vec!["checkout".into()],
+            0.8,
+        );
 
         let results = store.search_by_tag("login", 10);
         assert_eq!(results.len(), 1);
@@ -429,7 +536,14 @@ mod tests {
             vec!["login".into(), "auth".into()],
             0.9,
         );
-        store.insert_rich("s1", "https://a.com/cart", "product cart checkout items", 22, vec![], 0.4);
+        store.insert_rich(
+            "s1",
+            "https://a.com/cart",
+            "product cart checkout items",
+            22,
+            vec![],
+            0.4,
+        );
 
         // Round-trip through the binary stream, like the artifact on disk.
         let bytes = store.export_nda().to_binary_stream();
@@ -439,7 +553,10 @@ mod tests {
         assert_eq!(fresh.import_nda(&doc), 2);
         assert_eq!(fresh.nodes.len(), 2);
         assert_eq!(fresh.nodes[0].url, "https://a.com/login");
-        assert_eq!(fresh.nodes[0].tags, vec!["login".to_string(), "auth".to_string()]);
+        assert_eq!(
+            fresh.nodes[0].tags,
+            vec!["login".to_string(), "auth".to_string()]
+        );
         assert!((fresh.nodes[0].outcome_score - 0.9).abs() < 0.001);
         assert_eq!(fresh.nodes[1].triple_hash, 22);
         // Embeddings were rebuilt from text: semantic search works again.
@@ -453,7 +570,11 @@ mod tests {
         let mut store = SiteVectorStore::new();
         store.insert_rich("s1", "https://a.com", "some page text", 33, vec![], 0.5);
         let doc = store.export_nda();
-        assert_eq!(store.import_nda(&doc), 0, "already-stored pages are skipped");
+        assert_eq!(
+            store.import_nda(&doc),
+            0,
+            "already-stored pages are skipped"
+        );
         assert_eq!(store.nodes.len(), 1);
     }
 }

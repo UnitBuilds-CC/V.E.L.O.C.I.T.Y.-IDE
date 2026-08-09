@@ -34,8 +34,7 @@ impl PeerBridge {
         let mut count = 0;
 
         // Drain the inbox by taking ownership of current messages.
-        let messages: Vec<PeerMessage> =
-            self.peer_mgr.inbox.drain(..).collect();
+        let messages: Vec<PeerMessage> = self.peer_mgr.inbox.drain(..).collect();
 
         for msg in &messages {
             let broadcast = match &msg.kind {
@@ -408,7 +407,9 @@ mod tests {
         bridge.peer_manager_mut().add_peer(peer);
 
         // Request help targeting a peer.
-        bridge.bus().request_help("local-agent", "peer:peer-2", "fix the build");
+        bridge
+            .bus()
+            .request_help("local-agent", "peer:peer-2", "fix the build");
 
         let forwarded = bridge.pump_outbound();
         assert_eq!(forwarded, 1);
@@ -424,7 +425,9 @@ mod tests {
         let mut bridge = make_bridge();
 
         // No peers online — broadcasts should be dropped silently.
-        bridge.bus().report_progress("local-agent", 10.0, "starting");
+        bridge
+            .bus()
+            .report_progress("local-agent", 10.0, "starting");
 
         let forwarded = bridge.pump_outbound();
         assert_eq!(forwarded, 0);
@@ -449,7 +452,9 @@ mod tests {
         assert_eq!(in_count, 1);
 
         // Local agent responds with progress → forwarded to remote.
-        bridge.bus().report_progress("local-agent", 25.0, "starting tests");
+        bridge
+            .bus()
+            .report_progress("local-agent", 25.0, "starting tests");
 
         // Add an online peer for outbound.
         let peer = crate::agent::peer_link::PeerIdentity {

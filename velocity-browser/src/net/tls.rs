@@ -26,18 +26,24 @@ pub struct ProxyResolver {
 
 impl ProxyResolver {
     pub fn direct() -> Self {
-        Self { proxy_type: ProxyType::Direct }
+        Self {
+            proxy_type: ProxyType::Direct,
+        }
     }
 
     /// Route connections through an HTTP proxy at `addr` (`host:port`) using
     /// the CONNECT method to establish a raw tunnel to the target.
     pub fn http(addr: impl Into<String>) -> Self {
-        Self { proxy_type: ProxyType::Http(addr.into()) }
+        Self {
+            proxy_type: ProxyType::Http(addr.into()),
+        }
     }
 
     /// Route connections through a SOCKS5 proxy at `addr` (`host:port`).
     pub fn socks5(addr: impl Into<String>) -> Self {
-        Self { proxy_type: ProxyType::Socks5(addr.into()) }
+        Self {
+            proxy_type: ProxyType::Socks5(addr.into()),
+        }
     }
 
     /// Establish a raw TCP stream to `target_host:target_port`, tunneling
@@ -49,17 +55,14 @@ impl ProxyResolver {
         target_port: u16,
     ) -> Result<TcpStream, std::io::Error> {
         match &self.proxy_type {
-            ProxyType::Direct => {
-                TcpStream::connect(format!("{target_host}:{target_port}"))
-            }
+            ProxyType::Direct => TcpStream::connect(format!("{target_host}:{target_port}")),
             ProxyType::Http(proxy_addr) => {
                 let mut stream = TcpStream::connect(proxy_addr)?;
                 let request = build_http_connect_request(target_host, target_port);
                 stream.write_all(request.as_bytes())?;
                 stream.flush()?;
                 let head = read_http_headers(&mut stream)?;
-                parse_http_connect_status(&head)
-                    .map_err(std::io::Error::other)?;
+                parse_http_connect_status(&head).map_err(std::io::Error::other)?;
                 Ok(stream)
             }
             ProxyType::Socks5(proxy_addr) => {
@@ -69,16 +72,14 @@ impl ProxyResolver {
                 stream.flush()?;
                 let mut selection = [0u8; 2];
                 stream.read_exact(&mut selection)?;
-                validate_socks5_method_selection(&selection)
-                    .map_err(std::io::Error::other)?;
+                validate_socks5_method_selection(&selection).map_err(std::io::Error::other)?;
                 // CONNECT request to the target host/port.
                 let request = build_socks5_connect_request(target_host, target_port)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
                 stream.write_all(&request)?;
                 stream.flush()?;
                 let reply = read_socks5_reply(&mut stream)?;
-                parse_socks5_reply(&reply)
-                    .map_err(std::io::Error::other)?;
+                parse_socks5_reply(&reply).map_err(std::io::Error::other)?;
                 Ok(stream)
             }
         }
@@ -147,7 +148,9 @@ fn validate_socks5_method_selection(reply: &[u8]) -> Result<(), String> {
     match reply[1] {
         0x00 => Ok(()),
         0xFF => Err("SOCKS5 proxy rejected all offered auth methods".to_string()),
-        other => Err(format!("SOCKS5 proxy selected unsupported method {other:#x}")),
+        other => Err(format!(
+            "SOCKS5 proxy selected unsupported method {other:#x}"
+        )),
     }
 }
 
@@ -340,7 +343,10 @@ mod tests {
         // A panic here would mean the trust store failed to initialize.
         let a = client_config();
         let b = client_config();
-        assert!(Arc::ptr_eq(&a, &b), "config should be built once and cached");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "config should be built once and cached"
+        );
     }
 
     #[test]
@@ -354,7 +360,9 @@ mod tests {
     #[test]
     fn http_connect_status_accepts_2xx_rejects_others() {
         assert!(parse_http_connect_status("HTTP/1.1 200 Connection established\r\n").is_ok());
-        assert!(parse_http_connect_status("HTTP/1.1 407 Proxy Authentication Required\r\n").is_err());
+        assert!(
+            parse_http_connect_status("HTTP/1.1 407 Proxy Authentication Required\r\n").is_err()
+        );
         assert!(parse_http_connect_status("HTTP/1.1 502 Bad Gateway\r\n").is_err());
         assert!(parse_http_connect_status("garbage").is_err());
     }
@@ -431,7 +439,10 @@ mod tests {
         let mut buf = Vec::new();
         tls.read_to_end(&mut buf).expect("read response");
         let head = String::from_utf8_lossy(&buf);
-        assert!(head.starts_with("HTTP/1.1 200"), "unexpected status line: {}", &head[..head.len().min(64)]);
+        assert!(
+            head.starts_with("HTTP/1.1 200"),
+            "unexpected status line: {}",
+            &head[..head.len().min(64)]
+        );
     }
 }
-

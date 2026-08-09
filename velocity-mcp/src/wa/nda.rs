@@ -77,7 +77,10 @@ pub fn serialize_script_nda(script: &WaScript) -> String {
         format!("field_count {}", 4),
         format!("name {}", encode_nda_text(&script.name)),
         format!("created_at_ms {}", script.created_at_ms),
-        format!("start_url {}", encode_optional_nda_text(script.start_url.as_deref())),
+        format!(
+            "start_url {}",
+            encode_optional_nda_text(script.start_url.as_deref())
+        ),
         format!("step_count {}", script.steps.len()),
     ];
     for (index, step) in script.steps.iter().enumerate() {
@@ -147,12 +150,45 @@ pub fn deserialize_session_nda(content: &str) -> Result<WaSession, Box<dyn Error
         return Err(invalid_nda("invalid WA session NDA header"));
     }
     let _ = lines.next();
-    let id = decode_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing session id"))?, "id")?);
-    let created_at_ms = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing created_at_ms"))?, "created_at_ms")?.parse()?;
-    let updated_at_ms = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing updated_at_ms"))?, "updated_at_ms")?.parse()?;
-    let latest_snapshot_name = decode_optional_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing latest_snapshot_name"))?, "latest_snapshot_name")?);
-    let latest_snapshot_nda_path = decode_optional_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing latest_snapshot_nda_path"))?, "latest_snapshot_nda_path")?);
-    let snapshot_count = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing snapshot_count"))?, "snapshot_count")?.parse()?;
+    let id = decode_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing session id"))?,
+        "id",
+    )?);
+    let created_at_ms = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing created_at_ms"))?,
+        "created_at_ms",
+    )?
+    .parse()?;
+    let updated_at_ms = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing updated_at_ms"))?,
+        "updated_at_ms",
+    )?
+    .parse()?;
+    let latest_snapshot_name = decode_optional_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing latest_snapshot_name"))?,
+        "latest_snapshot_name",
+    )?);
+    let latest_snapshot_nda_path = decode_optional_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing latest_snapshot_nda_path"))?,
+        "latest_snapshot_nda_path",
+    )?);
+    let snapshot_count = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing snapshot_count"))?,
+        "snapshot_count",
+    )?
+    .parse()?;
     Ok(WaSession {
         id,
         created_at_ms,
@@ -169,16 +205,51 @@ pub fn deserialize_snapshot_nda(content: &str) -> Result<WaSnapshot, Box<dyn Err
         return Err(invalid_nda("invalid WA snapshot NDA header"));
     }
     let _ = lines.next();
-    let session_id = decode_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing session_id"))?, "session_id")?);
-    let snapshot_name = decode_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing snapshot_name"))?, "snapshot_name")?);
-    let created_at_ms = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing created_at_ms"))?, "created_at_ms")?.parse()?;
-    let url = decode_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing url"))?, "url")?);
-    let title = decode_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing title"))?, "title")?);
-    let focus_node_id = decode_optional_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing focus_node_id"))?, "focus_node_id")?);
-    let node_count: usize = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing node_count"))?, "node_count")?.parse()?;
+    let session_id = decode_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing session_id"))?,
+        "session_id",
+    )?);
+    let snapshot_name = decode_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing snapshot_name"))?,
+        "snapshot_name",
+    )?);
+    let created_at_ms = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing created_at_ms"))?,
+        "created_at_ms",
+    )?
+    .parse()?;
+    let url = decode_nda_text(parse_key_value_line(
+        lines.next().ok_or_else(|| invalid_nda("missing url"))?,
+        "url",
+    )?);
+    let title = decode_nda_text(parse_key_value_line(
+        lines.next().ok_or_else(|| invalid_nda("missing title"))?,
+        "title",
+    )?);
+    let focus_node_id = decode_optional_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing focus_node_id"))?,
+        "focus_node_id",
+    )?);
+    let node_count: usize = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing node_count"))?,
+        "node_count",
+    )?
+    .parse()?;
     let mut nodes = Vec::with_capacity(node_count);
     for _ in 0..node_count {
-        let line = lines.next().ok_or_else(|| invalid_nda("missing snapshot node row"))?;
+        let line = lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing snapshot node row"))?;
         let parts = line.split('\t').collect::<Vec<_>>();
         if parts.len() != 11 || parts[0] != "node" {
             return Err(invalid_nda("invalid snapshot node row"));
@@ -221,13 +292,37 @@ pub fn deserialize_script_nda(content: &str) -> Result<WaScript, Box<dyn Error>>
         return Err(invalid_nda("invalid WA script NDA header"));
     }
     let _ = lines.next();
-    let name = decode_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing script name"))?, "name")?);
-    let created_at_ms = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing created_at_ms"))?, "created_at_ms")?.parse()?;
-    let start_url = decode_optional_nda_text(parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing start_url"))?, "start_url")?);
-    let step_count: usize = parse_key_value_line(lines.next().ok_or_else(|| invalid_nda("missing step_count"))?, "step_count")?.parse()?;
+    let name = decode_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing script name"))?,
+        "name",
+    )?);
+    let created_at_ms = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing created_at_ms"))?,
+        "created_at_ms",
+    )?
+    .parse()?;
+    let start_url = decode_optional_nda_text(parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing start_url"))?,
+        "start_url",
+    )?);
+    let step_count: usize = parse_key_value_line(
+        lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing step_count"))?,
+        "step_count",
+    )?
+    .parse()?;
     let mut steps = Vec::with_capacity(step_count);
     for _ in 0..step_count {
-        let line = lines.next().ok_or_else(|| invalid_nda("missing script step row"))?;
+        let line = lines
+            .next()
+            .ok_or_else(|| invalid_nda("missing script step row"))?;
         let parts = line.split('\t').collect::<Vec<_>>();
         if parts.len() != 8 || parts[0] != "step" {
             return Err(invalid_nda("invalid script step row"));

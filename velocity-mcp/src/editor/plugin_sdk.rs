@@ -285,11 +285,17 @@ mod tests {
     #[test]
     fn closure_plugin_executes() {
         let plugin = ClosurePlugin::new(
-            "echo", "Echo", "Echoes input",
-            "echo", "Echoes the message",
+            "echo",
+            "Echo",
+            "Echoes input",
+            "echo",
+            "Echoes the message",
             serde_json::json!({"type": "object"}),
             |input| {
-                let msg = input.get("message").and_then(|v| v.as_str()).unwrap_or("none");
+                let msg = input
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("none");
                 PluginResult::ok(serde_json::json!({"echo": msg}))
             },
         );
@@ -302,8 +308,11 @@ mod tests {
     #[test]
     fn closure_plugin_unknown_tool() {
         let plugin = ClosurePlugin::new(
-            "test", "Test", "Test",
-            "tool1", "Tool 1",
+            "test",
+            "Test",
+            "Test",
+            "tool1",
+            "Tool 1",
             serde_json::json!({}),
             |_| PluginResult::ok(serde_json::json!(null)),
         );

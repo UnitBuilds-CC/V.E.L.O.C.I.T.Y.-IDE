@@ -86,7 +86,9 @@ pub struct FileDialogManager;
 impl FileDialogManager {
     /// Detect if a file dialog is currently open.
     pub fn detect_dialog(target: &FileDialogTarget) -> Option<FileDialogInfo> {
-        if !cfg!(target_os = "windows") { return None; }
+        if !cfg!(target_os = "windows") {
+            return None;
+        }
         let script = build_detect_dialog_script(target);
         match run_ps_script(&script) {
             Ok(json) => parse_dialog_info(&json),
@@ -95,15 +97,14 @@ impl FileDialogManager {
     }
 
     /// Perform an action on a detected file dialog.
-    pub fn perform(
-        target: &FileDialogTarget,
-        action: &FileDialogAction,
-    ) -> FileDialogResult {
+    pub fn perform(target: &FileDialogTarget, action: &FileDialogAction) -> FileDialogResult {
         if !cfg!(target_os = "windows") {
             return FileDialogResult {
-                success: false, action: "unknown".into(),
+                success: false,
+                action: "unknown".into(),
                 detail: "File dialog automation requires Windows runtime".into(),
-                selected_path: None, selected_paths: Vec::new(),
+                selected_path: None,
+                selected_paths: Vec::new(),
             };
         }
         let script = build_file_dialog_script(target, action);
@@ -131,15 +132,14 @@ impl FileDialogManager {
     }
 
     /// Wait for a file dialog to appear, then interact with it.
-    pub fn wait_and_set_path(
-        path: &Path,
-        target: &FileDialogTarget,
-    ) -> FileDialogResult {
+    pub fn wait_and_set_path(path: &Path, target: &FileDialogTarget) -> FileDialogResult {
         if !cfg!(target_os = "windows") {
             return FileDialogResult {
-                success: false, action: "wait_and_set_path".into(),
+                success: false,
+                action: "wait_and_set_path".into(),
                 detail: "File dialog automation requires Windows runtime".into(),
-                selected_path: None, selected_paths: Vec::new(),
+                selected_path: None,
+                selected_paths: Vec::new(),
             };
         }
         // The build_file_dialog_script already includes a wait loop with timeout
@@ -363,7 +363,14 @@ Write-Output '{{"found":false}}'
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -372,7 +379,9 @@ fn run_ps_script(script: &str) -> Result<String, String> {
     // Write the script, then close stdin (drop the pipe) so `powershell -Command -`
     // receives EOF and executes instead of blocking forever waiting for more input.
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -392,7 +401,9 @@ fn parse_dialog_info(json: &str) -> Option<FileDialogInfo> {
         kind: Option<String>,
     }
     let info = serde_json::from_str::<PsDialogInfo>(json).ok()?;
-    if info.found == Some(false) { return None; }
+    if info.found == Some(false) {
+        return None;
+    }
     Some(FileDialogInfo {
         hwnd: info.hwnd.unwrap_or(0),
         process_id: info.process_id.unwrap_or(0),
@@ -477,10 +488,8 @@ mod tests {
     #[test]
     #[ignore = "integration: performs live Windows UIAutomation (enumerates all desktop windows) and can block on unresponsive windows; run explicitly with --ignored on an interactive session"]
     fn quick_set_path_returns_result() {
-        let result = FileDialogManager::quick_set_path(
-            Path::new("C:\\test.txt"),
-            FileDialogKind::SaveAs,
-        );
+        let result =
+            FileDialogManager::quick_set_path(Path::new("C:\\test.txt"), FileDialogKind::SaveAs);
         // Result depends on whether a dialog is open; just verify no panic
         let _ = result.success;
     }

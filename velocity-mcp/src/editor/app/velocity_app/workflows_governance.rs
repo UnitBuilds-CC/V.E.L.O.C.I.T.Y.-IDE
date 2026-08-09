@@ -19,14 +19,26 @@ impl VelocityApp {
         );
 
         // Mode tabs: List | Visual | Templates | AI Generate
-        let mut mode: &str = if self.workflow_visual_mode { "Visual" } else { "List" };
+        let mut mode: &str = if self.workflow_visual_mode {
+            "Visual"
+        } else {
+            "List"
+        };
         ui.horizontal(|ui| {
-            let list_btn = ui.selectable_label(!self.workflow_visual_mode, RichText::new("List").size(9.0));
-            let visual_btn = ui.selectable_label(self.workflow_visual_mode, RichText::new("Visual").size(9.0));
+            let list_btn =
+                ui.selectable_label(!self.workflow_visual_mode, RichText::new("List").size(9.0));
+            let visual_btn =
+                ui.selectable_label(self.workflow_visual_mode, RichText::new("Visual").size(9.0));
             let templates_btn = ui.selectable_label(false, RichText::new("Templates").size(9.0));
             let ai_btn = ui.selectable_label(false, RichText::new("AI Generate").size(9.0));
-            if list_btn.clicked() { self.workflow_visual_mode = false; mode = "List"; }
-            if visual_btn.clicked() { self.workflow_visual_mode = true; mode = "Visual"; }
+            if list_btn.clicked() {
+                self.workflow_visual_mode = false;
+                mode = "List";
+            }
+            if visual_btn.clicked() {
+                self.workflow_visual_mode = true;
+                mode = "Visual";
+            }
             if templates_btn.clicked() { /* render templates inline below */ }
             if ai_btn.clicked() { /* render AI generate inline below */ }
         });
@@ -79,28 +91,45 @@ impl VelocityApp {
                 for wf in &self.workflows.workflows {
                     let is_sel = selected.as_deref() == Some(wf.id.as_str());
                     egui::Frame::new()
-                        .fill(if is_sel { palette.bg_tertiary } else { palette.bg_secondary })
+                        .fill(if is_sel {
+                            palette.bg_tertiary
+                        } else {
+                            palette.bg_secondary
+                        })
                         .corner_radius(5.0)
                         .inner_margin(8.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&wf.name).size(10.0).strong().color(palette.text));
+                                ui.label(
+                                    RichText::new(&wf.name)
+                                        .size(10.0)
+                                        .strong()
+                                        .color(palette.text),
+                                );
                                 ui.label(
                                     RichText::new(format!("({} step(s))", wf.steps.len()))
                                         .size(8.0)
                                         .color(palette.text_muted),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
-                                        remove = Some(wf.id.clone());
-                                    }
-                                    if ui.small_button(RichText::new("Run").size(8.0)).clicked() {
-                                        run = Some(wf.id.clone());
-                                    }
-                                    if ui.small_button(RichText::new("Edit").size(8.0)).clicked() {
-                                        select = Some(wf.id.clone());
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button(RichText::new("✖").size(8.0)).clicked()
+                                        {
+                                            remove = Some(wf.id.clone());
+                                        }
+                                        if ui.small_button(RichText::new("Run").size(8.0)).clicked()
+                                        {
+                                            run = Some(wf.id.clone());
+                                        }
+                                        if ui
+                                            .small_button(RichText::new("Edit").size(8.0))
+                                            .clicked()
+                                        {
+                                            select = Some(wf.id.clone());
+                                        }
+                                    },
+                                );
                             });
                         });
                     ui.add_space(3.0);
@@ -145,16 +174,23 @@ impl VelocityApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                            if ui
+                                                .small_button(RichText::new("✖").size(8.0))
+                                                .clicked()
+                                            {
                                                 remove_step = Some(i);
                                             }
                                             if i + 1 < step_count
-                                                && ui.small_button(RichText::new("↓").size(8.0)).clicked()
+                                                && ui
+                                                    .small_button(RichText::new("↓").size(8.0))
+                                                    .clicked()
                                             {
                                                 move_down = Some(i);
                                             }
                                             if i > 0
-                                                && ui.small_button(RichText::new("↑").size(8.0)).clicked()
+                                                && ui
+                                                    .small_button(RichText::new("↑").size(8.0))
+                                                    .clicked()
                                             {
                                                 move_up = Some(i);
                                             }
@@ -163,7 +199,9 @@ impl VelocityApp {
                                 });
                                 let detail = step_detail(step);
                                 if !detail.is_empty() {
-                                    ui.label(RichText::new(detail).size(8.0).color(palette.text_muted));
+                                    ui.label(
+                                        RichText::new(detail).size(8.0).color(palette.text_muted),
+                                    );
                                 }
                             });
                         ui.add_space(2.0);
@@ -301,7 +339,8 @@ impl VelocityApp {
                 let prompt = self.workflow_step_prompt_input.trim().to_string();
                 if !prompt.is_empty() {
                     if let Some(wf) = self.workflows.get_mut(&sel) {
-                        wf.steps.push(WorkflowStep::AgentTask { prompt, team: None });
+                        wf.steps
+                            .push(WorkflowStep::AgentTask { prompt, team: None });
                     }
                     let _ = self.workflows.save(&ws);
                     self.workflow_step_prompt_input.clear();
@@ -369,7 +408,11 @@ impl VelocityApp {
             palette.text_muted,
         );
         if !self.gov_status.is_empty() {
-            ui.label(RichText::new(&self.gov_status).size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new(&self.gov_status)
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
         }
 
         egui::ScrollArea::vertical()
@@ -689,7 +732,11 @@ impl VelocityApp {
 
         // Workflow selector + actions bar
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Workflow:").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new("Workflow:")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
             let mut selected_id = self.workflow_canvas_selected.clone();
 
             egui::ComboBox::from_id_salt("workflow_canvas_selector")
@@ -718,7 +765,10 @@ impl VelocityApp {
                 .selected_text("From template…")
                 .show_ui(ui, |ui| {
                     for template in workflow_templates::all_templates() {
-                        if ui.button(format!("{} — {}", template.name, template.description)).clicked() {
+                        if ui
+                            .button(format!("{} — {}", template.name, template.description))
+                            .clicked()
+                        {
                             let id = format!("wf-{}", crate::editor::triggers::now_secs());
                             let canvas = template.build(&id, template.name);
                             self.workflow_canvases.insert(id.clone(), canvas);
@@ -734,12 +784,39 @@ impl VelocityApp {
         if let Some(sel_id) = self.workflow_canvas_selected.clone() {
             // Node palette: add-node buttons
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Add node:").size(8.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("Add node:")
+                        .size(8.0)
+                        .color(palette.text_muted),
+                );
                 let add_buttons: &[(&str, CanvasNodeKind)] = &[
-                    ("Agent", CanvasNodeKind::AgentTask { prompt: "Describe task…".into(), team: None }),
-                    ("Tool", CanvasNodeKind::Tool { name: "tool_name".into(), args: serde_json::json!({}) }),
-                    ("Connector", CanvasNodeKind::Connector { id: "connector_id".into(), req: serde_json::json!({}) }),
-                    ("Condition", CanvasNodeKind::Condition { description: "Check condition".into() }),
+                    (
+                        "Agent",
+                        CanvasNodeKind::AgentTask {
+                            prompt: "Describe task…".into(),
+                            team: None,
+                        },
+                    ),
+                    (
+                        "Tool",
+                        CanvasNodeKind::Tool {
+                            name: "tool_name".into(),
+                            args: serde_json::json!({}),
+                        },
+                    ),
+                    (
+                        "Connector",
+                        CanvasNodeKind::Connector {
+                            id: "connector_id".into(),
+                            req: serde_json::json!({}),
+                        },
+                    ),
+                    (
+                        "Condition",
+                        CanvasNodeKind::Condition {
+                            description: "Check condition".into(),
+                        },
+                    ),
                 ];
                 for (label, kind) in add_buttons {
                     if ui.small_button(RichText::new(*label).size(8.0)).clicked() {
@@ -755,13 +832,19 @@ impl VelocityApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button(RichText::new("Snapshot").size(8.0)).clicked() {
+                    if ui
+                        .small_button(RichText::new("Snapshot").size(8.0))
+                        .clicked()
+                    {
                         if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
                             self.workflow_versions.snapshot(canvas, "Manual snapshot");
                             let _ = self.workflow_versions.save(&self.workspace_root);
                         }
                     }
-                    if ui.small_button(RichText::new("Delete Node").size(8.0)).clicked() {
+                    if ui
+                        .small_button(RichText::new("Delete Node").size(8.0))
+                        .clicked()
+                    {
                         if let Some(canvas) = self.workflow_canvases.get_mut(&sel_id) {
                             if let Some(selected) = canvas.selected_node() {
                                 let nid = selected.id.clone();
@@ -782,9 +865,15 @@ impl VelocityApp {
 
             // Edge connection controls
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Connect:").size(8.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("Connect:")
+                        .size(8.0)
+                        .color(palette.text_muted),
+                );
                 if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
-                    let node_ids: Vec<_> = canvas.nodes.iter()
+                    let node_ids: Vec<_> = canvas
+                        .nodes
+                        .iter()
                         .map(|n| (n.id.clone(), n.kind.label().to_string()))
                         .collect();
                     let mut from_idx: usize = 0;
@@ -819,13 +908,18 @@ impl VelocityApp {
             // Run button
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("▶ Run Workflow").size(10.0)).clicked() {
+                if ui
+                    .button(RichText::new("▶ Run Workflow").size(10.0))
+                    .clicked()
+                {
                     if let Some(canvas) = self.workflow_canvases.get(&sel_id) {
                         if let Some(wf) = canvas.to_workflow() {
                             let ws = self.workspace_root.clone();
                             let runrec = wf.execute(&ws);
                             self.toasts.push(crate::editor::toast::Toast::info(format!(
-                                "Workflow '{}' → {}", wf.name, runrec.status.label()
+                                "Workflow '{}' → {}",
+                                wf.name,
+                                runrec.status.label()
                             )));
                             self.workflow_last_run = Some(runrec);
                         }
@@ -839,16 +933,22 @@ impl VelocityApp {
                         RunStatus::Partial => palette.warning,
                     };
                     ui.label(
-                        RichText::new(format!("Last: {} ({} ok / {} steps)",
-                            runrec.status.label(), runrec.ok_count(), runrec.steps.len()))
-                            .size(9.0).color(status_color),
+                        RichText::new(format!(
+                            "Last: {} ({} ok / {} steps)",
+                            runrec.status.label(),
+                            runrec.ok_count(),
+                            runrec.steps.len()
+                        ))
+                        .size(9.0)
+                        .color(status_color),
                     );
                 }
             });
         } else {
             ui.label(
                 RichText::new("Select or create a workflow to begin editing.")
-                    .size(10.0).color(palette.text_muted),
+                    .size(10.0)
+                    .color(palette.text_muted),
             );
         }
     }

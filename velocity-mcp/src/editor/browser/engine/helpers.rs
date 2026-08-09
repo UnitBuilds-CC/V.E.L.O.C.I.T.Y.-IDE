@@ -2,7 +2,6 @@ use super::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-
 pub fn browser_workflow_suite_json_path(workspace_root: &Path, suite_name: &str) -> PathBuf {
     workspace_root
         .join(".velocity")
@@ -206,12 +205,15 @@ pub fn storage_entry_matches(
 ) -> bool {
     snapshot.storage.iter().any(|bucket| {
         bucket.scope.eq_ignore_ascii_case(scope)
-            && bucket.entries.iter().any(|(entry_key, entry_value): (&String, &String)| {
-                entry_key.eq_ignore_ascii_case(key)
-                    && value
-                        .map(|needle| entry_value.contains(needle))
-                        .unwrap_or(true)
-            })
+            && bucket
+                .entries
+                .iter()
+                .any(|(entry_key, entry_value): (&String, &String)| {
+                    entry_key.eq_ignore_ascii_case(key)
+                        && value
+                            .map(|needle| entry_value.contains(needle))
+                            .unwrap_or(true)
+                })
     })
 }
 
@@ -256,7 +258,11 @@ pub fn default_settle_signals(method: &str, status_code: u16) -> Vec<String> {
     signals
 }
 
-pub fn settle_signals_from_headers(method: &str, status_code: u16, raw: Option<&str>) -> Vec<String> {
+pub fn settle_signals_from_headers(
+    method: &str,
+    status_code: u16,
+    raw: Option<&str>,
+) -> Vec<String> {
     let mut signals = parse_list_header(raw.unwrap_or_default());
     if signals.is_empty() {
         signals = default_settle_signals(method, status_code);
@@ -388,4 +394,3 @@ pub fn protocol_events_from_headers(raw: Option<&str>) -> Vec<BrowserProtocolEve
     events.dedup();
     events
 }
-

@@ -251,14 +251,21 @@ mod tests {
     #[test]
     fn checkpoint_restore_reverts_working_tree() {
         fn git(dir: &Path, args: &[&str]) -> Option<bool> {
-            let out = Command::new("git").args(args).current_dir(dir).output().ok()?;
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .ok()?;
             Some(out.status.success())
         }
 
         // Unique temp workspace.
         let base = std::env::temp_dir().join(format!(
             "velocity_cp_test_{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         if std::fs::create_dir_all(&base).is_err() {
             return;
@@ -287,7 +294,10 @@ mod tests {
         mgr.restore(cp).expect("restore succeeds");
 
         let restored = std::fs::read_to_string(&file).unwrap();
-        assert_eq!(restored, "checkpointed", "restore must revert the later edit");
+        assert_eq!(
+            restored, "checkpointed",
+            "restore must revert the later edit"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }

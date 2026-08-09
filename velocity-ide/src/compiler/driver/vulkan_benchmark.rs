@@ -16,8 +16,7 @@ pub fn benchmark_attention_nda_vs_contig(
 
     let shader_info_contig =
         vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::ATTN_CONTIG_SPV);
-    let shader_module_contig =
-        unsafe { device.create_shader_module(&shader_info_contig, None)? };
+    let shader_module_contig = unsafe { device.create_shader_module(&shader_info_contig, None)? };
 
     let shader_info_ndakv =
         vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::ATTN_NDAKV_SPV);
@@ -74,8 +73,7 @@ pub fn benchmark_attention_nda_vs_contig(
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
             .build(),
     ];
-    let layout_info_ndakv =
-        vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_ndakv);
+    let layout_info_ndakv = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings_ndakv);
     let desc_set_layout_ndakv =
         unsafe { device.create_descriptor_set_layout(&layout_info_ndakv, None)? };
 
@@ -158,16 +156,41 @@ pub fn benchmark_attention_nda_vs_contig(
     let block_size = (16 * std::mem::size_of::<NdaKvBlock>()) as vk::DeviceSize;
     let out_size = (num_heads * head_dim * 4) as vk::DeviceSize;
 
-    let (q_buffer, q_memory, q_ptr) =
-        create_coherent_buffer(device, instance, physical_device, q_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
-    let (k_buffer, k_memory, k_ptr) =
-        create_coherent_buffer(device, instance, physical_device, k_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
-    let (v_buffer, v_memory, v_ptr) =
-        create_coherent_buffer(device, instance, physical_device, v_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
-    let (block_buffer, block_memory, block_ptr) =
-        create_coherent_buffer(device, instance, physical_device, block_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
-    let (out_buffer, out_memory, _out_ptr) =
-        create_coherent_buffer(device, instance, physical_device, out_size, vk::BufferUsageFlags::STORAGE_BUFFER)?;
+    let (q_buffer, q_memory, q_ptr) = create_coherent_buffer(
+        device,
+        instance,
+        physical_device,
+        q_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+    )?;
+    let (k_buffer, k_memory, k_ptr) = create_coherent_buffer(
+        device,
+        instance,
+        physical_device,
+        k_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+    )?;
+    let (v_buffer, v_memory, v_ptr) = create_coherent_buffer(
+        device,
+        instance,
+        physical_device,
+        v_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+    )?;
+    let (block_buffer, block_memory, block_ptr) = create_coherent_buffer(
+        device,
+        instance,
+        physical_device,
+        block_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+    )?;
+    let (out_buffer, out_memory, _out_ptr) = create_coherent_buffer(
+        device,
+        instance,
+        physical_device,
+        out_size,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+    )?;
 
     unsafe {
         let q_slice = std::slice::from_raw_parts_mut(q_ptr as *mut u32, 64);

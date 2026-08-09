@@ -1,7 +1,10 @@
 #[allow(unused_imports)]
 use velocity_browser::agentic::AgenticAomTree;
 #[allow(unused_imports)]
-use velocity_browser::engine::{CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind, ShadowFrameExtractor, ShadowHost};
+use velocity_browser::engine::{
+    CanvasElement, CanvasExtractor, FrameTarget, InterstitialClassifier, InterstitialKind,
+    ShadowFrameExtractor, ShadowHost,
+};
 use velocity_browser::nda::NdaTriple;
 use velocity_browser::parser::{CssMatcher, HtmlParser};
 use velocity_browser::session::BrowserSession;

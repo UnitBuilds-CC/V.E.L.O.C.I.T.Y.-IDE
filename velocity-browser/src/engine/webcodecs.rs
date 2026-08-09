@@ -25,18 +25,30 @@ pub enum CodecKind {
 impl CodecKind {
     pub fn from_name(name: &str) -> Self {
         let lower = name.to_ascii_lowercase();
-        if lower.contains("av1") { CodecKind::AV1 }
-        else if lower.contains("h265") || lower.contains("hevc") { CodecKind::H265 }
-        else if lower.contains("h264") || lower.contains("avc") { CodecKind::H264 }
-        else if lower.contains("vp9") { CodecKind::VP9 }
-        else if lower.contains("vp8") { CodecKind::VP8 }
-        else if lower.contains("opus") { CodecKind::Opus }
-        else if lower.contains("aac") { CodecKind::AAC }
-        else { CodecKind::Unknown }
+        if lower.contains("av1") {
+            CodecKind::AV1
+        } else if lower.contains("h265") || lower.contains("hevc") {
+            CodecKind::H265
+        } else if lower.contains("h264") || lower.contains("avc") {
+            CodecKind::H264
+        } else if lower.contains("vp9") {
+            CodecKind::VP9
+        } else if lower.contains("vp8") {
+            CodecKind::VP8
+        } else if lower.contains("opus") {
+            CodecKind::Opus
+        } else if lower.contains("aac") {
+            CodecKind::AAC
+        } else {
+            CodecKind::Unknown
+        }
     }
 
     pub fn is_video(&self) -> bool {
-        matches!(self, CodecKind::H264 | CodecKind::H265 | CodecKind::VP8 | CodecKind::VP9 | CodecKind::AV1)
+        matches!(
+            self,
+            CodecKind::H264 | CodecKind::H265 | CodecKind::VP8 | CodecKind::VP9 | CodecKind::AV1
+        )
     }
 
     pub fn is_audio(&self) -> bool {
@@ -133,7 +145,11 @@ impl VelocityRemotePacketStreamer {
     }
 
     /// Demux an audio packet.
-    pub fn demux_audio_packet(packet_bytes: &[u8], frame_idx: usize, codec: CodecKind) -> AudioFrame {
+    pub fn demux_audio_packet(
+        packet_bytes: &[u8],
+        frame_idx: usize,
+        codec: CodecKind,
+    ) -> AudioFrame {
         AudioFrame {
             frame_index: frame_idx,
             sample_rate: 48000,
@@ -183,7 +199,13 @@ impl VelocityCodecsEngine {
     }
 
     /// Encode a video frame into a packet (simplified: wraps raw bytes with header).
-    pub fn encode_video_frame(&mut self, width: usize, height: usize, timestamp_us: u64, raw_data: &[u8]) -> EncodedPacket {
+    pub fn encode_video_frame(
+        &mut self,
+        width: usize,
+        height: usize,
+        timestamp_us: u64,
+        raw_data: &[u8],
+    ) -> EncodedPacket {
         let is_keyframe = self.ring_buffer.frames_since_keyframe() >= 30; // Keyframe every 30 frames
         let mut packet_data = Vec::with_capacity(8 + raw_data.len());
         // Simple header: width(2) + height(2) + flags(1) + reserved(3)
@@ -203,7 +225,13 @@ impl VelocityCodecsEngine {
     }
 
     /// Encode an audio frame into a packet (simplified: wraps PCM samples with header).
-    pub fn encode_audio_packet(&mut self, sample_rate: u32, channels: u16, timestamp_us: u64, pcm_data: &[u8]) -> EncodedPacket {
+    pub fn encode_audio_packet(
+        &mut self,
+        sample_rate: u32,
+        channels: u16,
+        timestamp_us: u64,
+        pcm_data: &[u8],
+    ) -> EncodedPacket {
         let mut packet_data = Vec::with_capacity(8 + pcm_data.len());
         // Header: sample_rate(2) + channels(1) + flags(1) + reserved(4)
         packet_data.extend_from_slice(&(sample_rate as u16).to_le_bytes());
@@ -235,8 +263,16 @@ impl VelocityCodecsEngine {
             audio_frames_decoded: self.audio_ring.frames.len(),
             packets_encoded: self.encoded_packets.len(),
             frames_since_keyframe: self.ring_buffer.frames_since_keyframe(),
-            audio_packets_encoded: self.encoded_packets.iter().filter(|p| p.codec.is_audio()).count(),
-            video_packets_encoded: self.encoded_packets.iter().filter(|p| p.codec.is_video()).count(),
+            audio_packets_encoded: self
+                .encoded_packets
+                .iter()
+                .filter(|p| p.codec.is_audio())
+                .count(),
+            video_packets_encoded: self
+                .encoded_packets
+                .iter()
+                .filter(|p| p.codec.is_video())
+                .count(),
             codec: self.codec,
         }
     }
@@ -245,7 +281,11 @@ impl VelocityCodecsEngine {
         vec![NdaTriple::new(
             session_id,
             253,
-            &format!("codecs:{}:buffered_{}", self.codec_name, self.ring_buffer.frames.len()),
+            &format!(
+                "codecs:{}:buffered_{}",
+                self.codec_name,
+                self.ring_buffer.frames.len()
+            ),
         )]
     }
 }
@@ -356,16 +396,28 @@ mod tests {
     fn test_frames_since_keyframe() {
         let mut buf = VelocityFrameRingBuffer::new(10);
         buf.push_frame(VideoFrame {
-            frame_index: 0, width: 640, height: 480, timestamp_us: 0,
-            is_keyframe: true, codec: CodecKind::H264,
+            frame_index: 0,
+            width: 640,
+            height: 480,
+            timestamp_us: 0,
+            is_keyframe: true,
+            codec: CodecKind::H264,
         });
         buf.push_frame(VideoFrame {
-            frame_index: 1, width: 640, height: 480, timestamp_us: 16666,
-            is_keyframe: false, codec: CodecKind::H264,
+            frame_index: 1,
+            width: 640,
+            height: 480,
+            timestamp_us: 16666,
+            is_keyframe: false,
+            codec: CodecKind::H264,
         });
         buf.push_frame(VideoFrame {
-            frame_index: 2, width: 640, height: 480, timestamp_us: 33332,
-            is_keyframe: false, codec: CodecKind::H264,
+            frame_index: 2,
+            width: 640,
+            height: 480,
+            timestamp_us: 33332,
+            is_keyframe: false,
+            codec: CodecKind::H264,
         });
         assert_eq!(buf.frames_since_keyframe(), 2);
     }
@@ -374,8 +426,12 @@ mod tests {
     fn test_frames_since_keyframe_no_keyframe() {
         let mut buf = VelocityFrameRingBuffer::new(10);
         buf.push_frame(VideoFrame {
-            frame_index: 0, width: 640, height: 480, timestamp_us: 0,
-            is_keyframe: false, codec: CodecKind::H264,
+            frame_index: 0,
+            width: 640,
+            height: 480,
+            timestamp_us: 0,
+            is_keyframe: false,
+            codec: CodecKind::H264,
         });
         assert_eq!(buf.frames_since_keyframe(), 1); // all frames since no keyframe
     }
@@ -390,4 +446,3 @@ mod tests {
         assert!(triples[0].object_hash != 0);
     }
 }
-

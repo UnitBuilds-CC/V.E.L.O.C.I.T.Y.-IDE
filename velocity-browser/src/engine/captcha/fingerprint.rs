@@ -24,7 +24,13 @@ pub struct ProviderSignature {
 
 impl ProviderSignature {
     /// Score how well a set of signals matches this provider (0.0 - 1.0).
-    fn score(&self, urls: &[String], classes: &[String], scripts: &[String], data_attrs: &[(String, String)]) -> f32 {
+    fn score(
+        &self,
+        urls: &[String],
+        classes: &[String],
+        scripts: &[String],
+        data_attrs: &[(String, String)],
+    ) -> f32 {
         let mut hits = 0u32;
         let mut total = 0u32;
 
@@ -55,7 +61,10 @@ impl ProviderSignature {
         // Data attribute matching
         for (key, prefix) in &self.data_attr_patterns {
             total += 1;
-            if data_attrs.iter().any(|(k, v)| k == key && v.starts_with(prefix)) {
+            if data_attrs
+                .iter()
+                .any(|(k, v)| k == key && v.starts_with(prefix))
+            {
                 hits += 1;
             }
         }

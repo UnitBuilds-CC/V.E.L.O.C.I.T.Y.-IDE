@@ -412,4 +412,3 @@ pub fn set_session_cookies(
     let report = set_session_cookies_report(workspace_root, session_id, cookies)?;
     Ok(PathBuf::from(report.session_json_path))
 }
-

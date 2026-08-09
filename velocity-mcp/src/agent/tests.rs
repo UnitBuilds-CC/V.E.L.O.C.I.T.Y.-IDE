@@ -322,7 +322,8 @@ fn appends_to_legacy_ndav_changelog() {
 
 #[test]
 fn test_sanitize_chat_token_removes_tags() {
-    let input = "Hello there </tool_call>\n</tool_call>\n<parameter=path>src/main.rs</parameter> checking.";
+    let input =
+        "Hello there </tool_call>\n</tool_call>\n<parameter=path>src/main.rs</parameter> checking.";
     let expected = "Hello there src/main.rs checking.";
     assert_eq!(sanitize_chat_token(input).trim(), expected);
 }
@@ -431,10 +432,14 @@ fn writes_last_request_artifacts() {
     );
 
     let raw = std::fs::read(tmp.path().join(".velocity").join("last_request.nda")).unwrap();
-    let nda =
-        String::from_utf8(crate::agent::crypto::open(tmp.path(), b"last_request", &raw)).unwrap();
-    let json = std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json"))
-        .unwrap();
+    let nda = String::from_utf8(crate::agent::crypto::open(
+        tmp.path(),
+        b"last_request",
+        &raw,
+    ))
+    .unwrap();
+    let json =
+        std::fs::read_to_string(tmp.path().join(".velocity").join("last_request.json")).unwrap();
     assert!(nda.contains("last-request version 3"));
     assert!(nda.contains("field\tmodel\t@cf/example/chat"));
     assert!(json.contains("\"model\""));
@@ -457,8 +462,7 @@ struct ToolCall {
 #[test]
 fn test_eager_merkle_compaction() {
     let mut long_content = String::new();
-    long_content
-        .push_str("fn test_function() {\n    println!(\"Hello\");\n}\nclass TestClass {}");
+    long_content.push_str("fn test_function() {\n    println!(\"Hello\");\n}\nclass TestClass {}");
     for i in 0..100 {
         long_content.push_str(&format!("\n// Dummy line padding number {} to ensure we are well above the one thousand character compaction threshold.", i));
     }
@@ -530,14 +534,8 @@ fn test_fallback_provider_resolution() {
         default_provider_model(AiProvider::OpenRouter),
         "tencent/hy3:free"
     );
-    assert_eq!(
-        default_provider_model(AiProvider::AzureOpenAi),
-        "gpt-4o"
-    );
-    assert_eq!(
-        default_provider_model(AiProvider::LocalOllama),
-        "llama3.2"
-    );
+    assert_eq!(default_provider_model(AiProvider::AzureOpenAi), "gpt-4o");
+    assert_eq!(default_provider_model(AiProvider::LocalOllama), "llama3.2");
 }
 
 #[test]
@@ -557,7 +555,9 @@ fn test_compress_history_truncates_giant_uncompressed_tool_output() {
 
     let compressed = compress_history(&messages, true);
     assert_eq!(compressed.len(), 1);
-    assert!(compressed[0].content.contains("Truncated middle output of 'grep_search'"));
+    assert!(compressed[0]
+        .content
+        .contains("Truncated middle output of 'grep_search'"));
     assert!(compressed[0].content.len() < 13_000);
 }
 
@@ -574,7 +574,9 @@ fn test_compress_history_converts_orphan_tool_messages() {
     let compressed = compress_history(&[orphan_tool], true);
     assert_eq!(compressed.len(), 1);
     assert_eq!(compressed[0].role, "user");
-    assert!(compressed[0].content.contains("[Tool result for 'read_file']: Success output"));
+    assert!(compressed[0]
+        .content
+        .contains("[Tool result for 'read_file']: Success output"));
     assert!(compressed[0].tool_call_id.is_none());
     assert!(compressed[0].name.is_none());
 }

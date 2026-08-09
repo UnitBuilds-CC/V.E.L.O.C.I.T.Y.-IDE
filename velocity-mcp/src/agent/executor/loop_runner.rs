@@ -64,7 +64,9 @@ pub fn run_agent_reasoning_loop(
     let learned_directives = ImprovementEngine::recall_directives(&memory, 5);
     if !learned_directives.is_empty() {
         if let Some(sys_msg) = message_history.iter_mut().find(|m| m.role == "system") {
-            sys_msg.content.push_str("\n\n## Previously Learned Patterns\n");
+            sys_msg
+                .content
+                .push_str("\n\n## Previously Learned Patterns\n");
             for d in &learned_directives {
                 sys_msg.content.push_str(&format!("- {}\n", d));
             }
@@ -186,24 +188,16 @@ pub fn run_agent_reasoning_loop(
             AiProvider::LocalOllama => {
                 super::dispatch::execute_ollama_request(ollama_accounts, &request_body, ui_tx)
             }
-            AiProvider::Deepseek => {
-                super::dispatch::execute_deepseek_request(&request_body, ui_tx)
-            }
+            AiProvider::Deepseek => super::dispatch::execute_deepseek_request(&request_body, ui_tx),
             AiProvider::AlibabaQwen => {
                 super::dispatch::execute_alibaba_qwen_request(&request_body, ui_tx)
             }
             AiProvider::AwsBedrock => {
                 super::dispatch::execute_bedrock_request(&request_body, ui_tx)
             }
-            AiProvider::Groq => {
-                super::dispatch::execute_groq_request(&request_body, ui_tx)
-            }
-            AiProvider::Mistral => {
-                super::dispatch::execute_mistral_request(&request_body, ui_tx)
-            }
-            AiProvider::OpenAI => {
-                super::dispatch::execute_openai_request(&request_body, ui_tx)
-            }
+            AiProvider::Groq => super::dispatch::execute_groq_request(&request_body, ui_tx),
+            AiProvider::Mistral => super::dispatch::execute_mistral_request(&request_body, ui_tx),
+            AiProvider::OpenAI => super::dispatch::execute_openai_request(&request_body, ui_tx),
             AiProvider::GoogleVertex => {
                 super::dispatch::execute_google_request(&request_body, ui_tx)
             }
@@ -216,9 +210,7 @@ pub fn run_agent_reasoning_loop(
             AiProvider::Perplexity => {
                 super::dispatch::execute_perplexity_request(&request_body, ui_tx)
             }
-            AiProvider::Cerebras => {
-                super::dispatch::execute_cerebras_request(&request_body, ui_tx)
-            }
+            AiProvider::Cerebras => super::dispatch::execute_cerebras_request(&request_body, ui_tx),
             AiProvider::Anthropic => {
                 super::dispatch::execute_anthropic_request(&request_body, ui_tx)
             }
@@ -229,22 +221,57 @@ pub fn run_agent_reasoning_loop(
             None => {
                 let fallback = fallback_provider(current_provider);
                 let fallback_available = match fallback {
-                    AiProvider::OpenRouter => !or_accounts.is_empty() || !openrouter_api_key().trim().is_empty(),
+                    AiProvider::OpenRouter => {
+                        !or_accounts.is_empty() || !openrouter_api_key().trim().is_empty()
+                    }
                     AiProvider::CloudflareWorkersAi => !accounts.is_empty(),
                     AiProvider::AzureOpenAi => !azure_accounts.is_empty(),
                     AiProvider::LocalOllama => !ollama_accounts.is_empty(),
-                    AiProvider::Deepseek => !std::env::var("DEEPSEEK_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::AlibabaQwen => !std::env::var("DASHSCOPE_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::Deepseek => !std::env::var("DEEPSEEK_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::AlibabaQwen => !std::env::var("DASHSCOPE_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
                     AiProvider::AwsBedrock => std::env::var("BEDROCK_PROXY_URL").is_ok(),
-                    AiProvider::Groq => !std::env::var("GROQ_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::Mistral => !std::env::var("MISTRAL_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::OpenAI => !std::env::var("OPENAI_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::GoogleVertex => !std::env::var("GOOGLE_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::TogetherAi => !std::env::var("TOGETHER_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::FireworksAi => !std::env::var("FIREWORKS_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::Perplexity => !std::env::var("PERPLEXITY_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::Cerebras => !std::env::var("CEREBRAS_API_KEY").unwrap_or_default().trim().is_empty(),
-                    AiProvider::Anthropic => !std::env::var("ANTHROPIC_API_KEY").unwrap_or_default().trim().is_empty(),
+                    AiProvider::Groq => !std::env::var("GROQ_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::Mistral => !std::env::var("MISTRAL_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::OpenAI => !std::env::var("OPENAI_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::GoogleVertex => !std::env::var("GOOGLE_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::TogetherAi => !std::env::var("TOGETHER_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::FireworksAi => !std::env::var("FIREWORKS_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::Perplexity => !std::env::var("PERPLEXITY_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::Cerebras => !std::env::var("CEREBRAS_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
+                    AiProvider::Anthropic => !std::env::var("ANTHROPIC_API_KEY")
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty(),
                 };
 
                 if fallback_attempts < 7 && fallback_available {
@@ -283,20 +310,38 @@ pub fn run_agent_reasoning_loop(
                     AiProvider::CloudflareWorkersAi => {
                         "All Cloudflare Workers AI accounts exhausted or failed."
                     }
-                    AiProvider::AzureOpenAi => "Azure OpenAI request failed or no accounts configured.",
-                    AiProvider::LocalOllama => "Local Ollama server unreachable (http://localhost:11434).",
+                    AiProvider::AzureOpenAi => {
+                        "Azure OpenAI request failed or no accounts configured."
+                    }
+                    AiProvider::LocalOllama => {
+                        "Local Ollama server unreachable (http://localhost:11434)."
+                    }
                     AiProvider::Deepseek => "Deepseek request failed or DEEPSEEK_API_KEY missing.",
-                    AiProvider::AlibabaQwen => "Alibaba Qwen request failed or DASHSCOPE_API_KEY missing.",
-                    AiProvider::AwsBedrock => "AWS Bedrock request failed or BEDROCK_PROXY_URL not configured.",
+                    AiProvider::AlibabaQwen => {
+                        "Alibaba Qwen request failed or DASHSCOPE_API_KEY missing."
+                    }
+                    AiProvider::AwsBedrock => {
+                        "AWS Bedrock request failed or BEDROCK_PROXY_URL not configured."
+                    }
                     AiProvider::Groq => "Groq request failed or GROQ_API_KEY missing.",
                     AiProvider::Mistral => "Mistral AI request failed or MISTRAL_API_KEY missing.",
                     AiProvider::OpenAI => "OpenAI request failed or OPENAI_API_KEY missing.",
-                    AiProvider::GoogleVertex => "Google Vertex request failed or GOOGLE_API_KEY missing.",
-                    AiProvider::TogetherAi => "Together AI request failed or TOGETHER_API_KEY missing.",
-                    AiProvider::FireworksAi => "Fireworks AI request failed or FIREWORKS_API_KEY missing.",
-                    AiProvider::Perplexity => "Perplexity request failed or PERPLEXITY_API_KEY missing.",
+                    AiProvider::GoogleVertex => {
+                        "Google Vertex request failed or GOOGLE_API_KEY missing."
+                    }
+                    AiProvider::TogetherAi => {
+                        "Together AI request failed or TOGETHER_API_KEY missing."
+                    }
+                    AiProvider::FireworksAi => {
+                        "Fireworks AI request failed or FIREWORKS_API_KEY missing."
+                    }
+                    AiProvider::Perplexity => {
+                        "Perplexity request failed or PERPLEXITY_API_KEY missing."
+                    }
                     AiProvider::Cerebras => "Cerebras request failed or CEREBRAS_API_KEY missing.",
-                    AiProvider::Anthropic => "Anthropic request failed or ANTHROPIC_API_KEY missing.",
+                    AiProvider::Anthropic => {
+                        "Anthropic request failed or ANTHROPIC_API_KEY missing."
+                    }
                 };
                 ui_tx
                     .send(AgentToUiMessage::OutputToken(format!(
@@ -330,17 +375,19 @@ pub fn run_agent_reasoning_loop(
                             Some("text") => {
                                 if let Some(text) = block["text"].as_str() {
                                     assistant_content.push_str(text);
-                                    ui_tx.send(AgentToUiMessage::OutputToken(
-                                        sanitize_chat_token(text),
-                                    )).ok();
+                                    ui_tx
+                                        .send(AgentToUiMessage::OutputToken(sanitize_chat_token(
+                                            text,
+                                        )))
+                                        .ok();
                                 }
                             }
                             Some("thinking") => {
                                 if let Some(text) = block["thinking"].as_str() {
                                     reasoning_content.push_str(text);
-                                    ui_tx.send(AgentToUiMessage::ThoughtToken(
-                                        text.to_string(),
-                                    )).ok();
+                                    ui_tx
+                                        .send(AgentToUiMessage::ThoughtToken(text.to_string()))
+                                        .ok();
                                 }
                             }
                             Some("tool_use") => {
@@ -360,9 +407,11 @@ pub fn run_agent_reasoning_loop(
                     }
                 }
                 if let Some(err) = parsed["error"]["message"].as_str() {
-                    ui_tx.send(AgentToUiMessage::OutputToken(
-                        format!("\n\nAnthropic error: {err}")
-                    )).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::OutputToken(format!(
+                            "\n\nAnthropic error: {err}"
+                        )))
+                        .ok();
                 }
             }
             streamed_len = assistant_content.len();
@@ -382,7 +431,11 @@ pub fn run_agent_reasoning_loop(
             while let Ok(ui_msg) = ui_rx.try_recv() {
                 match ui_msg {
                     UiToAgentMessage::CancelTask => {
-                        ui_tx.send(AgentToUiMessage::StatusUpdate("Task interrupted by operator.".to_string())).ok();
+                        ui_tx
+                            .send(AgentToUiMessage::StatusUpdate(
+                                "Task interrupted by operator.".to_string(),
+                            ))
+                            .ok();
                         interrupted = true;
                         break;
                     }
@@ -616,7 +669,8 @@ pub fn run_agent_reasoning_loop(
                                 .unwrap_or(after_ps.len());
                             let val = after_ps[val_start..val_end].trim().to_string();
                             args.insert(key, Value::String(val));
-                            let next_slice_start = (val_end + "</parameter>".len()).min(after_ps.len());
+                            let next_slice_start =
+                                (val_end + "</parameter>".len()).min(after_ps.len());
                             param_rest = &after_ps[next_slice_start..];
                         }
                         let call_id = format!("inline_{}", accumulated_tools.len());
@@ -766,9 +820,11 @@ pub fn run_agent_reasoning_loop(
 
         if let Some(ref tcs) = final_tool_calls_value {
             let Some(tool_calls_arr) = tcs.as_array() else {
-                ui_tx.send(AgentToUiMessage::StatusUpdate(
-                    "Unexpected tool_calls format from provider, skipping.".to_string(),
-                )).ok();
+                ui_tx
+                    .send(AgentToUiMessage::StatusUpdate(
+                        "Unexpected tool_calls format from provider, skipping.".to_string(),
+                    ))
+                    .ok();
                 // Fall through to break
                 write_handover_nda(workspace_root, "idle", loop_count, "completed", false);
                 break;
@@ -822,7 +878,11 @@ pub fn run_agent_reasoning_loop(
                         }
                         UiToAgentMessage::CancelTask => {
                             pending_ids.clear();
-                            ui_tx.send(AgentToUiMessage::StatusUpdate("Task interrupted by operator.".to_string())).ok();
+                            ui_tx
+                                .send(AgentToUiMessage::StatusUpdate(
+                                    "Task interrupted by operator.".to_string(),
+                                ))
+                                .ok();
                             break;
                         }
                         other => {
@@ -842,7 +902,9 @@ pub fn run_agent_reasoning_loop(
 
             // Phase 2: Checkpoint before file-modifying tool batch
             let file_modifying = ["write_file", "delete_file", "run_command", "apply_diff"];
-            let has_file_mod = tool_specs.iter().any(|(_, name, _)| file_modifying.contains(&name.as_str()));
+            let has_file_mod = tool_specs
+                .iter()
+                .any(|(_, name, _)| file_modifying.contains(&name.as_str()));
             if has_file_mod && checkpoint_mgr.enabled {
                 let label = format!("before tool batch (loop {})", loop_count);
                 if let Some(cp_id) = checkpoint_mgr.checkpoint(&label) {
@@ -868,55 +930,68 @@ pub fn run_agent_reasoning_loop(
                 let lsp_written = lsp_written_clone.clone();
 
                 let handle = std::thread::spawn(move || {
-                    let (tool_result, file_buffer_update, changelog_entry) =
-                        if let Some(approved_args) = approval {
-                            ui_tx_clone
-                                .send(AgentToUiMessage::ToolExecutionStarted {
-                                    tool_name: tool_name.clone(),
-                                })
-                                .ok();
+                    let (tool_result, file_buffer_update, changelog_entry) = if let Some(
+                        approved_args,
+                    ) = approval
+                    {
+                        ui_tx_clone
+                            .send(AgentToUiMessage::ToolExecutionStarted {
+                                tool_name: tool_name.clone(),
+                            })
+                            .ok();
 
-                            // T1b: Claim file via coordination bus before writing
-                            let file_to_lock: Option<PathBuf> = match tool_name.as_str() {
-                                "write_file" | "apply_diff" | "delete_file" => {
-                                    approved_args["relativeFilePath"]
-                                        .as_str()
-                                        .or_else(|| approved_args["path"].as_str())
-                                        .map(|p| workspace_root_clone.join(p))
-                                }
-                                _ => None,
-                            };
-                            if let Some(ref lock_path) = file_to_lock {
-                                if !bus.claim_file("primary", lock_path) {
-                                    return (
-                                        call_id,
-                                        tool_name,
-                                        format!("Error: File '{}' is locked by another agent.", lock_path.display()),
-                                        None,
-                                        None,
-                                    );
-                                }
+                        // T1b: Claim file via coordination bus before writing
+                        let file_to_lock: Option<PathBuf> = match tool_name.as_str() {
+                            "write_file" | "apply_diff" | "delete_file" => approved_args
+                                ["relativeFilePath"]
+                                .as_str()
+                                .or_else(|| approved_args["path"].as_str())
+                                .map(|p| workspace_root_clone.join(p)),
+                            _ => None,
+                        };
+                        if let Some(ref lock_path) = file_to_lock {
+                            if !bus.claim_file("primary", lock_path) {
+                                return (
+                                    call_id,
+                                    tool_name,
+                                    format!(
+                                        "Error: File '{}' is locked by another agent.",
+                                        lock_path.display()
+                                    ),
+                                    None,
+                                    None,
+                                );
                             }
+                        }
 
-                            // T2b: LSP gate — if this file was already written this session
-                            // and build diagnostics still report errors referencing it,
-                            // block the write to force the agent to fix errors first.
-                            if let Some(ref lock_path) = file_to_lock {
-                                if lsp_written.lock_safe().contains(lock_path) {
-                                    let diag = crate::automation::read_latest_diagnostics(&workspace_root_clone);
-                                    if !diag.success {
-                                        let file_str = lock_path.display().to_string();
-                                        let rel_str = lock_path.strip_prefix(&workspace_root_clone)
-                                            .map(|p| p.display().to_string())
-                                            .unwrap_or_default();
-                                        let has_file_errors = diag.errors.iter().any(|e| {
-                                            e.contains(&file_str) || e.contains(&rel_str)
-                                        });
-                                        if has_file_errors {
-                                            let relevant: Vec<&String> = diag.errors.iter()
-                                                .filter(|e| e.contains(&file_str) || e.contains(&rel_str))
-                                                .take(5).collect();
-                                            return (
+                        // T2b: LSP gate — if this file was already written this session
+                        // and build diagnostics still report errors referencing it,
+                        // block the write to force the agent to fix errors first.
+                        if let Some(ref lock_path) = file_to_lock {
+                            if lsp_written.lock_safe().contains(lock_path) {
+                                let diag = crate::automation::read_latest_diagnostics(
+                                    &workspace_root_clone,
+                                );
+                                if !diag.success {
+                                    let file_str = lock_path.display().to_string();
+                                    let rel_str = lock_path
+                                        .strip_prefix(&workspace_root_clone)
+                                        .map(|p| p.display().to_string())
+                                        .unwrap_or_default();
+                                    let has_file_errors = diag
+                                        .errors
+                                        .iter()
+                                        .any(|e| e.contains(&file_str) || e.contains(&rel_str));
+                                    if has_file_errors {
+                                        let relevant: Vec<&String> = diag
+                                            .errors
+                                            .iter()
+                                            .filter(|e| {
+                                                e.contains(&file_str) || e.contains(&rel_str)
+                                            })
+                                            .take(5)
+                                            .collect();
+                                        return (
                                                 call_id,
                                                 tool_name,
                                                 format!(
@@ -928,61 +1003,61 @@ pub fn run_agent_reasoning_loop(
                                                 None,
                                                 None,
                                             );
-                                        }
                                     }
                                 }
                             }
+                        }
 
-                            let mut file_buffer_update = None;
-                            let mut changelog_entry = None;
-                            let tool_result = match registry::call_tool_in_workspace(
-                                &workspace_root_clone,
-                                &tool_name,
-                                &approved_args,
-                            ) {
-                                Ok(res) => {
-                                    if tool_name == "write_file" {
-                                        if let Some(rel_path) =
-                                            approved_args["relativeFilePath"].as_str()
-                                        {
-                                            let full_path = workspace_root_clone.join(rel_path);
-                                            if let Some(content) = approved_args["content"].as_str() {
-                                                file_buffer_update =
-                                                    Some((full_path, content.to_string()));
-                                            }
-                                            changelog_entry =
-                                                Some((rel_path.to_string(), "write_file"));
+                        let mut file_buffer_update = None;
+                        let mut changelog_entry = None;
+                        let tool_result = match registry::call_tool_in_workspace(
+                            &workspace_root_clone,
+                            &tool_name,
+                            &approved_args,
+                        ) {
+                            Ok(res) => {
+                                if tool_name == "write_file" {
+                                    if let Some(rel_path) =
+                                        approved_args["relativeFilePath"].as_str()
+                                    {
+                                        let full_path = workspace_root_clone.join(rel_path);
+                                        if let Some(content) = approved_args["content"].as_str() {
+                                            file_buffer_update =
+                                                Some((full_path, content.to_string()));
                                         }
+                                        changelog_entry =
+                                            Some((rel_path.to_string(), "write_file"));
                                     }
-                                    res
                                 }
-                                Err(e) => format!("Error executing tool: {:?}", e),
-                            };
-
-                            // T1b: Release file lock after execution
-                            if let Some(ref lock_path) = file_to_lock {
-                                bus.release_file("primary", lock_path);
-                                // T2b: Track written files for LSP gating
-                                if matches!(tool_name.as_str(), "write_file" | "apply_diff") {
-                                    lsp_written.lock_safe().insert(lock_path.clone());
-                                }
+                                res
                             }
-
-                            ui_tx_clone
-                                .send(AgentToUiMessage::ToolExecutionFinished {
-                                    tool_name: tool_name.clone(),
-                                    result: tool_result.clone(),
-                                })
-                                .ok();
-
-                            (tool_result, file_buffer_update, changelog_entry)
-                        } else {
-                            (
-                                "Error: Tool execution rejected by the user.".to_string(),
-                                None,
-                                None,
-                            )
+                            Err(e) => format!("Error executing tool: {:?}", e),
                         };
+
+                        // T1b: Release file lock after execution
+                        if let Some(ref lock_path) = file_to_lock {
+                            bus.release_file("primary", lock_path);
+                            // T2b: Track written files for LSP gating
+                            if matches!(tool_name.as_str(), "write_file" | "apply_diff") {
+                                lsp_written.lock_safe().insert(lock_path.clone());
+                            }
+                        }
+
+                        ui_tx_clone
+                            .send(AgentToUiMessage::ToolExecutionFinished {
+                                tool_name: tool_name.clone(),
+                                result: tool_result.clone(),
+                            })
+                            .ok();
+
+                        (tool_result, file_buffer_update, changelog_entry)
+                    } else {
+                        (
+                            "Error: Tool execution rejected by the user.".to_string(),
+                            None,
+                            None,
+                        )
+                    };
 
                     (
                         call_id,
@@ -1010,7 +1085,9 @@ pub fn run_agent_reasoning_loop(
             for (call_id, tool_name, tool_result, file_buffer_update, changelog_entry) in
                 thread_results
             {
-                if tool_result.contains("Error executing tool") || tool_result.starts_with("BLOCKED:") {
+                if tool_result.contains("Error executing tool")
+                    || tool_result.starts_with("BLOCKED:")
+                {
                     any_error = true;
                     // Phase 3: Penalize failed strategy
                     let mem_key = format!("tool:{}:error", tool_name);
@@ -1128,7 +1205,9 @@ pub fn run_agent_reasoning_loop(
                     break;
                 }
                 Err(e) => {
-                    ui_tx.send(AgentToUiMessage::StatusUpdate(format!("Build status: {e}"))).ok();
+                    ui_tx
+                        .send(AgentToUiMessage::StatusUpdate(format!("Build status: {e}")))
+                        .ok();
                     break;
                 }
             }

@@ -2,7 +2,6 @@
 #![allow(unused)]
 #![allow(dead_code)]
 
-
 mod compiler;
 mod model;
 mod nda;
@@ -10,18 +9,19 @@ mod nda_int;
 mod pipeline_bridge;
 mod pipeline_nda;
 mod safety;
-mod site_map;
 mod sandbox;
+mod site_map;
 mod tokenizer;
 
-
-use std::{io::{self, Write, BufRead, BufReader}, path::PathBuf, time::Instant};
+use std::{
+    io::{self, BufRead, BufReader, Write},
+    path::PathBuf,
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-
-
 
 // ─── CLI definition ────────────────────────────────────────────────────────
 
@@ -150,14 +150,10 @@ struct ChatArgs {
     arch: String,
 }
 
-
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"),
-    )
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let cli = Cli::parse();
     match cli.command {
@@ -182,7 +178,11 @@ fn main() -> Result<()> {
             if let Ok(driver) = compiler::driver::VulkanDriver::init() {
                 if let Ok((contig_us, ndakv_us)) = driver.run_attn_benchmarks() {
                     println!("  Float32 Attention: {:.2} us", contig_us);
-                    println!("  NDA-KV Attention : {:.2} us ({:.1}x speedup)", ndakv_us, contig_us / ndakv_us);
+                    println!(
+                        "  NDA-KV Attention : {:.2} us ({:.1}x speedup)",
+                        ndakv_us,
+                        contig_us / ndakv_us
+                    );
                 } else {
                     println!("  [FAIL] Failed to run GPU attention benchmarks.");
                 }
@@ -205,10 +205,8 @@ fn run_seed(args: SeedArgs) -> Result<()> {
     }
 
     // Parse weight-root hex (0 = standalone, not tied to model weights)
-    let weight_root = u64::from_str_radix(
-        args.weight_root.trim_start_matches("0x"),
-        16,
-    ).unwrap_or(0);
+    let weight_root =
+        u64::from_str_radix(args.weight_root.trim_start_matches("0x"), 16).unwrap_or(0);
 
     eprintln!("[seed] Opening SiteMap at {:?}", args.site_map);
     eprintln!("[seed] Weight root: {:016x}", weight_root);
@@ -216,8 +214,8 @@ fn run_seed(args: SeedArgs) -> Result<()> {
     eprintln!("[seed] {}", site_map.stats());
 
     let mut total_functions = 0;
-    let mut total_stored    = 0;
-    let n_files             = args.source.len();
+    let mut total_stored = 0;
+    let n_files = args.source.len();
 
     for path in &args.source {
         eprint!("[seed] Compiling {:?} … ", path);
@@ -225,7 +223,7 @@ fn run_seed(args: SeedArgs) -> Result<()> {
             Ok(report) => {
                 eprintln!("{}", report);
                 total_functions += report.functions;
-                total_stored    += report.nodes_stored;
+                total_stored += report.nodes_stored;
             }
             Err(e) => {
                 eprintln!("FAILED: {e:#}");
@@ -355,8 +353,7 @@ fn run_generate(args: GenerateArgs) -> Result<()> {
     let prompt_text = if let Some(p) = args.prompt {
         p
     } else if let Some(pf) = &args.prompt_file {
-        std::fs::read_to_string(pf)
-            .with_context(|| format!("Reading prompt file: {pf:?}"))?
+        std::fs::read_to_string(pf).with_context(|| format!("Reading prompt file: {pf:?}"))?
     } else {
         anyhow::bail!("Either --prompt or --prompt-file must be provided");
     };
@@ -369,7 +366,7 @@ fn run_generate(args: GenerateArgs) -> Result<()> {
         Message {
             role: "user".to_string(),
             content: prompt_text,
-        }
+        },
     ];
 
     let t_gen = Instant::now();
@@ -388,28 +385,23 @@ fn run_generate_zero(_args: GenerateArgs) -> Result<()> {
 
 // ─── Dual-Path NDA Generate ─────────────────────────────────────────────────
 
-fn run_generate_zero_nda(
-    _args: GenerateArgs,
-    _mode: pipeline_nda::PipelineMode,
-) -> Result<()> {
+fn run_generate_zero_nda(_args: GenerateArgs, _mode: pipeline_nda::PipelineMode) -> Result<()> {
     anyhow::bail!("Local model execution via Dual-Path NDA is disabled in Kimi mode.");
 }
 
 fn run_chat(_args: ChatArgs) -> Result<()> {
     use std::io::BufRead;
-    
+
     let accounts = load_accounts();
     if accounts.is_empty() {
         anyhow::bail!("No Cloudflare accounts found in parent .env. Please configure them first.");
     }
-    
+
     println!("Ready! Enter a prompt below. Type 'exit' or 'quit' to end the session.\n");
-    let mut history = vec![
-        Message {
-            role: "system".to_string(),
-            content: "You are Kimi, a helpful AI coding assistant.".to_string(),
-        }
-    ];
+    let mut history = vec![Message {
+        role: "system".to_string(),
+        content: "You are Kimi, a helpful AI coding assistant.".to_string(),
+    }];
 
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
@@ -454,5 +446,3 @@ fn run_chat(_args: ChatArgs) -> Result<()> {
 
     Ok(())
 }
-
-

@@ -29,10 +29,7 @@ impl StealthHumanBehavior {
         let perp_x = -dy / distance.max(1.0) * distance * 0.15;
         let perp_y = dx / distance.max(1.0) * distance * 0.15;
 
-        let cp1 = (
-            start.0 + dx * 0.25 + perp_x,
-            start.1 + dy * 0.25 + perp_y,
-        );
+        let cp1 = (start.0 + dx * 0.25 + perp_x, start.1 + dy * 0.25 + perp_y);
         let cp2 = (
             start.0 + dx * 0.75 - perp_x * 0.5,
             start.1 + dy * 0.75 - perp_y * 0.5,
@@ -127,10 +124,7 @@ impl StealthHumanBehavior {
     }
 
     /// Generate a realistic scroll pattern (smooth acceleration/deceleration).
-    pub fn generate_scroll_pattern(
-        total_distance: f64,
-        steps: usize,
-    ) -> Vec<(f64, u64)> {
+    pub fn generate_scroll_pattern(total_distance: f64, steps: usize) -> Vec<(f64, u64)> {
         let mut scroll_events = Vec::with_capacity(steps);
         let base_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -140,7 +134,11 @@ impl StealthHumanBehavior {
         for i in 0..steps {
             let t = i as f64 / steps as f64;
             // Ease-in-out for natural scroll acceleration
-            let t_eased = if t < 0.5 { 2.0 * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(2) / 2.0 };
+            let t_eased = if t < 0.5 {
+                2.0 * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+            };
             let delta = total_distance * t_eased / steps as f64;
             let timestamp = base_time + (i as u64 * 16); // ~60fps scroll events
             scroll_events.push((delta, timestamp));
@@ -207,7 +205,12 @@ impl CanvasFingerprintRandomizer {
     /// Generate a fake WebGL renderer string that varies per session.
     pub fn spoofed_webgl_renderer(&self) -> String {
         let mut state = self.session_seed;
-        let vendors = ["ANGLE (Intel", "ANGLE (NVIDIA", "ANGLE (AMD", "ANGLE (Apple"];
+        let vendors = [
+            "ANGLE (Intel",
+            "ANGLE (NVIDIA",
+            "ANGLE (AMD",
+            "ANGLE (Apple",
+        ];
         let renderers = [
             "Intel(R) UHD Graphics 630",
             "NVIDIA GeForce RTX 3070",
@@ -220,7 +223,10 @@ impl CanvasFingerprintRandomizer {
         let vendor_idx = (state % vendors.len() as u64) as usize;
         state = xorshift64(state);
         let renderer_idx = (state % renderers.len() as u64) as usize;
-        format!("{}) Direct3D11 vs_5_0 ps_5_0, {} via D3D11", vendors[vendor_idx], renderers[renderer_idx])
+        format!(
+            "{}) Direct3D11 vs_5_0 ps_5_0, {} via D3D11",
+            vendors[vendor_idx], renderers[renderer_idx]
+        )
     }
 
     /// Slightly perturb audio context sample rate for audio fingerprint resistance.
@@ -233,7 +239,9 @@ impl CanvasFingerprintRandomizer {
 }
 
 impl Default for CanvasFingerprintRandomizer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -244,7 +252,7 @@ mod tests {
     fn test_bezier_trajectory() {
         let path = StealthHumanBehavior::generate_bezier_trajectory((0.0, 0.0), (100.0, 100.0), 20);
         assert_eq!(path.len(), 21); // steps + 1
-        // Should start near (0,0) and end near (100,100)
+                                    // Should start near (0,0) and end near (100,100)
         assert!((path[0].x - 0.0).abs() < 5.0);
         assert!((path[20].x - 100.0).abs() < 5.0);
     }
@@ -308,7 +316,8 @@ mod tests {
 
     #[test]
     fn bezier_trajectory_start_end_positions() {
-        let path = StealthHumanBehavior::generate_bezier_trajectory((10.0, 20.0), (200.0, 300.0), 50);
+        let path =
+            StealthHumanBehavior::generate_bezier_trajectory((10.0, 20.0), (200.0, 300.0), 50);
         assert_eq!(path.len(), 51);
         // Start should be near (10, 20)
         assert!((path[0].x - 10.0).abs() < 5.0);
@@ -373,13 +382,19 @@ mod tests {
         rand.apply_noise(&mut pixels_hi);
         // Should not panic; values stay in u8 range (clamped by implementation)
         // At least some pixels should have changed
-        assert!(pixels_hi.iter().zip(original_hi.iter()).any(|(a, b)| a != b));
+        assert!(pixels_hi
+            .iter()
+            .zip(original_hi.iter())
+            .any(|(a, b)| a != b));
 
         // Near-min values should not underflow below 0
         let mut pixels_lo = vec![0u8; 64];
         let original_lo = pixels_lo.clone();
         rand.apply_noise(&mut pixels_lo);
-        assert!(pixels_lo.iter().zip(original_lo.iter()).any(|(a, b)| a != b));
+        assert!(pixels_lo
+            .iter()
+            .zip(original_lo.iter())
+            .any(|(a, b)| a != b));
     }
 
     #[test]

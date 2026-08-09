@@ -14,7 +14,11 @@ struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
-        Self { data, byte_pos: 0, bit_pos: 0 }
+        Self {
+            data,
+            byte_pos: 0,
+            bit_pos: 0,
+        }
     }
 
     fn read_bit(&mut self) -> Result<u32, String> {
@@ -119,8 +123,9 @@ const DIST_EXTRA: [u8; 30] = [
     0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
     13,
 ];
-const CODE_LENGTH_ORDER: [usize; 19] =
-    [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+const CODE_LENGTH_ORDER: [usize; 19] = [
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+];
 
 fn fixed_tables() -> (Huffman, Huffman) {
     let mut lit = [0u8; 288];
@@ -223,7 +228,8 @@ fn inflate_compressed_block(
             if dsym >= DIST_BASE.len() {
                 return Err("invalid distance symbol".to_string());
             }
-            let distance = DIST_BASE[dsym] as usize + r.read_bits(DIST_EXTRA[dsym] as u32)? as usize;
+            let distance =
+                DIST_BASE[dsym] as usize + r.read_bits(DIST_EXTRA[dsym] as u32)? as usize;
             if distance == 0 || distance > out.len() {
                 return Err("invalid back-reference distance".to_string());
             }
@@ -390,7 +396,9 @@ mod tests {
     #[test]
     fn content_encoding_gzip_dispatches() {
         let out = decode_content_encoding("gzip", GZIP_VECTOR).unwrap();
-        assert!(String::from_utf8(out).unwrap().starts_with("Velocity agent"));
+        assert!(String::from_utf8(out)
+            .unwrap()
+            .starts_with("Velocity agent"));
     }
 
     #[test]

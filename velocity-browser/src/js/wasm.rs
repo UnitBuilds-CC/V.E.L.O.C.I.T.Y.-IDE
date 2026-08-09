@@ -173,19 +173,27 @@ impl WasmInterpreter {
             other => Err(format!("expected f64 on stack, got {:?}", other)),
         }
     }
-    fn push(&mut self, v: WasmValue) { self.stack.push(v); }
+    fn push(&mut self, v: WasmValue) {
+        self.stack.push(v);
+    }
 
     // ── Memory helpers ──
 
     fn load_bytes(&self, addr: usize, n: usize) -> Result<&[u8], String> {
-        if addr.checked_add(n).is_none_or(|end| end > self.memory.len()) {
+        if addr
+            .checked_add(n)
+            .is_none_or(|end| end > self.memory.len())
+        {
             return Err("memory out of bounds".into());
         }
         Ok(&self.memory[addr..addr + n])
     }
     fn store_bytes(&mut self, addr: usize, bytes: &[u8]) -> WasmResult {
         let n = bytes.len();
-        if addr.checked_add(n).is_none_or(|end| end > self.memory.len()) {
+        if addr
+            .checked_add(n)
+            .is_none_or(|end| end > self.memory.len())
+        {
             return Err("memory out of bounds".into());
         }
         self.memory[addr..addr + n].copy_from_slice(bytes);
@@ -194,8 +202,10 @@ impl WasmInterpreter {
 
     /// Read a u32 immediate (LEB128-simplified as 4-byte LE) from code at pc.
     fn read_u32(code: &[u8], pc: &mut usize) -> Result<u32, String> {
-        if *pc + 4 > code.len() { return Err("unexpected end of code".into()); }
-        let val = u32::from_le_bytes([code[*pc], code[*pc+1], code[*pc+2], code[*pc+3]]);
+        if *pc + 4 > code.len() {
+            return Err("unexpected end of code".into());
+        }
+        let val = u32::from_le_bytes([code[*pc], code[*pc + 1], code[*pc + 2], code[*pc + 3]]);
         *pc += 4;
         Ok(val)
     }
@@ -203,25 +213,43 @@ impl WasmInterpreter {
         Self::read_u32(code, pc).map(|v| v as i32)
     }
     fn read_i64(code: &[u8], pc: &mut usize) -> Result<i64, String> {
-        if *pc + 8 > code.len() { return Err("unexpected end of code".into()); }
+        if *pc + 8 > code.len() {
+            return Err("unexpected end of code".into());
+        }
         let val = i64::from_le_bytes([
-            code[*pc], code[*pc+1], code[*pc+2], code[*pc+3],
-            code[*pc+4], code[*pc+5], code[*pc+6], code[*pc+7],
+            code[*pc],
+            code[*pc + 1],
+            code[*pc + 2],
+            code[*pc + 3],
+            code[*pc + 4],
+            code[*pc + 5],
+            code[*pc + 6],
+            code[*pc + 7],
         ]);
         *pc += 8;
         Ok(val)
     }
     fn read_f32(code: &[u8], pc: &mut usize) -> Result<f32, String> {
-        if *pc + 4 > code.len() { return Err("unexpected end of code".into()); }
-        let val = f32::from_le_bytes([code[*pc], code[*pc+1], code[*pc+2], code[*pc+3]]);
+        if *pc + 4 > code.len() {
+            return Err("unexpected end of code".into());
+        }
+        let val = f32::from_le_bytes([code[*pc], code[*pc + 1], code[*pc + 2], code[*pc + 3]]);
         *pc += 4;
         Ok(val)
     }
     fn read_f64(code: &[u8], pc: &mut usize) -> Result<f64, String> {
-        if *pc + 8 > code.len() { return Err("unexpected end of code".into()); }
+        if *pc + 8 > code.len() {
+            return Err("unexpected end of code".into());
+        }
         let val = f64::from_le_bytes([
-            code[*pc], code[*pc+1], code[*pc+2], code[*pc+3],
-            code[*pc+4], code[*pc+5], code[*pc+6], code[*pc+7],
+            code[*pc],
+            code[*pc + 1],
+            code[*pc + 2],
+            code[*pc + 3],
+            code[*pc + 4],
+            code[*pc + 5],
+            code[*pc + 6],
+            code[*pc + 7],
         ]);
         *pc += 8;
         Ok(val)
@@ -266,10 +294,23 @@ impl WasmInterpreter {
                     let mut depth = 1;
                     while self.pc < code.len() && depth > 0 {
                         match code[self.pc] {
-                            op::IF => { depth += 1; self.pc += 2; }
-                            op::ELSE if depth == 1 => { depth = 0; self.pc += 1; }
-                            op::END => { depth -= 1; if depth > 0 { self.pc += 1; } }
-                            _ => { self.pc += 1; }
+                            op::IF => {
+                                depth += 1;
+                                self.pc += 2;
+                            }
+                            op::ELSE if depth == 1 => {
+                                depth = 0;
+                                self.pc += 1;
+                            }
+                            op::END => {
+                                depth -= 1;
+                                if depth > 0 {
+                                    self.pc += 1;
+                                }
+                            }
+                            _ => {
+                                self.pc += 1;
+                            }
                         }
                     }
                     if depth == 0 {
@@ -282,9 +323,19 @@ impl WasmInterpreter {
                 let mut depth = 1;
                 while self.pc < code.len() && depth > 0 {
                     match code[self.pc] {
-                        op::IF => { depth += 1; self.pc += 1; }
-                        op::END => { depth -= 1; if depth > 0 { self.pc += 1; } }
-                        _ => { self.pc += 1; }
+                        op::IF => {
+                            depth += 1;
+                            self.pc += 1;
+                        }
+                        op::END => {
+                            depth -= 1;
+                            if depth > 0 {
+                                self.pc += 1;
+                            }
+                        }
+                        _ => {
+                            self.pc += 1;
+                        }
                     }
                 }
             }
@@ -297,9 +348,19 @@ impl WasmInterpreter {
                 let mut depth = 1;
                 while self.pc < code.len() && depth > 0 {
                     match code[self.pc] {
-                        op::BLOCK | op::LOOP | op::IF => { depth += 1; self.pc += 2; }
-                        op::END => { depth -= 1; if depth > 0 { self.pc += 1; } }
-                        _ => { self.pc += 1; }
+                        op::BLOCK | op::LOOP | op::IF => {
+                            depth += 1;
+                            self.pc += 2;
+                        }
+                        op::END => {
+                            depth -= 1;
+                            if depth > 0 {
+                                self.pc += 1;
+                            }
+                        }
+                        _ => {
+                            self.pc += 1;
+                        }
                     }
                 }
                 self.label_stack.pop();
@@ -311,9 +372,19 @@ impl WasmInterpreter {
                     let mut depth = 1;
                     while self.pc < code.len() && depth > 0 {
                         match code[self.pc] {
-                            op::BLOCK | op::LOOP | op::IF => { depth += 1; self.pc += 2; }
-                            op::END => { depth -= 1; if depth > 0 { self.pc += 1; } }
-                            _ => { self.pc += 1; }
+                            op::BLOCK | op::LOOP | op::IF => {
+                                depth += 1;
+                                self.pc += 2;
+                            }
+                            op::END => {
+                                depth -= 1;
+                                if depth > 0 {
+                                    self.pc += 1;
+                                }
+                            }
+                            _ => {
+                                self.pc += 1;
+                            }
                         }
                     }
                     self.label_stack.pop();
@@ -327,111 +398,359 @@ impl WasmInterpreter {
             // ── Local variables ──
             op::LOCAL_GET => {
                 let idx = Self::read_u32(code, &mut self.pc)? as usize;
-                let val = self.locals.get(idx).cloned().ok_or_else(|| format!("local {} out of range", idx))?;
+                let val = self
+                    .locals
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("local {} out of range", idx))?;
                 self.push(val);
             }
             op::LOCAL_SET => {
                 let idx = Self::read_u32(code, &mut self.pc)? as usize;
                 let val = self.stack.pop().ok_or("stack underflow")?;
-                if idx < self.locals.len() { self.locals[idx] = val; }
-                else { return Err(format!("local {} out of range", idx)); }
+                if idx < self.locals.len() {
+                    self.locals[idx] = val;
+                } else {
+                    return Err(format!("local {} out of range", idx));
+                }
             }
             op::LOCAL_TEE => {
                 let idx = Self::read_u32(code, &mut self.pc)? as usize;
                 let val = self.stack.last().cloned().ok_or("stack underflow")?;
-                if idx < self.locals.len() { self.locals[idx] = val; }
-                else { return Err(format!("local {} out of range", idx)); }
+                if idx < self.locals.len() {
+                    self.locals[idx] = val;
+                } else {
+                    return Err(format!("local {} out of range", idx));
+                }
             }
 
             // ── Constants ──
-            op::I32_CONST => { let v = Self::read_i32(code, &mut self.pc)?; self.push(WasmValue::I32(v)); }
-            op::I64_CONST => { let v = Self::read_i64(code, &mut self.pc)?; self.push(WasmValue::I64(v)); }
-            op::F32_CONST => { let v = Self::read_f32(code, &mut self.pc)?; self.push(WasmValue::F32(v)); }
-            op::F64_CONST => { let v = Self::read_f64(code, &mut self.pc)?; self.push(WasmValue::F64(v)); }
+            op::I32_CONST => {
+                let v = Self::read_i32(code, &mut self.pc)?;
+                self.push(WasmValue::I32(v));
+            }
+            op::I64_CONST => {
+                let v = Self::read_i64(code, &mut self.pc)?;
+                self.push(WasmValue::I64(v));
+            }
+            op::F32_CONST => {
+                let v = Self::read_f32(code, &mut self.pc)?;
+                self.push(WasmValue::F32(v));
+            }
+            op::F64_CONST => {
+                let v = Self::read_f64(code, &mut self.pc)?;
+                self.push(WasmValue::F64(v));
+            }
 
             // ── i32 comparison ──
-            op::I32_EQZ => { let a = self.pop_i32()?; self.push(WasmValue::I32(if a == 0 { 1 } else { 0 })); }
-            op::I32_EQ => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if a == b { 1 } else { 0 })); }
-            op::I32_NE => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if a != b { 1 } else { 0 })); }
-            op::I32_LT_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if a < b { 1 } else { 0 })); }
-            op::I32_LT_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(if a < b { 1 } else { 0 })); }
-            op::I32_GT_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if a > b { 1 } else { 0 })); }
-            op::I32_GT_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(if a > b { 1 } else { 0 })); }
-            op::I32_LE_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if a <= b { 1 } else { 0 })); }
-            op::I32_LE_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(if a <= b { 1 } else { 0 })); }
-            op::I32_GE_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if a >= b { 1 } else { 0 })); }
-            op::I32_GE_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(if a >= b { 1 } else { 0 })); }
+            op::I32_EQZ => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::I32(if a == 0 { 1 } else { 0 }));
+            }
+            op::I32_EQ => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if a == b { 1 } else { 0 }));
+            }
+            op::I32_NE => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if a != b { 1 } else { 0 }));
+            }
+            op::I32_LT_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if a < b { 1 } else { 0 }));
+            }
+            op::I32_LT_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32(if a < b { 1 } else { 0 }));
+            }
+            op::I32_GT_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if a > b { 1 } else { 0 }));
+            }
+            op::I32_GT_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32(if a > b { 1 } else { 0 }));
+            }
+            op::I32_LE_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if a <= b { 1 } else { 0 }));
+            }
+            op::I32_LE_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32(if a <= b { 1 } else { 0 }));
+            }
+            op::I32_GE_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if a >= b { 1 } else { 0 }));
+            }
+            op::I32_GE_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32(if a >= b { 1 } else { 0 }));
+            }
 
             // ── i64 comparison ──
-            op::I64_EQZ => { let a = self.pop_i64()?; self.push(WasmValue::I32(if a == 0 { 1 } else { 0 })); }
-            op::I64_EQ => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I32(if a == b { 1 } else { 0 })); }
-            op::I64_NE => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I32(if a != b { 1 } else { 0 })); }
-            op::I64_LT_S => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I32(if a < b { 1 } else { 0 })); }
-            op::I64_GT_S => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I32(if a > b { 1 } else { 0 })); }
-            op::I64_LE_S => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I32(if a <= b { 1 } else { 0 })); }
-            op::I64_GE_S => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I32(if a >= b { 1 } else { 0 })); }
+            op::I64_EQZ => {
+                let a = self.pop_i64()?;
+                self.push(WasmValue::I32(if a == 0 { 1 } else { 0 }));
+            }
+            op::I64_EQ => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I32(if a == b { 1 } else { 0 }));
+            }
+            op::I64_NE => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I32(if a != b { 1 } else { 0 }));
+            }
+            op::I64_LT_S => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I32(if a < b { 1 } else { 0 }));
+            }
+            op::I64_GT_S => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I32(if a > b { 1 } else { 0 }));
+            }
+            op::I64_LE_S => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I32(if a <= b { 1 } else { 0 }));
+            }
+            op::I64_GE_S => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I32(if a >= b { 1 } else { 0 }));
+            }
 
             // ── i32 arithmetic ──
-            op::I32_ADD => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_add(b))); }
-            op::I32_SUB => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_sub(b))); }
-            op::I32_MUL => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_mul(b))); }
-            op::I32_DIV_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if b != 0 { a.wrapping_div(b) } else { return Err("i32.div_s by zero".into()) })); }
-            op::I32_DIV_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(if b != 0 { (a / b) as i32 } else { return Err("i32.div_u by zero".into()) })); }
-            op::I32_REM_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(if b != 0 { a.wrapping_rem(b) } else { return Err("i32.rem_s by zero".into()) })); }
-            op::I32_REM_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32((a % b) as i32)); }
-            op::I32_AND => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a & b)); }
-            op::I32_OR => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a | b)); }
-            op::I32_XOR => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a ^ b)); }
-            op::I32_SHL => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_shl(b % 32))); }
-            op::I32_SHR_S => { let (b, a) = (self.pop_i32()?, self.pop_i32()?); self.push(WasmValue::I32(a.wrapping_shr((b % 32) as u32))); }
-            op::I32_SHR_U => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32); self.push(WasmValue::I32(a.wrapping_shr(b % 32) as i32)); }
-            op::I32_ROTL => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.rotate_left(b % 32))); }
-            op::I32_ROTR => { let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?); self.push(WasmValue::I32(a.rotate_right(b % 32))); }
-            op::I32_CLZ => { let a = self.pop_i32()?; self.push(WasmValue::I32(a.leading_zeros() as i32)); }
-            op::I32_CTZ => { let a = self.pop_i32()?; self.push(WasmValue::I32(a.trailing_zeros() as i32)); }
-            op::I32_POPCNT => { let a = self.pop_i32()?; self.push(WasmValue::I32(a.count_ones() as i32)); }
+            op::I32_ADD => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a.wrapping_add(b)));
+            }
+            op::I32_SUB => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a.wrapping_sub(b)));
+            }
+            op::I32_MUL => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a.wrapping_mul(b)));
+            }
+            op::I32_DIV_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if b != 0 {
+                    a.wrapping_div(b)
+                } else {
+                    return Err("i32.div_s by zero".into());
+                }));
+            }
+            op::I32_DIV_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32(if b != 0 {
+                    (a / b) as i32
+                } else {
+                    return Err("i32.div_u by zero".into());
+                }));
+            }
+            op::I32_REM_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(if b != 0 {
+                    a.wrapping_rem(b)
+                } else {
+                    return Err("i32.rem_s by zero".into());
+                }));
+            }
+            op::I32_REM_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32((a % b) as i32));
+            }
+            op::I32_AND => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a & b));
+            }
+            op::I32_OR => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a | b));
+            }
+            op::I32_XOR => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a ^ b));
+            }
+            op::I32_SHL => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?);
+                self.push(WasmValue::I32(a.wrapping_shl(b % 32)));
+            }
+            op::I32_SHR_S => {
+                let (b, a) = (self.pop_i32()?, self.pop_i32()?);
+                self.push(WasmValue::I32(a.wrapping_shr((b % 32) as u32)));
+            }
+            op::I32_SHR_U => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()? as u32);
+                self.push(WasmValue::I32(a.wrapping_shr(b % 32) as i32));
+            }
+            op::I32_ROTL => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?);
+                self.push(WasmValue::I32(a.rotate_left(b % 32)));
+            }
+            op::I32_ROTR => {
+                let (b, a) = (self.pop_i32()? as u32, self.pop_i32()?);
+                self.push(WasmValue::I32(a.rotate_right(b % 32)));
+            }
+            op::I32_CLZ => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::I32(a.leading_zeros() as i32));
+            }
+            op::I32_CTZ => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::I32(a.trailing_zeros() as i32));
+            }
+            op::I32_POPCNT => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::I32(a.count_ones() as i32));
+            }
 
             // ── i64 arithmetic ──
-            op::I64_ADD => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(a.wrapping_add(b))); }
-            op::I64_SUB => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(a.wrapping_sub(b))); }
-            op::I64_MUL => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(a.wrapping_mul(b))); }
-            op::I64_DIV_S => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(if b != 0 { a.wrapping_div(b) } else { return Err("i64.div_s by zero".into()) })); }
-            op::I64_AND => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(a & b)); }
-            op::I64_OR => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(a | b)); }
-            op::I64_XOR => { let (b, a) = (self.pop_i64()?, self.pop_i64()?); self.push(WasmValue::I64(a ^ b)); }
+            op::I64_ADD => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(a.wrapping_add(b)));
+            }
+            op::I64_SUB => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(a.wrapping_sub(b)));
+            }
+            op::I64_MUL => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(a.wrapping_mul(b)));
+            }
+            op::I64_DIV_S => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(if b != 0 {
+                    a.wrapping_div(b)
+                } else {
+                    return Err("i64.div_s by zero".into());
+                }));
+            }
+            op::I64_AND => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(a & b));
+            }
+            op::I64_OR => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(a | b));
+            }
+            op::I64_XOR => {
+                let (b, a) = (self.pop_i64()?, self.pop_i64()?);
+                self.push(WasmValue::I64(a ^ b));
+            }
 
             // ── f32 arithmetic ──
-            op::F32_ABS => { let a = self.pop_f32()?; self.push(WasmValue::F32(a.abs())); }
-            op::F32_NEG => { let a = self.pop_f32()?; self.push(WasmValue::F32(-a)); }
-            op::F32_CEIL => { let a = self.pop_f32()?; self.push(WasmValue::F32(a.ceil())); }
-            op::F32_FLOOR => { let a = self.pop_f32()?; self.push(WasmValue::F32(a.floor())); }
-            op::F32_SQRT => { let a = self.pop_f32()?; self.push(WasmValue::F32(a.sqrt())); }
-            op::F32_ADD => { let (b, a) = (self.pop_f32()?, self.pop_f32()?); self.push(WasmValue::F32(a + b)); }
-            op::F32_SUB => { let (b, a) = (self.pop_f32()?, self.pop_f32()?); self.push(WasmValue::F32(a - b)); }
-            op::F32_MUL => { let (b, a) = (self.pop_f32()?, self.pop_f32()?); self.push(WasmValue::F32(a * b)); }
-            op::F32_DIV => { let (b, a) = (self.pop_f32()?, self.pop_f32()?); self.push(WasmValue::F32(a / b)); }
-            op::F32_MIN => { let (b, a) = (self.pop_f32()?, self.pop_f32()?); self.push(WasmValue::F32(a.min(b))); }
-            op::F32_MAX => { let (b, a) = (self.pop_f32()?, self.pop_f32()?); self.push(WasmValue::F32(a.max(b))); }
+            op::F32_ABS => {
+                let a = self.pop_f32()?;
+                self.push(WasmValue::F32(a.abs()));
+            }
+            op::F32_NEG => {
+                let a = self.pop_f32()?;
+                self.push(WasmValue::F32(-a));
+            }
+            op::F32_CEIL => {
+                let a = self.pop_f32()?;
+                self.push(WasmValue::F32(a.ceil()));
+            }
+            op::F32_FLOOR => {
+                let a = self.pop_f32()?;
+                self.push(WasmValue::F32(a.floor()));
+            }
+            op::F32_SQRT => {
+                let a = self.pop_f32()?;
+                self.push(WasmValue::F32(a.sqrt()));
+            }
+            op::F32_ADD => {
+                let (b, a) = (self.pop_f32()?, self.pop_f32()?);
+                self.push(WasmValue::F32(a + b));
+            }
+            op::F32_SUB => {
+                let (b, a) = (self.pop_f32()?, self.pop_f32()?);
+                self.push(WasmValue::F32(a - b));
+            }
+            op::F32_MUL => {
+                let (b, a) = (self.pop_f32()?, self.pop_f32()?);
+                self.push(WasmValue::F32(a * b));
+            }
+            op::F32_DIV => {
+                let (b, a) = (self.pop_f32()?, self.pop_f32()?);
+                self.push(WasmValue::F32(a / b));
+            }
+            op::F32_MIN => {
+                let (b, a) = (self.pop_f32()?, self.pop_f32()?);
+                self.push(WasmValue::F32(a.min(b)));
+            }
+            op::F32_MAX => {
+                let (b, a) = (self.pop_f32()?, self.pop_f32()?);
+                self.push(WasmValue::F32(a.max(b)));
+            }
 
             // ── f64 arithmetic ──
-            op::F64_ABS => { let a = self.pop_f64()?; self.push(WasmValue::F64(a.abs())); }
-            op::F64_NEG => { let a = self.pop_f64()?; self.push(WasmValue::F64(-a)); }
-            op::F64_CEIL => { let a = self.pop_f64()?; self.push(WasmValue::F64(a.ceil())); }
-            op::F64_FLOOR => { let a = self.pop_f64()?; self.push(WasmValue::F64(a.floor())); }
-            op::F64_SQRT => { let a = self.pop_f64()?; self.push(WasmValue::F64(a.sqrt())); }
-            op::F64_ADD => { let (b, a) = (self.pop_f64()?, self.pop_f64()?); self.push(WasmValue::F64(a + b)); }
-            op::F64_SUB => { let (b, a) = (self.pop_f64()?, self.pop_f64()?); self.push(WasmValue::F64(a - b)); }
-            op::F64_MUL => { let (b, a) = (self.pop_f64()?, self.pop_f64()?); self.push(WasmValue::F64(a * b)); }
-            op::F64_DIV => { let (b, a) = (self.pop_f64()?, self.pop_f64()?); self.push(WasmValue::F64(a / b)); }
-            op::F64_MIN => { let (b, a) = (self.pop_f64()?, self.pop_f64()?); self.push(WasmValue::F64(a.min(b))); }
-            op::F64_MAX => { let (b, a) = (self.pop_f64()?, self.pop_f64()?); self.push(WasmValue::F64(a.max(b))); }
+            op::F64_ABS => {
+                let a = self.pop_f64()?;
+                self.push(WasmValue::F64(a.abs()));
+            }
+            op::F64_NEG => {
+                let a = self.pop_f64()?;
+                self.push(WasmValue::F64(-a));
+            }
+            op::F64_CEIL => {
+                let a = self.pop_f64()?;
+                self.push(WasmValue::F64(a.ceil()));
+            }
+            op::F64_FLOOR => {
+                let a = self.pop_f64()?;
+                self.push(WasmValue::F64(a.floor()));
+            }
+            op::F64_SQRT => {
+                let a = self.pop_f64()?;
+                self.push(WasmValue::F64(a.sqrt()));
+            }
+            op::F64_ADD => {
+                let (b, a) = (self.pop_f64()?, self.pop_f64()?);
+                self.push(WasmValue::F64(a + b));
+            }
+            op::F64_SUB => {
+                let (b, a) = (self.pop_f64()?, self.pop_f64()?);
+                self.push(WasmValue::F64(a - b));
+            }
+            op::F64_MUL => {
+                let (b, a) = (self.pop_f64()?, self.pop_f64()?);
+                self.push(WasmValue::F64(a * b));
+            }
+            op::F64_DIV => {
+                let (b, a) = (self.pop_f64()?, self.pop_f64()?);
+                self.push(WasmValue::F64(a / b));
+            }
+            op::F64_MIN => {
+                let (b, a) = (self.pop_f64()?, self.pop_f64()?);
+                self.push(WasmValue::F64(a.min(b)));
+            }
+            op::F64_MAX => {
+                let (b, a) = (self.pop_f64()?, self.pop_f64()?);
+                self.push(WasmValue::F64(a.max(b)));
+            }
 
             // ── Conversions ──
-            op::I32_WRAP_I64 => { let a = self.pop_i64()?; self.push(WasmValue::I32(a as i32)); }
-            op::I64_EXTEND_I32_S => { let a = self.pop_i32()?; self.push(WasmValue::I64(a as i64)); }
-            op::F32_CONVERT_I32_S => { let a = self.pop_i32()?; self.push(WasmValue::F32(a as f32)); }
-            op::F64_CONVERT_I32_S => { let a = self.pop_i32()?; self.push(WasmValue::F64(a as f64)); }
-            op::I32_TRUNC_F32_S => { let a = self.pop_f32()?; self.push(WasmValue::I32(a as i32)); }
+            op::I32_WRAP_I64 => {
+                let a = self.pop_i64()?;
+                self.push(WasmValue::I32(a as i32));
+            }
+            op::I64_EXTEND_I32_S => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::I64(a as i64));
+            }
+            op::F32_CONVERT_I32_S => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::F32(a as f32));
+            }
+            op::F64_CONVERT_I32_S => {
+                let a = self.pop_i32()?;
+                self.push(WasmValue::F64(a as f64));
+            }
+            op::I32_TRUNC_F32_S => {
+                let a = self.pop_f32()?;
+                self.push(WasmValue::I32(a as i32));
+            }
 
             // ── Memory ──
             op::I32_LOAD => {
@@ -439,14 +758,17 @@ impl WasmInterpreter {
                 let offset = Self::read_u32(code, &mut self.pc)? as usize;
                 let addr = self.pop_i32()? as usize + offset;
                 let bytes = self.load_bytes(addr, 4)?;
-                self.push(WasmValue::I32(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])));
+                self.push(WasmValue::I32(i32::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3],
+                ])));
             }
             op::I64_LOAD => {
                 let _align = Self::read_u32(code, &mut self.pc)?;
                 let offset = Self::read_u32(code, &mut self.pc)? as usize;
                 let addr = self.pop_i32()? as usize + offset;
                 let bytes = self.load_bytes(addr, 8)?;
-                let mut arr = [0u8; 8]; arr.copy_from_slice(bytes);
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(bytes);
                 self.push(WasmValue::I64(i64::from_le_bytes(arr)));
             }
             op::F32_LOAD => {
@@ -454,14 +776,17 @@ impl WasmInterpreter {
                 let offset = Self::read_u32(code, &mut self.pc)? as usize;
                 let addr = self.pop_i32()? as usize + offset;
                 let bytes = self.load_bytes(addr, 4)?;
-                self.push(WasmValue::F32(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])));
+                self.push(WasmValue::F32(f32::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3],
+                ])));
             }
             op::F64_LOAD => {
                 let _align = Self::read_u32(code, &mut self.pc)?;
                 let offset = Self::read_u32(code, &mut self.pc)? as usize;
                 let addr = self.pop_i32()? as usize + offset;
                 let bytes = self.load_bytes(addr, 8)?;
-                let mut arr = [0u8; 8]; arr.copy_from_slice(bytes);
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(bytes);
                 self.push(WasmValue::F64(f64::from_le_bytes(arr)));
             }
             op::I32_LOAD8_U => {
@@ -476,7 +801,9 @@ impl WasmInterpreter {
                 let offset = Self::read_u32(code, &mut self.pc)? as usize;
                 let addr = self.pop_i32()? as usize + offset;
                 let bytes = self.load_bytes(addr, 2)?;
-                self.push(WasmValue::I32(u16::from_le_bytes([bytes[0], bytes[1]]) as i32));
+                self.push(WasmValue::I32(
+                    u16::from_le_bytes([bytes[0], bytes[1]]) as i32
+                ));
             }
             op::I32_STORE => {
                 let _align = Self::read_u32(code, &mut self.pc)?;
@@ -529,14 +856,23 @@ impl WasmInterpreter {
     // ── Legacy single-step API ──
 
     pub fn execute_i32_add(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.execute_instruction(op::I32_ADD, &[]).map_err(|e| e.into())
+        self.execute_instruction(op::I32_ADD, &[])
+            .map_err(|e| e.into())
     }
 
-    pub fn write_memory(&mut self, offset: usize, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn write_memory(
+        &mut self,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.store_bytes(offset, bytes).map_err(|e| e.into())
     }
 
-    pub fn read_memory(&self, offset: usize, len: usize) -> Result<&[u8], Box<dyn std::error::Error + Send + Sync>> {
+    pub fn read_memory(
+        &self,
+        offset: usize,
+        len: usize,
+    ) -> Result<&[u8], Box<dyn std::error::Error + Send + Sync>> {
         self.load_bytes(offset, len).map_err(|e| e.into())
     }
 }
@@ -550,10 +886,22 @@ mod tests {
         let mut wasm = WasmInterpreter::new(1);
         // (3 + 7) * 2 = 20
         let code: Vec<u8> = vec![
-            op::I32_CONST, 3, 0, 0, 0,
-            op::I32_CONST, 7, 0, 0, 0,
+            op::I32_CONST,
+            3,
+            0,
+            0,
+            0,
+            op::I32_CONST,
+            7,
+            0,
+            0,
+            0,
             op::I32_ADD,
-            op::I32_CONST, 2, 0, 0, 0,
+            op::I32_CONST,
+            2,
+            0,
+            0,
+            0,
             op::I32_MUL,
         ];
         let result = wasm.execute_program(&code).unwrap();
@@ -566,13 +914,30 @@ mod tests {
         wasm.init_locals(vec![WasmValue::I32(10), WasmValue::I32(20)]);
         // if local[0] < local[1] then result = local[1] else result = local[0]
         let code: Vec<u8> = vec![
-            op::LOCAL_GET, 0, 0, 0, 0,   // push local[0] = 10
-            op::LOCAL_GET, 1, 0, 0, 0,   // push local[1] = 20
-            op::I32_LT_S,                 // 10 < 20 → 1
-            op::IF, 0x40,                 // if
-            op::LOCAL_GET, 1, 0, 0, 0,   // push local[1] = 20
+            op::LOCAL_GET,
+            0,
+            0,
+            0,
+            0, // push local[0] = 10
+            op::LOCAL_GET,
+            1,
+            0,
+            0,
+            0,            // push local[1] = 20
+            op::I32_LT_S, // 10 < 20 → 1
+            op::IF,
+            0x40, // if
+            op::LOCAL_GET,
+            1,
+            0,
+            0,
+            0, // push local[1] = 20
             op::ELSE,
-            op::LOCAL_GET, 0, 0, 0, 0,   // push local[0] = 10
+            op::LOCAL_GET,
+            0,
+            0,
+            0,
+            0, // push local[0] = 10
             op::END,
         ];
         let result = wasm.execute_program(&code).unwrap();
@@ -584,12 +949,40 @@ mod tests {
         let mut wasm = WasmInterpreter::new(1);
         let code: Vec<u8> = vec![
             // Store 42 at address 0
-            op::I32_CONST, 0, 0, 0, 0,   // address = 0
-            op::I32_CONST, 42, 0, 0, 0,  // value = 42
-            op::I32_STORE, 2, 0, 0, 0, 0, 0, 0, 0, // align=2, offset=0
+            op::I32_CONST,
+            0,
+            0,
+            0,
+            0, // address = 0
+            op::I32_CONST,
+            42,
+            0,
+            0,
+            0, // value = 42
+            op::I32_STORE,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0, // align=2, offset=0
             // Load from address 0
-            op::I32_CONST, 0, 0, 0, 0,   // address = 0
-            op::I32_LOAD, 2, 0, 0, 0, 0, 0, 0, 0, // align=2, offset=0
+            op::I32_CONST,
+            0,
+            0,
+            0,
+            0, // address = 0
+            op::I32_LOAD,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0, // align=2, offset=0
         ];
         let result = wasm.execute_program(&code).unwrap();
         assert_eq!(result, Some(WasmValue::I32(42)));
@@ -599,8 +992,16 @@ mod tests {
     fn bitwise_operations() {
         let mut wasm = WasmInterpreter::new(1);
         let code: Vec<u8> = vec![
-            op::I32_CONST, 0xFF, 0, 0, 0,
-            op::I32_CONST, 0x0F, 0, 0, 0,
+            op::I32_CONST,
+            0xFF,
+            0,
+            0,
+            0,
+            op::I32_CONST,
+            0x0F,
+            0,
+            0,
+            0,
             op::I32_AND,
         ];
         let result = wasm.execute_program(&code).unwrap();
@@ -632,10 +1033,7 @@ mod tests {
     fn conversion_wrap_extend() {
         let mut wasm = WasmInterpreter::new(1);
         // i64 → i32 wrap: 0x1_0000_0007 → 7
-        let code = vec![
-            op::I64_CONST, 7, 0, 0, 0, 0, 0, 0, 0,
-            op::I32_WRAP_I64,
-        ];
+        let code = vec![op::I64_CONST, 7, 0, 0, 0, 0, 0, 0, 0, op::I32_WRAP_I64];
         let result = wasm.execute_program(&code).unwrap();
         assert_eq!(result, Some(WasmValue::I32(7)));
     }

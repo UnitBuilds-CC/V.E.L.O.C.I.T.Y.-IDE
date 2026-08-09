@@ -129,9 +129,14 @@ impl QuicConnection {
 
     /// Send data on a stream.
     pub fn send_data(&mut self, stream_id: u64, data: &[u8]) -> Result<usize, &'static str> {
-        let stream = self.streams.iter_mut().find(|s| s.stream_id == stream_id)
+        let stream = self
+            .streams
+            .iter_mut()
+            .find(|s| s.stream_id == stream_id)
             .ok_or("Stream not found")?;
-        if stream.state != QuicStreamState::Open && stream.state != QuicStreamState::HalfClosedRemote {
+        if stream.state != QuicStreamState::Open
+            && stream.state != QuicStreamState::HalfClosedRemote
+        {
             return Err("Stream not writable");
         }
         stream.data_buffer.extend_from_slice(data);
@@ -143,19 +148,31 @@ impl QuicConnection {
 
     /// Close a stream gracefully.
     pub fn close_stream(&mut self, stream_id: u64) -> Result<(), &'static str> {
-        let stream = self.streams.iter_mut().find(|s| s.stream_id == stream_id)
+        let stream = self
+            .streams
+            .iter_mut()
+            .find(|s| s.stream_id == stream_id)
             .ok_or("Stream not found")?;
         match stream.state {
-            QuicStreamState::Open => { stream.state = QuicStreamState::HalfClosedLocal; }
-            QuicStreamState::HalfClosedRemote => { stream.state = QuicStreamState::Closed; }
-            _ => { return Err("Cannot close stream in current state"); }
+            QuicStreamState::Open => {
+                stream.state = QuicStreamState::HalfClosedLocal;
+            }
+            QuicStreamState::HalfClosedRemote => {
+                stream.state = QuicStreamState::Closed;
+            }
+            _ => {
+                return Err("Cannot close stream in current state");
+            }
         }
         Ok(())
     }
 
     /// Reset a stream with an error code.
     pub fn reset_stream(&mut self, stream_id: u64, _error_code: u32) -> Result<(), &'static str> {
-        let stream = self.streams.iter_mut().find(|s| s.stream_id == stream_id)
+        let stream = self
+            .streams
+            .iter_mut()
+            .find(|s| s.stream_id == stream_id)
             .ok_or("Stream not found")?;
         stream.state = QuicStreamState::Reset;
         Ok(())
@@ -189,7 +206,9 @@ impl QuicConnection {
             rtt_us: self.rtt_us,
             loss_rate: if self.packets_sent > 0 {
                 self.packets_lost as f64 / self.packets_sent as f64
-            } else { 0.0 },
+            } else {
+                0.0
+            },
         }
     }
 }
@@ -233,7 +252,13 @@ mod tests {
         let mut conn = QuicConnection::connect("example.com:443");
         conn.complete_handshake().unwrap();
         let sid = conn.open_uni_stream().unwrap();
-        assert!(conn.streams.iter().find(|s| s.stream_id == sid).unwrap().is_unidirectional);
+        assert!(
+            conn.streams
+                .iter()
+                .find(|s| s.stream_id == sid)
+                .unwrap()
+                .is_unidirectional
+        );
     }
 
     #[test]
@@ -316,7 +341,7 @@ mod tests {
         conn.complete_handshake().unwrap();
         let sid = conn.open_stream().unwrap();
         conn.close_stream(sid).unwrap(); // Open -> HalfClosedLocal
-        // HalfClosedLocal is not writable
+                                         // HalfClosedLocal is not writable
         assert!(conn.send_data(sid, b"data").is_err());
     }
 
@@ -380,7 +405,11 @@ mod tests {
         conn.complete_handshake().unwrap();
         let sid = conn.open_stream().unwrap();
         // Manually set to HalfClosedRemote to test the second close path
-        conn.streams.iter_mut().find(|s| s.stream_id == sid).unwrap().state = QuicStreamState::HalfClosedRemote;
+        conn.streams
+            .iter_mut()
+            .find(|s| s.stream_id == sid)
+            .unwrap()
+            .state = QuicStreamState::HalfClosedRemote;
         conn.close_stream(sid).unwrap();
         assert_eq!(conn.streams[0].state, QuicStreamState::Closed);
     }
@@ -390,7 +419,11 @@ mod tests {
         let mut conn = QuicConnection::connect("example.com:443");
         conn.complete_handshake().unwrap();
         let sid = conn.open_stream().unwrap();
-        conn.streams.iter_mut().find(|s| s.stream_id == sid).unwrap().state = QuicStreamState::Closed;
+        conn.streams
+            .iter_mut()
+            .find(|s| s.stream_id == sid)
+            .unwrap()
+            .state = QuicStreamState::Closed;
         assert!(conn.close_stream(sid).is_err());
     }
 

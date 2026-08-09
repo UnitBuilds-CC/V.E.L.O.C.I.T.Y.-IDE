@@ -134,13 +134,21 @@ impl NdaDocument {
     pub fn push_str(&mut self, subject: &str, predicate: u16, object: &str) {
         let subject = self.dict.intern(subject);
         let object = NdaObject::Str(self.dict.intern(object));
-        self.facts.push(NdaFact { subject, predicate, object });
+        self.facts.push(NdaFact {
+            subject,
+            predicate,
+            object,
+        });
     }
 
     /// Append a fact whose object is an integer literal.
     pub fn push_int(&mut self, subject: &str, predicate: u16, object: i64) {
         let subject = self.dict.intern(subject);
-        self.facts.push(NdaFact { subject, predicate, object: NdaObject::Int(object) });
+        self.facts.push(NdaFact {
+            subject,
+            predicate,
+            object: NdaObject::Int(object),
+        });
     }
 
     /// Absorb every fact from `other` into `self`, re-interning its strings so
@@ -159,7 +167,11 @@ impl NdaDocument {
                 },
                 NdaObject::Int(n) => NdaObject::Int(*n),
             };
-            self.facts.push(NdaFact { subject, predicate: fact.predicate, object });
+            self.facts.push(NdaFact {
+                subject,
+                predicate: fact.predicate,
+                object,
+            });
         }
     }
 
@@ -290,10 +302,17 @@ impl NdaDocument {
                 }
                 _ => return Err("unknown NDA object tag"),
             };
-            facts.push(NdaFact { subject, predicate, object });
+            facts.push(NdaFact {
+                subject,
+                predicate,
+                object,
+            });
         }
 
-        Ok(Self { dict: NdaDictionary { strings, index }, facts })
+        Ok(Self {
+            dict: NdaDictionary { strings, index },
+            facts,
+        })
     }
 
     /// Compute the SHA-256 Merkle root over the document's readable facts,
@@ -352,8 +371,7 @@ impl NdaDocument {
         header.extend_from_slice(&(self.facts.len() as u32).to_le_bytes());
         header.extend_from_slice(nonce);
 
-        let (ciphertext, tag) =
-            crate::net::aes_gcm::aes256_gcm_encrypt(key, nonce, &header, &body);
+        let (ciphertext, tag) = crate::net::aes_gcm::aes256_gcm_encrypt(key, nonce, &header, &body);
 
         let mut out = header;
         out.extend_from_slice(&ciphertext);
@@ -392,10 +410,8 @@ impl NdaDocument {
         let mut tag = [0u8; 16];
         tag.copy_from_slice(tag_slice);
 
-        let body = crate::net::aes_gcm::aes256_gcm_decrypt(
-            key, &nonce, header, ciphertext, &tag,
-        )
-        .ok_or("NDA authentication failed (tampered or wrong key)")?;
+        let body = crate::net::aes_gcm::aes256_gcm_decrypt(key, &nonce, header, ciphertext, &tag)
+            .ok_or("NDA authentication failed (tampered or wrong key)")?;
 
         let doc = Self::from_binary_stream(&body)?;
         if doc.facts.len() as u32 != fact_count {
@@ -442,8 +458,7 @@ pub fn seal_bytes(key: &[u8; 32], nonce: &[u8; 12], payload: &[u8]) -> Vec<u8> {
     header.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     header.extend_from_slice(nonce);
 
-    let (ciphertext, tag) =
-        crate::net::aes_gcm::aes256_gcm_encrypt(key, nonce, &header, payload);
+    let (ciphertext, tag) = crate::net::aes_gcm::aes256_gcm_encrypt(key, nonce, &header, payload);
 
     let mut out = header;
     out.extend_from_slice(&ciphertext);
@@ -482,10 +497,8 @@ pub fn open_bytes(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, &'static str>
     let mut tag = [0u8; 16];
     tag.copy_from_slice(tag_slice);
 
-    let payload = crate::net::aes_gcm::aes256_gcm_decrypt(
-        key, &nonce, header, ciphertext, &tag,
-    )
-    .ok_or("NDA authentication failed (tampered or wrong key)")?;
+    let payload = crate::net::aes_gcm::aes256_gcm_decrypt(key, &nonce, header, ciphertext, &tag)
+        .ok_or("NDA authentication failed (tampered or wrong key)")?;
 
     if payload.len() != payload_len {
         return Err("NDA payload length mismatch");

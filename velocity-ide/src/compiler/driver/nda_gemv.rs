@@ -745,7 +745,10 @@ impl VulkanNdaGemv {
         Ok(duration_us)
     }
 
-    pub fn submit_async_float(&self, input_floats: &[f32]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn submit_async_float(
+        &self,
+        input_floats: &[f32],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 input_floats.as_ptr(),
@@ -917,12 +920,7 @@ impl Drop for VulkanNdaGemv {
                 self.weight_pos_memory,
                 false,
             );
-            destroy_buffer(
-                &self.device,
-                self.output_buffer,
-                self.output_memory,
-                true,
-            );
+            destroy_buffer(&self.device, self.output_buffer, self.output_memory, true);
 
             self.device.destroy_pipeline(self.compute_pipeline, None);
             self.device

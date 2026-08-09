@@ -1,17 +1,17 @@
 // sandbox/scope_validator.rs — Semantic alignment check via cosine similarity
 pub struct ScopeValidation {
-    pub similarity:   f32,    // cosine_sim(output_vec, conditioning_vec)
-    pub passed:       bool,   // similarity >= threshold
-    pub threshold:    f32,    // current θ
+    pub similarity: f32, // cosine_sim(output_vec, conditioning_vec)
+    pub passed: bool,    // similarity >= threshold
+    pub threshold: f32,  // current θ
 }
 
 pub struct ScopeValidator;
 
 impl ScopeValidator {
     pub fn validate(
-        output_vec:       &[f32],
+        output_vec: &[f32],
         conditioning_vec: &[f32],
-        threshold:        f32,
+        threshold: f32,
     ) -> ScopeValidation {
         if output_vec.len() != conditioning_vec.len() || output_vec.is_empty() {
             return ScopeValidation {

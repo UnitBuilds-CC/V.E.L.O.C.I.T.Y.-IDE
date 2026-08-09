@@ -39,14 +39,25 @@ impl KeyBinding {
             actual_key = parts.last().unwrap_or(&"").to_string();
         }
 
-        Self { key: actual_key, ctrl, shift, alt }
+        Self {
+            key: actual_key,
+            ctrl,
+            shift,
+            alt,
+        }
     }
 
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
-        if self.ctrl { parts.push("Ctrl"); }
-        if self.shift { parts.push("Shift"); }
-        if self.alt { parts.push("Alt"); }
+        if self.ctrl {
+            parts.push("Ctrl");
+        }
+        if self.shift {
+            parts.push("Shift");
+        }
+        if self.alt {
+            parts.push("Alt");
+        }
         parts.push(&self.key);
         parts.join("+")
     }
@@ -171,14 +182,18 @@ impl KeybindingsConfig {
 
     /// Find the binding for a given command.
     pub fn binding_for(&self, command: &str) -> Option<&KeyBinding> {
-        self.bindings.iter().find(|e| e.command == command).map(|e| &e.binding)
+        self.bindings
+            .iter()
+            .find(|e| e.command == command)
+            .map(|e| &e.binding)
     }
 
     /// Find the command for a given key combination.
     pub fn command_for(&self, binding: &KeyBinding, context: Option<&str>) -> Option<&str> {
-        self.bindings.iter().find(|e| {
-            e.binding == *binding && (e.when.is_none() || e.when.as_deref() == context)
-        }).map(|e| e.command.as_str())
+        self.bindings
+            .iter()
+            .find(|e| e.binding == *binding && (e.when.is_none() || e.when.as_deref() == context))
+            .map(|e| e.command.as_str())
     }
 
     /// Update a binding for a command.

@@ -23,7 +23,7 @@ pub enum AeadAlg {
 pub fn per_record_nonce(write_iv: &[u8; 12], seq: u64) -> [u8; 12] {
     let mut nonce = *write_iv;
     let seq_bytes = seq.to_be_bytes(); // 8 bytes
-    // XOR into the low-order (rightmost) 8 bytes of the 12-byte IV.
+                                       // XOR into the low-order (rightmost) 8 bytes of the 12-byte IV.
     for i in 0..8 {
         nonce[4 + i] ^= seq_bytes[i];
     }
@@ -119,8 +119,7 @@ mod tests {
 
         let sealed = seal_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 7, &aad, plaintext);
         assert!(sealed.len() > plaintext.len()); // includes the 16-byte tag
-        let opened =
-            open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 7, &aad, &sealed).unwrap();
+        let opened = open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, 7, &aad, &sealed).unwrap();
         assert_eq!(opened, plaintext);
     }
 
@@ -192,7 +191,14 @@ mod tests {
         let iv = [0x88u8; 12];
         let aad = [0x17, 0x03, 0x03, 0x00, 0x01];
         let seq = u64::MAX - 1;
-        let sealed = seal_record(AeadAlg::ChaCha20Poly1305, &key, &iv, seq, &aad, b"late-record");
+        let sealed = seal_record(
+            AeadAlg::ChaCha20Poly1305,
+            &key,
+            &iv,
+            seq,
+            &aad,
+            b"late-record",
+        );
         let opened = open_record(AeadAlg::ChaCha20Poly1305, &key, &iv, seq, &aad, &sealed).unwrap();
         assert_eq!(opened, b"late-record");
     }

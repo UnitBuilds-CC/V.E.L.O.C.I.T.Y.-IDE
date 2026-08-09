@@ -155,8 +155,7 @@ impl ReflectionEngine {
         }
 
         // Find the worst offender
-        let worst = failure_counts.iter()
-            .max_by_key(|(_, count)| *count);
+        let worst = failure_counts.iter().max_by_key(|(_, count)| *count);
 
         if let Some(((role, action), count)) = worst {
             if *count >= self.config.min_failures_threshold {
@@ -186,7 +185,8 @@ impl ReflectionEngine {
 
     fn detect_navigation_loop(&mut self, recent: &[&ActionOutcome]) -> Option<Reflection> {
         // Check if the same URL appears 3+ times in recent navigate actions
-        let nav_urls: Vec<&str> = recent.iter()
+        let nav_urls: Vec<&str> = recent
+            .iter()
             .filter(|o| o.action_kind == ActionKind::Navigate)
             .map(|o| o.page_url.as_str())
             .collect();
@@ -219,8 +219,11 @@ impl ReflectionEngine {
     }
 
     fn detect_timeout_pattern(&self, recent: &[&ActionOutcome]) -> Option<Reflection> {
-        let timeout_count = recent.iter()
-            .filter(|o| !o.signals.completed_in_time && o.score < self.config.failure_score_threshold)
+        let timeout_count = recent
+            .iter()
+            .filter(|o| {
+                !o.signals.completed_in_time && o.score < self.config.failure_score_threshold
+            })
             .count();
 
         if timeout_count >= self.config.min_failures_threshold as usize {
@@ -229,7 +232,8 @@ impl ReflectionEngine {
                 message: format!(
                     "{} of the last {} actions timed out. \
                      The page may be unresponsive or loading heavy resources.",
-                    timeout_count, recent.len()
+                    timeout_count,
+                    recent.len()
                 ),
                 confidence: 0.80,
                 suggested_strategy: Some(
@@ -246,7 +250,8 @@ impl ReflectionEngine {
     fn detect_blocking_overlay(&self, recent: &[&ActionOutcome]) -> Option<Reflection> {
         // Pattern: multiple click failures where DOM didn't change
         // (suggests something is intercepting clicks — e.g., cookie banner)
-        let blocked_clicks = recent.iter()
+        let blocked_clicks = recent
+            .iter()
             .filter(|o| {
                 o.action_kind == ActionKind::Click
                     && o.score < self.config.failure_score_threshold
@@ -281,7 +286,12 @@ mod tests {
     use super::*;
     use crate::agentic::outcome_scorer::OutcomeSignals;
 
-    fn make_outcome(action: ActionKind, role: &str, score: f64, signals: OutcomeSignals) -> ActionOutcome {
+    fn make_outcome(
+        action: ActionKind,
+        role: &str,
+        score: f64,
+        signals: OutcomeSignals,
+    ) -> ActionOutcome {
         ActionOutcome {
             action_kind: action,
             target_selector: "node_1".to_string(),
@@ -301,7 +311,10 @@ mod tests {
                 ActionKind::Click,
                 "button",
                 0.1,
-                OutcomeSignals { error_thrown: true, ..Default::default() },
+                OutcomeSignals {
+                    error_thrown: true,
+                    ..Default::default()
+                },
             ));
         }
 
@@ -321,14 +334,20 @@ mod tests {
                 target_role: "link".to_string(),
                 page_url: "https://example.com/login".to_string(),
                 score: 0.5,
-                signals: OutcomeSignals { url_changed: true, completed_in_time: true, ..Default::default() },
+                signals: OutcomeSignals {
+                    url_changed: true,
+                    completed_in_time: true,
+                    ..Default::default()
+                },
                 timestamp_ms: 0,
             });
         }
 
         let mut engine = ReflectionEngine::new();
         let reflections = engine.reflect(&scorer);
-        let nav_loop = reflections.iter().find(|r| r.category == ReflectionCategory::NavigationLoop);
+        let nav_loop = reflections
+            .iter()
+            .find(|r| r.category == ReflectionCategory::NavigationLoop);
         assert!(nav_loop.is_some());
     }
 
@@ -340,13 +359,18 @@ mod tests {
                 ActionKind::Click,
                 "button",
                 0.1,
-                OutcomeSignals { completed_in_time: true, ..Default::default() },
+                OutcomeSignals {
+                    completed_in_time: true,
+                    ..Default::default()
+                },
             ));
         }
 
         let mut engine = ReflectionEngine::new();
         let reflections = engine.reflect(&scorer);
-        let overlay = reflections.iter().find(|r| r.category == ReflectionCategory::BlockingOverlay);
+        let overlay = reflections
+            .iter()
+            .find(|r| r.category == ReflectionCategory::BlockingOverlay);
         assert!(overlay.is_some());
     }
 
@@ -358,7 +382,11 @@ mod tests {
                 ActionKind::Click,
                 "button",
                 0.9,
-                OutcomeSignals { dom_changed: true, completed_in_time: true, ..Default::default() },
+                OutcomeSignals {
+                    dom_changed: true,
+                    completed_in_time: true,
+                    ..Default::default()
+                },
             ));
         }
 
@@ -450,12 +478,17 @@ mod tests {
                 ActionKind::Click,
                 "button",
                 0.1,
-                OutcomeSignals { completed_in_time: false, ..Default::default() },
+                OutcomeSignals {
+                    completed_in_time: false,
+                    ..Default::default()
+                },
             ));
         }
         let mut engine = ReflectionEngine::new();
         let reflections = engine.reflect(&scorer);
-        let timeout = reflections.iter().find(|r| r.category == ReflectionCategory::TimeoutPattern);
+        let timeout = reflections
+            .iter()
+            .find(|r| r.category == ReflectionCategory::TimeoutPattern);
         assert!(timeout.is_some(), "Should detect timeout pattern");
     }
 
@@ -476,8 +509,13 @@ mod tests {
         // Trigger repeated failure + blocking overlay + timeout + nav loop
         for _ in 0..4 {
             scorer.record(make_outcome(
-                ActionKind::Click, "button", 0.1,
-                OutcomeSignals { completed_in_time: false, ..Default::default() },
+                ActionKind::Click,
+                "button",
+                0.1,
+                OutcomeSignals {
+                    completed_in_time: false,
+                    ..Default::default()
+                },
             ));
         }
         for _ in 0..4 {
@@ -487,7 +525,11 @@ mod tests {
                 target_role: "link".to_string(),
                 page_url: "https://loop.com".to_string(),
                 score: 0.1,
-                signals: OutcomeSignals { url_changed: true, completed_in_time: false, ..Default::default() },
+                signals: OutcomeSignals {
+                    url_changed: true,
+                    completed_in_time: false,
+                    ..Default::default()
+                },
                 timestamp_ms: 0,
             });
         }
@@ -496,7 +538,10 @@ mod tests {
             ..Default::default()
         });
         let reflections = engine.reflect(&scorer);
-        assert!(reflections.len() <= 2, "Should truncate to max_reflections_per_turn");
+        assert!(
+            reflections.len() <= 2,
+            "Should truncate to max_reflections_per_turn"
+        );
     }
 
     // ── with_config ───────────────────────────────────────────────────
@@ -520,14 +565,27 @@ mod tests {
         let mut scorer = OutcomeScorer::new();
         for _ in 0..4 {
             scorer.record(make_outcome(
-                ActionKind::Click, "button", 0.1,
-                OutcomeSignals { error_thrown: true, ..Default::default() },
+                ActionKind::Click,
+                "button",
+                0.1,
+                OutcomeSignals {
+                    error_thrown: true,
+                    ..Default::default()
+                },
             ));
         }
         let mut engine = ReflectionEngine::new();
         let _ = engine.reflect(&scorer);
-        assert!(engine.reflection_counts.contains_key("repeated::button::click"));
-        assert_eq!(*engine.reflection_counts.get("repeated::button::click").unwrap(), 1);
+        assert!(engine
+            .reflection_counts
+            .contains_key("repeated::button::click"));
+        assert_eq!(
+            *engine
+                .reflection_counts
+                .get("repeated::button::click")
+                .unwrap(),
+            1
+        );
     }
 
     // ── below-threshold failures don't trigger ────────────────────────
@@ -536,14 +594,24 @@ mod tests {
     fn single_failure_below_threshold() {
         let mut scorer = OutcomeScorer::new();
         scorer.record(make_outcome(
-            ActionKind::Click, "button", 0.1,
-            OutcomeSignals { error_thrown: true, ..Default::default() },
+            ActionKind::Click,
+            "button",
+            0.1,
+            OutcomeSignals {
+                error_thrown: true,
+                ..Default::default()
+            },
         ));
         let mut engine = ReflectionEngine::new();
         let reflections = engine.reflect(&scorer);
         // Only 1 failure, threshold is 2
-        let repeated = reflections.iter().find(|r| r.category == ReflectionCategory::RepeatedFailure);
-        assert!(repeated.is_none(), "Single failure should not trigger repeated failure");
+        let repeated = reflections
+            .iter()
+            .find(|r| r.category == ReflectionCategory::RepeatedFailure);
+        assert!(
+            repeated.is_none(),
+            "Single failure should not trigger repeated failure"
+        );
     }
 
     // ── different action kinds don't cluster ──────────────────────────
@@ -552,16 +620,31 @@ mod tests {
     fn different_actions_dont_cluster() {
         let mut scorer = OutcomeScorer::new();
         scorer.record(make_outcome(
-            ActionKind::Click, "button", 0.1,
-            OutcomeSignals { error_thrown: true, ..Default::default() },
+            ActionKind::Click,
+            "button",
+            0.1,
+            OutcomeSignals {
+                error_thrown: true,
+                ..Default::default()
+            },
         ));
         scorer.record(make_outcome(
-            ActionKind::Fill, "button", 0.1,
-            OutcomeSignals { error_thrown: true, ..Default::default() },
+            ActionKind::Fill,
+            "button",
+            0.1,
+            OutcomeSignals {
+                error_thrown: true,
+                ..Default::default()
+            },
         ));
         let mut engine = ReflectionEngine::new();
         let reflections = engine.reflect(&scorer);
-        let repeated = reflections.iter().find(|r| r.category == ReflectionCategory::RepeatedFailure);
-        assert!(repeated.is_none(), "Different actions shouldn't cluster as repeated failure");
+        let repeated = reflections
+            .iter()
+            .find(|r| r.category == ReflectionCategory::RepeatedFailure);
+        assert!(
+            repeated.is_none(),
+            "Different actions shouldn't cluster as repeated failure"
+        );
     }
 }

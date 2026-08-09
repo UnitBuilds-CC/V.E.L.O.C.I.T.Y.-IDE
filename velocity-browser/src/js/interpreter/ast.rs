@@ -12,41 +12,110 @@ pub enum VarKind {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Expr(Expr),
-    VarDecl { kind: VarKind, name: String, init: Option<Expr> },
-    DestructureDecl { pattern: DestructurePattern, init: Expr },
+    VarDecl {
+        kind: VarKind,
+        name: String,
+        init: Option<Expr>,
+    },
+    DestructureDecl {
+        pattern: DestructurePattern,
+        init: Expr,
+    },
     Block(Vec<Stmt>),
-    If { cond: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
-    While { cond: Expr, body: Box<Stmt> },
-    DoWhile { body: Box<Stmt>, cond: Expr },
-    For { init: Option<Box<Stmt>>, cond: Option<Expr>, update: Option<Expr>, body: Box<Stmt> },
-    ForIn { var_name: String, object: Expr, body: Box<Stmt> },
-    ForOf { var_name: String, object: Expr, body: Box<Stmt> },
+    If {
+        cond: Expr,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>,
+    },
+    While {
+        cond: Expr,
+        body: Box<Stmt>,
+    },
+    DoWhile {
+        body: Box<Stmt>,
+        cond: Expr,
+    },
+    For {
+        init: Option<Box<Stmt>>,
+        cond: Option<Expr>,
+        update: Option<Expr>,
+        body: Box<Stmt>,
+    },
+    ForIn {
+        var_name: String,
+        object: Expr,
+        body: Box<Stmt>,
+    },
+    ForOf {
+        var_name: String,
+        object: Expr,
+        body: Box<Stmt>,
+    },
     /// `for await (x of y) { ... }` — awaits each value before binding.
-    ForAwaitOf { var_name: String, object: Expr, body: Box<Stmt> },
+    ForAwaitOf {
+        var_name: String,
+        object: Expr,
+        body: Box<Stmt>,
+    },
     Return(Option<Expr>),
     Break,
     Continue,
     Throw(Expr),
-    TryCatch { try_block: Box<Stmt>, catch_var: Option<String>, catch_block: Option<Box<Stmt>>, finally_block: Option<Box<Stmt>> },
-    FunctionDecl { name: String, params: Vec<String>, body: Box<Stmt> },
-    ClassDecl { name: String, parent: Option<String>, methods: Vec<ClassMethod>, fields: Vec<ClassField> },
+    TryCatch {
+        try_block: Box<Stmt>,
+        catch_var: Option<String>,
+        catch_block: Option<Box<Stmt>>,
+        finally_block: Option<Box<Stmt>>,
+    },
+    FunctionDecl {
+        name: String,
+        params: Vec<String>,
+        body: Box<Stmt>,
+    },
+    ClassDecl {
+        name: String,
+        parent: Option<String>,
+        methods: Vec<ClassMethod>,
+        fields: Vec<ClassField>,
+    },
     /// import { a, b } from 'module' / import x from 'module' / import * as x from 'module'
-    Import { specifiers: Vec<ImportSpecifier>, source: String },
+    Import {
+        specifiers: Vec<ImportSpecifier>,
+        source: String,
+    },
     /// export const x = ...; / export default expr; / export { a, b };
-    Export { declaration: Option<Box<Stmt>>, default_expr: Option<Expr>, named: Vec<String> },
+    Export {
+        declaration: Option<Box<Stmt>>,
+        default_expr: Option<Expr>,
+        named: Vec<String>,
+    },
     /// Generator function: function* name() { yield ... }
-    GeneratorDecl { name: String, params: Vec<String>, body: Box<Stmt> },
+    GeneratorDecl {
+        name: String,
+        params: Vec<String>,
+        body: Box<Stmt>,
+    },
     /// Async function: async function name() { ... } — wraps return in Promise.
-    AsyncFunctionDecl { name: String, params: Vec<String>, body: Box<Stmt> },
+    AsyncFunctionDecl {
+        name: String,
+        params: Vec<String>,
+        body: Box<Stmt>,
+    },
     /// Labeled statement: label: stmt (we skip the label)
-    Labeled { label: String, body: Box<Stmt> },
+    Labeled {
+        label: String,
+        body: Box<Stmt>,
+    },
     /// Switch statement: switch (discriminant) { case ...: ... default: ... }
-    Switch { discriminant: Expr, cases: Vec<SwitchCase> },
+    Switch {
+        discriminant: Expr,
+        cases: Vec<SwitchCase>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct SwitchCase {
-    pub pattern: Option<Expr>,  // None for default
+    pub pattern: Option<Expr>, // None for default
     pub body: Vec<Stmt>,
 }
 
@@ -58,8 +127,8 @@ pub enum DestructurePattern {
 
 #[derive(Debug, Clone)]
 pub struct ImportSpecifier {
-    pub imported: String,  // the name exported by the module (or "default" / "*")
-    pub local: String,     // the local binding name
+    pub imported: String, // the name exported by the module (or "default" / "*")
+    pub local: String,    // the local binding name
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

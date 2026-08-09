@@ -207,7 +207,12 @@ pub struct TaskResult {
 }
 
 impl Task {
-    pub fn new(task_id: &str, prompt: &str, instructions: &str, attached_files: Vec<String>) -> Self {
+    pub fn new(
+        task_id: &str,
+        prompt: &str,
+        instructions: &str,
+        attached_files: Vec<String>,
+    ) -> Self {
         Self {
             task_id: task_id.to_string(),
             prompt: prompt.to_string(),
@@ -359,7 +364,14 @@ impl DroneCore {
         let total_chunks = data["total_chunks"].as_u64().unwrap_or(1) as u32;
         let instructions = data["instructions"].as_str();
 
-        let transfer = FileTransfer::new(transfer_id, filename, total_size, sha256, total_chunks, instructions);
+        let transfer = FileTransfer::new(
+            transfer_id,
+            filename,
+            total_size,
+            sha256,
+            total_chunks,
+            instructions,
+        );
 
         let mut transfers = self.transfers.lock_safe();
         transfers.insert(transfer_id.to_string(), transfer);
@@ -397,7 +409,9 @@ impl DroneCore {
         let mut transfers = self.transfers.lock_safe();
         let transfer = match transfers.get_mut(transfer_id) {
             Some(t) => t,
-            None => return serde_json::json!({ "error": format!("Unknown transfer {transfer_id}") }),
+            None => {
+                return serde_json::json!({ "error": format!("Unknown transfer {transfer_id}") })
+            }
         };
 
         if !transfer.is_complete() {
@@ -428,7 +442,11 @@ impl DroneCore {
 
         // Execute deployment instructions.
         let deploy_result = if let Some(ref instructions) = transfer.instructions {
-            let output = execute_deploy_instructions(instructions, &dest_path.to_string_lossy(), &self.workspace);
+            let output = execute_deploy_instructions(
+                instructions,
+                &dest_path.to_string_lossy(),
+                &self.workspace,
+            );
             serde_json::json!({
                 "deployed": true,
                 "dest_path": dest_path.to_string_lossy(),
@@ -457,7 +475,11 @@ impl DroneCore {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
-        let prompt = data.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let prompt = data
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let instructions = data
             .get("instructions")
             .and_then(|v| v.as_str())
@@ -466,7 +488,11 @@ impl DroneCore {
         let attached_files: Vec<String> = data
             .get("attached_files")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let task = Task::new(&task_id, &prompt, &instructions, attached_files);
@@ -502,7 +528,10 @@ impl DroneCore {
                 let task = task_arc.lock_safe();
                 (200, task.to_json())
             }
-            None => (404, serde_json::json!({ "error": format!("Unknown task {task_id}") })),
+            None => (
+                404,
+                serde_json::json!({ "error": format!("Unknown task {task_id}") }),
+            ),
         }
     }
 }
@@ -510,7 +539,11 @@ impl DroneCore {
 // ── Deployment Instructions ──
 
 /// Execute deployment instructions line by line.
-pub fn execute_deploy_instructions(instructions: &str, file_path: &str, workspace: &Path) -> String {
+pub fn execute_deploy_instructions(
+    instructions: &str,
+    file_path: &str,
+    workspace: &Path,
+) -> String {
     let mut output = Vec::new();
 
     for line in instructions.lines() {
@@ -771,7 +804,10 @@ mod tests {
         let (status, json) = core.handle_task_status("task1");
         assert_eq!(status, 200);
         assert_eq!(json["status"], "completed");
-        assert!(json["result"]["stdout"].as_str().unwrap().contains("drone_test"));
+        assert!(json["result"]["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("drone_test"));
     }
 
     #[test]

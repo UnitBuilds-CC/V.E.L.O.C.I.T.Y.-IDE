@@ -107,11 +107,27 @@ pub struct DisplayCommand {
 
 impl DisplayCommand {
     pub fn text(content: impl Into<String>, x: u16, y: u16, color: u32) -> Self {
-        Self { kind: CommandKind::DrawText as u8, color, x, y, w: 0, h: 0, content: content.into() }
+        Self {
+            kind: CommandKind::DrawText as u8,
+            color,
+            x,
+            y,
+            w: 0,
+            h: 0,
+            content: content.into(),
+        }
     }
 
     pub fn rect(x: u16, y: u16, w: u16, h: u16, color: u32) -> Self {
-        Self { kind: CommandKind::DrawRect as u8, color, x, y, w, h, content: String::new() }
+        Self {
+            kind: CommandKind::DrawRect as u8,
+            color,
+            x,
+            y,
+            w,
+            h,
+            content: String::new(),
+        }
     }
 
     pub fn image(data_url: impl Into<String>, x: u16, y: u16, w: u16, h: u16) -> Self {
@@ -262,8 +278,14 @@ impl NdaPortableDoc {
     }
 
     /// Append a semantic content triple.
-    pub fn push_triple(&mut self, subject: impl Into<String>, predicate: impl Into<String>, object: impl Into<String>) {
-        self.triples.push((subject.into(), predicate.into(), object.into()));
+    pub fn push_triple(
+        &mut self,
+        subject: impl Into<String>,
+        predicate: impl Into<String>,
+        object: impl Into<String>,
+    ) {
+        self.triples
+            .push((subject.into(), predicate.into(), object.into()));
     }
 
     /// Append a display command.
@@ -274,12 +296,22 @@ impl NdaPortableDoc {
     /// Set (or replace) the document title meta triple.
     pub fn set_title(&mut self, title: &str) {
         self.triples.retain(|(_, p, _)| p != NDA_TITLE);
-        self.triples.insert(0, ("nda:doc".to_string(), NDA_TITLE.to_string(), title.to_string()));
+        self.triples.insert(
+            0,
+            (
+                "nda:doc".to_string(),
+                NDA_TITLE.to_string(),
+                title.to_string(),
+            ),
+        );
     }
 
     /// Return the document title if present.
     pub fn title(&self) -> Option<&str> {
-        self.triples.iter().find(|(_, p, _)| p == NDA_TITLE).map(|(_, _, o)| o.as_str())
+        self.triples
+            .iter()
+            .find(|(_, p, _)| p == NDA_TITLE)
+            .map(|(_, _, o)| o.as_str())
     }
 
     /// SHA-256 over the *content* layer only (triples with non-provenance
@@ -338,19 +370,46 @@ impl NdaPortableDoc {
         let subj = format!("rev:{next}");
 
         if next == 0 {
-            self.triples.push(("nda:doc".to_string(), NDA_ORIGIN.to_string(), origin_workspace.to_string()));
+            self.triples.push((
+                "nda:doc".to_string(),
+                NDA_ORIGIN.to_string(),
+                origin_workspace.to_string(),
+            ));
             if !self.triples.iter().any(|(_, p, _)| p == NDA_CREATED) {
-                self.triples.push(("nda:doc".to_string(), NDA_CREATED.to_string(), timestamp.to_string()));
+                self.triples.push((
+                    "nda:doc".to_string(),
+                    NDA_CREATED.to_string(),
+                    timestamp.to_string(),
+                ));
             }
         }
 
-        self.triples.push((subj.clone(), NDA_REV_PARENT.to_string(), parent));
-        self.triples.push((subj.clone(), NDA_REV_CONTENT_HASH.to_string(), content_hex));
-        self.triples.push((subj.clone(), NDA_REV_AUTHOR_NAME.to_string(), author_name.to_string()));
-        self.triples.push((subj.clone(), NDA_REV_AUTHOR_EMAIL.to_string(), author_email.to_string()));
-        self.triples.push((subj.clone(), NDA_REV_AUTHOR_SOURCE.to_string(), author_source.to_string()));
-        self.triples.push((subj.clone(), NDA_REV_TIMESTAMP.to_string(), timestamp.to_string()));
-        self.triples.push((subj, NDA_REV_MESSAGE.to_string(), message.to_string()));
+        self.triples
+            .push((subj.clone(), NDA_REV_PARENT.to_string(), parent));
+        self.triples
+            .push((subj.clone(), NDA_REV_CONTENT_HASH.to_string(), content_hex));
+        self.triples.push((
+            subj.clone(),
+            NDA_REV_AUTHOR_NAME.to_string(),
+            author_name.to_string(),
+        ));
+        self.triples.push((
+            subj.clone(),
+            NDA_REV_AUTHOR_EMAIL.to_string(),
+            author_email.to_string(),
+        ));
+        self.triples.push((
+            subj.clone(),
+            NDA_REV_AUTHOR_SOURCE.to_string(),
+            author_source.to_string(),
+        ));
+        self.triples.push((
+            subj.clone(),
+            NDA_REV_TIMESTAMP.to_string(),
+            timestamp.to_string(),
+        ));
+        self.triples
+            .push((subj, NDA_REV_MESSAGE.to_string(), message.to_string()));
     }
 
     /// Recover the ordered revision history from the document's triples.
@@ -440,7 +499,11 @@ impl NdaPortableDoc {
     /// revision. Content is not snapshotted historically, so this reports a
     /// content-hash equality plus live content counts (an “uncommitted delta”).
     pub fn uncommitted_delta(&self) -> UncommittedDelta {
-        let content_triples = self.triples.iter().filter(|(_, p, _)| !is_provenance_predicate(p)).count();
+        let content_triples = self
+            .triples
+            .iter()
+            .filter(|(_, p, _)| !is_provenance_predicate(p))
+            .count();
         let commands = self.commands.len();
         let current = hex(&self.content_hash());
         match self.revisions().last() {
@@ -495,7 +558,8 @@ impl NdaPortableDoc {
     /// (wrapped). Use [`Self::try_to_portable_bytes`] to validate bounds first
     /// and get a precise [`NdaEncodeError`] instead of a corrupt document.
     pub fn to_portable_bytes(&self) -> Vec<u8> {
-        self.encode_portable(false).expect("infallible when not validating")
+        self.encode_portable(false)
+            .expect("infallible when not validating")
     }
 
     /// Serialize like [`Self::to_portable_bytes`], but validate the `u16`
@@ -711,7 +775,10 @@ mod tests {
     fn golden_header_offsets() {
         let doc = sample();
         let bytes = doc.to_portable_bytes();
-        assert_eq!(u32::from_le_bytes(bytes[0..4].try_into().unwrap()), NDA_MAGIC);
+        assert_eq!(
+            u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+            NDA_MAGIC
+        );
         assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 0);
         // 1 title triple + 1 content triple = 2 triples.
         assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 2);
@@ -719,7 +786,10 @@ mod tests {
         let pool_off = u16::from_le_bytes(bytes[46..48].try_into().unwrap()) as usize;
         assert_eq!(pool_off, PORTABLE_HEADER_LEN + 2 * 12 + 2 * 18);
         // Empty string interned first at pool offset 0.
-        assert_eq!(u16::from_le_bytes(bytes[pool_off..pool_off + 2].try_into().unwrap()), 0);
+        assert_eq!(
+            u16::from_le_bytes(bytes[pool_off..pool_off + 2].try_into().unwrap()),
+            0
+        );
     }
 
     #[test]
@@ -758,7 +828,14 @@ mod tests {
     fn history_chain_links_and_verifies() {
         let mut doc = NdaPortableDoc::new();
         doc.push_triple("a", "b", "c");
-        doc.commit_revision("Alice", "a@x", "configured", "2026-01-01T00:00:00Z", "init", "ws");
+        doc.commit_revision(
+            "Alice",
+            "a@x",
+            "configured",
+            "2026-01-01T00:00:00Z",
+            "init",
+            "ws",
+        );
         // A content edit + second revision.
         doc.push_triple("d", "e", "f");
         doc.commit_revision("Bob", "b@x", "git", "2026-01-02T00:00:00Z", "edit", "ws");
@@ -848,10 +925,16 @@ mod tests {
     #[test]
     fn vector_points_round_trip() {
         let cmd = DisplayCommand::vector(&[(0, 0), (10, 0), (10, 10)], 5, 6, 2, 0x1234_56FF);
-        assert_eq!(parse_vector_points(&cmd.content), vec![(0, 0), (10, 0), (10, 10)]);
+        assert_eq!(
+            parse_vector_points(&cmd.content),
+            vec![(0, 0), (10, 0), (10, 10)]
+        );
         assert_eq!(cmd.h, 2);
         // Malformed tokens are skipped, valid ones kept.
-        assert_eq!(parse_vector_points("1,2;garbage;3,4;5"), vec![(1, 2), (3, 4)]);
+        assert_eq!(
+            parse_vector_points("1,2;garbage;3,4;5"),
+            vec![(1, 2), (3, 4)]
+        );
     }
 
     /// Build a buffer *by hand* following the documented 48-byte layout (not via
@@ -875,8 +958,8 @@ mod tests {
         g.extend_from_slice(&1u16.to_le_bytes()); // 44..46 commandCount
         let pool_off: u16 = (PORTABLE_HEADER_LEN + 12 + 18) as u16; // 78
         g.extend_from_slice(&pool_off.to_le_bytes()); // 46..48 stringPoolOffset
-        // Triple 0: s=2, p=5, o=8 (pool-relative byte offsets; each 1-char
-        // entry is 3 bytes: 2-byte length prefix + 1 char).
+                                                      // Triple 0: s=2, p=5, o=8 (pool-relative byte offsets; each 1-char
+                                                      // entry is 3 bytes: 2-byte length prefix + 1 char).
         g.extend_from_slice(&2u32.to_le_bytes());
         g.extend_from_slice(&5u32.to_le_bytes());
         g.extend_from_slice(&8u32.to_le_bytes());
@@ -918,8 +1001,20 @@ mod tests {
         }
         doc.push_command(DisplayCommand::text("héllo wörld", 4, 8, 0xAABB_CCDD));
         doc.push_command(DisplayCommand::rect(1, 2, 30, 40, 0x0011_2233));
-        doc.push_command(DisplayCommand::image("data:image/png;base64,AAAA", 0, 0, 64, 48));
-        doc.push_command(DisplayCommand::vector(&[(0, 0), (5, 5), (10, 0)], 2, 3, 2, 0xFF00_FF00));
+        doc.push_command(DisplayCommand::image(
+            "data:image/png;base64,AAAA",
+            0,
+            0,
+            64,
+            48,
+        ));
+        doc.push_command(DisplayCommand::vector(
+            &[(0, 0), (5, 5), (10, 0)],
+            2,
+            3,
+            2,
+            0xFF00_FF00,
+        ));
         doc.commit_revision("A", "a@x", "git", "2026-01-01T00:00:00Z", "m0", "ws");
         doc.push_triple("extra", "p", "q");
         doc.commit_revision("B", "b@x", "os", "2026-01-02T00:00:00Z", "m1", "ws");
@@ -944,9 +1039,23 @@ mod tests {
 
         let diff = doc.diff_revisions(0, 1).expect("two revisions");
         assert!(!diff.same_content, "content changed between revs");
-        let fields: Vec<&str> = diff.changed_fields.iter().map(|(n, _, _)| n.as_str()).collect();
-        for expected in ["parent", "author", "email", "source", "timestamp", "message"] {
-            assert!(fields.contains(&expected), "missing changed field {expected}");
+        let fields: Vec<&str> = diff
+            .changed_fields
+            .iter()
+            .map(|(n, _, _)| n.as_str())
+            .collect();
+        for expected in [
+            "parent",
+            "author",
+            "email",
+            "source",
+            "timestamp",
+            "message",
+        ] {
+            assert!(
+                fields.contains(&expected),
+                "missing changed field {expected}"
+            );
         }
         // Out-of-range index → None.
         assert!(doc.diff_revisions(0, 5).is_none());

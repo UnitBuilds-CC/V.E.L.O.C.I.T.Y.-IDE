@@ -9,9 +9,9 @@ pub mod memory_store;
 pub mod models;
 pub mod nda;
 pub mod peer_bridge;
-pub mod peer_link;
 #[cfg(test)]
 mod peer_e2e_test;
+pub mod peer_link;
 pub mod peer_robust;
 pub mod peer_server;
 pub mod planning;
@@ -23,11 +23,8 @@ pub mod shared_memory;
 #[cfg(test)]
 mod tests;
 
-pub use executor::{
-    run_agent_thread, run_headless_subagent,
-};
+pub use executor::{run_agent_thread, run_headless_subagent};
 pub use models::{
-    AgentToUiMessage, ApiStyle, HeadlessSubAgentEventKind,
-    HeadlessSubAgentProgress, HeadlessSubAgentRequest, ModelInfo,
-    UiToAgentMessage, AiProvider,
+    AgentToUiMessage, AiProvider, ApiStyle, HeadlessSubAgentEventKind, HeadlessSubAgentProgress,
+    HeadlessSubAgentRequest, ModelInfo, UiToAgentMessage,
 };

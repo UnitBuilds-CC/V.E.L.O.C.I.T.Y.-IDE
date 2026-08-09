@@ -1,12 +1,12 @@
 use super::ast::*;
+use super::eval::{eval_expr_node, eval_stmt};
 use super::lexer::lex;
 use super::parser::Parser;
-use super::eval::{eval_stmt, eval_expr_node};
 use crate::js::scope::{Scope, ScopeRef};
 use crate::js::vm::JsValue;
-use velocity_ide::safety::SafeMutex;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use velocity_ide::safety::SafeMutex;
 
 /// Global module registry for ES module imports.
 /// Maps module specifier -> exported bindings (name -> value).
@@ -47,7 +47,9 @@ pub fn clear_module_registry() {
 /// Resolve a module import. Returns the module's exports or None if not registered.
 pub fn resolve_module(specifier: &str) -> Option<HashMap<String, JsValue>> {
     let registry = MODULE_REGISTRY.lock_safe();
-    registry.as_ref().and_then(|map| map.get(specifier).cloned())
+    registry
+        .as_ref()
+        .and_then(|map| map.get(specifier).cloned())
 }
 
 /// Evaluate a module source and register its exports.
@@ -60,7 +62,11 @@ pub fn evaluate_module(specifier: &str, source: &str) -> Result<HashMap<String, 
 
     for stmt in &stmts {
         match stmt {
-            Stmt::Export { declaration, default_expr, named } => {
+            Stmt::Export {
+                declaration,
+                default_expr,
+                named,
+            } => {
                 if let Some(decl) = declaration {
                     let _ = eval_stmt(decl, &scope);
                     match decl.as_ref() {
@@ -88,7 +94,9 @@ pub fn evaluate_module(specifier: &str, source: &str) -> Result<HashMap<String, 
                     }
                 }
             }
-            _ => { let _ = eval_stmt(stmt, &scope); }
+            _ => {
+                let _ = eval_stmt(stmt, &scope);
+            }
         }
     }
 
@@ -105,7 +113,8 @@ pub fn apply_import(
     let module_exports = match resolve_module(source) {
         Some(exports) => exports,
         None => {
-            let fetched = MODULE_RESOLVER.lock_safe()
+            let fetched = MODULE_RESOLVER
+                .lock_safe()
                 .as_ref()
                 .and_then(|resolver| resolver(source));
             match fetched {
@@ -118,10 +127,12 @@ pub fn apply_import(
         let value = if spec.imported == "*" {
             JsValue::Object(module_exports.clone())
         } else {
-            module_exports.get(&spec.imported).cloned().unwrap_or(JsValue::Undefined)
+            module_exports
+                .get(&spec.imported)
+                .cloned()
+                .unwrap_or(JsValue::Undefined)
         };
         Scope::declare(scope, &spec.local, value);
     }
     Ok(())
 }
-

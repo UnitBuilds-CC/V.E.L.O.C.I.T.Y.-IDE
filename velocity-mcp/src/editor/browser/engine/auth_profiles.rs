@@ -142,7 +142,11 @@ pub fn list_auth_profiles(
             Err(err) => return Err(format!("read auth profile dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         if path
@@ -308,7 +312,8 @@ pub fn reseed_runtime_auth_state_report(
     apply_storage_updates(&mut target.session_storage, &copied_session_storage);
 
     let session_path = save_runtime_session_state(workspace_root, &target)?;
-    let auth_diagnostics = build_runtime_auth_diagnostics_report(workspace_root, &target, sitemap_path);
+    let auth_diagnostics =
+        build_runtime_auth_diagnostics_report(workspace_root, &target, sitemap_path);
 
     Ok(RuntimeAuthReseedReport {
         target_runtime_session: target,
@@ -327,4 +332,3 @@ pub fn reseed_runtime_auth_state_report(
         warnings,
     })
 }
-

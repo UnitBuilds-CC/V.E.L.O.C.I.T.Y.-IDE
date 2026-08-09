@@ -342,7 +342,10 @@ mod tests {
 8afb0db2fd4abff6af4149f51b",
         ));
         let msg = b"Cryptographic Forum Research Group";
-        assert_eq!(to_hex(&poly1305_mac(&key, msg)), "a8061dc1305136c6c22b8baf0c0127a9");
+        assert_eq!(
+            to_hex(&poly1305_mac(&key, msg)),
+            "a8061dc1305136c6c22b8baf0c0127a9"
+        );
     }
 
     #[test]
@@ -364,7 +367,9 @@ mod tests {
         for i in 0..32 {
             key[i] = 0x80 + i as u8;
         }
-        let nonce = [0x07, 0, 0, 0, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47];
+        let nonce = [
+            0x07, 0, 0, 0, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+        ];
         let aad = from_hex("50515253c0c1c2c3c4c5c6c7");
         let plaintext = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
 

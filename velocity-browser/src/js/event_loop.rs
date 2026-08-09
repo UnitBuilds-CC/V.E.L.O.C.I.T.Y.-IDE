@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use crate::js::vm::JsValue;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskKind {
@@ -149,9 +149,10 @@ impl JsEventLoopScheduler {
             }
             // If interval, re-queue for next firing
             if task.kind == TaskKind::Interval
-                && self.interval_registry.iter().any(|t| t.id == task.id) {
-                    self.task_queue.push_back(task.clone());
-                }
+                && self.interval_registry.iter().any(|t| t.id == task.id)
+            {
+                self.task_queue.push_back(task.clone());
+            }
             return Some(task);
         }
         None

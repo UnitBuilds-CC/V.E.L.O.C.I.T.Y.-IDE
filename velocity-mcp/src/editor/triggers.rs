@@ -54,7 +54,12 @@ pub struct Trigger {
 }
 
 impl Trigger {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, kind: TriggerKind, action: TriggerAction) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        kind: TriggerKind,
+        action: TriggerAction,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -202,8 +207,8 @@ impl TriggerRegistry {
     pub fn save(&self, workspace_root: &Path) -> Result<(), String> {
         let dir = workspace_root.join(".velocity");
         std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create .velocity dir: {e}"))?;
-        let json =
-            serde_json::to_vec_pretty(self).map_err(|e| format!("triggers serialize failed: {e}"))?;
+        let json = serde_json::to_vec_pretty(self)
+            .map_err(|e| format!("triggers serialize failed: {e}"))?;
         std::fs::write(dir.join(TRIGGERS_FILE), json)
             .map_err(|e| format!("cannot write triggers: {e}"))
     }
@@ -291,7 +296,10 @@ mod tests {
         assert_eq!(parse_schedule("1h"), Some(Schedule::Every(3600)));
         assert_eq!(parse_schedule("2d"), Some(Schedule::Every(172_800)));
         assert_eq!(parse_schedule("45"), Some(Schedule::Every(45)));
-        assert_eq!(parse_schedule("daily@09:30"), Some(Schedule::DailyAt(34_200)));
+        assert_eq!(
+            parse_schedule("daily@09:30"),
+            Some(Schedule::DailyAt(34_200))
+        );
         assert_eq!(parse_schedule(""), None);
         assert_eq!(parse_schedule("0s"), None);
         assert_eq!(parse_schedule("daily@25:00"), None);
@@ -337,9 +345,7 @@ mod tests {
             "m",
             "manual",
             TriggerKind::Manual,
-            TriggerAction::AgentPrompt {
-                prompt: "x".into(),
-            },
+            TriggerAction::AgentPrompt { prompt: "x".into() },
         );
         assert!(!manual.is_due(10_000));
         assert_eq!(manual.seconds_until_due(10_000), None);
@@ -384,8 +390,12 @@ mod tests {
         reg.add(Trigger::new(
             "hook",
             "webhook",
-            TriggerKind::Webhook { token: "secret".into() },
-            TriggerAction::RunWorkflow { workflow_id: "wf1".into() },
+            TriggerKind::Webhook {
+                token: "secret".into(),
+            },
+            TriggerAction::RunWorkflow {
+                workflow_id: "wf1".into(),
+            },
         ));
         assert_eq!(reg.len(), 2);
         assert_eq!(reg.toggle("nightly"), Some(false));

@@ -2,8 +2,8 @@
 //! Breadcrumb navigation — shows the file path segments and symbol hierarchy
 //! above the editor for quick navigation.
 
-use std::path::{Path, PathBuf};
 use eframe::egui;
+use std::path::{Path, PathBuf};
 
 /// A single breadcrumb segment.
 #[derive(Debug, Clone)]
@@ -33,7 +33,8 @@ pub fn build_breadcrumbs(
     let mut segments = Vec::new();
 
     // Workspace root name
-    let root_name = workspace_root.file_name()
+    let root_name = workspace_root
+        .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
@@ -56,14 +57,19 @@ pub fn build_breadcrumbs(
 
             segments.push(BreadcrumbSegment {
                 label,
-                kind: if is_last { BreadcrumbKind::File } else { BreadcrumbKind::Directory },
+                kind: if is_last {
+                    BreadcrumbKind::File
+                } else {
+                    BreadcrumbKind::Directory
+                },
                 path: Some(accumulated.clone()),
                 symbol: None,
             });
         }
     } else {
         // File not under workspace root — just show file name
-        let name = file_path.file_name()
+        let name = file_path
+            .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
@@ -111,9 +117,10 @@ pub fn render_breadcrumbs(
                 BreadcrumbKind::Symbol => palette.accent,
             };
 
-            let resp = ui.add(egui::Label::new(
-                egui::RichText::new(&segment.label).color(color).size(12.0)
-            ).sense(egui::Sense::click()));
+            let resp = ui.add(
+                egui::Label::new(egui::RichText::new(&segment.label).color(color).size(12.0))
+                    .sense(egui::Sense::click()),
+            );
 
             if resp.clicked() {
                 action = Some(match segment.kind {
@@ -180,8 +187,7 @@ pub fn load_view_states(workspace_root: &Path) -> ViewStateMap {
 // ─── Word Wrap Toggle ────────────────────────────────────────────────────────
 
 /// Word wrap configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum WordWrapMode {
     #[default]
     Off,
@@ -189,7 +195,6 @@ pub enum WordWrapMode {
     /// Wrap at a specific column.
     Column(u16),
 }
-
 
 impl WordWrapMode {
     pub fn label(&self) -> &'static str {
@@ -248,7 +253,11 @@ pub fn project_templates() -> Vec<ProjectTemplate> {
             name: "Node.js (TypeScript)",
             description: "A Node.js project with TypeScript",
             language: "typescript",
-            init_commands: vec!["npm init -y", "npm install -D typescript @types/node", "npx tsc --init"],
+            init_commands: vec![
+                "npm init -y",
+                "npm install -D typescript @types/node",
+                "npx tsc --init",
+            ],
         },
         ProjectTemplate {
             name: "React App (Vite)",

@@ -7,10 +7,10 @@
 //! attributes (like `application/json` or `type="module"`) are skipped gracefully.
 
 use crate::dom::DomTree;
-use crate::js::vm::JsVirtualMachine;
-use crate::js::event_loop::JsEventLoopScheduler;
-use crate::net::HttpClient;
 use crate::engine::TraceCollector;
+use crate::js::event_loop::JsEventLoopScheduler;
+use crate::js::vm::JsVirtualMachine;
+use crate::net::HttpClient;
 use crate::parser::html::NodeType;
 
 /// Collected script to execute: inline body or fetched source.
@@ -67,10 +67,10 @@ pub fn execute_page_scripts(
         }
     }
 
-    trace.record_console("info", &format!(
-        "Script execution complete for {}",
-        current_url
-    ));
+    trace.record_console(
+        "info",
+        &format!("Script execution complete for {}", current_url),
+    );
 }
 
 /// Find all <script> nodes in document order and return their content.
@@ -102,7 +102,11 @@ fn find_script_nodes(tree: &mut DomTree) -> Vec<(String, bool)> {
         }
 
         let is_defer = node.attributes.contains_key("defer");
-        let has_src = node.attributes.get("src").map(|s| !s.is_empty()).unwrap_or(false);
+        let has_src = node
+            .attributes
+            .get("src")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
 
         if has_src {
             // External script - the URL will be fetched later
@@ -304,10 +308,10 @@ pub fn execute_page_scripts_full(
         }
     }
 
-    trace.record_console("info", &format!(
-        "Full script pipeline complete for {}",
-        current_url
-    ));
+    trace.record_console(
+        "info",
+        &format!("Full script pipeline complete for {}", current_url),
+    );
 }
 
 #[cfg(test)]
@@ -327,22 +331,45 @@ mod tests {
         let mut http = HttpClient::new();
         let mut trace = TraceCollector::new();
 
-        execute_page_scripts(&mut tree, &mut vm, &mut scheduler, &mut http, &mut trace, "about:test");
+        execute_page_scripts(
+            &mut tree,
+            &mut vm,
+            &mut scheduler,
+            &mut http,
+            &mut trace,
+            "about:test",
+        );
 
-        let node = tree.nodes.iter().find(|n| n.attributes.get("id").map(|s| s.as_str()) == Some("target")).unwrap();
-        assert_eq!(node.attributes.get("data-ran").map(|s| s.as_str()), Some("true"));
+        let node = tree
+            .nodes
+            .iter()
+            .find(|n| n.attributes.get("id").map(|s| s.as_str()) == Some("target"))
+            .unwrap();
+        assert_eq!(
+            node.attributes.get("data-ran").map(|s| s.as_str()),
+            Some("true")
+        );
     }
 
     #[test]
     fn skips_json_type_scripts() {
-        let mut tree = make_tree("<script type='application/json'>{\"key\":\"val\"}</script><script>var x = 1</script>");
+        let mut tree = make_tree(
+            "<script type='application/json'>{\"key\":\"val\"}</script><script>var x = 1</script>",
+        );
         let mut vm = JsVirtualMachine::new();
         let mut scheduler = JsEventLoopScheduler::new();
         let mut http = HttpClient::new();
         let mut trace = TraceCollector::new();
 
         // Should not error on JSON script
-        execute_page_scripts(&mut tree, &mut vm, &mut scheduler, &mut http, &mut trace, "about:test");
+        execute_page_scripts(
+            &mut tree,
+            &mut vm,
+            &mut scheduler,
+            &mut http,
+            &mut trace,
+            "about:test",
+        );
     }
 
     #[test]
@@ -353,7 +380,14 @@ mod tests {
         let mut http = HttpClient::new();
         let mut trace = TraceCollector::new();
 
-        execute_page_scripts(&mut tree, &mut vm, &mut scheduler, &mut http, &mut trace, "about:test");
+        execute_page_scripts(
+            &mut tree,
+            &mut vm,
+            &mut scheduler,
+            &mut http,
+            &mut trace,
+            "about:test",
+        );
     }
 
     #[test]
@@ -385,16 +419,27 @@ mod tests {
         let mut tree = make_tree(
             "<div id='order'></div>\
              <script defer>document.getElementById('order').setAttribute('data-d','2')</script>\
-             <script>document.getElementById('order').setAttribute('data-s','1')</script>"
+             <script>document.getElementById('order').setAttribute('data-s','1')</script>",
         );
         let mut vm = JsVirtualMachine::new();
         let mut scheduler = JsEventLoopScheduler::new();
         let mut http = HttpClient::new();
         let mut trace = TraceCollector::new();
 
-        execute_page_scripts(&mut tree, &mut vm, &mut scheduler, &mut http, &mut trace, "about:test");
+        execute_page_scripts(
+            &mut tree,
+            &mut vm,
+            &mut scheduler,
+            &mut http,
+            &mut trace,
+            "about:test",
+        );
 
-        let node = tree.nodes.iter().find(|n| n.attributes.get("id").map(|s| s.as_str()) == Some("order")).unwrap();
+        let node = tree
+            .nodes
+            .iter()
+            .find(|n| n.attributes.get("id").map(|s| s.as_str()) == Some("order"))
+            .unwrap();
         // Both should have run
         assert_eq!(node.attributes.get("data-s").map(|s| s.as_str()), Some("1"));
         assert_eq!(node.attributes.get("data-d").map(|s| s.as_str()), Some("2"));
@@ -443,7 +488,8 @@ mod tests {
     fn module_fetch_resolver_resolves_cross_file_import() {
         // Serialize with other module-system tests (global resolver/registry).
         let _guard = crate::js::interpreter::MODULE_TEST_LOCK.lock().unwrap();
-        let (base, _paths) = serve_module("export function add(a, b) { return a + b; }".to_string());
+        let (base, _paths) =
+            serve_module("export function add(a, b) { return a + b; }".to_string());
         install_module_fetch_resolver(&base);
 
         let mut tree = make_tree("<div id='out'></div>");
@@ -468,7 +514,14 @@ mod tests {
         let mut http = HttpClient::new();
         let mut trace = TraceCollector::new();
 
-        execute_page_scripts_full(&mut tree, &mut vm, &mut scheduler, &mut http, &mut trace, &base);
+        execute_page_scripts_full(
+            &mut tree,
+            &mut vm,
+            &mut scheduler,
+            &mut http,
+            &mut trace,
+            &base,
+        );
 
         // The module file was actually fetched over the network by the resolver.
         let log = paths.lock().unwrap();

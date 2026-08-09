@@ -62,11 +62,11 @@ mod tests {
     fn test_shutdown_flag() {
         // Reset flag
         SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
-        
+
         assert!(!is_shutdown_requested());
         request_shutdown();
         assert!(is_shutdown_requested());
-        
+
         // Reset for other tests
         SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
     }
@@ -74,16 +74,16 @@ mod tests {
     #[test]
     fn test_wait_for_shutdown_timeout() {
         SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
-        
+
         // Should timeout without shutdown
         let result = wait_for_shutdown(std::time::Duration::from_millis(50));
         assert!(!result);
-        
+
         // Request shutdown and wait
         request_shutdown();
         let result = wait_for_shutdown(std::time::Duration::from_millis(50));
         assert!(result);
-        
+
         // Reset for other tests
         SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
     }

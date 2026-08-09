@@ -3,12 +3,7 @@
 //! or adjacent to the cursor.
 
 /// Bracket pair types.
-const PAIRS: &[(char, char)] = &[
-    ('(', ')'),
-    ('[', ']'),
-    ('{', '}'),
-    ('<', '>'),
-];
+const PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
 /// Result of a bracket match search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,12 +28,16 @@ pub fn find_matching_bracket(text: &str, cursor_offset: usize) -> Option<Bracket
     // Check if it's an opening bracket
     for &(open, close) in PAIRS {
         if ch == open {
-            return find_forward(text, cursor_offset, open, close)
-                .map(|close_off| BracketMatch { open_offset: cursor_offset, close_offset: close_off });
+            return find_forward(text, cursor_offset, open, close).map(|close_off| BracketMatch {
+                open_offset: cursor_offset,
+                close_offset: close_off,
+            });
         }
         if ch == close {
-            return find_backward(text, cursor_offset, open, close)
-                .map(|open_off| BracketMatch { open_offset: open_off, close_offset: cursor_offset });
+            return find_backward(text, cursor_offset, open, close).map(|open_off| BracketMatch {
+                open_offset: open_off,
+                close_offset: cursor_offset,
+            });
         }
     }
 
@@ -47,12 +46,20 @@ pub fn find_matching_bracket(text: &str, cursor_offset: usize) -> Option<Bracket
         let prev = bytes[cursor_offset - 1] as char;
         for &(open, close) in PAIRS {
             if prev == open {
-                return find_forward(text, cursor_offset - 1, open, close)
-                    .map(|close_off| BracketMatch { open_offset: cursor_offset - 1, close_offset: close_off });
+                return find_forward(text, cursor_offset - 1, open, close).map(|close_off| {
+                    BracketMatch {
+                        open_offset: cursor_offset - 1,
+                        close_offset: close_off,
+                    }
+                });
             }
             if prev == close {
-                return find_backward(text, cursor_offset - 1, open, close)
-                    .map(|open_off| BracketMatch { open_offset: open_off, close_offset: cursor_offset - 1 });
+                return find_backward(text, cursor_offset - 1, open, close).map(|open_off| {
+                    BracketMatch {
+                        open_offset: open_off,
+                        close_offset: cursor_offset - 1,
+                    }
+                });
             }
         }
     }
@@ -157,21 +164,39 @@ mod tests {
         //         0123456789...
         // The '{' is at byte offset 9
         let result = find_matching_bracket(text, 9); // '{'
-        assert_eq!(result, Some(BracketMatch { open_offset: 9, close_offset: 17 }));
+        assert_eq!(
+            result,
+            Some(BracketMatch {
+                open_offset: 9,
+                close_offset: 17
+            })
+        );
     }
 
     #[test]
     fn match_nested() {
         let text = "((a)(b))";
         let result = find_matching_bracket(text, 0);
-        assert_eq!(result, Some(BracketMatch { open_offset: 0, close_offset: 7 }));
+        assert_eq!(
+            result,
+            Some(BracketMatch {
+                open_offset: 0,
+                close_offset: 7
+            })
+        );
     }
 
     #[test]
     fn match_from_close() {
         let text = "{ x }";
         let result = find_matching_bracket(text, 4); // '}'
-        assert_eq!(result, Some(BracketMatch { open_offset: 0, close_offset: 4 }));
+        assert_eq!(
+            result,
+            Some(BracketMatch {
+                open_offset: 0,
+                close_offset: 4
+            })
+        );
     }
 
     #[test]

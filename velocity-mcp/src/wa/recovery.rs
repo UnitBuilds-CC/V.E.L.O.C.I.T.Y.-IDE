@@ -79,8 +79,8 @@ pub struct RetryResult {
 impl RetryPolicy {
     /// Compute the delay for the nth retry (0-indexed).
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let base = self.initial_delay.as_millis() as f64
-            * self.backoff_multiplier.powi(attempt as i32);
+        let base =
+            self.initial_delay.as_millis() as f64 * self.backoff_multiplier.powi(attempt as i32);
         let capped = base.min(self.max_delay.as_millis() as f64);
         // Simplified jitter: add random-ish perturbation based on attempt
         let jitter = capped * self.jitter_factor * ((attempt as f64 * 7.3).sin().abs());
@@ -95,14 +95,14 @@ impl RetryPolicy {
                 lower.contains("not found") || lower.contains("no matching")
             }
             RetryableError::ElementNotReady => {
-                lower.contains("not ready") || lower.contains("disabled") || lower.contains("offscreen")
+                lower.contains("not ready")
+                    || lower.contains("disabled")
+                    || lower.contains("offscreen")
             }
             RetryableError::WindowNotFocused => {
                 lower.contains("not focused") || lower.contains("lost focus")
             }
-            RetryableError::Timeout => {
-                lower.contains("timeout") || lower.contains("timed out")
-            }
+            RetryableError::Timeout => lower.contains("timeout") || lower.contains("timed out"),
             RetryableError::TransientComError => {
                 lower.contains("com") || lower.contains("rpc") || lower.contains("0x8")
             }
@@ -364,7 +364,7 @@ impl RecoveryPlan {
 /// Build a PowerShell script for a recovery action.
 pub fn build_recovery_script(action: &RecoveryAction) -> Option<String> {
     match action {
-        RecoveryAction::Wait(_) => None, // Handled in Rust
+        RecoveryAction::Wait(_) => None,         // Handled in Rust
         RecoveryAction::RefreshSnapshot => None, // Handled by re-invoking capture
         RecoveryAction::FocusTargetWindow => Some(
             r#"
@@ -472,8 +472,12 @@ impl CheckpointManager {
             id: id.clone(),
             label: label.to_string(),
             created_at_ms: now_ms(),
-            description: format!("Checkpoint '{}': {} windows, clipboard={}",
-                label, windows.len(), if clipboard.is_some() { "yes" } else { "no" }),
+            description: format!(
+                "Checkpoint '{}': {} windows, clipboard={}",
+                label,
+                windows.len(),
+                if clipboard.is_some() { "yes" } else { "no" }
+            ),
             window_states: windows,
             clipboard_snapshot: clipboard,
         };
@@ -502,11 +506,13 @@ impl CheckpointManager {
     pub fn restore(&self, id: &str) -> CheckpointResult {
         let cp = match self.get(id) {
             Some(cp) => cp,
-            None => return CheckpointResult {
-                success: false,
-                checkpoint_id: id.to_string(),
-                detail: format!("Checkpoint '{}' not found", id),
-            },
+            None => {
+                return CheckpointResult {
+                    success: false,
+                    checkpoint_id: id.to_string(),
+                    detail: format!("Checkpoint '{}' not found", id),
+                }
+            }
         };
         let mut restored = 0u32;
         for win in &cp.window_states {
@@ -516,7 +522,10 @@ impl CheckpointManager {
                 crate::wa::window_mgmt::WindowOperation::Maximize
             } else {
                 crate::wa::window_mgmt::WindowOperation::MoveResize {
-                    x: win.x, y: win.y, width: win.width, height: win.height,
+                    x: win.x,
+                    y: win.y,
+                    width: win.width,
+                    height: win.height,
                 }
             };
             let result = crate::wa::window_mgmt::WindowManager::apply_operation(win.hwnd, &op);
@@ -531,8 +540,12 @@ impl CheckpointManager {
         CheckpointResult {
             success: restored > 0 || cp.window_states.is_empty(),
             checkpoint_id: id.to_string(),
-            detail: format!("Restored {}/{} windows from checkpoint '{}'",
-                restored, cp.window_states.len(), cp.label),
+            detail: format!(
+                "Restored {}/{} windows from checkpoint '{}'",
+                restored,
+                cp.window_states.len(),
+                cp.label
+            ),
         }
     }
 

@@ -1,5 +1,5 @@
+use super::super::console::{clear_console_output, get_console_output};
 use super::*;
-use super::super::console::{get_console_output, clear_console_output};
 
 // ── Console API ──────────────────────────────────────────────────────────
 
@@ -21,7 +21,11 @@ fn console_api() {
 fn console_table_renders_markdown() {
     eval_full("console.table([{fruit: 'apple', qty: 3}])");
     let output = get_console_output();
-    let rec = output.iter().rev().find(|r| r.level == "table").expect("table record");
+    let rec = output
+        .iter()
+        .rev()
+        .find(|r| r.level == "table")
+        .expect("table record");
     match &rec.args[0] {
         JsValue::String(s) => {
             assert!(s.contains("| (index) | fruit | qty |"), "got: {}", s);
@@ -35,9 +39,13 @@ fn console_table_renders_markdown() {
 fn console_table_renders_plain_object() {
     eval_full("console.table({alpha: 'one', beta: 'two'})");
     let output = get_console_output();
-    let rec = output.iter().rev().find(|r| {
-        r.level == "table" && matches!(&r.args[0], JsValue::String(s) if s.contains("alpha"))
-    }).expect("table record");
+    let rec = output
+        .iter()
+        .rev()
+        .find(|r| {
+            r.level == "table" && matches!(&r.args[0], JsValue::String(s) if s.contains("alpha"))
+        })
+        .expect("table record");
     match &rec.args[0] {
         JsValue::String(s) => {
             assert!(s.contains("| alpha | one |"), "got: {}", s);
@@ -60,8 +68,14 @@ fn get_console_text_exposes_logs_to_agents() {
 
 #[test]
 fn abort_controller() {
-    assert_eq!(eval_full("var ac = new AbortController(); ac.signal.aborted"), JsValue::Boolean(false));
-    assert_eq!(eval_full("var ac = new AbortController(); ac.abort(); ac.signal.aborted"), JsValue::Boolean(true));
+    assert_eq!(
+        eval_full("var ac = new AbortController(); ac.signal.aborted"),
+        JsValue::Boolean(false)
+    );
+    assert_eq!(
+        eval_full("var ac = new AbortController(); ac.abort(); ac.signal.aborted"),
+        JsValue::Boolean(true)
+    );
 }
 
 // ── TextEncoder/TextDecoder ──────────────────────────────────────────────
@@ -80,17 +94,29 @@ fn text_encoder() {
 
 #[test]
 fn text_decoder() {
-    assert_eq!(eval_full("var dec = new TextDecoder(); dec.decode([65, 66, 67])"), JsValue::String("ABC".to_string()));
+    assert_eq!(
+        eval_full("var dec = new TextDecoder(); dec.decode([65, 66, 67])"),
+        JsValue::String("ABC".to_string())
+    );
 }
 
 // ── RegExp test/exec ─────────────────────────────────────────────────────
 
 #[test]
 fn regexp_test_exec() {
-    assert_eq!(eval_full("var re = new RegExp('abc'); re.test('xabcx')"), JsValue::Boolean(true));
-    assert_eq!(eval_full("var re = new RegExp('xyz'); re.test('xabcx')"), JsValue::Boolean(false));
+    assert_eq!(
+        eval_full("var re = new RegExp('abc'); re.test('xabcx')"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval_full("var re = new RegExp('xyz'); re.test('xabcx')"),
+        JsValue::Boolean(false)
+    );
     // Case insensitive
-    assert_eq!(eval_full("var re = new RegExp('abc', 'i'); re.test('XABCX')"), JsValue::Boolean(true));
+    assert_eq!(
+        eval_full("var re = new RegExp('abc', 'i'); re.test('XABCX')"),
+        JsValue::Boolean(true)
+    );
     // exec
     match eval_full("var re = new RegExp('abc'); re.exec('xabcx')") {
         JsValue::Array(arr) => {
@@ -105,33 +131,75 @@ fn regexp_test_exec() {
 #[test]
 fn date_methods() {
     // Date(0) = 1970-01-01T00:00:00.000Z
-    assert_eq!(eval_full("var d = new Date(0); d.getTime()"), JsValue::Number(0.0));
-    assert_eq!(eval_full("var d = new Date(0); d.getFullYear()"), JsValue::Number(1970.0));
-    assert_eq!(eval_full("var d = new Date(0); d.getMonth()"), JsValue::Number(0.0));
-    assert_eq!(eval_full("var d = new Date(0); d.getDate()"), JsValue::Number(1.0));
-    assert_eq!(eval_full("var d = new Date(0); d.getDay()"), JsValue::Number(4.0)); // Thursday
-    assert_eq!(eval_full("var d = new Date(0); d.getHours()"), JsValue::Number(0.0));
-    assert_eq!(eval_full("var d = new Date(0); d.getMinutes()"), JsValue::Number(0.0));
-    assert_eq!(eval_full("var d = new Date(0); d.getSeconds()"), JsValue::Number(0.0));
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getTime()"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getFullYear()"),
+        JsValue::Number(1970.0)
+    );
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getMonth()"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getDate()"),
+        JsValue::Number(1.0)
+    );
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getDay()"),
+        JsValue::Number(4.0)
+    ); // Thursday
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getHours()"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getMinutes()"),
+        JsValue::Number(0.0)
+    );
+    assert_eq!(
+        eval_full("var d = new Date(0); d.getSeconds()"),
+        JsValue::Number(0.0)
+    );
     // toISOString
-    assert_eq!(eval_full("var d = new Date(0); d.toISOString()"), JsValue::String("1970-01-01T00:00:00.000Z".to_string()));
+    assert_eq!(
+        eval_full("var d = new Date(0); d.toISOString()"),
+        JsValue::String("1970-01-01T00:00:00.000Z".to_string())
+    );
 }
 
 // ── Object.prototype methods ─────────────────────────────────────────────
 
 #[test]
 fn object_proto_methods() {
-    assert_eq!(eval_full("var o = {a: 1}; o.hasOwnProperty('a')"), JsValue::Boolean(true));
-    assert_eq!(eval_full("var o = {a: 1}; o.hasOwnProperty('b')"), JsValue::Boolean(false));
-    assert_eq!(eval_full("var o = {a: 1}; o.propertyIsEnumerable('a')"), JsValue::Boolean(true));
+    assert_eq!(
+        eval_full("var o = {a: 1}; o.hasOwnProperty('a')"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval_full("var o = {a: 1}; o.hasOwnProperty('b')"),
+        JsValue::Boolean(false)
+    );
+    assert_eq!(
+        eval_full("var o = {a: 1}; o.propertyIsEnumerable('a')"),
+        JsValue::Boolean(true)
+    );
 }
 
 // ── Boolean methods ──────────────────────────────────────────────────────
 
 #[test]
 fn boolean_methods() {
-    assert_eq!(eval_full("var b = true; b.toString()"), JsValue::String("true".to_string()));
-    assert_eq!(eval_full("var b = false; b.valueOf()"), JsValue::Boolean(false));
+    assert_eq!(
+        eval_full("var b = true; b.toString()"),
+        JsValue::String("true".to_string())
+    );
+    assert_eq!(
+        eval_full("var b = false; b.valueOf()"),
+        JsValue::Boolean(false)
+    );
 }
 
 // ── NativeFunction methods ───────────────────────────────────────────────

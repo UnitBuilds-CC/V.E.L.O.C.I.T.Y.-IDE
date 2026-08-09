@@ -9,13 +9,10 @@ pub mod tester;
 pub mod watcher;
 
 pub use build_runner::{
-    read_latest_diagnostics, run_cargo_check, run_self_check,
-    spawn_build_watcher, BuildDiagnostics,
+    read_latest_diagnostics, run_cargo_check, run_self_check, spawn_build_watcher, BuildDiagnostics,
 };
 pub use coordinator::WorkspaceCoordinator;
-pub use instruction_registry::{
-    AgentTaskKind, DecompositionStyle, InstructionRegistry,
-};
+pub use instruction_registry::{AgentTaskKind, DecompositionStyle, InstructionRegistry};
 pub use mediator::MediatorArena;
 pub use site_map_support::{open_workspace_site_map, resolve_weight_root};
 pub use task_router::RoutedSubAgentTask;

@@ -23,15 +23,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone)]
 pub enum AgentBroadcast {
     /// An agent claimed a file for writing.
-    FileClaimed {
-        agent_id: String,
-        path: PathBuf,
-    },
+    FileClaimed { agent_id: String, path: PathBuf },
     /// An agent released a previously claimed file.
-    FileReleased {
-        agent_id: String,
-        path: PathBuf,
-    },
+    FileReleased { agent_id: String, path: PathBuf },
     /// An agent is requesting help from another agent.
     HelpRequested {
         from: String,
@@ -45,10 +39,7 @@ pub enum AgentBroadcast {
         status: String,
     },
     /// An agent finished its task.
-    AgentFinished {
-        agent_id: String,
-        summary: String,
-    },
+    AgentFinished { agent_id: String, summary: String },
 }
 
 /// A file lock entry tracking which agent owns a path.
@@ -177,11 +168,9 @@ impl CoordinationBus {
     pub fn request_help(&self, from: &str, to: &str, task: &str) {
         {
             let mut state = self.state.lock_safe();
-            state.help_requests.push((
-                from.to_string(),
-                to.to_string(),
-                task.to_string(),
-            ));
+            state
+                .help_requests
+                .push((from.to_string(), to.to_string(), task.to_string()));
         }
         self.broadcast(AgentBroadcast::HelpRequested {
             from: from.to_string(),

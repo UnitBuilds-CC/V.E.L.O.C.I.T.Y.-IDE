@@ -12,16 +12,15 @@ use super::*;
 fn for_await_of_unwraps_promises() {
     let result = eval_full(
         "var out = []; var arr = [Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]; \
-         async function run() { for await (var x of arr) { out.push(x); } } run(); out.join(',')"
+         async function run() { for await (var x of arr) { out.push(x); } } run(); out.join(',')",
     );
     assert_eq!(result, JsValue::String("1,2,3".to_string()));
 }
 
 #[test]
 fn for_await_of_plain_values() {
-    let result = eval_full(
-        "var out = []; for await (var x of [10, 20, 30]) { out.push(x); } out.length"
-    );
+    let result =
+        eval_full("var out = []; for await (var x of [10, 20, 30]) { out.push(x); } out.length");
     assert_eq!(result, JsValue::Number(3.0));
 }
 
@@ -57,7 +56,10 @@ fn string_is_well_formed() {
 
 #[test]
 fn string_to_well_formed() {
-    assert_eq!(eval_full("'hello'.toWellFormed()"), JsValue::String("hello".to_string()));
+    assert_eq!(
+        eval_full("'hello'.toWellFormed()"),
+        JsValue::String("hello".to_string())
+    );
 }
 
 // ── Promise.withResolvers ───────────────────────────────────────────────────
@@ -106,9 +108,7 @@ fn map_group_by() {
 
 #[test]
 fn array_from_async() {
-    let result = eval_full(
-        "var p = Array.fromAsync([1, 2, 3]); p.__resolved__.join(',')"
-    );
+    let result = eval_full("var p = Array.fromAsync([1, 2, 3]); p.__resolved__.join(',')");
     assert_eq!(result, JsValue::String("1,2,3".to_string()));
 }
 
@@ -116,7 +116,10 @@ fn array_from_async() {
 
 #[test]
 fn error_is_error() {
-    assert_eq!(eval_full("Error.isError(new Error('x'))"), JsValue::Boolean(true));
+    assert_eq!(
+        eval_full("Error.isError(new Error('x'))"),
+        JsValue::Boolean(true)
+    );
     assert_eq!(eval_full("Error.isError(42)"), JsValue::Boolean(false));
     assert_eq!(eval_full("Error.isError({})"), JsValue::Boolean(false));
 }
@@ -125,18 +128,27 @@ fn error_is_error() {
 
 #[test]
 fn btoa_encodes() {
-    assert_eq!(eval_full("btoa('hello')"), JsValue::String("aGVsbG8=".to_string()));
+    assert_eq!(
+        eval_full("btoa('hello')"),
+        JsValue::String("aGVsbG8=".to_string())
+    );
     assert_eq!(eval_full("btoa('')"), JsValue::String(String::new()));
 }
 
 #[test]
 fn atob_decodes() {
-    assert_eq!(eval_full("atob('aGVsbG8=')"), JsValue::String("hello".to_string()));
+    assert_eq!(
+        eval_full("atob('aGVsbG8=')"),
+        JsValue::String("hello".to_string())
+    );
 }
 
 #[test]
 fn btoa_atob_roundtrip() {
-    assert_eq!(eval_full("atob(btoa('test123'))"), JsValue::String("test123".to_string()));
+    assert_eq!(
+        eval_full("atob(btoa('test123'))"),
+        JsValue::String("test123".to_string())
+    );
 }
 
 // ── crypto.randomUUID ───────────────────────────────────────────────────────
@@ -151,8 +163,14 @@ fn crypto_random_uuid_format() {
 
 #[test]
 fn url_can_parse() {
-    assert_eq!(eval_full("URL.canParse('https://example.com')"), JsValue::Boolean(true));
-    assert_eq!(eval_full("URL.canParse('not a url')"), JsValue::Boolean(false));
+    assert_eq!(
+        eval_full("URL.canParse('https://example.com')"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval_full("URL.canParse('not a url')"),
+        JsValue::Boolean(false)
+    );
 }
 
 // ── MessageChannel ──────────────────────────────────────────────────────────
@@ -170,7 +188,7 @@ fn event_target_dispatch() {
     let result = eval_full(
         "var et = new EventTarget(); var got = ''; \
          et.addEventListener('ping', function(e) { got = e.data; }); \
-         et.dispatchEvent({ type: 'ping', data: 'pong' }); got"
+         et.dispatchEvent({ type: 'ping', data: 'pong' }); got",
     );
     assert_eq!(result, JsValue::String("pong".to_string()));
 }
@@ -195,7 +213,10 @@ fn proxy_revocable_shape() {
 
 #[test]
 fn array_buffer_is_view() {
-    assert_eq!(eval_full("ArrayBuffer.isView(new Uint8Array(4))"), JsValue::Boolean(true));
+    assert_eq!(
+        eval_full("ArrayBuffer.isView(new Uint8Array(4))"),
+        JsValue::Boolean(true)
+    );
     assert_eq!(eval_full("ArrayBuffer.isView([])"), JsValue::Boolean(false));
 }
 
@@ -211,16 +232,15 @@ fn get_own_property_symbols() {
 
 #[test]
 fn set_union() {
-    let result = eval_full(
-        "var a = new Set([1,2,3]); var b = new Set([3,4,5]); var u = a.union(b); u.size"
-    );
+    let result =
+        eval_full("var a = new Set([1,2,3]); var b = new Set([3,4,5]); var u = a.union(b); u.size");
     assert_eq!(result, JsValue::Number(5.0));
 }
 
 #[test]
 fn set_intersection() {
     let result = eval_full(
-        "var a = new Set([1,2,3]); var b = new Set([2,3,4]); var i = a.intersection(b); i.size"
+        "var a = new Set([1,2,3]); var b = new Set([2,3,4]); var i = a.intersection(b); i.size",
     );
     assert_eq!(result, JsValue::Number(2.0));
 }
@@ -228,28 +248,43 @@ fn set_intersection() {
 #[test]
 fn set_difference() {
     let result = eval_full(
-        "var a = new Set([1,2,3]); var b = new Set([2,3,4]); var d = a.difference(b); d.size"
+        "var a = new Set([1,2,3]); var b = new Set([2,3,4]); var d = a.difference(b); d.size",
     );
     assert_eq!(result, JsValue::Number(1.0));
 }
 
 #[test]
 fn set_is_subset_of() {
-    assert_eq!(eval_full("new Set([1,2]).isSubsetOf(new Set([1,2,3]))"), JsValue::Boolean(true));
-    assert_eq!(eval_full("new Set([1,4]).isSubsetOf(new Set([1,2,3]))"), JsValue::Boolean(false));
+    assert_eq!(
+        eval_full("new Set([1,2]).isSubsetOf(new Set([1,2,3]))"),
+        JsValue::Boolean(true)
+    );
+    assert_eq!(
+        eval_full("new Set([1,4]).isSubsetOf(new Set([1,2,3]))"),
+        JsValue::Boolean(false)
+    );
 }
 
 // ── Intl.Locale ─────────────────────────────────────────────────────────────
 
 #[test]
 fn intl_locale_basic() {
-    assert_eq!(eval_full("new Intl.Locale('en-US').language"), JsValue::String("en".to_string()));
-    assert_eq!(eval_full("new Intl.Locale('en-US').region"), JsValue::String("US".to_string()));
+    assert_eq!(
+        eval_full("new Intl.Locale('en-US').language"),
+        JsValue::String("en".to_string())
+    );
+    assert_eq!(
+        eval_full("new Intl.Locale('en-US').region"),
+        JsValue::String("US".to_string())
+    );
 }
 
 #[test]
 fn intl_locale_to_string() {
-    assert_eq!(eval_full("new Intl.Locale('en-US').toString()"), JsValue::String("en-US".to_string()));
+    assert_eq!(
+        eval_full("new Intl.Locale('en-US').toString()"),
+        JsValue::String("en-US".to_string())
+    );
 }
 
 // ── Intl.getCanonicalLocales ────────────────────────────────────────────────

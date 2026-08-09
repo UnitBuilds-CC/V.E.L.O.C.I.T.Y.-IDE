@@ -126,13 +126,18 @@ impl MerkleGraphView {
                         .show(ui, |ui| {
                             for (file, symbols) in &model.files {
                                 let file_expanded = self.expanded_files.contains(file);
-                                let is_sel = self.selected.as_ref() == Some(&Selection::File(file.clone()));
+                                let is_sel =
+                                    self.selected.as_ref() == Some(&Selection::File(file.clone()));
                                 let resp = ui
                                     .horizontal(|ui| {
                                         ui.label(
-                                            egui::RichText::new(if file_expanded { "▼" } else { "▶" })
-                                                .size(9.0)
-                                                .color(palette.text_muted),
+                                            egui::RichText::new(if file_expanded {
+                                                "▼"
+                                            } else {
+                                                "▶"
+                                            })
+                                            .size(9.0)
+                                            .color(palette.text_muted),
                                         );
                                         ui.label(
                                             egui::RichText::new("▤")
@@ -142,8 +147,11 @@ impl MerkleGraphView {
                                         );
                                         ui.selectable_label(
                                             is_sel,
-                                            egui::RichText::new(file_name(file))
-                                                .color(if is_sel { palette.accent } else { palette.text }),
+                                            egui::RichText::new(file_name(file)).color(if is_sel {
+                                                palette.accent
+                                            } else {
+                                                palette.text
+                                            }),
                                         )
                                     })
                                     .inner;
@@ -169,9 +177,13 @@ impl MerkleGraphView {
                                             .horizontal(|ui| {
                                                 ui.add_space(16.0);
                                                 ui.label(
-                                                    egui::RichText::new(if sym_expanded { "▼" } else { "▶" })
-                                                        .size(9.0)
-                                                        .color(palette.text_muted),
+                                                    egui::RichText::new(if sym_expanded {
+                                                        "▼"
+                                                    } else {
+                                                        "▶"
+                                                    })
+                                                    .size(9.0)
+                                                    .color(palette.text_muted),
                                                 );
                                                 ui.label(
                                                     egui::RichText::new("ƒ")
@@ -181,11 +193,13 @@ impl MerkleGraphView {
                                                 );
                                                 ui.selectable_label(
                                                     is_sym_sel,
-                                                    egui::RichText::new(&sym.name).color(if is_sym_sel {
-                                                        palette.accent
-                                                    } else {
-                                                        palette.text
-                                                    }),
+                                                    egui::RichText::new(&sym.name).color(
+                                                        if is_sym_sel {
+                                                            palette.accent
+                                                        } else {
+                                                            palette.text
+                                                        },
+                                                    ),
                                                 )
                                             })
                                             .inner;
@@ -204,7 +218,9 @@ impl MerkleGraphView {
                                         // Drill into a symbol's call relations.
                                         if sym_expanded {
                                             if let Some(sm) = &sm_ok {
-                                                let hash = crate::editor::app::helpers::hash_str(&sym.name);
+                                                let hash = crate::editor::app::helpers::hash_str(
+                                                    &sym.name,
+                                                );
                                                 let deps = sm.get_dependencies(hash);
                                                 let callers = sm.get_callers(hash);
                                                 let dep_names = resolve_names(sm, &deps);
@@ -213,20 +229,40 @@ impl MerkleGraphView {
                                                     ui.horizontal(|ui| {
                                                         ui.add_space(40.0);
                                                         ui.label(
-                                                            egui::RichText::new("no indexed relations")
-                                                                .small()
-                                                                .color(palette.text_muted),
+                                                            egui::RichText::new(
+                                                                "no indexed relations",
+                                                            )
+                                                            .small()
+                                                            .color(palette.text_muted),
                                                         );
                                                     });
                                                 } else {
                                                     for callee in &dep_names {
-                                                        if relation_row(ui, palette, "↳ calls", callee) {
-                                                            action = Some(GraphAction::NavigateToSymbol(callee.clone()));
+                                                        if relation_row(
+                                                            ui,
+                                                            palette,
+                                                            "↳ calls",
+                                                            callee,
+                                                        ) {
+                                                            action = Some(
+                                                                GraphAction::NavigateToSymbol(
+                                                                    callee.clone(),
+                                                                ),
+                                                            );
                                                         }
                                                     }
                                                     for caller in &caller_names {
-                                                        if relation_row(ui, palette, "↰ called by", caller) {
-                                                            action = Some(GraphAction::NavigateToSymbol(caller.clone()));
+                                                        if relation_row(
+                                                            ui,
+                                                            palette,
+                                                            "↰ called by",
+                                                            caller,
+                                                        ) {
+                                                            action = Some(
+                                                                GraphAction::NavigateToSymbol(
+                                                                    caller.clone(),
+                                                                ),
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -259,7 +295,13 @@ impl MerkleGraphView {
                                     let callers = resolve_names(sm, &sm.get_callers(hash));
                                     let callees = resolve_names(sm, &sm.get_dependencies(hash));
                                     relation_section(ui, palette, "Calls", &callees, &mut action);
-                                    relation_section(ui, palette, "Called by", &callers, &mut action);
+                                    relation_section(
+                                        ui,
+                                        palette,
+                                        "Called by",
+                                        &callers,
+                                        &mut action,
+                                    );
                                 }
                             }
                             Some(Selection::File(file)) => {
@@ -284,10 +326,8 @@ impl MerkleGraphView {
                                     );
                                     ui.add_space(4.0);
                                     for sym in symbols {
-                                        let line_label = sym
-                                            .line
-                                            .map(|l| format!(":{}", l))
-                                            .unwrap_or_default();
+                                        let line_label =
+                                            sym.line.map(|l| format!(":{}", l)).unwrap_or_default();
                                         if ui
                                             .link(egui::RichText::new(format!(
                                                 "ƒ {}{}",
@@ -295,8 +335,9 @@ impl MerkleGraphView {
                                             )))
                                             .clicked()
                                         {
-                                            action =
-                                                Some(GraphAction::NavigateToSymbol(sym.name.clone()));
+                                            action = Some(GraphAction::NavigateToSymbol(
+                                                sym.name.clone(),
+                                            ));
                                         }
                                     }
                                 }
@@ -334,10 +375,10 @@ impl MerkleGraphView {
             let line = std::fs::read_to_string(&abs)
                 .ok()
                 .and_then(|c| crate::editor::search::find_definition_line(&c, &e.name));
-            files.entry(e.file).or_default().push(FileSymbolEntry {
-                name: e.name,
-                line,
-            });
+            files
+                .entry(e.file)
+                .or_default()
+                .push(FileSymbolEntry { name: e.name, line });
         }
         for syms in files.values_mut() {
             syms.sort_by(|a, b| a.name.cmp(&b.name));
@@ -373,11 +414,7 @@ fn resolve_names(sm: &velocity_ide::site_map::SiteMap, hashes: &[u64]) -> Vec<St
 fn relation_row(ui: &mut egui::Ui, palette: IdePalette, label: &str, name: &str) -> bool {
     ui.horizontal(|ui| {
         ui.add_space(40.0);
-        ui.label(
-            egui::RichText::new(label)
-                .small()
-                .color(palette.text_muted),
-        );
+        ui.label(egui::RichText::new(label).small().color(palette.text_muted));
         ui.link(egui::RichText::new(name).size(11.0))
     })
     .inner
@@ -425,9 +462,6 @@ mod tests {
 
     #[test]
     fn symbol_key_is_unique_per_file() {
-        assert_ne!(
-            symbol_key("src/a.rs", "run"),
-            symbol_key("src/b.rs", "run")
-        );
+        assert_ne!(symbol_key("src/a.rs", "run"), symbol_key("src/b.rs", "run"));
     }
 }

@@ -71,18 +71,14 @@ impl VelocityApp {
                         }
                     } else {
                         if ui
-                            .small_button(
-                                RichText::new("Start").size(9.0).color(palette.success),
-                            )
+                            .small_button(RichText::new("Start").size(9.0).color(palette.success))
                             .clicked()
                         {
                             self.start_peer_server();
                         }
                     }
 
-                    ui.label(
-                        RichText::new("Port:").size(9.0).color(palette.text_muted),
-                    );
+                    ui.label(RichText::new("Port:").size(9.0).color(palette.text_muted));
                     let port_edit = ui.add(
                         egui::TextEdit::singleline(&mut self.peer_port.to_string())
                             .desired_width(60.0)
@@ -96,11 +92,12 @@ impl VelocityApp {
                 ui.add_space(2.0);
                 if let Some(id) = &self.peer_manager.local_identity {
                     ui.horizontal(|ui| {
+                        ui.label(RichText::new("ID:").size(9.0).color(palette.text_muted));
                         ui.label(
-                            RichText::new("ID:").size(9.0).color(palette.text_muted),
-                        );
-                        ui.label(
-                            RichText::new(&id.id).size(9.0).monospace().color(palette.text_muted),
+                            RichText::new(&id.id)
+                                .size(9.0)
+                                .monospace()
+                                .color(palette.text_muted),
                         );
                     });
                 }
@@ -171,12 +168,8 @@ impl VelocityApp {
                     let status_dot = if peer.online { "●" } else { "○" };
 
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(status_dot).size(10.0).color(status_color),
-                        );
-                        ui.label(
-                            RichText::new(&peer.name).size(10.0).strong(),
-                        );
+                        ui.label(RichText::new(status_dot).size(10.0).color(status_color));
+                        ui.label(RichText::new(&peer.name).size(10.0).strong());
                         ui.label(
                             RichText::new(format!("{}:{}", peer.host, peer.port))
                                 .size(9.0)
@@ -184,23 +177,17 @@ impl VelocityApp {
                                 .color(palette.text_muted),
                         );
                         if let Some(env) = &peer.environment {
-                            ui.label(
-                                RichText::new(env).size(8.0).color(palette.text_muted),
-                            );
+                            ui.label(RichText::new(env).size(8.0).color(palette.text_muted));
                         }
                     });
 
                     // Capabilities
                     if !peer.capabilities.is_empty() {
                         ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("caps:").size(8.0).color(palette.text_muted),
-                            );
+                            ui.label(RichText::new("caps:").size(8.0).color(palette.text_muted));
                             for cap in &peer.capabilities {
                                 ui.label(
-                                    RichText::new(cap.label())
-                                        .size(8.0)
-                                        .color(palette.accent),
+                                    RichText::new(cap.label()).size(8.0).color(palette.accent),
                                 );
                             }
                         });
@@ -208,18 +195,11 @@ impl VelocityApp {
 
                     // Actions for this peer
                     ui.horizontal(|ui| {
-                        if ui
-                            .small_button(
-                                RichText::new("Chat").size(8.0),
-                            )
-                            .clicked()
-                        {
+                        if ui.small_button(RichText::new("Chat").size(8.0)).clicked() {
                             self.peer_chat_selected = Some(peer.id.clone());
                         }
                         if ui
-                            .small_button(
-                                RichText::new("Health Check").size(8.0),
-                            )
+                            .small_button(RichText::new("Health Check").size(8.0))
                             .clicked()
                         {
                             let host = peer.host.clone();
@@ -232,8 +212,7 @@ impl VelocityApp {
                                     }
                                 }
                                 Err(e) => {
-                                    self.peer_status =
-                                        format!("{} unreachable: {}", peer.name, e);
+                                    self.peer_status = format!("{} unreachable: {}", peer.name, e);
                                     if let Some(p) = self.peer_manager.peers.get_mut(&peer.id) {
                                         p.online = false;
                                     }
@@ -241,9 +220,7 @@ impl VelocityApp {
                             }
                         }
                         if ui
-                            .small_button(
-                                RichText::new("Remove").size(8.0).color(palette.error),
-                            )
+                            .small_button(RichText::new("Remove").size(8.0).color(palette.error))
                             .clicked()
                         {
                             self.peer_manager.remove_peer(&peer.id);
@@ -361,30 +338,19 @@ impl VelocityApp {
                     };
 
                     ui.horizontal(|ui| {
+                        ui.label(RichText::new(dir_label).size(9.0).strong());
+                        ui.label(RichText::new(&xfer.filename).size(9.0).monospace());
                         ui.label(
-                            RichText::new(dir_label).size(9.0).strong(),
-                        );
-                        ui.label(
-                            RichText::new(&xfer.filename)
+                            RichText::new(format!("{:.0}%", progress * 100.0))
                                 .size(9.0)
-                                .monospace(),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "{:.0}%",
-                                progress * 100.0
-                            ))
-                            .size(9.0)
-                            .color(if xfer.complete {
-                                palette.success
-                            } else {
-                                palette.warning
-                            }),
+                                .color(if xfer.complete {
+                                    palette.success
+                                } else {
+                                    palette.warning
+                                }),
                         );
                         if xfer.complete {
-                            ui.label(
-                                RichText::new("✓").size(9.0).color(palette.success),
-                            );
+                            ui.label(RichText::new("✓").size(9.0).color(palette.success));
                         }
                     });
                 }
@@ -415,9 +381,7 @@ impl VelocityApp {
                         TaskStatus::Cancelled => palette.text_muted,
                     };
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(&task.prompt).size(9.0).strong(),
-                        );
+                        ui.label(RichText::new(&task.prompt).size(9.0).strong());
                         ui.label(
                             RichText::new(task.status.label())
                                 .size(8.0)
@@ -562,10 +526,7 @@ impl VelocityApp {
                     environment: None,
                 };
                 self.peer_manager.add_peer(peer);
-                self.peer_status = format!(
-                    "Added {} (unreachable: {}). Will retry.",
-                    name, e
-                );
+                self.peer_status = format!("Added {} (unreachable: {}). Will retry.", name, e);
             }
         }
 

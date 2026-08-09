@@ -143,7 +143,9 @@ impl VirtualDesktopManager {
             VDesktopOperation::SwitchToNamed(name) => {
                 // Resolve name to index via enumeration then switch
                 self.enumerate();
-                let idx = self.cached_state.as_ref()
+                let idx = self
+                    .cached_state
+                    .as_ref()
                     .and_then(|s| s.by_name(name))
                     .map(|d| d.index)
                     .unwrap_or(0);
@@ -151,9 +153,10 @@ impl VirtualDesktopManager {
             }
             VDesktopOperation::Create { name } => build_create_desktop_script(name.as_deref()),
             VDesktopOperation::Remove(idx) => build_remove_desktop_script(*idx),
-            VDesktopOperation::MoveWindow { hwnd, desktop_index } => {
-                build_move_window_to_desktop_script(*hwnd, *desktop_index)
-            }
+            VDesktopOperation::MoveWindow {
+                hwnd,
+                desktop_index,
+            } => build_move_window_to_desktop_script(*hwnd, *desktop_index),
             VDesktopOperation::PinWindow(hwnd) => build_pin_window_script(*hwnd),
             VDesktopOperation::UnpinWindow(hwnd) => build_unpin_window_script(*hwnd),
         };
@@ -443,14 +446,23 @@ Write-Output (ConvertTo-Json @{{ success = $true; hwnd = {hwnd}; pinned = $false
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -475,7 +487,8 @@ fn parse_enumerate_result(json: &str) -> Option<VirtualDesktopState> {
         total_count: Option<u32>,
     }
     let r: PsResult = serde_json::from_str(json).ok()?;
-    let desktops: Vec<VirtualDesktop> = r.desktops?
+    let desktops: Vec<VirtualDesktop> = r
+        .desktops?
         .into_iter()
         .map(|d| VirtualDesktop {
             id: d.id.unwrap_or_default(),

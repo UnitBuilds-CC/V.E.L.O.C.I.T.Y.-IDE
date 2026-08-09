@@ -70,7 +70,9 @@ pub fn render_minimap(
     let line_height = config.char_height * scale;
     for (i, line) in content.lines().enumerate() {
         let y = rect.min.y + i as f32 * line_height;
-        if y > rect.max.y { break; }
+        if y > rect.max.y {
+            break;
+        }
 
         let indent = line.len() - line.trim_start().len();
         let content_len = line.trim().len().min(60);
@@ -94,12 +96,19 @@ pub fn render_minimap(
         egui::pos2(rect.max.x, vp_end_y.min(rect.max.y)),
     );
     painter.rect_filled(viewport_rect, 0.0, palette.accent.gamma_multiply(0.12));
-    painter.rect_stroke(viewport_rect, 0.0, egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.4)), egui::StrokeKind::Outside);
+    painter.rect_stroke(
+        viewport_rect,
+        0.0,
+        egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.4)),
+        egui::StrokeKind::Outside,
+    );
 
     // Highlights (search matches, errors, etc.)
     for hl in highlights {
         let y = rect.min.y + hl.line as f32 * line_height;
-        if y > rect.max.y { continue; }
+        if y > rect.max.y {
+            continue;
+        }
         let hl_rect = Rect::from_min_max(
             egui::pos2(rect.max.x - 3.0, y),
             egui::pos2(rect.max.x, y + line_height),

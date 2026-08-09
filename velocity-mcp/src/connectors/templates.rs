@@ -95,7 +95,12 @@ pub enum WebhookDirection {
 
 impl IntegrationTemplate {
     /// Instantiate this template into a concrete ConnectorConfig.
-    pub fn instantiate_connector(&self, id: &str, name: &str, secret_handle: Option<String>) -> ConnectorConfig {
+    pub fn instantiate_connector(
+        &self,
+        id: &str,
+        name: &str,
+        secret_handle: Option<String>,
+    ) -> ConnectorConfig {
         ConnectorConfig {
             id: id.to_string(),
             name: name.to_string(),
@@ -109,8 +114,10 @@ impl IntegrationTemplate {
 
     /// Instantiate sync rules from this template.
     pub fn instantiate_sync_rules(&self, connector_id: &str) -> Vec<SyncRule> {
-        self.sync_rules.iter().enumerate().map(|(i, tmpl)| {
-            SyncRule {
+        self.sync_rules
+            .iter()
+            .enumerate()
+            .map(|(i, tmpl)| SyncRule {
                 id: format!("{}_{}", connector_id, i),
                 name: tmpl.name.clone(),
                 connector_id: connector_id.to_string(),
@@ -121,28 +128,35 @@ impl IntegrationTemplate {
                 enabled: false,
                 field_mappings: tmpl.field_mappings.clone(),
                 filter: None,
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Instantiate outgoing webhooks from this template.
-    pub fn instantiate_outgoing_webhooks(&self, connector_id: &str, url: &str) -> Vec<OutgoingWebhook> {
-        self.webhooks.iter()
+    pub fn instantiate_outgoing_webhooks(
+        &self,
+        connector_id: &str,
+        url: &str,
+    ) -> Vec<OutgoingWebhook> {
+        self.webhooks
+            .iter()
             .filter(|w| matches!(w.direction, WebhookDirection::Outgoing))
             .enumerate()
-            .map(|(i, tmpl)| {
-                OutgoingWebhook {
-                    id: format!("{}_wh_{}", connector_id, i),
-                    name: tmpl.name.clone(),
-                    url: url.to_string(),
-                    events: tmpl.events.iter().map(|e| WebhookEvent::from_label(e)).collect(),
-                    secret_handle: None,
-                    headers: Vec::new(),
-                    enabled: false,
-                    fire_count: 0,
-                    last_fired: None,
-                    last_status: None,
-                }
+            .map(|(i, tmpl)| OutgoingWebhook {
+                id: format!("{}_wh_{}", connector_id, i),
+                name: tmpl.name.clone(),
+                url: url.to_string(),
+                events: tmpl
+                    .events
+                    .iter()
+                    .map(|e| WebhookEvent::from_label(e))
+                    .collect(),
+                secret_handle: None,
+                headers: Vec::new(),
+                enabled: false,
+                fire_count: 0,
+                last_fired: None,
+                last_status: None,
             })
             .collect()
     }
@@ -178,7 +192,10 @@ fn github_template() -> IntegrationTemplate {
             base_url: "https://api.github.com".to_string(),
             auth_scheme: AuthScheme::Bearer,
             default_headers: vec![
-                ("Accept".to_string(), "application/vnd.github+json".to_string()),
+                (
+                    "Accept".to_string(),
+                    "application/vnd.github+json".to_string(),
+                ),
                 ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string()),
             ],
         },
@@ -209,18 +226,20 @@ fn github_template() -> IntegrationTemplate {
                 ],
             },
         ],
-        webhooks: vec![
-            WebhookTemplate {
-                name: "GitHub Events".to_string(),
-                events: vec!["workflow.completed".to_string(), "workflow.failed".to_string()],
-                direction: WebhookDirection::Outgoing,
-            },
-        ],
+        webhooks: vec![WebhookTemplate {
+            name: "GitHub Events".to_string(),
+            events: vec![
+                "workflow.completed".to_string(),
+                "workflow.failed".to_string(),
+            ],
+            direction: WebhookDirection::Outgoing,
+        }],
         required_secrets: vec!["github_token".to_string()],
-        setup_instructions: "1. Go to GitHub Settings > Developer Settings > Personal Access Tokens\n\
+        setup_instructions:
+            "1. Go to GitHub Settings > Developer Settings > Personal Access Tokens\n\
             2. Create a token with 'repo' and 'read:org' scopes\n\
             3. Store the token as 'github_token' in the secret store"
-            .to_string(),
+                .to_string(),
     }
 }
 
@@ -233,10 +252,10 @@ fn gitlab_template() -> IntegrationTemplate {
         connector: ConnectorTemplate {
             kind: ConnectorKind::GitLab,
             base_url: "https://gitlab.com/api/v4".to_string(),
-            auth_scheme: AuthScheme::Header { name: "PRIVATE-TOKEN".to_string() },
-            default_headers: vec![
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ],
+            auth_scheme: AuthScheme::Header {
+                name: "PRIVATE-TOKEN".to_string(),
+            },
+            default_headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         },
         sync_rules: vec![
             SyncRuleTemplate {
@@ -263,13 +282,11 @@ fn gitlab_template() -> IntegrationTemplate {
                 ],
             },
         ],
-        webhooks: vec![
-            WebhookTemplate {
-                name: "GitLab Events".to_string(),
-                events: vec!["build.completed".to_string(), "build.failed".to_string()],
-                direction: WebhookDirection::Outgoing,
-            },
-        ],
+        webhooks: vec![WebhookTemplate {
+            name: "GitLab Events".to_string(),
+            events: vec!["build.completed".to_string(), "build.failed".to_string()],
+            direction: WebhookDirection::Outgoing,
+        }],
         required_secrets: vec!["gitlab_token".to_string()],
         setup_instructions: "1. Go to GitLab > User Settings > Access Tokens\n\
             2. Create a token with 'api' scope\n\
@@ -304,7 +321,10 @@ fn jira_template() -> IntegrationTemplate {
                     ("body".to_string(), "fields.description".to_string()),
                     ("status".to_string(), "fields.status.name".to_string()),
                     ("priority".to_string(), "fields.priority.name".to_string()),
-                    ("assignee".to_string(), "fields.assignee.displayName".to_string()),
+                    (
+                        "assignee".to_string(),
+                        "fields.assignee.displayName".to_string(),
+                    ),
                 ],
             },
             SyncRuleTemplate {
@@ -351,18 +371,12 @@ fn slack_template() -> IntegrationTemplate {
             },
             WebhookTemplate {
                 name: "Build Status".to_string(),
-                events: vec![
-                    "build.completed".to_string(),
-                    "build.failed".to_string(),
-                ],
+                events: vec!["build.completed".to_string(), "build.failed".to_string()],
                 direction: WebhookDirection::Outgoing,
             },
             WebhookTemplate {
                 name: "Task Updates".to_string(),
-                events: vec![
-                    "task.started".to_string(),
-                    "task.completed".to_string(),
-                ],
+                events: vec!["task.started".to_string(), "task.completed".to_string()],
                 direction: WebhookDirection::Outgoing,
             },
         ],
@@ -379,24 +393,20 @@ fn discord_template() -> IntegrationTemplate {
     IntegrationTemplate {
         id: "discord".to_string(),
         name: "Discord".to_string(),
-        description: "Discord integration: webhook notifications for build and task events".to_string(),
+        description: "Discord integration: webhook notifications for build and task events"
+            .to_string(),
         category: IntegrationCategory::Communication,
         connector: ConnectorTemplate {
             kind: ConnectorKind::Discord,
             base_url: "https://discord.com/api/v10".to_string(),
             auth_scheme: AuthScheme::Bearer,
-            default_headers: vec![
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ],
+            default_headers: vec![("Content-Type".to_string(), "application/json".to_string())],
         },
         sync_rules: vec![],
         webhooks: vec![
             WebhookTemplate {
                 name: "Build Notifications".to_string(),
-                events: vec![
-                    "build.completed".to_string(),
-                    "build.failed".to_string(),
-                ],
+                events: vec!["build.completed".to_string(), "build.failed".to_string()],
                 direction: WebhookDirection::Outgoing,
             },
             WebhookTemplate {
@@ -436,7 +446,10 @@ fn notion_template() -> IntegrationTemplate {
                 direction: SyncDirection::BiDirectional,
                 poll_interval_secs: 600,
                 field_mappings: vec![
-                    ("title".to_string(), "properties.title.title[0].plain_text".to_string()),
+                    (
+                        "title".to_string(),
+                        "properties.title.title[0].plain_text".to_string(),
+                    ),
                     ("content".to_string(), "blocks".to_string()),
                     ("last_edited".to_string(), "last_edited_time".to_string()),
                 ],
@@ -530,14 +543,22 @@ mod tests {
     #[test]
     fn templates_have_required_secrets() {
         for t in all_templates() {
-            assert!(!t.required_secrets.is_empty(), "Template '{}' should have required secrets", t.id);
+            assert!(
+                !t.required_secrets.is_empty(),
+                "Template '{}' should have required secrets",
+                t.id
+            );
         }
     }
 
     #[test]
     fn templates_have_setup_instructions() {
         for t in all_templates() {
-            assert!(!t.setup_instructions.is_empty(), "Template '{}' should have setup instructions", t.id);
+            assert!(
+                !t.setup_instructions.is_empty(),
+                "Template '{}' should have setup instructions",
+                t.id
+            );
         }
     }
 

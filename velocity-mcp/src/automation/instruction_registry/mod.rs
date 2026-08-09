@@ -17,8 +17,12 @@ mod tests {
         let registry = InstructionRegistry::open(dir.path());
         assert!(registry.for_kind(AgentTaskKind::Refactor).is_some());
         assert!(registry.policy_for_kind(AgentTaskKind::Refactor).is_some());
-        assert!(registry.for_kind(AgentTaskKind::DesktopAutomation).is_some());
-        assert!(registry.policy_for_kind(AgentTaskKind::DesktopAutomation).is_some());
+        assert!(registry
+            .for_kind(AgentTaskKind::DesktopAutomation)
+            .is_some());
+        assert!(registry
+            .policy_for_kind(AgentTaskKind::DesktopAutomation)
+            .is_some());
         assert!(dir
             .path()
             .join(".velocity")

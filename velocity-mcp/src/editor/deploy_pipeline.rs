@@ -169,7 +169,10 @@ impl PipelineManager {
     pub fn new(workspace_root: PathBuf, config: PipelineConfig) -> Self {
         Self {
             config,
-            stages: PipelineStage::all().iter().map(|s| StageResult::new(*s)).collect(),
+            stages: PipelineStage::all()
+                .iter()
+                .map(|s| StageResult::new(*s))
+                .collect(),
             current_stage: None,
             history: VecDeque::with_capacity(10),
             deployments: Vec::new(),
@@ -215,7 +218,10 @@ impl PipelineManager {
 
     /// Start the pipeline from the build stage.
     pub fn start(&mut self) -> Result<(), String> {
-        self.stages = PipelineStage::all().iter().map(|s| StageResult::new(*s)).collect();
+        self.stages = PipelineStage::all()
+            .iter()
+            .map(|s| StageResult::new(*s))
+            .collect();
         self.current_stage = Some(PipelineStage::Build);
         self.run_current_stage()
     }
@@ -312,7 +318,9 @@ impl PipelineManager {
     /// Trigger deploy stage manually.
     pub fn deploy(&mut self) -> Result<(), String> {
         // Check that build+test passed
-        let all_prior_passed = self.stages.iter()
+        let all_prior_passed = self
+            .stages
+            .iter()
             .filter(|s| s.stage != PipelineStage::Deploy)
             .all(|s| matches!(s.status, StageStatus::Passed | StageStatus::Skipped));
 
@@ -354,9 +362,17 @@ impl PipelineManager {
 
     /// Get overall pipeline status label.
     pub fn status_label(&self) -> &str {
-        if self.stages.iter().all(|s| matches!(s.status, StageStatus::Passed | StageStatus::Skipped)) {
+        if self
+            .stages
+            .iter()
+            .all(|s| matches!(s.status, StageStatus::Passed | StageStatus::Skipped))
+        {
             "All Passed"
-        } else if self.stages.iter().any(|s| matches!(s.status, StageStatus::Failed(_))) {
+        } else if self
+            .stages
+            .iter()
+            .any(|s| matches!(s.status, StageStatus::Failed(_)))
+        {
             "Failed"
         } else if self.stages.iter().any(|s| s.status == StageStatus::Running) {
             "Running"
@@ -377,17 +393,23 @@ impl PipelineManager {
     /// Git push: stage all changes, commit with message, and push to remote.
     /// Returns the push output on success. Arguments are passed as discrete
     /// argv entries, so commit messages containing spaces or quotes are safe.
-    pub fn git_push(&self, commit_message: &str, remote: &str, branch: &str) -> Result<String, String> {
+    pub fn git_push(
+        &self,
+        commit_message: &str,
+        remote: &str,
+        branch: &str,
+    ) -> Result<String, String> {
         // Stage all changes
         run_command_args(&["git", "add", "-A"], &self.workspace_root)?;
 
         // Commit (message passed as a single argv entry — no shell quoting needed)
-        let commit_out =
-            run_command_args(&["git", "commit", "-m", commit_message], &self.workspace_root)?;
+        let commit_out = run_command_args(
+            &["git", "commit", "-m", commit_message],
+            &self.workspace_root,
+        )?;
 
         // Push to remote
-        let push_out =
-            run_command_args(&["git", "push", remote, branch], &self.workspace_root)?;
+        let push_out = run_command_args(&["git", "push", remote, branch], &self.workspace_root)?;
 
         Ok(format!("{}\n{}", commit_out, push_out))
     }
@@ -407,9 +429,14 @@ impl PipelineManager {
     pub fn trigger_ci_webhook(&self, webhook_url: &str, payload: &str) -> Result<String, String> {
         run_command_args(
             &[
-                "curl", "-s", "-X", "POST",
-                "-H", "Content-Type: application/json",
-                "-d", payload,
+                "curl",
+                "-s",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                payload,
                 webhook_url,
             ],
             &self.workspace_root,
@@ -418,12 +445,20 @@ impl PipelineManager {
 
     /// Full deploy flow: build → test → git push → trigger CI.
     /// This is the one-click "ship it" pipeline.
-    pub fn ship_it(&mut self, commit_message: &str, remote: &str, branch: &str, ci_workflow: Option<&str>) -> Result<String, String> {
+    pub fn ship_it(
+        &mut self,
+        commit_message: &str,
+        remote: &str,
+        branch: &str,
+        ci_workflow: Option<&str>,
+    ) -> Result<String, String> {
         // Run build + test first
         self.start()?;
 
         // Check all stages passed
-        let all_passed = self.stages.iter()
+        let all_passed = self
+            .stages
+            .iter()
             .all(|s| matches!(s.status, StageStatus::Passed | StageStatus::Skipped));
         if !all_passed {
             return Err("Pipeline stages did not pass — aborting ship".into());
@@ -561,7 +596,8 @@ fn run_command_args_with_timeout(
             s
         })
         .unwrap_or_default();
-    let status = exit_status.ok_or_else(|| format!("Command {} exited without a status", program))?;
+    let status =
+        exit_status.ok_or_else(|| format!("Command {} exited without a status", program))?;
 
     finish_output(stdout, stderr, status)
 }
@@ -644,10 +680,13 @@ mod tests {
 
     #[test]
     fn deploy_requires_prior_stages() {
-        let mut pm = PipelineManager::new(PathBuf::from("/tmp"), PipelineConfig {
-            deploy_command: Some("echo deploy".into()),
-            ..Default::default()
-        });
+        let mut pm = PipelineManager::new(
+            PathBuf::from("/tmp"),
+            PipelineConfig {
+                deploy_command: Some("echo deploy".into()),
+                ..Default::default()
+            },
+        );
         let result = pm.deploy();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("prior stages"));
@@ -661,7 +700,10 @@ mod tests {
 
     #[test]
     fn parse_shell_words_splits_on_whitespace() {
-        assert_eq!(parse_shell_words("cargo build --release"), ["cargo", "build", "--release"]);
+        assert_eq!(
+            parse_shell_words("cargo build --release"),
+            ["cargo", "build", "--release"]
+        );
     }
 
     #[test]

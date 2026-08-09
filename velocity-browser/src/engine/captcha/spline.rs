@@ -101,11 +101,15 @@ impl Default for SplineExtractor {
 
 impl SplineExtractor {
     pub fn new() -> Self {
-        Self { luminance_threshold: 128 }
+        Self {
+            luminance_threshold: 128,
+        }
     }
 
     pub fn with_threshold(threshold: u8) -> Self {
-        Self { luminance_threshold: threshold }
+        Self {
+            luminance_threshold: threshold,
+        }
     }
 
     /// Extract the dominant closed contour from a region as an ordered set of
@@ -196,7 +200,11 @@ impl SplineExtractor {
             let start = key[i];
             let end = key[(i + 1) % key.len()];
             let control = Point2D::new((start.x + end.x) * 0.5, (start.y + end.y) * 0.5);
-            segments.push(SplineSegment { start, control, end });
+            segments.push(SplineSegment {
+                start,
+                control,
+                end,
+            });
         }
         segments
     }

@@ -474,7 +474,11 @@ pub fn list_workflows(
             Err(err) => return Err(format!("read workflow dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         if path
@@ -574,7 +578,11 @@ pub fn list_workflow_suites(
             Err(err) => return Err(format!("read workflow suite dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         if path
@@ -647,7 +655,11 @@ pub fn list_workflow_runs(
             Err(err) => return Err(format!("read browser run dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser run report: {err}"))?;
@@ -716,7 +728,11 @@ pub fn list_workflow_suite_runs(
             Err(err) => return Err(format!("read browser suite run dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser suite run report: {err}"))?;
@@ -736,4 +752,3 @@ pub fn list_workflow_suite_runs(
     });
     Ok(items)
 }
-

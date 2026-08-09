@@ -126,21 +126,30 @@ impl ProviderScorer {
         latency_ms: u64,
     ) {
         let key = (format!("{}::{}", provider_slug, model_id), category);
-        self.scores.entry(key)
+        self.scores
+            .entry(key)
             .and_modify(|p| p.record(success, latency_ms))
-            .or_insert_with(|| ProviderPerformance::new(provider_slug, model_id, success, latency_ms));
+            .or_insert_with(|| {
+                ProviderPerformance::new(provider_slug, model_id, success, latency_ms)
+            });
     }
 
     /// Get the recommended provider ordering for a task category.
     /// Returns providers sorted by combined score (best first).
     pub fn recommend(&self, category: &TaskCategory) -> Vec<&ProviderPerformance> {
-        let mut candidates: Vec<_> = self.scores.iter()
-            .filter(|((_, cat), perf)| cat == category && perf.observations >= self.min_observations)
+        let mut candidates: Vec<_> = self
+            .scores
+            .iter()
+            .filter(|((_, cat), perf)| {
+                cat == category && perf.observations >= self.min_observations
+            })
             .map(|(_, perf)| perf)
             .collect();
 
         candidates.sort_by(|a, b| {
-            b.combined_score().partial_cmp(&a.combined_score()).unwrap_or(std::cmp::Ordering::Equal)
+            b.combined_score()
+                .partial_cmp(&a.combined_score())
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         candidates
@@ -149,21 +158,37 @@ impl ProviderScorer {
     /// Get the single best provider+model for a category, if enough data exists.
     pub fn best_for(&self, category: &TaskCategory) -> Option<(&str, &str, f64)> {
         self.recommend(category).first().map(|p| {
-            (p.provider_slug.as_str(), p.model_id.as_str(), p.combined_score())
+            (
+                p.provider_slug.as_str(),
+                p.model_id.as_str(),
+                p.combined_score(),
+            )
         })
     }
 
     /// Get success rate for a specific provider+model on a category.
-    pub fn success_rate(&self, provider_slug: &str, model_id: &str, category: &TaskCategory) -> Option<f64> {
+    pub fn success_rate(
+        &self,
+        provider_slug: &str,
+        model_id: &str,
+        category: &TaskCategory,
+    ) -> Option<f64> {
         let key = (format!("{}::{}", provider_slug, model_id), category.clone());
         self.scores.get(&key).map(|p| p.ema_success_rate)
     }
 
     /// Generate a report of all provider performance.
     pub fn report(&self) -> Vec<(String, String, f64, u32)> {
-        let mut report: Vec<_> = self.scores.iter()
+        let mut report: Vec<_> = self
+            .scores
+            .iter()
             .map(|((key, cat), perf)| {
-                (key.clone(), cat.label().to_string(), perf.combined_score(), perf.observations)
+                (
+                    key.clone(),
+                    cat.label().to_string(),
+                    perf.combined_score(),
+                    perf.observations,
+                )
             })
             .collect();
         report.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
@@ -172,7 +197,13 @@ impl ProviderScorer {
 
     /// Should we try a fallback provider? Returns true if current provider's
     /// success rate is below threshold for the given category.
-    pub fn should_fallback(&self, provider_slug: &str, model_id: &str, category: &TaskCategory, threshold: f64) -> bool {
+    pub fn should_fallback(
+        &self,
+        provider_slug: &str,
+        model_id: &str,
+        category: &TaskCategory,
+        threshold: f64,
+    ) -> bool {
         if let Some(rate) = self.success_rate(provider_slug, model_id, category) {
             rate < threshold
         } else {
@@ -222,7 +253,13 @@ mod tests {
     fn should_fallback_on_low_success() {
         let mut scorer = ProviderScorer::new();
         for _ in 0..5 {
-            scorer.record("bad_provider", "model_x", TaskCategory::Browsing, false, 10000);
+            scorer.record(
+                "bad_provider",
+                "model_x",
+                TaskCategory::Browsing,
+                false,
+                10000,
+            );
         }
 
         assert!(scorer.should_fallback("bad_provider", "model_x", &TaskCategory::Browsing, 0.5));
@@ -267,9 +304,15 @@ mod tests {
         assert_eq!(TaskCategory::from_str("browsing"), TaskCategory::Browsing);
         assert_eq!(TaskCategory::from_str("navigation"), TaskCategory::Browsing);
         assert_eq!(TaskCategory::from_str("web"), TaskCategory::Browsing);
-        assert_eq!(TaskCategory::from_str("extraction"), TaskCategory::DataExtraction);
+        assert_eq!(
+            TaskCategory::from_str("extraction"),
+            TaskCategory::DataExtraction
+        );
         assert_eq!(TaskCategory::from_str("data"), TaskCategory::DataExtraction);
-        assert_eq!(TaskCategory::from_str("scraping"), TaskCategory::DataExtraction);
+        assert_eq!(
+            TaskCategory::from_str("scraping"),
+            TaskCategory::DataExtraction
+        );
         assert_eq!(TaskCategory::from_str("form"), TaskCategory::FormFilling);
         assert_eq!(TaskCategory::from_str("filling"), TaskCategory::FormFilling);
         assert_eq!(TaskCategory::from_str("input"), TaskCategory::FormFilling);
@@ -298,9 +341,12 @@ mod tests {
     #[test]
     fn task_category_label_roundtrip() {
         let cats = [
-            TaskCategory::Coding, TaskCategory::Browsing,
-            TaskCategory::DataExtraction, TaskCategory::FormFilling,
-            TaskCategory::Reasoning, TaskCategory::Creative,
+            TaskCategory::Coding,
+            TaskCategory::Browsing,
+            TaskCategory::DataExtraction,
+            TaskCategory::FormFilling,
+            TaskCategory::Reasoning,
+            TaskCategory::Creative,
             TaskCategory::General,
         ];
         for cat in &cats {
@@ -323,7 +369,11 @@ mod tests {
             observations: 100,
         };
         let score = p.combined_score();
-        assert!(score > 0.95, "Perfect fast provider should score > 0.95, got {}", score);
+        assert!(
+            score > 0.95,
+            "Perfect fast provider should score > 0.95, got {}",
+            score
+        );
     }
 
     #[test]
@@ -338,7 +388,11 @@ mod tests {
             observations: 100,
         };
         let score = p.combined_score();
-        assert!(score < 0.01, "Terrible slow provider should score near 0, got {}", score);
+        assert!(
+            score < 0.01,
+            "Terrible slow provider should score near 0, got {}",
+            score
+        );
     }
 
     // ── ProviderScorer::report ────────────────────────────────────────
@@ -352,7 +406,10 @@ mod tests {
         }
         let report = scorer.report();
         assert_eq!(report.len(), 2);
-        assert!(report[0].2 >= report[1].2, "Report should be sorted by score");
+        assert!(
+            report[0].2 >= report[1].2,
+            "Report should be sorted by score"
+        );
     }
 
     #[test]
@@ -366,7 +423,9 @@ mod tests {
     #[test]
     fn success_rate_none_for_unknown_provider() {
         let scorer = ProviderScorer::new();
-        assert!(scorer.success_rate("unknown", "model", &TaskCategory::Coding).is_none());
+        assert!(scorer
+            .success_rate("unknown", "model", &TaskCategory::Coding)
+            .is_none());
     }
 
     // ── should_fallback ───────────────────────────────────────────────

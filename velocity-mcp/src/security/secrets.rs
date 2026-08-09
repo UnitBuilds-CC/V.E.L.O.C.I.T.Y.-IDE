@@ -60,8 +60,7 @@ impl SecretStore {
         let sealed = crate::agent::crypto::seal(workspace_root, SECRETS_LABEL, &json)
             .ok_or_else(|| "no key material available to seal secrets".to_string())?;
         let dir = workspace_root.join(".velocity");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create .velocity dir: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create .velocity dir: {e}"))?;
         std::fs::write(dir.join(SECRETS_FILE), &sealed)
             .map_err(|e| format!("cannot write secrets file: {e}"))
     }

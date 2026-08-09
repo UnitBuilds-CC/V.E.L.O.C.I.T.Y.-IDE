@@ -60,8 +60,10 @@ impl TransitionSpec {
                     delay_ms = val;
                 }
                 time_idx += 1;
-            } else if matches!(*part, "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out")
-                || part.starts_with("cubic-bezier")
+            } else if matches!(
+                *part,
+                "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out"
+            ) || part.starts_with("cubic-bezier")
                 || part.starts_with("steps")
             {
                 timing = TimingFunction::parse(part);
@@ -70,7 +72,12 @@ impl TransitionSpec {
             }
         }
 
-        Self { property, duration_ms, delay_ms, timing_function: timing }
+        Self {
+            property,
+            duration_ms,
+            delay_ms,
+            timing_function: timing,
+        }
     }
 
     /// Parse a full `transition` declaration that may list several transitions
@@ -336,7 +343,10 @@ mod tests {
     #[test]
     fn multiple_transitions_on_same_node() {
         let mut mgr = TransitionManager::new();
-        mgr.set_transition_specs(1, TransitionSpec::parse_many("opacity 1s linear, width 1s linear"));
+        mgr.set_transition_specs(
+            1,
+            TransitionSpec::parse_many("opacity 1s linear, width 1s linear"),
+        );
         mgr.set_property(1, "opacity", "0", 0.0);
         mgr.set_property(1, "width", "0px", 0.0);
         mgr.set_property(1, "opacity", "1", 0.0);

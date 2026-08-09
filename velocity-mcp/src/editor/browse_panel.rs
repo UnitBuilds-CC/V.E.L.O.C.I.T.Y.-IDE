@@ -34,13 +34,25 @@ pub struct BrowseMessage {
 
 impl BrowseMessage {
     pub fn user(content: &str) -> Self {
-        Self { role: "user".to_string(), content: content.to_string(), timestamp: Instant::now() }
+        Self {
+            role: "user".to_string(),
+            content: content.to_string(),
+            timestamp: Instant::now(),
+        }
     }
     pub fn assistant(content: &str) -> Self {
-        Self { role: "assistant".to_string(), content: content.to_string(), timestamp: Instant::now() }
+        Self {
+            role: "assistant".to_string(),
+            content: content.to_string(),
+            timestamp: Instant::now(),
+        }
     }
     pub fn status(content: &str) -> Self {
-        Self { role: "status".to_string(), content: content.to_string(), timestamp: Instant::now() }
+        Self {
+            role: "status".to_string(),
+            content: content.to_string(),
+            timestamp: Instant::now(),
+        }
     }
 }
 
@@ -88,12 +100,7 @@ impl Default for BrowseState {
 
 impl BrowseState {
     /// Submit a browse request. Spawns a headless sub-agent with browser tools.
-    pub fn send(
-        &mut self,
-        workspace_root: &std::path::Path,
-        provider: AiProvider,
-        model: &str,
-    ) {
+    pub fn send(&mut self, workspace_root: &std::path::Path, provider: AiProvider, model: &str) {
         let query = self.input.trim().to_string();
         let url = self.url_input.trim().to_string();
         if query.is_empty() {
@@ -102,10 +109,7 @@ impl BrowseState {
 
         // Build the user prompt
         let prompt = if url.is_empty() {
-            format!(
-                "{}\n\nUser request: {}",
-                BROWSE_SYSTEM_PROMPT, query
-            )
+            format!("{}\n\nUser request: {}", BROWSE_SYSTEM_PROMPT, query)
         } else {
             format!(
                 "{}\n\nUser request: Go to {} and answer: {}",
@@ -164,9 +168,10 @@ impl BrowseState {
                     self.messages.push(BrowseMessage::status(&event.message));
                 }
                 crate::agent::HeadlessSubAgentEventKind::ToolStarted => {
-                    self.messages.push(BrowseMessage::status(
-                        &format!("\u{1F310} {}", event.message),
-                    ));
+                    self.messages.push(BrowseMessage::status(&format!(
+                        "\u{1F310} {}",
+                        event.message
+                    )));
                 }
                 _ => {}
             }
@@ -178,7 +183,9 @@ impl BrowseState {
         if transcript.len() > self.transcript_rendered {
             let new_text = &transcript[self.transcript_rendered..];
             // Find or create the streaming assistant message
-            let needs_new = self.messages.last()
+            let needs_new = self
+                .messages
+                .last()
                 .map(|m| m.role != "streaming")
                 .unwrap_or(true);
             if needs_new {

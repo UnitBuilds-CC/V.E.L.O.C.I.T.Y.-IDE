@@ -149,7 +149,10 @@ pub fn verify_signature(
     signature: &[u8],
 ) -> Result<(), String> {
     let alg = ring_algorithm(scheme).ok_or_else(|| {
-        format!("unsupported signature scheme {:02x}{:02x}", scheme[0], scheme[1])
+        format!(
+            "unsupported signature scheme {:02x}{:02x}",
+            scheme[0], scheme[1]
+        )
     })?;
     let key_bytes = spki_public_key_bytes(spki).ok_or("malformed SubjectPublicKeyInfo")?;
     let public_key = signature::UnparsedPublicKey::new(alg, key_bytes);
@@ -311,8 +314,14 @@ mod tests {
 
     #[test]
     fn scheme_name_maps_known_schemes_and_flags_unknown() {
-        assert_eq!(scheme_name(ECDSA_SECP256R1_SHA256), "ecdsa_secp256r1_sha256");
-        assert_eq!(scheme_name(ECDSA_SECP384R1_SHA384), "ecdsa_secp384r1_sha384");
+        assert_eq!(
+            scheme_name(ECDSA_SECP256R1_SHA256),
+            "ecdsa_secp256r1_sha256"
+        );
+        assert_eq!(
+            scheme_name(ECDSA_SECP384R1_SHA384),
+            "ecdsa_secp384r1_sha384"
+        );
         assert_eq!(scheme_name(RSA_PSS_RSAE_SHA256), "rsa_pss_rsae_sha256");
         assert_eq!(scheme_name(RSA_PKCS1_SHA512), "rsa_pkcs1_sha512");
         assert_eq!(scheme_name([0x00, 0x00]), "unknown");

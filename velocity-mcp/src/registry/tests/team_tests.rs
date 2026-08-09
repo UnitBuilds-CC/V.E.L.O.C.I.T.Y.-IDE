@@ -70,7 +70,11 @@ fn create_expert_team_replaces_matching_slug() {
     let canon = root.canonicalize().unwrap();
     let teams = load_expert_teams(&canon);
     let matching: Vec<_> = teams.iter().filter(|t| t.slug() == "docs-team").collect();
-    assert_eq!(matching.len(), 1, "second create should replace, not append");
+    assert_eq!(
+        matching.len(),
+        1,
+        "second create should replace, not append"
+    );
     assert_eq!(matching[0].members[0].role, "Second");
 }
 
@@ -100,7 +104,10 @@ fn create_skill_file_writes_nda() {
     )
     .unwrap();
 
-    let skill_path = root.join(".velocity").join("skills").join("netcode-expert.nda");
+    let skill_path = root
+        .join(".velocity")
+        .join("skills")
+        .join("netcode-expert.nda");
     let raw = fs::read(skill_path).expect("skill nda written");
     let plain = crate::agent::crypto::open(&root, b"skill", &raw);
     let content = String::from_utf8(plain).expect("utf8 skill nda");

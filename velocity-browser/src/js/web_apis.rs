@@ -90,7 +90,13 @@ impl WebApiResult {
         }
     }
 
-    fn with_storage(value: JsValue, st: StorageType, op: StorageOp, key: Option<String>, val: Option<String>) -> Self {
+    fn with_storage(
+        value: JsValue,
+        st: StorageType,
+        op: StorageOp,
+        key: Option<String>,
+        val: Option<String>,
+    ) -> Self {
         Self {
             value,
             pending_timer: None,
@@ -121,43 +127,70 @@ pub fn eval_web_api(expr: &str, current_url: &str, timer_seq: u64) -> Option<Web
     let expr = expr.trim();
 
     // setTimeout(script/fn, delay)
-    if let Some(inner) = expr.strip_prefix("setTimeout(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(inner) = expr
+        .strip_prefix("setTimeout(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(handle_set_timeout(inner, timer_seq));
     }
 
     // setInterval(script/fn, delay)
-    if let Some(inner) = expr.strip_prefix("setInterval(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(inner) = expr
+        .strip_prefix("setInterval(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(handle_set_interval(inner, timer_seq));
     }
 
     // clearTimeout(id) / clearInterval(id)
-    if let Some(inner) = expr.strip_prefix("clearTimeout(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(inner) = expr
+        .strip_prefix("clearTimeout(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         if let Ok(id) = inner.trim().parse::<u64>() {
             return Some(WebApiResult::with_cancel(JsValue::Undefined, id));
         }
     }
-    if let Some(inner) = expr.strip_prefix("clearInterval(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(inner) = expr
+        .strip_prefix("clearInterval(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         if let Ok(id) = inner.trim().parse::<u64>() {
             return Some(WebApiResult::with_cancel(JsValue::Undefined, id));
         }
     }
 
     // console.log/warn/error/info(...)
-    if let Some(msg) = expr.strip_prefix("console.log(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(msg) = expr
+        .strip_prefix("console.log(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(WebApiResult::with_console("log", unquote(msg)));
     }
-    if let Some(msg) = expr.strip_prefix("console.warn(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(msg) = expr
+        .strip_prefix("console.warn(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(WebApiResult::with_console("warn", unquote(msg)));
     }
-    if let Some(msg) = expr.strip_prefix("console.error(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(msg) = expr
+        .strip_prefix("console.error(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(WebApiResult::with_console("error", unquote(msg)));
     }
-    if let Some(msg) = expr.strip_prefix("console.info(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(msg) = expr
+        .strip_prefix("console.info(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(WebApiResult::with_console("info", unquote(msg)));
     }
 
     // fetch(url) / fetch(url, options)
-    if let Some(inner) = expr.strip_prefix("fetch(").and_then(|s| s.strip_suffix(")")) {
+    if let Some(inner) = expr
+        .strip_prefix("fetch(")
+        .and_then(|s| s.strip_suffix(")"))
+    {
         return Some(handle_fetch(inner));
     }
 
@@ -171,7 +204,9 @@ pub fn eval_web_api(expr: &str, current_url: &str, timer_seq: u64) -> Option<Web
 
     // window.location properties
     if expr == "window.location.href" || expr == "location.href" {
-        return Some(WebApiResult::simple(JsValue::String(current_url.to_string())));
+        return Some(WebApiResult::simple(JsValue::String(
+            current_url.to_string(),
+        )));
     }
     if expr == "window.location.pathname" || expr == "location.pathname" {
         let path = extract_pathname(current_url);
@@ -195,12 +230,17 @@ pub fn eval_web_api(expr: &str, current_url: &str, timer_seq: u64) -> Option<Web
         return Some(WebApiResult::simple(JsValue::String(hostname)));
     }
     if expr == "window.location.protocol" || expr == "location.protocol" {
-        let protocol = if current_url.starts_with("https") { "https:" } else { "http:" };
+        let protocol = if current_url.starts_with("https") {
+            "https:"
+        } else {
+            "http:"
+        };
         return Some(WebApiResult::simple(JsValue::String(protocol.to_string())));
     }
 
     // window.location.href = "url" (navigation)
-    if let Some(url) = expr.strip_prefix("window.location.href=")
+    if let Some(url) = expr
+        .strip_prefix("window.location.href=")
         .or_else(|| expr.strip_prefix("window.location.href ="))
         .or_else(|| expr.strip_prefix("window.location ="))
         .or_else(|| expr.strip_prefix("location.href="))
@@ -317,30 +357,69 @@ fn parse_timer_args(inner: &str) -> (String, u64) {
 
 fn handle_storage(expr: &str, st: StorageType, prefix: &str) -> Option<WebApiResult> {
     // .getItem('key')
-    if let Some(arg) = expr.strip_prefix(&format!("{}.getItem(", prefix)).and_then(|s| s.strip_suffix(")")) {
+    if let Some(arg) = expr
+        .strip_prefix(&format!("{}.getItem(", prefix))
+        .and_then(|s| s.strip_suffix(")"))
+    {
         let key = unquote(arg);
-        return Some(WebApiResult::with_storage(JsValue::Null, st, StorageOp::GetItem, Some(key), None));
+        return Some(WebApiResult::with_storage(
+            JsValue::Null,
+            st,
+            StorageOp::GetItem,
+            Some(key),
+            None,
+        ));
     }
     // .setItem('key', 'value')
-    if let Some(args) = expr.strip_prefix(&format!("{}.setItem(", prefix)).and_then(|s| s.strip_suffix(")")) {
+    if let Some(args) = expr
+        .strip_prefix(&format!("{}.setItem(", prefix))
+        .and_then(|s| s.strip_suffix(")"))
+    {
         if let Some((k, v)) = args.split_once(',') {
             let key = unquote(k.trim());
             let val = unquote(v.trim());
-            return Some(WebApiResult::with_storage(JsValue::Undefined, st, StorageOp::SetItem, Some(key), Some(val)));
+            return Some(WebApiResult::with_storage(
+                JsValue::Undefined,
+                st,
+                StorageOp::SetItem,
+                Some(key),
+                Some(val),
+            ));
         }
     }
     // .removeItem('key')
-    if let Some(arg) = expr.strip_prefix(&format!("{}.removeItem(", prefix)).and_then(|s| s.strip_suffix(")")) {
+    if let Some(arg) = expr
+        .strip_prefix(&format!("{}.removeItem(", prefix))
+        .and_then(|s| s.strip_suffix(")"))
+    {
         let key = unquote(arg);
-        return Some(WebApiResult::with_storage(JsValue::Undefined, st, StorageOp::RemoveItem, Some(key), None));
+        return Some(WebApiResult::with_storage(
+            JsValue::Undefined,
+            st,
+            StorageOp::RemoveItem,
+            Some(key),
+            None,
+        ));
     }
     // .clear()
     if expr == format!("{}.clear()", prefix) {
-        return Some(WebApiResult::with_storage(JsValue::Undefined, st, StorageOp::Clear, None, None));
+        return Some(WebApiResult::with_storage(
+            JsValue::Undefined,
+            st,
+            StorageOp::Clear,
+            None,
+            None,
+        ));
     }
     // .length
     if expr == format!("{}.length", prefix) {
-        return Some(WebApiResult::with_storage(JsValue::Number(0.0), st, StorageOp::Length, None, None));
+        return Some(WebApiResult::with_storage(
+            JsValue::Number(0.0),
+            st,
+            StorageOp::Length,
+            None,
+            None,
+        ));
     }
     None
 }
@@ -419,10 +498,18 @@ fn unquote(s: &str) -> String {
 pub fn build_fetch_response(status: u16, body: &str) -> JsValue {
     let mut resp = HashMap::new();
     resp.insert("status".to_string(), JsValue::Number(status as f64));
-    resp.insert("ok".to_string(), JsValue::Boolean((200..300).contains(&status)));
-    resp.insert("statusText".to_string(), JsValue::String(
-        if status == 200 { "OK".to_string() } else { format!("{}", status) }
-    ));
+    resp.insert(
+        "ok".to_string(),
+        JsValue::Boolean((200..300).contains(&status)),
+    );
+    resp.insert(
+        "statusText".to_string(),
+        JsValue::String(if status == 200 {
+            "OK".to_string()
+        } else {
+            format!("{}", status)
+        }),
+    );
     resp.insert("body".to_string(), JsValue::String(body.to_string()));
     resp.insert("text".to_string(), JsValue::String(body.to_string()));
 
@@ -443,9 +530,7 @@ fn json_to_jsvalue(val: &serde_json::Value) -> JsValue {
         serde_json::Value::Bool(b) => JsValue::Boolean(*b),
         serde_json::Value::Number(n) => JsValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => JsValue::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            JsValue::Array(arr.iter().map(json_to_jsvalue).collect())
-        }
+        serde_json::Value::Array(arr) => JsValue::Array(arr.iter().map(json_to_jsvalue).collect()),
         serde_json::Value::Object(obj) => {
             let mut map = HashMap::new();
             for (k, v) in obj {
@@ -486,20 +571,32 @@ mod tests {
 
     #[test]
     fn eval_location_href() {
-        let result = eval_web_api("window.location.href", "https://example.com/path?q=1", 1).unwrap();
-        assert_eq!(result.value, JsValue::String("https://example.com/path?q=1".to_string()));
+        let result =
+            eval_web_api("window.location.href", "https://example.com/path?q=1", 1).unwrap();
+        assert_eq!(
+            result.value,
+            JsValue::String("https://example.com/path?q=1".to_string())
+        );
     }
 
     #[test]
     fn eval_location_pathname() {
-        let result = eval_web_api("window.location.pathname", "https://example.com/foo/bar?x=1", 1).unwrap();
+        let result = eval_web_api(
+            "window.location.pathname",
+            "https://example.com/foo/bar?x=1",
+            1,
+        )
+        .unwrap();
         assert_eq!(result.value, JsValue::String("/foo/bar".to_string()));
     }
 
     #[test]
     fn eval_location_origin() {
         let result = eval_web_api("window.location.origin", "https://example.com/path", 1).unwrap();
-        assert_eq!(result.value, JsValue::String("https://example.com".to_string()));
+        assert_eq!(
+            result.value,
+            JsValue::String("https://example.com".to_string())
+        );
     }
 
     #[test]

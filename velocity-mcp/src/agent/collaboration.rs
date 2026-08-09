@@ -206,7 +206,8 @@ impl CollaborationManager {
 
     /// Check if a user has a specific permission.
     pub fn check_permission(&self, user_id: &str, perm: Permission) -> bool {
-        self.users.get(user_id)
+        self.users
+            .get(user_id)
             .map(|u| u.role.has_permission(perm))
             .unwrap_or(false)
     }
@@ -273,7 +274,9 @@ impl CollaborationManager {
             return Err("User does not have permission to view sessions".to_string());
         }
 
-        let session = self.sessions.get_mut(session_id)
+        let session = self
+            .sessions
+            .get_mut(session_id)
             .ok_or_else(|| format!("Session '{}' not found", session_id))?;
 
         if !session.participants.contains(&user_id.to_string()) {
@@ -297,7 +300,9 @@ impl CollaborationManager {
         content: &str,
         kind: MessageKind,
     ) -> Result<(), String> {
-        let session = self.sessions.get_mut(session_id)
+        let session = self
+            .sessions
+            .get_mut(session_id)
             .ok_or_else(|| format!("Session '{}' not found", session_id))?;
 
         let msg = SessionMessage {
@@ -324,14 +329,16 @@ impl CollaborationManager {
 
     /// Get sessions a user is participating in.
     pub fn user_sessions(&self, user_id: &str) -> Vec<&SharedSession> {
-        self.sessions.values()
+        self.sessions
+            .values()
             .filter(|s| s.participants.contains(&user_id.to_string()))
             .collect()
     }
 
     /// Get all active sessions.
     pub fn active_sessions(&self) -> Vec<&SharedSession> {
-        self.sessions.values()
+        self.sessions
+            .values()
             .filter(|s| s.status == SessionStatus::Active)
             .collect()
     }
@@ -352,8 +359,8 @@ impl CollaborationManager {
             users: self.users.values().cloned().collect(),
             sessions: self.sessions.values().cloned().collect(),
         };
-        let json = serde_json::to_vec_pretty(&state)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("collaboration.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -488,7 +495,8 @@ mod tests {
         mgr.add_user(test_user("u1", TeamRole::Editor));
 
         let sess_id = mgr.create_session("u1", "Chat").unwrap();
-        mgr.send_message(&sess_id, "u1", "Hello!", MessageKind::UserChat).unwrap();
+        mgr.send_message(&sess_id, "u1", "Hello!", MessageKind::UserChat)
+            .unwrap();
 
         let session = mgr.sessions.get(&sess_id).unwrap();
         assert_eq!(session.messages.len(), 1);

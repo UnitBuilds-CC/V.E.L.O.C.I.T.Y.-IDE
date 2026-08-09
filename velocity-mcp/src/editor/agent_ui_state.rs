@@ -403,7 +403,6 @@ pub struct AgentUiState {
     pub metrics: AgentMetricsState,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,4 +480,3 @@ mod tests {
         assert_eq!(state.last_tool_duration_ms, 150);
     }
 }
-

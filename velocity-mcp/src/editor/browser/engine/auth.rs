@@ -255,4 +255,3 @@ pub fn collect_auth_signals(
     signals.dedup();
     signals
 }
-

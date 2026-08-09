@@ -45,7 +45,7 @@ impl StatusBar {
                     egui::RichText::new(mode)
                         .size(12.0)
                         .strong()
-                        .color(palette.accent)
+                        .color(palette.accent),
                 );
                 if mode_response.clicked() {
                     actions.clicked_mode = true;

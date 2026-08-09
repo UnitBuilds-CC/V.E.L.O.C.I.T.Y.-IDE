@@ -1,38 +1,34 @@
 // sandbox/mod.rs — Executing NDA opcode trees with nda_int kernels
 #![allow(dead_code, unused)]
-pub mod scope_validator;
 pub mod jit_sandbox;
+pub mod scope_validator;
 
 pub use jit_sandbox::NdaJitSandbox;
 
-use std::time::Instant;
-use crate::site_map::{NdaNode, SiteMap};
-use crate::site_map::verifier::{BitwiseOp, MathOp, MathFuncKind};
-use crate::nda_int::NdaVec;
 use crate::nda::NdaMatrix;
+use crate::nda_int::NdaVec;
+use crate::site_map::verifier::{BitwiseOp, MathFuncKind, MathOp};
+use crate::site_map::{NdaNode, SiteMap};
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct SandboxResult {
     pub executed_nodes: usize,
-    pub matrix_count:   usize,
-    pub norm_count:     usize,
-    pub output_vec:     Vec<f32>,   // final output of the execution chain
-    pub output_dim:     usize,
-    pub panicked:       bool,
-    pub error:          Option<String>,
-    pub elapsed_us:     u64,
+    pub matrix_count: usize,
+    pub norm_count: usize,
+    pub output_vec: Vec<f32>, // final output of the execution chain
+    pub output_dim: usize,
+    pub panicked: bool,
+    pub error: Option<String>,
+    pub elapsed_us: u64,
 }
 
 pub struct NdaSandbox;
 
 impl NdaSandbox {
-    pub fn run(
-        nodes: &[NdaNode],
-        conditioning_vec: &[f32],
-        site_map: &SiteMap,
-    ) -> SandboxResult {
+    pub fn run(nodes: &[NdaNode], conditioning_vec: &[f32], site_map: &SiteMap) -> SandboxResult {
         let t_start = Instant::now();
-        
+
         let executed_nodes = 0;
         let matrix_count = 0;
         let norm_count = 0;
@@ -83,18 +79,16 @@ impl NdaSandbox {
                     elapsed_us,
                 }
             }
-            Ok(Err(err_msg)) => {
-                SandboxResult {
-                    executed_nodes,
-                    matrix_count,
-                    norm_count,
-                    output_vec: vec![],
-                    output_dim: 0,
-                    panicked: false,
-                    error: Some(err_msg),
-                    elapsed_us,
-                }
-            }
+            Ok(Err(err_msg)) => SandboxResult {
+                executed_nodes,
+                matrix_count,
+                norm_count,
+                output_vec: vec![],
+                output_dim: 0,
+                panicked: false,
+                error: Some(err_msg),
+                elapsed_us,
+            },
             Err(panic_err) => {
                 let err_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
                     s.to_string()
@@ -145,9 +139,7 @@ struct ExecutionState {
 fn jit_val_to_nda_vec(jv: crate::compiler::nda_jit::JitVal) -> NdaVec {
     match jv {
         crate::compiler::nda_jit::JitVal::Vector(v) => (*v).clone(),
-        crate::compiler::nda_jit::JitVal::Float(val) => {
-            NdaVec::from_f32_slice(&[val])
-        }
+        crate::compiler::nda_jit::JitVal::Float(val) => NdaVec::from_f32_slice(&[val]),
         crate::compiler::nda_jit::JitVal::Scalar(val, scale) => {
             let actual = (val as f32) * 2.0f32.powi(scale as i32);
             NdaVec::from_f32_slice(&[actual])
@@ -156,7 +148,11 @@ fn jit_val_to_nda_vec(jv: crate::compiler::nda_jit::JitVal) -> NdaVec {
 }
 
 impl ExecutionState {
-    fn execute_sequence(&mut self, nodes: &[NdaNode], site_map: &SiteMap) -> Result<ControlFlow, String> {
+    fn execute_sequence(
+        &mut self,
+        nodes: &[NdaNode],
+        site_map: &SiteMap,
+    ) -> Result<ControlFlow, String> {
         for node in nodes {
             let cf = self.execute_node(node, site_map)?;
             match cf {
@@ -187,7 +183,13 @@ impl ExecutionState {
         self.executed_nodes += 1;
         match node {
             // ── Original computation nodes ────────────────────────────────
-            NdaNode::Matrix { rows, cols, scale, sign, extra } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                scale,
+                sign,
+                extra,
+            } => {
                 let r = *rows as usize;
                 let c = *cols as usize;
                 if self.current_vec.len != c {
@@ -198,13 +200,7 @@ impl ExecutionState {
                 }
 
                 let scale_f32 = 2.0f32.powi(*scale as i32);
-                let mat = NdaMatrix::new_quad(
-                    r,
-                    c,
-                    scale_f32,
-                    sign.clone(),
-                    extra.clone(),
-                );
+                let mat = NdaMatrix::new_quad(r, c, scale_f32, sign.clone(), extra.clone());
 
                 self.current_vec = crate::nda_int::nda_gemv_nda_to_nda(&mat, &self.current_vec);
                 self.matrix_count += 1;
@@ -281,7 +277,11 @@ impl ExecutionState {
                     }
                 }
             }
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 let cond_val = self.eval_node(cond, site_map)?;
                 if Self::is_truthy(&cond_val) {
                     let cf = self.execute_sequence(then_body, site_map)?;
@@ -383,7 +383,12 @@ impl ExecutionState {
                 if *op == BitwiseOp::Not {
                     let sign: Vec<u8> = l.sign.iter().map(|b| !b).collect();
                     let extra: Vec<u8> = l.extra.iter().map(|b| !b).collect();
-                    self.current_vec = NdaVec { len: l.len, log2_scale: l.log2_scale, sign: sign.into(), extra: extra.into() };
+                    self.current_vec = NdaVec {
+                        len: l.len,
+                        log2_scale: l.log2_scale,
+                        sign: sign.into(),
+                        extra: extra.into(),
+                    };
                 } else if let Some(r_node) = rhs {
                     let r = self.eval_node(r_node, site_map)?;
                     // Element-wise bitwise over the vectors' raw integer codes,
@@ -415,7 +420,11 @@ impl ExecutionState {
                 // Element-wise arithmetic with scalar broadcast (len-1 operand).
                 let n = l.len().max(r.len());
                 let pick = |v: &[f32], i: usize| -> f32 {
-                    if v.len() == 1 { v[0] } else { v.get(i).copied().unwrap_or(0.0) }
+                    if v.len() == 1 {
+                        v[0]
+                    } else {
+                        v.get(i).copied().unwrap_or(0.0)
+                    }
                 };
                 let out: Vec<f32> = (0..n)
                     .map(|i| {
@@ -425,7 +434,13 @@ impl ExecutionState {
                             MathOp::Add => a + b,
                             MathOp::Sub => a - b,
                             MathOp::Mul => a * b,
-                            MathOp::Div => if b != 0.0 { a / b } else { 0.0 },
+                            MathOp::Div => {
+                                if b != 0.0 {
+                                    a / b
+                                } else {
+                                    0.0
+                                }
+                            }
                         }
                     })
                     .collect();
@@ -434,12 +449,15 @@ impl ExecutionState {
             NdaNode::MathFunc { func, operand } => {
                 let val = self.eval_node(operand, site_map)?;
                 let f32s = val.to_f32_vec();
-                let res: Vec<f32> = f32s.iter().map(|&x| match func {
-                    MathFuncKind::Sin => x.sin(),
-                    MathFuncKind::Cos => x.cos(),
-                    MathFuncKind::Sqrt => x.sqrt(),
-                    MathFuncKind::Exp => x.exp(),
-                }).collect();
+                let res: Vec<f32> = f32s
+                    .iter()
+                    .map(|&x| match func {
+                        MathFuncKind::Sin => x.sin(),
+                        MathFuncKind::Cos => x.cos(),
+                        MathFuncKind::Sqrt => x.sqrt(),
+                        MathFuncKind::Exp => x.exp(),
+                    })
+                    .collect();
                 self.current_vec = NdaVec::from_f32_slice(&res);
             }
             NdaNode::Peek { addr } => {
@@ -456,7 +474,13 @@ impl ExecutionState {
                 let cols = vec.len;
                 if cols > 0 {
                     let rows = mat_vec.len / cols;
-                    let n_mat = NdaMatrix::new_quad(rows, cols, 2.0f32.powi(mat_vec.log2_scale as i32), mat_vec.sign.to_vec(), mat_vec.extra.to_vec());
+                    let n_mat = NdaMatrix::new_quad(
+                        rows,
+                        cols,
+                        2.0f32.powi(mat_vec.log2_scale as i32),
+                        mat_vec.sign.to_vec(),
+                        mat_vec.extra.to_vec(),
+                    );
                     self.current_vec = crate::nda_int::nda_gemv_nda_to_nda(&n_mat, &vec);
                 }
             }
@@ -583,19 +607,19 @@ mod tests {
     #[allow(clippy::needless_range_loop)]
     fn test_nda_vs_native_rust_performance() {
         use std::time::Instant;
-        
+
         let input = vec![1.0f32; 896];
         let site_map = SiteMap::open(&std::env::temp_dir().join("sandbox_perf_sm"), 0).unwrap();
-        
+
         let mut nodes = Vec::new();
-        
+
         let mut shapes = Vec::new();
         shapes.push((128usize, 896usize));
         for _ in 0..22 {
             shapes.push((128, 128));
         }
         shapes.push((896, 128));
-        
+
         for &(r, c) in &shapes {
             let bitmap_bytes = r * c.div_ceil(8);
             nodes.push(NdaNode::Matrix {
@@ -606,10 +630,10 @@ mod tests {
                 extra: vec![0x55; bitmap_bytes],
             });
         }
-        
+
         // Warmup
         let _ = NdaSandbox::run(&nodes, &input, &site_map);
-        
+
         let iters = 50;
         let t0 = Instant::now();
         for _ in 0..iters {
@@ -617,7 +641,7 @@ mod tests {
             std::hint::black_box(res);
         }
         let sandbox_duration = t0.elapsed() / iters;
-        
+
         let mut native_mats = Vec::new();
         for &(r, c) in &shapes {
             let bitmap_bytes = r * c.div_ceil(8);
@@ -629,12 +653,12 @@ mod tests {
                 vec![0x55; bitmap_bytes],
             ));
         }
-        
+
         let mut current_vec = NdaVec::from_f32_slice(&input);
         for mat in &native_mats {
             current_vec = crate::nda_int::nda_gemv_nda_to_nda(mat, &current_vec);
         }
-        
+
         let t1 = Instant::now();
         for _ in 0..iters {
             let mut vec = NdaVec::from_f32_slice(&input);
@@ -644,12 +668,12 @@ mod tests {
             std::hint::black_box(vec);
         }
         let native_duration = t1.elapsed() / iters;
-        
+
         let mut f32_mats = Vec::new();
         for &(r, c) in &shapes {
             f32_mats.push(vec![0.5f32; r * c]);
         }
-        
+
         let mut f32_vec = input.clone();
         for (i, &(r, c)) in shapes.iter().enumerate() {
             let mut out = vec![0.0f32; r];
@@ -664,7 +688,7 @@ mod tests {
             }
             f32_vec = out;
         }
-        
+
         let t2 = Instant::now();
         for _ in 0..iters {
             let mut vec = input.clone();
@@ -684,15 +708,20 @@ mod tests {
             std::hint::black_box(vec);
         }
         let f32_duration = t2.elapsed() / iters;
-        
+
         println!();
         println!("Execution comparison for a 24-layer Matrix Chain:");
         println!("  1. NDA Sandbox (Interpretive) : {:?}", sandbox_duration);
         println!("  2. NDA Native Rust (Direct)   : {:?}", native_duration);
         println!("  3. Standard F32 GEMV (Direct) : {:?}", f32_duration);
-        println!("  - Sandbox overhead            : {:.1}%", (sandbox_duration.as_nanos() as f64 / native_duration.as_nanos() as f64 - 1.0) * 100.0);
-        println!("  - NDA Speedup vs F32 GEMV     : {:.1}x", f32_duration.as_nanos() as f64 / native_duration.as_nanos() as f64);
+        println!(
+            "  - Sandbox overhead            : {:.1}%",
+            (sandbox_duration.as_nanos() as f64 / native_duration.as_nanos() as f64 - 1.0) * 100.0
+        );
+        println!(
+            "  - NDA Speedup vs F32 GEMV     : {:.1}x",
+            f32_duration.as_nanos() as f64 / native_duration.as_nanos() as f64
+        );
         println!();
     }
 }
-

@@ -47,7 +47,7 @@ impl Default for ReconnectConfig {
             initial_delay_secs: 2,
             max_delay_secs: 300, // 5 minutes
             backoff_multiplier: 2.0,
-            max_attempts: 0, // unlimited
+            max_attempts: 0,               // unlimited
             peer_death_timeout_secs: 3600, // 1 hour
         }
     }
@@ -479,12 +479,8 @@ impl RobustPeerManager {
             return;
         }
 
-        let online_peers: Vec<PeerIdentity> = self
-            .inner
-            .online_peers()
-            .into_iter()
-            .cloned()
-            .collect();
+        let online_peers: Vec<PeerIdentity> =
+            self.inner.online_peers().into_iter().cloned().collect();
 
         for peer in &online_peers {
             let start = now_secs();
@@ -535,12 +531,12 @@ impl RobustPeerManager {
             "env": identity.environment,
         });
 
-        let payload = serde_json::to_string(&announcement)
-            .map_err(|e| format!("Serialize: {e}"))?;
+        let payload =
+            serde_json::to_string(&announcement).map_err(|e| format!("Serialize: {e}"))?;
 
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("Bind: {e}"))?;
-        socket.set_broadcast(true)
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("Bind: {e}"))?;
+        socket
+            .set_broadcast(true)
             .map_err(|e| format!("Set broadcast: {e}"))?;
 
         let addr: SocketAddr = format!(
@@ -562,7 +558,8 @@ impl RobustPeerManager {
         let port = self.discovery_config.broadcast_port;
         let socket = UdpSocket::bind(format!("0.0.0.0:{}", port))
             .map_err(|e| format!("Bind discovery: {e}"))?;
-        socket.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
             .map_err(|e| format!("Timeout: {e}"))?;
 
         let mut buf = [0u8; 1024];
@@ -769,9 +766,7 @@ mod tests {
             environment: None,
         };
         robust.inner.add_peer(peer);
-        robust
-            .health
-            .insert(id.to_string(), PeerHealth::new(id));
+        robust.health.insert(id.to_string(), PeerHealth::new(id));
     }
 
     #[test]
@@ -953,7 +948,15 @@ mod tests {
     fn checkpoint_management() {
         let mut robust = make_robust();
 
-        robust.create_checkpoint("xfer_1", "p1", "app.exe", 3000, 3, "hash1", Some("run {file}"));
+        robust.create_checkpoint(
+            "xfer_1",
+            "p1",
+            "app.exe",
+            3000,
+            3,
+            "hash1",
+            Some("run {file}"),
+        );
         assert!(robust.checkpoints.contains_key("xfer_1"));
         assert!(!robust.is_transfer_complete("xfer_1"));
 

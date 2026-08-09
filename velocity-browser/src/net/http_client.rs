@@ -68,7 +68,10 @@ impl HttpClient {
     }
 
     /// Perform a GET, following redirects up to [`MAX_REDIRECTS`].
-    pub fn get(&mut self, url: &str) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get(
+        &mut self,
+        url: &str,
+    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
         let mut current = url.to_string();
         for _ in 0..=MAX_REDIRECTS {
             let (scheme, host, port, path) = parse_url(&current)?;
@@ -132,7 +135,8 @@ impl HttpClient {
         for _ in 0..=MAX_REDIRECTS {
             let (scheme, host, port, path) = parse_url(&current_url)?;
             let buffer = if method_is_post {
-                let req = self.build_post_request(&scheme, &host, &path, &current_body, &current_ct);
+                let req =
+                    self.build_post_request(&scheme, &host, &path, &current_body, &current_ct);
                 self.send_raw_request(&scheme, &host, port, &req)?
             } else {
                 self.request_once(&scheme, &host, port, &path)?
@@ -157,7 +161,14 @@ impl HttpClient {
         Err("too many redirects".into())
     }
 
-    fn build_post_request(&self, scheme: &str, host: &str, path: &str, body: &str, content_type: &str) -> String {
+    fn build_post_request(
+        &self,
+        scheme: &str,
+        host: &str,
+        path: &str,
+        body: &str,
+        content_type: &str,
+    ) -> String {
         let mut req = format!(
             "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: VelocityAgent/1.0\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccept-Encoding: gzip, deflate\r\nConnection: close\r\n",
             path, host, content_type, body.len()
@@ -225,7 +236,8 @@ impl HttpClient {
                 continue;
             }
             // Store in legacy jar for backward compat
-            self.cookie_jar.insert(parsed.name.clone(), parsed.value.clone());
+            self.cookie_jar
+                .insert(parsed.name.clone(), parsed.value.clone());
             // Store in full cookie store
             self.cookie_store.set_cookie(CookieRecord {
                 name: parsed.name.clone(),
@@ -247,13 +259,19 @@ impl HttpClient {
             .unwrap_or(false)
         {
             dechunk(body)?
-        } else if let Some(len) = headers.get("content-length").and_then(|v| v.trim().parse::<usize>().ok()) {
+        } else if let Some(len) = headers
+            .get("content-length")
+            .and_then(|v| v.trim().parse::<usize>().ok())
+        {
             body.iter().take(len).copied().collect()
         } else {
             body.to_vec()
         };
 
-        let encoding = headers.get("content-encoding").map(|s| s.as_str()).unwrap_or("");
+        let encoding = headers
+            .get("content-encoding")
+            .map(|s| s.as_str())
+            .unwrap_or("");
         let final_bytes = inflate::decode_content_encoding(encoding, &decoded_body)
             .unwrap_or_else(|_| decoded_body.clone());
 
@@ -417,7 +435,13 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// Resolve a redirect `Location` against the current request.
-fn resolve_redirect(scheme: &str, host: &str, port: u16, base_path: &str, location: &str) -> String {
+fn resolve_redirect(
+    scheme: &str,
+    host: &str,
+    port: u16,
+    base_path: &str,
+    location: &str,
+) -> String {
     let loc = location.trim();
     if loc.starts_with("http://") || loc.starts_with("https://") {
         return loc.to_string();
@@ -446,7 +470,10 @@ mod tests {
     #[test]
     fn parses_url_components() {
         let (scheme, host, port, path) = parse_url("http://example.com/a/b?x=1").unwrap();
-        assert_eq!((scheme.as_str(), host.as_str(), port, path.as_str()), ("http", "example.com", 80, "/a/b?x=1"));
+        assert_eq!(
+            (scheme.as_str(), host.as_str(), port, path.as_str()),
+            ("http", "example.com", 80, "/a/b?x=1")
+        );
         let (s2, h2, p2, _) = parse_url("https://site.test:8443/").unwrap();
         assert_eq!((s2.as_str(), h2.as_str(), p2), ("https", "site.test", 8443));
     }
@@ -458,7 +485,10 @@ mod tests {
         assert_eq!(body, b"body-here");
         let (status, headers, cookies) = parse_status_and_headers(head);
         assert_eq!(status, 200);
-        assert_eq!(headers.get("content-type").map(|s| s.as_str()), Some("text/html"));
+        assert_eq!(
+            headers.get("content-type").map(|s| s.as_str()),
+            Some("text/html")
+        );
         assert_eq!(cookies.len(), 1);
         assert!(cookies[0].contains("sid=abc"));
     }
@@ -519,7 +549,9 @@ mod tests {
         assert_eq!(resp.set_cookies.len(), 1);
         assert_eq!(resp.set_cookies[0].name, "token");
         // Cookie should now be in the store
-        let matching = client.cookie_store.get_cookies_for_url("example.com", "/", true);
+        let matching = client
+            .cookie_store
+            .get_cookies_for_url("example.com", "/", true);
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].value, "abc");
     }
@@ -531,7 +563,9 @@ mod tests {
     #[ignore]
     fn https_get_end_to_end() {
         let mut client = HttpClient::new();
-        let resp = client.get("https://example.com/").expect("https GET should succeed");
+        let resp = client
+            .get("https://example.com/")
+            .expect("https GET should succeed");
         assert_eq!(resp.status_code, 200);
         assert!(resp.body.to_ascii_lowercase().contains("<!doctype html") || !resp.body.is_empty());
     }
@@ -633,7 +667,10 @@ mod tests {
         let head = b"GARBAGE LINE\r\nContent-Type: text/html";
         let (status, headers, _) = parse_status_and_headers(head);
         assert_eq!(status, 0); // unparseable status
-        assert_eq!(headers.get("content-type").map(|s| s.as_str()), Some("text/html"));
+        assert_eq!(
+            headers.get("content-type").map(|s| s.as_str()),
+            Some("text/html")
+        );
     }
 
     #[test]
@@ -646,7 +683,10 @@ mod tests {
     fn http_client_default() {
         let client = HttpClient::default();
         assert!(client.cookie_jar.is_empty());
-        assert!(matches!(client.proxy.proxy_type, crate::net::tls::ProxyType::Direct));
+        assert!(matches!(
+            client.proxy.proxy_type,
+            crate::net::tls::ProxyType::Direct
+        ));
     }
 
     #[test]

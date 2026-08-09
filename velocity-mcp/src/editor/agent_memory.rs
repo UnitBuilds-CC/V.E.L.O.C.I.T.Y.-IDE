@@ -72,13 +72,20 @@ impl MemberMemoryStore {
     pub fn search(&self, query: &str) -> Vec<&AgentMemory> {
         let query_lower = query.to_lowercase();
         let terms: Vec<&str> = query_lower.split_whitespace().collect();
-        let mut scored: Vec<(usize, &AgentMemory)> = self.memories.iter()
+        let mut scored: Vec<(usize, &AgentMemory)> = self
+            .memories
+            .iter()
             .map(|mem| {
-                let score = terms.iter().filter(|term| {
-                    mem.keywords.iter().any(|k| k.to_lowercase().contains(*term))
-                        || mem.title.to_lowercase().contains(*term)
-                        || mem.content.to_lowercase().contains(*term)
-                }).count();
+                let score = terms
+                    .iter()
+                    .filter(|term| {
+                        mem.keywords
+                            .iter()
+                            .any(|k| k.to_lowercase().contains(*term))
+                            || mem.title.to_lowercase().contains(*term)
+                            || mem.content.to_lowercase().contains(*term)
+                    })
+                    .count();
                 (score, mem)
             })
             .filter(|(score, _)| *score > 0)
@@ -94,9 +101,11 @@ impl MemberMemoryStore {
         if relevant.is_empty() {
             return String::new();
         }
-        let entries: Vec<String> = relevant.iter().take(5).map(|mem| {
-            format!("- [{}] {}: {}", mem.category, mem.title, mem.content)
-        }).collect();
+        let entries: Vec<String> = relevant
+            .iter()
+            .take(5)
+            .map(|mem| format!("- [{}] {}: {}", mem.category, mem.title, mem.content))
+            .collect();
         format!(
             "\n\n<member_memory>\nRelevant knowledge from past sessions:\n{}\n</member_memory>\n",
             entries.join("\n")
@@ -159,8 +168,10 @@ impl AgentMemoryManager {
                             if !store.memories.is_empty() {
                                 // Replace any existing store for this member so
                                 // repeated loads never accumulate duplicates.
-                                if let Some(pos) =
-                                    self.stores.iter().position(|s| s.member_id == store.member_id)
+                                if let Some(pos) = self
+                                    .stores
+                                    .iter()
+                                    .position(|s| s.member_id == store.member_id)
                                 {
                                     self.stores[pos] = store;
                                 } else {
@@ -241,10 +252,22 @@ fn serialize_member_memory(store: &MemberMemoryStore) -> String {
     ];
     for (i, mem) in store.memories.iter().enumerate() {
         lines.push(format!("memory\t{}\tid\t{}", i, encode_nda_text(&mem.id)));
-        lines.push(format!("memory\t{}\ttitle\t{}", i, encode_nda_text(&mem.title)));
-        lines.push(format!("memory\t{}\tcontent\t{}", i, encode_nda_text(&mem.content)));
+        lines.push(format!(
+            "memory\t{}\ttitle\t{}",
+            i,
+            encode_nda_text(&mem.title)
+        ));
+        lines.push(format!(
+            "memory\t{}\tcontent\t{}",
+            i,
+            encode_nda_text(&mem.content)
+        ));
         lines.push(format!("memory\t{}\tcreated_at\t{}", i, mem.created_at));
-        lines.push(format!("memory\t{}\tcategory\t{}", i, encode_nda_text(&mem.category)));
+        lines.push(format!(
+            "memory\t{}\tcategory\t{}",
+            i,
+            encode_nda_text(&mem.category)
+        ));
         for kw in &mem.keywords {
             lines.push(format!("memory_kw\t{}\t{}", i, encode_nda_text(kw)));
         }
@@ -277,7 +300,9 @@ fn parse_member_memory(member_id: &str, text: &str) -> MemberMemoryStore {
             if parts.len() != 3 {
                 continue;
             }
-            let Ok(idx) = parts[0].parse::<usize>() else { continue };
+            let Ok(idx) = parts[0].parse::<usize>() else {
+                continue;
+            };
             let field = parts[1];
             let value = parts[2];
             let mem = memories.entry(idx).or_default();
@@ -294,7 +319,9 @@ fn parse_member_memory(member_id: &str, text: &str) -> MemberMemoryStore {
             if parts.len() != 2 {
                 continue;
             }
-            let Ok(idx) = parts[0].parse::<usize>() else { continue };
+            let Ok(idx) = parts[0].parse::<usize>() else {
+                continue;
+            };
             let kw = decode_nda_text(parts[1]);
             memories.entry(idx).or_default().keywords.push(kw);
         }
@@ -396,7 +423,12 @@ mod tests {
             let mut mgr = AgentMemoryManager::new(dir.path());
             mgr.remember(
                 "member_a",
-                AgentMemory::new("Deploy lesson", "Always run migrations before deploy", "lesson", vec!["deploy", "migration"]),
+                AgentMemory::new(
+                    "Deploy lesson",
+                    "Always run migrations before deploy",
+                    "lesson",
+                    vec!["deploy", "migration"],
+                ),
             );
             mgr.save_all();
         }
@@ -421,7 +453,11 @@ mod tests {
         let mut mgr2 = AgentMemoryManager::new(dir.path());
         mgr2.load_all();
         mgr2.load_all(); // repeated load must not accumulate duplicates
-        let count = mgr2.stores.iter().filter(|s| s.member_id == "member_b").count();
+        let count = mgr2
+            .stores
+            .iter()
+            .filter(|s| s.member_id == "member_b")
+            .count();
         assert_eq!(count, 1);
     }
 }

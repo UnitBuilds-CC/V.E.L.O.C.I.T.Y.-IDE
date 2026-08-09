@@ -27,7 +27,9 @@ fn get_interactive_elements_finds_link() {
 
 #[test]
 fn get_interactive_elements_finds_input() {
-    eval_full("document.body.innerHTML = '<input type=\"text\" name=\"email\" placeholder=\"Email\">'");
+    eval_full(
+        "document.body.innerHTML = '<input type=\"text\" name=\"email\" placeholder=\"Email\">'",
+    );
     let result = eval_full("document.getInteractiveElements().length");
     assert!(to_number(&result) >= 1.0);
 }
@@ -116,7 +118,9 @@ fn check_by_label_ignores_text_inputs() {
 
 #[test]
 fn fill_form_by_label_fills_multiple_fields() {
-    eval_full("document.body.innerHTML = '<input placeholder=\"Email\"><input placeholder=\"City\">'");
+    eval_full(
+        "document.body.innerHTML = '<input placeholder=\"Email\"><input placeholder=\"City\">'",
+    );
     let filled = eval_full("document.fillFormByLabel({Email: 'a@b.com', City: 'Lisbon'}).filled");
     assert_eq!(filled, JsValue::Number(2.0));
     let value = eval_full("document.querySelectorAll('input')[1].value");
@@ -136,7 +140,10 @@ fn fill_form_by_label_routes_booleans_to_checkboxes() {
 fn fill_form_by_label_reports_missed_labels() {
     eval_full("document.body.innerHTML = '<input placeholder=\"Email\">'");
     let missed = eval_full("document.fillFormByLabel({Email: 'a', Phone: 'b'}).missed");
-    assert_eq!(missed, JsValue::Array(vec![JsValue::String("Phone".to_string())]));
+    assert_eq!(
+        missed,
+        JsValue::Array(vec![JsValue::String("Phone".to_string())])
+    );
 }
 
 #[test]
@@ -144,7 +151,8 @@ fn read_form_lists_controls_with_state() {
     eval_full("document.body.innerHTML = '<input placeholder=\"Email\" value=\"a@b.com\"><input type=\"checkbox\" aria-label=\"Terms\" checked>'");
     let count = eval_full("document.readForm().length");
     assert_eq!(count, JsValue::Number(2.0));
-    let labels = eval_full("document.readForm().map(function(c) { return c.label; }).sort().join(',')");
+    let labels =
+        eval_full("document.readForm().map(function(c) { return c.label; }).sort().join(',')");
     assert_eq!(labels, JsValue::String("Email,Terms".to_string()));
 }
 
@@ -162,10 +170,12 @@ fn read_form_text_is_token_cheap() {
 
 #[test]
 fn read_form_reflects_fill_by_label() {
-    eval_full("
+    eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\">';
         document.fillByLabel('Email', 'new@val.ue');
-    ");
+    ",
+    );
     let text = eval_full("document.readFormText()");
     if let JsValue::String(s) = &text {
         assert!(s.contains("Email [textbox] = new@val.ue"), "got: {}", s);
@@ -176,13 +186,15 @@ fn read_form_reflects_fill_by_label() {
 
 #[test]
 fn submit_form_fires_submit_listener() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<form><input placeholder=\"Q\"></form>';
         var submitted = false;
         document.querySelector('form').addEventListener('submit', function() { submitted = true; });
         document.submitForm();
         submitted
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -218,19 +230,23 @@ fn select_by_label_marks_option_selected() {
 
 #[test]
 fn select_by_label_fires_change() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<select aria-label=\"Size\"><option>Small</option></select>';
         var changed = false;
         document.querySelector('select').addEventListener('change', function() { changed = true; });
         document.selectByLabel('Size', 'Small');
         changed
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn select_by_label_misses_unknown_option() {
-    eval_full("document.body.innerHTML = '<select aria-label=\"Size\"><option>Small</option></select>'");
+    eval_full(
+        "document.body.innerHTML = '<select aria-label=\"Size\"><option>Small</option></select>'",
+    );
     let ok = eval_full("document.selectByLabel('Size', 'Gigantic')");
     assert_eq!(ok, JsValue::Boolean(false));
 }
@@ -249,44 +265,52 @@ fn select_by_label_matches_by_value() {
 
 #[test]
 fn focus_sets_active_element() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input id=\"a\" placeholder=\"Email\">';
         document.querySelector('input').focus();
         document.activeElement.id
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::String("a".to_string()));
 }
 
 #[test]
 fn blur_clears_active_element() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\">';
         document.querySelector('input').focus();
         document.querySelector('input').blur();
         document.activeElement
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::Null);
 }
 
 #[test]
 fn focus_fires_focus_listener() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\">';
         var focused = false;
         document.querySelector('input').addEventListener('focus', function() { focused = true; });
         document.querySelector('input').focus();
         focused
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn focus_by_label_moves_focus() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\"><button>Save</button>';
         document.focusByLabel('Save');
         document.activeElement.tagName
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::String("BUTTON".to_string()));
 }
 
@@ -299,15 +323,20 @@ fn focus_by_label_misses_unknown() {
 
 #[test]
 fn export_nda_includes_focus_fact() {
-    eval_full("
+    eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\">';
         document.focusByLabel('Email');
-    ");
+    ",
+    );
     let doc = super::super::agent_layer::export_agent_state_nda();
     let facts = doc.readable_facts();
     assert!(
-        facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_FOCUSED && o == "1"),
-        "expected a focused fact, got: {:?}", facts
+        facts
+            .iter()
+            .any(|(_, p, o)| *p == crate::predicates::AOM_FOCUSED && o == "1"),
+        "expected a focused fact, got: {:?}",
+        facts
     );
 }
 
@@ -315,12 +344,14 @@ fn export_nda_includes_focus_fact() {
 
 #[test]
 fn type_text_appends_to_focused_value() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\">';
         document.focusByLabel('Email');
         document.typeText('hi');
         document.querySelector('input').value
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::String("hi".to_string()));
 }
 
@@ -346,38 +377,44 @@ fn type_text_fires_keydown_per_char() {
 
 #[test]
 fn press_enter_submits_enclosing_form() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<form><input placeholder=\"Q\"></form>';
         var submitted = false;
         document.querySelector('form').addEventListener('submit', function() { submitted = true; });
         document.focusByLabel('Q');
         document.pressKey('Enter');
         submitted
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn press_tab_advances_focus() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"First\"><input placeholder=\"Second\">';
         document.focusByLabel('First');
         document.pressKey('Tab');
         document.activeElement.placeholder
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::String("Second".to_string()));
 }
 
 #[test]
 fn press_key_delivers_key_to_listener() {
-    let result = eval_full("
+    let result = eval_full(
+        "
         document.body.innerHTML = '<input placeholder=\"Email\">';
         var seen = '';
         document.querySelector('input').addEventListener('keydown', function(e) { seen = e.key; });
         document.focusByLabel('Email');
         document.pressKey('Escape');
         seen
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::String("Escape".to_string()));
 }
 
@@ -432,7 +469,9 @@ fn interactive_elements_text_format() {
 
 #[test]
 fn multiple_interactive_elements() {
-    eval_full("document.body.innerHTML = '<button>A</button><a href=\"#\">B</a><input type=\"text\">'");
+    eval_full(
+        "document.body.innerHTML = '<button>A</button><a href=\"#\">B</a><input type=\"text\">'",
+    );
     let result = eval_full("document.getInteractiveElements().length");
     assert!(to_number(&result) >= 3.0);
 }
@@ -443,7 +482,16 @@ fn select_element_is_combobox() {
     let els = eval_full("document.getInteractiveElements()");
     if let JsValue::Array(arr) = &els {
         if let Some(JsValue::Object(first)) = arr.first() {
-            assert_eq!(first.get("role").and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }), Some("combobox"));
+            assert_eq!(
+                first
+                    .get("role")
+                    .and_then(|v| if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }),
+                Some("combobox")
+            );
         }
     }
 }
@@ -454,7 +502,16 @@ fn checkbox_role() {
     let els = eval_full("document.getInteractiveElements()");
     if let JsValue::Array(arr) = &els {
         if let Some(JsValue::Object(first)) = arr.first() {
-            assert_eq!(first.get("role").and_then(|v| if let JsValue::String(s) = v { Some(s.as_str()) } else { None }), Some("checkbox"));
+            assert_eq!(
+                first
+                    .get("role")
+                    .and_then(|v| if let JsValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }),
+                Some("checkbox")
+            );
         }
     }
 }
@@ -592,17 +649,19 @@ fn selector_uses_name_for_inputs() {
 
 #[test]
 fn agent_workflow_summarize_then_interact() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.head.innerHTML = '<title>Login Page</title>';
         document.body.innerHTML = '<h1>Welcome</h1><form><input name="user" placeholder="Username"><input name="pass" type="password" placeholder="Password"><button>Login</button></form>';
-    "#);
+    "#,
+    );
     // Step 1: Summarize.
     let title = eval_full("document.summarizePage().title");
     assert_eq!(title, JsValue::String("Login Page".to_string()));
     // Step 2: Get interactive elements.
     let count = eval_full("document.getInteractiveElements().length");
     assert!(to_number(&count) >= 3.0); // 2 inputs + 1 button
-    // Step 3: Capture state.
+                                       // Step 3: Capture state.
     let state = eval_full("document.captureState()");
     if let JsValue::Object(m) = &state {
         assert!(m.contains_key("nodeCount"));
@@ -743,10 +802,12 @@ fn to_markdown_bold_and_code() {
 
 #[test]
 fn to_markdown_includes_title() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.head.innerHTML = '<title>Doc Title</title>';
         document.body.innerHTML = '<p>Some content</p>';
-    "#);
+    "#,
+    );
     let result = eval_full("document.toMarkdown()");
     if let JsValue::String(s) = &result {
         assert!(s.contains("# Doc Title"), "got: {}", s);
@@ -766,10 +827,12 @@ fn fill_form_by_name() {
 
 #[test]
 fn fill_form_sets_value() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.body.innerHTML = '<input name="email">';
         document.fillForm({email: 'a@b.com'});
-    "#);
+    "#,
+    );
     let result = eval_full("document.getInteractiveElements()[0].value");
     assert_eq!(result, JsValue::String("a@b.com".to_string()));
 }
@@ -804,10 +867,12 @@ fn fill_form_disabled_field() {
 
 #[test]
 fn fill_form_checkbox() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.body.innerHTML = '<input type="checkbox" name="agree">';
         document.fillForm({agree: 'true'});
-    "#);
+    "#,
+    );
     let result = eval_full("document.querySelector('input').hasAttribute('checked')");
     assert_eq!(result, JsValue::Boolean(true));
 }
@@ -821,25 +886,29 @@ fn fill_form_multiple_fields() {
 
 #[test]
 fn fill_form_fires_input_event() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<input name="email">';
         var fired = false;
         document.querySelector('input').addEventListener('input', function() { fired = true; });
         document.fillForm({email: 'a@b.com'});
         fired
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn fill_form_fires_change_event() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<input type="checkbox" name="agree">';
         var changed = false;
         document.querySelector('input').addEventListener('change', function() { changed = true; });
         document.fillForm({agree: 'true'});
         changed
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -942,37 +1011,43 @@ fn find_by_text_has_selector() {
 
 #[test]
 fn click_fires_listener() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<button id="b">Go</button>';
         var clicked = false;
         document.querySelector('#b').addEventListener('click', function() { clicked = true; });
         document.querySelector('#b').click();
         clicked
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn click_bubbles_to_parent() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<div id="wrap"><button id="b">Go</button></div>';
         var bubbled = false;
         document.querySelector('#wrap').addEventListener('click', function() { bubbled = true; });
         document.querySelector('#b').click();
         bubbled
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn click_by_text_fires_listener() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<button>Save Draft</button>';
         var saved = false;
         document.querySelector('button').addEventListener('click', function() { saved = true; });
         document.clickByText('Save Draft');
         saved
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -992,13 +1067,15 @@ fn click_by_text_returns_false_on_miss() {
 
 #[test]
 fn click_by_text_resolves_span_inside_button() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<button id="b"><span>Buy Now</span></button>';
         var bought = false;
         document.querySelector('#b').addEventListener('click', function() { bought = true; });
         document.clickByText('Buy Now');
         bought
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -1006,33 +1083,39 @@ fn click_by_text_resolves_span_inside_button() {
 
 #[test]
 fn diff_state_unchanged() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<p>Stable content</p>';
         var before = document.captureState();
         document.diffState(before).changed
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(false));
 }
 
 #[test]
 fn diff_state_detects_change() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<p>Before content</p>';
         var before = document.captureState();
         document.body.innerHTML = '<p>After content</p><button>New</button>';
         document.diffState(before).changed
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn diff_state_text_changed_flag() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<p>Original text</p>';
         var before = document.captureState();
         document.body.innerHTML = '<p>Modified text</p>';
         document.diffState(before).textChanged
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -1040,20 +1123,24 @@ fn diff_state_text_changed_flag() {
 
 #[test]
 fn export_nda_has_facts() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.head.innerHTML = '<title>NDA Page</title>';
         document.body.innerHTML = '<button>Act</button><a href="/x">Link</a>';
-    "#);
+    "#,
+    );
     let doc = super::super::agent_layer::export_agent_state_nda();
     assert!(!doc.facts.is_empty());
 }
 
 #[test]
 fn export_nda_contains_title_fact() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.head.innerHTML = '<title>NDA Title Test</title>';
         document.body.innerHTML = '<p>content</p>';
-    "#);
+    "#,
+    );
     let doc = super::super::agent_layer::export_agent_state_nda();
     let facts = doc.readable_facts();
     assert!(facts.iter().any(|(s, p, o)| s == "page"
@@ -1066,17 +1153,25 @@ fn export_nda_contains_interactive_element_facts() {
     eval_full("document.body.innerHTML = '<button id=\"go\">Go Now</button>'");
     let doc = super::super::agent_layer::export_agent_state_nda();
     let facts = doc.readable_facts();
-    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_ROLE && o == "button"));
-    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_NAME && o == "Go Now"));
-    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_SELECTOR && o == "#go"));
+    assert!(facts
+        .iter()
+        .any(|(_, p, o)| *p == crate::predicates::AOM_ROLE && o == "button"));
+    assert!(facts
+        .iter()
+        .any(|(_, p, o)| *p == crate::predicates::AOM_NAME && o == "Go Now"));
+    assert!(facts
+        .iter()
+        .any(|(_, p, o)| *p == crate::predicates::AOM_SELECTOR && o == "#go"));
 }
 
 #[test]
 fn export_nda_binary_roundtrip() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.head.innerHTML = '<title>Roundtrip</title>';
         document.body.innerHTML = '<button>Press</button>';
-    "#);
+    "#,
+    );
     let doc = super::super::agent_layer::export_agent_state_nda();
     let bytes = doc.to_binary_stream();
     let decoded = crate::nda::NdaDocument::from_binary_stream(&bytes).expect("decode");
@@ -1088,15 +1183,19 @@ fn export_nda_disabled_fact() {
     eval_full("document.body.innerHTML = '<button disabled>Off</button>'");
     let doc = super::super::agent_layer::export_agent_state_nda();
     let facts = doc.readable_facts();
-    assert!(facts.iter().any(|(_, p, o)| *p == crate::predicates::AOM_DISABLED && o == "1"));
+    assert!(facts
+        .iter()
+        .any(|(_, p, o)| *p == crate::predicates::AOM_DISABLED && o == "1"));
 }
 
 #[test]
 fn export_nda_text_via_js() {
-    eval_full(r#"
+    eval_full(
+        r#"
         document.head.innerHTML = '<title>JS NDA</title>';
         document.body.innerHTML = '<button>Do It</button>';
-    "#);
+    "#,
+    );
     let result = eval_full("document.exportNdaText()");
     if let JsValue::String(s) = &result {
         assert!(s.contains("JS NDA"), "got: {}", s);
@@ -1123,7 +1222,9 @@ fn wait_for_settlement_settles_when_quiet() {
 
 #[test]
 fn wait_for_settlement_runs_pending_timers() {
-    let result = eval_full("var x = 0; setTimeout(function(){ x = 7; }, 0); document.waitForSettlement(); x");
+    let result = eval_full(
+        "var x = 0; setTimeout(function(){ x = 7; }, 0); document.waitForSettlement(); x",
+    );
     assert_eq!(result, JsValue::Number(7.0));
 }
 
@@ -1143,18 +1244,21 @@ fn wait_for_settlement_reports_timer_count() {
 
 #[test]
 fn wait_for_settlement_never_settles_with_interval() {
-    let result = eval_full("setInterval(function(){}, 1); var s = document.waitForSettlement(); s.settled");
+    let result =
+        eval_full("setInterval(function(){}, 1); var s = document.waitForSettlement(); s.settled");
     assert_eq!(result, JsValue::Boolean(false));
 }
 
 #[test]
 fn wait_for_settlement_observes_timer_dom_mutations() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.body.innerHTML = '<div id="box"></div>';
         setTimeout(function(){ document.getElementById('box').setAttribute('data-x', '1'); }, 0);
         document.waitForSettlement();
         document.getElementById('box').getAttribute('data-x')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("1".to_string()));
 }
 
@@ -1171,15 +1275,21 @@ fn export_nda_includes_network_facts() {
     let doc = super::super::agent_layer::export_agent_state_nda();
     let facts = doc.readable_facts();
     assert!(
-        facts.iter().any(|(s, p, o)| s == "https://api.example.com/data"
-            && *p == crate::predicates::NET_METHOD && o == "GET"),
-        "expected net method fact, got {:?}", facts
+        facts
+            .iter()
+            .any(|(s, p, o)| s == "https://api.example.com/data"
+                && *p == crate::predicates::NET_METHOD
+                && o == "GET"),
+        "expected net method fact, got {:?}",
+        facts
     );
     assert!(
-        facts.iter().any(|(s, p, o)| s == "https://api.example.com/data"
-            && *p == crate::predicates::NET_STATUS && o == "200"),
-        "expected net status fact, got {:?}", facts
+        facts
+            .iter()
+            .any(|(s, p, o)| s == "https://api.example.com/data"
+                && *p == crate::predicates::NET_STATUS
+                && o == "200"),
+        "expected net status fact, got {:?}",
+        facts
     );
 }
-
-

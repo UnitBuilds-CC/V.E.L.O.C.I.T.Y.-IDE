@@ -260,11 +260,14 @@ pub fn find_element<'a>(
         .filter_map(|element| {
             element_match_score(element, role, name).map(|score| (score, element))
         })
-        .max_by(|&(left_score, left_element): &(i32, &AomElement), &(right_score, right_element): &(i32, &AomElement)| {
-            left_score
-                .cmp(&right_score)
-                .then_with(|| right_element.name.len().cmp(&left_element.name.len()))
-        })
+        .max_by(
+            |&(left_score, left_element): &(i32, &AomElement),
+             &(right_score, right_element): &(i32, &AomElement)| {
+                left_score
+                    .cmp(&right_score)
+                    .then_with(|| right_element.name.len().cmp(&left_element.name.len()))
+            },
+        )
         .map(|(_, element)| element)
 }
 
@@ -290,11 +293,14 @@ pub fn find_form_field<'a>(
         .iter()
         .flat_map(|form| form.fields.iter())
         .filter_map(|field| form_field_match_score(field, field_name).map(|score| (score, field)))
-        .max_by(|&(left_score, left_field): &(i32, &BrowserFormField), &(right_score, right_field): &(i32, &BrowserFormField)| {
-            left_score
-                .cmp(&right_score)
-                .then_with(|| right_field.label.len().cmp(&left_field.label.len()))
-        })
+        .max_by(
+            |&(left_score, left_field): &(i32, &BrowserFormField),
+             &(right_score, right_field): &(i32, &BrowserFormField)| {
+                left_score
+                    .cmp(&right_score)
+                    .then_with(|| right_field.label.len().cmp(&left_field.label.len()))
+            },
+        )
         .map(|(_, field)| field)
 }
 
@@ -309,11 +315,14 @@ pub fn find_textbox_element<'a>(
         .filter_map(|element| {
             string_match_score(&element.name, field_name).map(|score| (score, element))
         })
-        .max_by(|&(left_score, left_element): &(i32, &AomElement), &(right_score, right_element): &(i32, &AomElement)| {
-            left_score
-                .cmp(&right_score)
-                .then_with(|| right_element.name.len().cmp(&left_element.name.len()))
-        })
+        .max_by(
+            |&(left_score, left_element): &(i32, &AomElement),
+             &(right_score, right_element): &(i32, &AomElement)| {
+                left_score
+                    .cmp(&right_score)
+                    .then_with(|| right_element.name.len().cmp(&left_element.name.len()))
+            },
+        )
         .map(|(_, element)| element)
 }
 
@@ -331,12 +340,18 @@ pub fn extract_snapshot_value(
         "element" => {
             let req_role = role.ok_or_else(|| "extract element requires role".to_string())?;
             let req_name = name.ok_or_else(|| "extract element requires name".to_string())?;
-            let element = find_element(snapshot, req_role, req_name)
-                .ok_or_else(|| format!("extract element not found: role='{}' name='{}'", req_role, req_name))?;
+            let element = find_element(snapshot, req_role, req_name).ok_or_else(|| {
+                format!(
+                    "extract element not found: role='{}' name='{}'",
+                    req_role, req_name
+                )
+            })?;
             Ok(element.value.clone())
         }
         "field" => {
-            let req_field = field.or(name).ok_or_else(|| "extract field requires field name".to_string())?;
+            let req_field = field
+                .or(name)
+                .ok_or_else(|| "extract field requires field name".to_string())?;
             let form_field = find_form_field(snapshot, req_field)
                 .ok_or_else(|| format!("extract field not found: '{}'", req_field))?;
             Ok(form_field.value.clone())
@@ -786,4 +801,3 @@ pub fn wait_for_stable_snapshot(
         }
     }
 }
-

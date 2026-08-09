@@ -62,7 +62,10 @@ fn safety_try_lock_safe_on_uncontested() {
 
     // try_lock_safe should succeed on an uncontested mutex
     let guard = m.try_lock_safe();
-    assert!(guard.is_some(), "try_lock_safe should succeed on uncontested mutex");
+    assert!(
+        guard.is_some(),
+        "try_lock_safe should succeed on uncontested mutex"
+    );
     assert_eq!(*guard.unwrap(), 42);
 }
 
@@ -153,7 +156,9 @@ fn site_map_concurrent_triple_insertion() {
     use velocity_ide::site_map::{NdaNode, SiteMap};
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let sm = Arc::new(Mutex::new(SiteMap::open(tmp.path(), 0).expect("open site map")));
+    let sm = Arc::new(Mutex::new(
+        SiteMap::open(tmp.path(), 0).expect("open site map"),
+    ));
 
     let mut handles = vec![];
     for t in 0..4 {
@@ -183,8 +188,8 @@ fn site_map_concurrent_triple_insertion() {
 /// Test that NdaNode hash doesn't collide for common values.
 #[test]
 fn nda_node_hash_no_collisions_for_common_values() {
-    use velocity_ide::site_map::NdaNode;
     use std::collections::HashSet;
+    use velocity_ide::site_map::NdaNode;
 
     let mut hashes = HashSet::new();
     for i in 0..1000 {

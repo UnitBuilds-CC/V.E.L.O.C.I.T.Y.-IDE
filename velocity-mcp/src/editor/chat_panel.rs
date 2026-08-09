@@ -212,10 +212,13 @@ fn render_header(
     // Row 2: toggle options (visually separated, less cluttered)
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let thoughts_label = if state.show_thoughts { "Show reasoning: on" } else { "Show reasoning: off" };
+        let thoughts_label = if state.show_thoughts {
+            "Show reasoning: on"
+        } else {
+            "Show reasoning: off"
+        };
         if ui
-            .add(egui::Button::new(egui::RichText::new(thoughts_label).size(9.0))
-                .frame(false))
+            .add(egui::Button::new(egui::RichText::new(thoughts_label).size(9.0)).frame(false))
             .clicked()
         {
             state.show_thoughts = !state.show_thoughts;
@@ -370,11 +373,14 @@ fn render_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
                                         .color(palette.text_muted),
                                 );
                             }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("📋 Copy").clicked() {
-                                    ui.ctx().copy_text(code.clone());
-                                }
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("📋 Copy").clicked() {
+                                        ui.ctx().copy_text(code.clone());
+                                    }
+                                },
+                            );
                         });
                         ui.add_space(4.0);
                         // Use syntax-highlighted code editor for blocks with 3+ lines
@@ -547,7 +553,9 @@ fn render_inline_markdown(ui: &mut egui::Ui, text: &str, palette: IdePalette) {
 
         for (content, is_bold, is_italic, is_code) in parts {
             // Comfortable line-height keeps wrapped paragraphs legible.
-            let mut rt = egui::RichText::new(content).size(14.0).line_height(Some(21.0));
+            let mut rt = egui::RichText::new(content)
+                .size(14.0)
+                .line_height(Some(21.0));
             if is_bold {
                 rt = rt.strong().color(palette.text);
             } else if is_italic {
@@ -664,9 +672,8 @@ fn render_pending_approvals(
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Decline").clicked() {
-                                let _ = agent_tx.send(UiToAgentMessage::RejectTool {
-                                    id: id.clone(),
-                                });
+                                let _ =
+                                    agent_tx.send(UiToAgentMessage::RejectTool { id: id.clone() });
                                 state.pending_approvals.retain(|(p_id, _, _)| p_id != &id);
                             }
                             if ui.button("Approve").clicked() {
@@ -710,10 +717,8 @@ fn render_input(
 
                 let mut submit = false;
                 if response.has_focus() {
-                    let (enter_pressed, shift_pressed) = ui.input(|i| (
-                        i.key_pressed(egui::Key::Enter),
-                        i.modifiers.shift,
-                    ));
+                    let (enter_pressed, shift_pressed) =
+                        ui.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
                     if enter_pressed && !shift_pressed {
                         ui.input_mut(|i| {
                             i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
@@ -794,7 +799,14 @@ fn render_input(
                                 crate::agent::AiProvider::Cerebras,
                                 crate::agent::AiProvider::AwsBedrock,
                             ] {
-                                if ui.selectable_value(&mut state.provider, provider, provider.label()).clicked() {
+                                if ui
+                                    .selectable_value(
+                                        &mut state.provider,
+                                        provider,
+                                        provider.label(),
+                                    )
+                                    .clicked()
+                                {
                                     provider_changed = true;
                                 }
                             }
@@ -813,19 +825,28 @@ fn render_input(
                         .show_ui(ui, |ui| {
                             for model in state.available_models.clone() {
                                 model_changed |= ui
-                                    .selectable_value(&mut state.selected_model, model.id.clone(), model.label)
+                                    .selectable_value(
+                                        &mut state.selected_model,
+                                        model.id.clone(),
+                                        model.label,
+                                    )
                                     .changed();
                             }
                         });
                     if model_changed {
-                        let _ = agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
+                        let _ =
+                            agent_tx.send(UiToAgentMessage::SetModel(state.selected_model.clone()));
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let send_btn = egui::Button::new(egui::RichText::new("➔").strong().color(egui::Color32::WHITE))
-                            .corner_radius(egui::CornerRadius::same(12))
-                            .fill(palette.accent)
-                            .min_size(egui::vec2(28.0, 28.0));
+                        let send_btn = egui::Button::new(
+                            egui::RichText::new("➔")
+                                .strong()
+                                .color(egui::Color32::WHITE),
+                        )
+                        .corner_radius(egui::CornerRadius::same(12))
+                        .fill(palette.accent)
+                        .min_size(egui::vec2(28.0, 28.0));
 
                         if ui.add(send_btn).clicked() || submit {
                             let text = state.input.trim().to_string();

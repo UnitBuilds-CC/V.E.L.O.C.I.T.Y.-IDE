@@ -14,8 +14,8 @@ use std::sync::Mutex;
 use velocity_ide::safety::SafeMutex;
 
 use crate::net::webrtc::{
-    ConnectionState, DataChannelState, IceConnectionState, SessionDescription, SignalingState,
-    SdpType, WebRtcTransport,
+    ConnectionState, DataChannelState, IceConnectionState, SdpType, SessionDescription,
+    SignalingState, WebRtcTransport,
 };
 
 /// Process-wide registry of live peer connections keyed by opaque id.
@@ -65,13 +65,15 @@ impl JsRtcPeerConnection {
     /// `pc.setLocalDescription(desc)`.
     pub fn set_local_description(&self, desc: HashMap<String, String>) -> Result<(), String> {
         let sd = js_to_session(&desc)?;
-        self.with(|t| t.set_local_description(sd)).unwrap_or(Err("peer not found".into()))
+        self.with(|t| t.set_local_description(sd))
+            .unwrap_or(Err("peer not found".into()))
     }
 
     /// `pc.setRemoteDescription(desc)`.
     pub fn set_remote_description(&self, desc: HashMap<String, String>) -> Result<(), String> {
         let sd = js_to_session(&desc)?;
-        self.with(|t| t.set_remote_description(sd)).unwrap_or(Err("peer not found".into()))
+        self.with(|t| t.set_remote_description(sd))
+            .unwrap_or(Err("peer not found".into()))
     }
 
     /// `pc.addIceCandidate(candidate)`.
@@ -174,7 +176,10 @@ fn js_to_session(desc: &HashMap<String, String>) -> Result<SessionDescription, S
         Some("pranswer") => SdpType::Pranswer,
         other => return Err(format!("invalid SDP type: {:?}", other)),
     };
-    Ok(SessionDescription { sdp_type, sdp: desc.get("sdp").cloned().unwrap_or_default() })
+    Ok(SessionDescription {
+        sdp_type,
+        sdp: desc.get("sdp").cloned().unwrap_or_default(),
+    })
 }
 
 fn signaling_state_str(s: &SignalingState) -> &'static str {

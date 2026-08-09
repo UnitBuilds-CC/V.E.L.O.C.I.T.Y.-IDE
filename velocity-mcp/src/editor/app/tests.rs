@@ -1,21 +1,17 @@
-use super::types::*;
 use super::helpers::*;
+use super::render::desktop_automation_runtime_validation_brief;
+use super::types::*;
 use super::wa::*;
-use crate::editor::orchestrator_panel::{
-    OrchestratorDashboardSnapshot, OrchestratorTaskSnapshot,
-};
-use crate::orchestrator::worker::{
-    WorkerThreadEvent, WorkerThreadEventKind, WorkerThreadSnapshot,
-};
 use crate::automation::AgentTaskKind;
+use crate::editor::agent_ui_state::AgentUiState;
+use crate::editor::chat_panel::ChatPanelState;
 use crate::editor::mission_control::MissionControlState;
 use crate::editor::orchestrator_panel::OrchestratorPanel;
-use crate::editor::task_timeline::TaskTimelineState as TTState;
-use crate::editor::chat_panel::ChatPanelState;
-use crate::editor::agent_ui_state::AgentUiState;
+use crate::editor::orchestrator_panel::{OrchestratorDashboardSnapshot, OrchestratorTaskSnapshot};
 use crate::editor::smart_sidebar::SmartSidebarState;
+use crate::editor::task_timeline::TaskTimelineState as TTState;
+use crate::orchestrator::worker::{WorkerThreadEvent, WorkerThreadEventKind, WorkerThreadSnapshot};
 use std::path::PathBuf;
-use super::render::desktop_automation_runtime_validation_brief;
 
 fn task_snapshot(task_id: u64, events: Vec<WorkerThreadEvent>) -> OrchestratorTaskSnapshot {
     OrchestratorTaskSnapshot {
@@ -92,15 +88,21 @@ fn desktop_automation_task_detection_prefers_lane_and_wa_language() {
         Some(AgentTaskKind::DesktopAutomation.as_str())
     ));
     assert!(task_matches_desktop_automation_lane(&task, None));
-    assert!(!task_matches_desktop_automation_lane(&task_snapshot(11, Vec::new()), None));
+    assert!(!task_matches_desktop_automation_lane(
+        &task_snapshot(11, Vec::new()),
+        None
+    ));
 }
 
 #[test]
 fn desktop_automation_evidence_state_prefers_live_then_artifacts() {
-    let live_task = task_snapshot(13, vec![WorkerThreadEvent {
-        kind: WorkerThreadEventKind::Status,
-        message: "Capturing WA snapshot".to_string(),
-    }]);
+    let live_task = task_snapshot(
+        13,
+        vec![WorkerThreadEvent {
+            kind: WorkerThreadEventKind::Status,
+            message: "Capturing WA snapshot".to_string(),
+        }],
+    );
     assert_eq!(
         desktop_automation_evidence_state(&live_task),
         DesktopAutomationEvidenceState::LiveEvidence
@@ -141,36 +143,62 @@ fn desktop_automation_evidence_lines_include_live_and_artifact_details() {
             },
         ],
     );
-    task.outputs = vec!["snapshot:capture".to_string(), "script:verified".to_string()];
+    task.outputs = vec![
+        "snapshot:capture".to_string(),
+        "script:verified".to_string(),
+    ];
     task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
     task.wa_run_id = Some("desktop-run".to_string());
     task.run_summary_path = Some("runs\\desktop\\summary.txt".to_string());
     task.run_facts_path = Some("runs\\desktop\\facts.nda".to_string());
     if let Some(thread) = task.live_thread.as_mut() {
-        thread.changed_files.push(".velocity\\wa-snapshots\\capture.wa.nda".to_string());
+        thread
+            .changed_files
+            .push(".velocity\\wa-snapshots\\capture.wa.nda".to_string());
         thread.transcript = "WA transcript evidence".to_string();
-        thread.operator_notes.push("Retry with focused selector".to_string());
+        thread
+            .operator_notes
+            .push("Retry with focused selector".to_string());
     }
 
     let lines = desktop_automation_evidence_lines(&task);
-    assert!(lines.iter().any(|line| line.contains("Evidence state: Live WA evidence")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Evidence state: Live WA evidence")));
     assert!(lines.iter().any(|line| line.contains("WA run artifact:")));
-    assert!(lines.iter().any(|line| line.contains("WA run id: desktop-run")));
-    assert!(lines.iter().any(|line| line.contains("Run summary artifact:")));
-    assert!(lines.iter().any(|line| line.contains("NDA facts artifact:")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("WA run id: desktop-run")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Run summary artifact:")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("NDA facts artifact:")));
     assert!(lines.iter().any(|line| line.contains("Reported outputs:")));
-    assert!(lines.iter().any(|line| line.contains("Live worker evidence updates: 2")));
-    assert!(lines.iter().any(|line| line.contains("Observed file activity:")));
-    assert!(lines.iter().any(|line| line.contains("Live transcript captured")));
-    assert!(lines.iter().any(|line| line.contains("Operator notes recorded: 1")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Live worker evidence updates: 2")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Observed file activity:")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Live transcript captured")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Operator notes recorded: 1")));
 }
 
 #[test]
 fn desktop_automation_mission_summary_counts_evidence_states() {
-    let live_task = task_snapshot(21, vec![WorkerThreadEvent {
-        kind: WorkerThreadEventKind::Status,
-        message: "WA capture running".to_string(),
-    }]);
+    let live_task = task_snapshot(
+        21,
+        vec![WorkerThreadEvent {
+            kind: WorkerThreadEventKind::Status,
+            message: "WA capture running".to_string(),
+        }],
+    );
 
     let mut artifact_task = task_snapshot(22, Vec::new());
     artifact_task.title = "Desktop automation artifact review".to_string();
@@ -195,9 +223,18 @@ fn desktop_automation_mission_summary_counts_evidence_states() {
     assert_eq!(summary.live_count, 1);
     assert_eq!(summary.artifact_count, 1);
     assert_eq!(summary.awaiting_count, 1);
-    assert!(summary.state_labels.iter().any(|label| label.contains("Live WA evidence: 1")));
-    assert!(summary.state_labels.iter().any(|label| label.contains("WA artifacts captured: 1")));
-    assert!(summary.state_labels.iter().any(|label| label.contains("Awaiting WA evidence: 1")));
+    assert!(summary
+        .state_labels
+        .iter()
+        .any(|label| label.contains("Live WA evidence: 1")));
+    assert!(summary
+        .state_labels
+        .iter()
+        .any(|label| label.contains("WA artifacts captured: 1")));
+    assert!(summary
+        .state_labels
+        .iter()
+        .any(|label| label.contains("Awaiting WA evidence: 1")));
 }
 
 #[test]
@@ -215,7 +252,10 @@ fn desktop_automation_selected_task_status_summarizes_artifacts_and_live_signals
             },
         ],
     );
-    task.outputs = vec!["snapshot:capture".to_string(), "script:verified".to_string()];
+    task.outputs = vec![
+        "snapshot:capture".to_string(),
+        "script:verified".to_string(),
+    ];
     task.wa_run_path = Some(".velocity\\wa-runs\\desktop-run.wa-run.nda".to_string());
     task.wa_run_id = Some("desktop-run".to_string());
     task.run_summary_path = Some("runs\\desktop\\summary.txt".to_string());
@@ -246,12 +286,29 @@ fn desktop_automation_selected_task_cues_surface_artifacts_and_next_step() {
     task.run_facts_path = Some("runs\\desktop\\facts.nda".to_string());
 
     let cues = desktop_automation_selected_task_cues(&task);
-    assert!(cues.artifact_lines.iter().any(|line| line.contains("WA run ready:")));
-    assert!(cues.artifact_lines.iter().any(|line| line.contains("WA run id: desktop-run")));
-    assert!(cues.artifact_lines.iter().any(|line| line.contains("Run summary ready:")));
-    assert!(cues.artifact_lines.iter().any(|line| line.contains("NDA facts ready:")));
-    assert!(cues.artifact_lines.iter().any(|line| line.contains("Reported outputs ready:")));
-    assert!(cues.next_action.contains("Review the captured WA artifacts"));
+    assert!(cues
+        .artifact_lines
+        .iter()
+        .any(|line| line.contains("WA run ready:")));
+    assert!(cues
+        .artifact_lines
+        .iter()
+        .any(|line| line.contains("WA run id: desktop-run")));
+    assert!(cues
+        .artifact_lines
+        .iter()
+        .any(|line| line.contains("Run summary ready:")));
+    assert!(cues
+        .artifact_lines
+        .iter()
+        .any(|line| line.contains("NDA facts ready:")));
+    assert!(cues
+        .artifact_lines
+        .iter()
+        .any(|line| line.contains("Reported outputs ready:")));
+    assert!(cues
+        .next_action
+        .contains("Review the captured WA artifacts"));
 }
 
 #[test]
@@ -284,10 +341,29 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         command_output: String::new(),
         account_usage: Vec::new(),
         usage_date: String::new(),
-        command_palette: CommandPalette { open: false, query: String::new(), selected: 0, just_opened: false },
+        command_palette: CommandPalette {
+            open: false,
+            query: String::new(),
+            selected: 0,
+            just_opened: false,
+        },
         show_shortcuts: false,
-        quick_open: QuickOpen { open: false, query: String::new(), selected: 0, just_opened: false, files: Vec::new(), last_query: String::new(), last_file_count: 0, filtered: Vec::new(), scroll_to_selected: false },
-        mru: MruSwitcher { open: false, selected: 0, order: Vec::new() },
+        quick_open: QuickOpen {
+            open: false,
+            query: String::new(),
+            selected: 0,
+            just_opened: false,
+            files: Vec::new(),
+            last_query: String::new(),
+            last_file_count: 0,
+            filtered: Vec::new(),
+            scroll_to_selected: false,
+        },
+        mru: MruSwitcher {
+            open: false,
+            selected: 0,
+            order: Vec::new(),
+        },
         closed_editor_paths: Vec::new(),
         goto_line_open: false,
         goto_line_input: String::new(),
@@ -402,7 +478,7 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
         precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
         semantic_index: None,
-semantic_search_active: false,
+        semantic_search_active: false,
         inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
         test_generator: crate::editor::test_generator::TestGenerator::default(),
         deploy_pipeline: None,
@@ -481,11 +557,13 @@ semantic_search_active: false,
 
     let newest = app.task_timeline.visible_events().next().unwrap().1;
     assert_eq!(
-        app.task_timeline.get_text(newest.name_offset, newest.name_len),
+        app.task_timeline
+            .get_text(newest.name_offset, newest.name_len),
         "Worker output"
     );
     assert_eq!(
-        app.task_timeline.get_text(newest.description_offset, newest.description_len),
+        app.task_timeline
+            .get_text(newest.description_offset, newest.description_len),
         "Generated component outline"
     );
 }
@@ -512,10 +590,29 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         command_output: String::new(),
         account_usage: Vec::new(),
         usage_date: String::new(),
-        command_palette: CommandPalette { open: false, query: String::new(), selected: 0, just_opened: false },
+        command_palette: CommandPalette {
+            open: false,
+            query: String::new(),
+            selected: 0,
+            just_opened: false,
+        },
         show_shortcuts: false,
-        quick_open: QuickOpen { open: false, query: String::new(), selected: 0, just_opened: false, files: Vec::new(), last_query: String::new(), last_file_count: 0, filtered: Vec::new(), scroll_to_selected: false },
-        mru: MruSwitcher { open: false, selected: 0, order: Vec::new() },
+        quick_open: QuickOpen {
+            open: false,
+            query: String::new(),
+            selected: 0,
+            just_opened: false,
+            files: Vec::new(),
+            last_query: String::new(),
+            last_file_count: 0,
+            filtered: Vec::new(),
+            scroll_to_selected: false,
+        },
+        mru: MruSwitcher {
+            open: false,
+            selected: 0,
+            order: Vec::new(),
+        },
         closed_editor_paths: Vec::new(),
         goto_line_open: false,
         goto_line_input: String::new(),
@@ -630,7 +727,7 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         live_orchestration: crate::editor::live_orchestration::LiveOrchestrationState::new(),
         precomp_cache: crate::editor::speculative_precomp::PrecomputationCache::new(),
         semantic_index: None,
-semantic_search_active: false,
+        semantic_search_active: false,
         inline_suggestions: crate::editor::inline_suggestions::InlineSuggestionEngine::default(),
         test_generator: crate::editor::test_generator::TestGenerator::default(),
         deploy_pipeline: None,

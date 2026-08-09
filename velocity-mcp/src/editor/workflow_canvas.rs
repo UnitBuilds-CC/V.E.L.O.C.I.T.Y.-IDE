@@ -43,9 +43,15 @@ pub enum CanvasNodeKind {
     /// Entry point — where execution begins.
     Start,
     /// Dispatch a prompt to a headless agent.
-    AgentTask { prompt: String, team: Option<String> },
+    AgentTask {
+        prompt: String,
+        team: Option<String>,
+    },
     /// Invoke a registered MCP tool.
-    Tool { name: String, args: serde_json::Value },
+    Tool {
+        name: String,
+        args: serde_json::Value,
+    },
     /// Invoke a connector.
     Connector { id: String, req: serde_json::Value },
     /// Conditional branch — true/false exits.
@@ -70,12 +76,12 @@ impl CanvasNodeKind {
     /// Accent color for the node border/header.
     pub fn color(&self) -> egui::Color32 {
         match self {
-            Self::Start => egui::Color32::from_rgb(76, 175, 80),    // green
-            Self::AgentTask { .. } => egui::Color32::from_rgb(33, 150, 243),  // blue
-            Self::Tool { .. } => egui::Color32::from_rgb(255, 152, 0),   // orange
-            Self::Connector { .. } => egui::Color32::from_rgb(156, 39, 176),  // purple
-            Self::Condition { .. } => egui::Color32::from_rgb(255, 87, 34),   // deep orange
-            Self::End => egui::Color32::from_rgb(158, 158, 158),   // grey
+            Self::Start => egui::Color32::from_rgb(76, 175, 80), // green
+            Self::AgentTask { .. } => egui::Color32::from_rgb(33, 150, 243), // blue
+            Self::Tool { .. } => egui::Color32::from_rgb(255, 152, 0), // orange
+            Self::Connector { .. } => egui::Color32::from_rgb(156, 39, 176), // purple
+            Self::Condition { .. } => egui::Color32::from_rgb(255, 87, 34), // deep orange
+            Self::End => egui::Color32::from_rgb(158, 158, 158), // grey
         }
     }
 
@@ -188,7 +194,11 @@ impl WorkflowCanvas {
     /// Add an edge between two nodes.
     pub fn add_edge(&mut self, from: NodeId, from_port: &str, to: NodeId) {
         // Prevent duplicate edges.
-        if self.edges.iter().any(|e| e.from == from && e.from_port == from_port && e.to == to) {
+        if self
+            .edges
+            .iter()
+            .any(|e| e.from == from && e.from_port == from_port && e.to == to)
+        {
             return;
         }
         self.edges.push(CanvasEdge {
@@ -200,7 +210,8 @@ impl WorkflowCanvas {
 
     /// Remove an edge.
     pub fn remove_edge(&mut self, from: &NodeId, from_port: &str, to: &NodeId) {
-        self.edges.retain(|e| &e.from != from || e.from_port != from_port || &e.to != to);
+        self.edges
+            .retain(|e| &e.from != from || e.from_port != from_port || &e.to != to);
     }
 
     /// Get a node by id.
@@ -242,7 +253,9 @@ impl WorkflowCanvas {
         }
         for edge in &self.edges {
             *in_degree.entry(edge.to.0.clone()).or_insert(0) += 1;
-            adj.entry(edge.from.0.clone()).or_default().push(edge.to.0.clone());
+            adj.entry(edge.from.0.clone())
+                .or_default()
+                .push(edge.to.0.clone());
         }
 
         let mut queue: Vec<String> = in_degree
@@ -322,7 +335,8 @@ impl WorkflowCanvas {
         let palette_bg = egui::Color32::from_rgb(30, 30, 30);
         let palette_grid = egui::Color32::from_rgb(45, 45, 45);
 
-        let (response, painter) = ui.allocate_painter(available_size, egui::Sense::click_and_drag());
+        let (response, painter) =
+            ui.allocate_painter(available_size, egui::Sense::click_and_drag());
         let rect = response.rect;
 
         // Background
@@ -375,8 +389,8 @@ impl WorkflowCanvas {
         }
 
         // Interaction pass (mutable)
-        let is_dragging_primary = response.dragged_by(egui::PointerButton::Primary)
-            && !ui.input(|i| i.modifiers.ctrl);
+        let is_dragging_primary =
+            response.dragged_by(egui::PointerButton::Primary) && !ui.input(|i| i.modifiers.ctrl);
         let is_clicked = response.clicked();
         let mut dragging_node: Option<NodeId> = None;
 
@@ -438,7 +452,12 @@ fn draw_node_fn(
 
     // Body
     painter.rect_filled(body_rect, 0.0, bg_color);
-    painter.rect_stroke(body_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        body_rect,
+        0.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)),
+        egui::StrokeKind::Inside,
+    );
 
     // Header
     painter.rect_filled(header_rect, 0.0, border_color);
@@ -465,13 +484,21 @@ fn draw_node_fn(
     // Output port (right side)
     let port_pos = egui::pos2(rect.max.x, rect.center().y);
     painter.circle_filled(port_pos, 5.0 * zoom, border_color);
-    painter.circle_stroke(port_pos, 5.0 * zoom, egui::Stroke::new(1.0, egui::Color32::WHITE));
+    painter.circle_stroke(
+        port_pos,
+        5.0 * zoom,
+        egui::Stroke::new(1.0, egui::Color32::WHITE),
+    );
 
     // Input port (left side) — not on Start node
     if !matches!(node.kind, CanvasNodeKind::Start) {
         let in_pos = egui::pos2(rect.min.x, rect.center().y);
         painter.circle_filled(in_pos, 5.0 * zoom, border_color);
-        painter.circle_stroke(in_pos, 5.0 * zoom, egui::Stroke::new(1.0, egui::Color32::WHITE));
+        painter.circle_stroke(
+            in_pos,
+            5.0 * zoom,
+            egui::Stroke::new(1.0, egui::Color32::WHITE),
+        );
     }
 
     rect
@@ -522,7 +549,11 @@ fn draw_edge_fn(
     let arrow_size = 8.0 * zoom;
     let left = to - dir * arrow_size + egui::Vec2::new(-dir.y, dir.x) * arrow_size * 0.5;
     let right = to - dir * arrow_size - egui::Vec2::new(-dir.y, dir.x) * arrow_size * 0.5;
-    painter.add(egui::Shape::convex_polygon(vec![to, left, right], color, egui::Stroke::NONE));
+    painter.add(egui::Shape::convex_polygon(
+        vec![to, left, right],
+        color,
+        egui::Stroke::NONE,
+    ));
 }
 
 /// Actions produced by canvas interaction.
@@ -536,13 +567,25 @@ pub enum CanvasAction {
 }
 
 /// Compute points along a cubic bezier curve.
-fn bezier_points(p0: egui::Pos2, p1: egui::Pos2, p2: egui::Pos2, p3: egui::Pos2, segments: usize) -> Vec<egui::Pos2> {
+fn bezier_points(
+    p0: egui::Pos2,
+    p1: egui::Pos2,
+    p2: egui::Pos2,
+    p3: egui::Pos2,
+    segments: usize,
+) -> Vec<egui::Pos2> {
     (0..=segments)
         .map(|i| {
             let t = i as f32 / segments as f32;
             let mt = 1.0 - t;
-            let x = mt * mt * mt * p0.x + 3.0 * mt * mt * t * p1.x + 3.0 * mt * t * t * p2.x + t * t * t * p3.x;
-            let y = mt * mt * mt * p0.y + 3.0 * mt * mt * t * p1.y + 3.0 * mt * t * t * p2.y + t * t * t * p3.y;
+            let x = mt * mt * mt * p0.x
+                + 3.0 * mt * mt * t * p1.x
+                + 3.0 * mt * t * t * p2.x
+                + t * t * t * p3.x;
+            let y = mt * mt * mt * p0.y
+                + 3.0 * mt * mt * t * p1.y
+                + 3.0 * mt * t * t * p2.y
+                + t * t * t * p3.y;
             egui::pos2(x, y)
         })
         .collect()
@@ -564,7 +607,10 @@ mod tests {
     fn add_and_remove_node() {
         let mut canvas = WorkflowCanvas::new("test", "Test");
         let id = canvas.add_node(
-            CanvasNodeKind::Tool { name: "write_file".into(), args: serde_json::json!({}) },
+            CanvasNodeKind::Tool {
+                name: "write_file".into(),
+                args: serde_json::json!({}),
+            },
             NodePosition { x: 300.0, y: 200.0 },
         );
         assert_eq!(canvas.nodes.len(), 3);
@@ -578,7 +624,10 @@ mod tests {
         let start_id = canvas.nodes[0].id.clone();
         let end_id = canvas.nodes[1].id.clone();
         let mid = canvas.add_node(
-            CanvasNodeKind::Tool { name: "read_file".into(), args: serde_json::json!({}) },
+            CanvasNodeKind::Tool {
+                name: "read_file".into(),
+                args: serde_json::json!({}),
+            },
             NodePosition { x: 300.0, y: 200.0 },
         );
         canvas.add_edge(start_id.clone(), "ok", mid.clone());
@@ -606,7 +655,10 @@ mod tests {
         let start_id = canvas.nodes[0].id.clone();
         let end_id = canvas.nodes[1].id.clone();
         let tool_node = canvas.add_node(
-            CanvasNodeKind::Tool { name: "write_file".into(), args: serde_json::json!({"f": "a.txt"}) },
+            CanvasNodeKind::Tool {
+                name: "write_file".into(),
+                args: serde_json::json!({"f": "a.txt"}),
+            },
             NodePosition { x: 300.0, y: 200.0 },
         );
         canvas.add_edge(start_id, "ok", tool_node.clone());
@@ -614,6 +666,9 @@ mod tests {
 
         let wf = canvas.to_workflow().unwrap();
         assert_eq!(wf.steps.len(), 1);
-        assert!(matches!(wf.steps[0], crate::editor::workflow::WorkflowStep::Tool { .. }));
+        assert!(matches!(
+            wf.steps[0],
+            crate::editor::workflow::WorkflowStep::Tool { .. }
+        ));
     }
 }

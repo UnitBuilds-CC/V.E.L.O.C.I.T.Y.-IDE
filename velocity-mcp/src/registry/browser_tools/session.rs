@@ -16,7 +16,9 @@ pub fn handle_session_tool(
                 .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser session creation summary: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser session creation summary: {err}"
+                    ))
                 })?
             } else {
                 crate::editor::browser::render_session_create_report(&report)
@@ -31,10 +33,12 @@ pub fn handle_session_tool(
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::read_session_report(root, session_id)
                     .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser session summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser session summary: {err}"))
+                })?
             } else {
-                crate::editor::browser::session_state_to_json(&session).map_err(Box::<dyn Error>::from)?
+                crate::editor::browser::session_state_to_json(&session)
+                    .map_err(Box::<dyn Error>::from)?
             }
         }
         "browser_list_snapshots" => {
@@ -52,8 +56,9 @@ pub fn handle_session_tool(
                 sort_direction,
             )
             .map_err(Box::<dyn Error>::from)?;
-            serde_json::to_string_pretty(&snapshots)
-                .map_err(|err| Box::<dyn Error>::from(format!("serialise browser snapshots: {err}")))?
+            serde_json::to_string_pretty(&snapshots).map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise browser snapshots: {err}"))
+            })?
         }
         "browser_read_snapshot" => {
             let url = arguments["url"].as_str().ok_or("url is required")?;
@@ -63,11 +68,13 @@ pub fn handle_session_tool(
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::read_snapshot_report(url, &sitemap_path)
                     .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser snapshot summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser snapshot summary: {err}"))
+                })?
             } else {
-                serde_json::to_string_pretty(&snapshot)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser snapshot: {err}")))?
+                serde_json::to_string_pretty(&snapshot).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser snapshot: {err}"))
+                })?
             }
         }
         "browser_read_visual_fallback" => {
@@ -77,8 +84,11 @@ pub fn handle_session_tool(
                 let report =
                     crate::editor::browser::read_visual_fallback_report(url, &sitemap_path)
                         .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser html fallback summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser html fallback summary: {err}"
+                    ))
+                })?
             } else {
                 crate::editor::browser::read_visual_fallback(url, &sitemap_path)
                     .map_err(Box::<dyn Error>::from)?
@@ -102,11 +112,15 @@ pub fn handle_session_tool(
                     &sitemap_path,
                 )
                 .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&compact)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser snapshot diff summary: {err}")))?
+                serde_json::to_string_pretty(&compact).map_err(|err| {
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser snapshot diff summary: {err}"
+                    ))
+                })?
             } else {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser snapshot diff: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser snapshot diff: {err}"))
+                })?
             }
         }
         "browser_list_sessions" => {
@@ -123,8 +137,9 @@ pub fn handle_session_tool(
                 sort_direction,
             )
             .map_err(Box::<dyn Error>::from)?;
-            serde_json::to_string_pretty(&sessions)
-                .map_err(|err| Box::<dyn Error>::from(format!("serialise browser sessions: {err}")))?
+            serde_json::to_string_pretty(&sessions).map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise browser sessions: {err}"))
+            })?
         }
         "browser_get_storage" => {
             let session_id = arguments["sessionId"]
@@ -136,8 +151,9 @@ pub fn handle_session_tool(
                     root, session_id, scope,
                 )
                 .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser storage summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser storage summary: {err}"))
+                })?
             } else {
                 crate::editor::browser::get_session_storage_entries(root, session_id, scope)
                     .map_err(Box::<dyn Error>::from)?
@@ -164,12 +180,12 @@ pub fn handle_session_tool(
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser storage update summary: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser storage update summary: {err}"
+                    ))
                 })?
             } else {
-                crate::editor::browser::render_storage_update_report(
-                    &report,
-                )
+                crate::editor::browser::render_storage_update_report(&report)
             }
         }
         "browser_get_cookies" => {
@@ -179,10 +195,12 @@ pub fn handle_session_tool(
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::get_session_cookies_report(root, session_id)
                     .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser cookie summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser cookie summary: {err}"))
+                })?
             } else {
-                crate::editor::browser::get_session_cookies(root, session_id).map_err(Box::<dyn Error>::from)?
+                crate::editor::browser::get_session_cookies(root, session_id)
+                    .map_err(Box::<dyn Error>::from)?
             }
         }
         "browser_set_cookies" => {
@@ -205,8 +223,11 @@ pub fn handle_session_tool(
                 crate::editor::browser::set_session_cookies_report(root, session_id, &cookies)
                     .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser cookie update summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser cookie update summary: {err}"
+                    ))
+                })?
             } else {
                 crate::editor::browser::render_cookie_update_report(&report)
             }
@@ -219,8 +240,9 @@ pub fn handle_session_tool(
             let report =
                 crate::editor::browser::auth_diagnostics_report(root, session_id, &sitemap_path)
                     .map_err(Box::<dyn Error>::from)?;
-            serde_json::to_string_pretty(&report)
-                .map_err(|err| Box::<dyn Error>::from(format!("serialise browser auth diagnostics: {err}")))?
+            serde_json::to_string_pretty(&report).map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise browser auth diagnostics: {err}"))
+            })?
         }
         "browser_save_auth_profile" => {
             let profile_name = arguments["profileName"]
@@ -241,12 +263,12 @@ pub fn handle_session_tool(
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser auth profile save report: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser auth profile save report: {err}"
+                    ))
                 })?
             } else {
-                crate::editor::browser::render_auth_profile_save_report(
-                    &report,
-                )
+                crate::editor::browser::render_auth_profile_save_report(&report)
             }
         }
         "browser_list_auth_profiles" => {
@@ -263,8 +285,9 @@ pub fn handle_session_tool(
                 sort_direction,
             )
             .map_err(Box::<dyn Error>::from)?;
-            serde_json::to_string_pretty(&profiles)
-                .map_err(|err| Box::<dyn Error>::from(format!("serialise browser auth profiles: {err}")))?
+            serde_json::to_string_pretty(&profiles).map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise browser auth profiles: {err}"))
+            })?
         }
         "browser_read_auth_profile" => {
             let profile_name = arguments["profileName"]
@@ -275,11 +298,13 @@ pub fn handle_session_tool(
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report = crate::editor::browser::read_auth_profile_report(root, profile_name)
                     .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser auth profile summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser auth profile summary: {err}"))
+                })?
             } else {
-                serde_json::to_string_pretty(&profile)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser auth profile: {err}")))?
+                serde_json::to_string_pretty(&profile).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser auth profile: {err}"))
+                })?
             }
         }
         "browser_apply_auth_profile" => {
@@ -299,12 +324,12 @@ pub fn handle_session_tool(
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser auth profile apply report: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser auth profile apply report: {err}"
+                    ))
                 })?
             } else {
-                crate::editor::browser::render_auth_profile_apply_report(
-                    &report,
-                )
+                crate::editor::browser::render_auth_profile_apply_report(&report)
             }
         }
         "browser_reseed_auth" => {
@@ -325,8 +350,9 @@ pub fn handle_session_tool(
             )
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser auth reseed report: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser auth reseed report: {err}"))
+                })?
             } else {
                 crate::editor::browser::render_auth_reseed_report(&report)
             }
@@ -340,12 +366,11 @@ pub fn handle_session_tool(
                 crate::editor::browser::access_diagnostics_report(root, session_id, &sitemap_path)
                     .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(true) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser access diagnostics: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser access diagnostics: {err}"))
+                })?
             } else {
-                crate::editor::browser::render_access_diagnostics_report(
-                    &report,
-                )
+                crate::editor::browser::render_access_diagnostics_report(&report)
             }
         }
         "browser_get_session_network" => {
@@ -356,12 +381,12 @@ pub fn handle_session_tool(
                 .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser session network report: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser session network report: {err}"
+                    ))
                 })?
             } else {
-                crate::editor::browser::render_session_network_read_report(
-                    &report,
-                )
+                crate::editor::browser::render_session_network_read_report(&report)
             }
         }
         "browser_read_session_transcript" => {
@@ -374,7 +399,9 @@ pub fn handle_session_tool(
                 )
                 .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&entry).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser session transcript entry: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser session transcript entry: {err}"
+                    ))
                 })?
             } else {
                 let sort_direction = crate::editor::browser::parse_list_sort_direction(
@@ -391,12 +418,12 @@ pub fn handle_session_tool(
                 .map_err(Box::<dyn Error>::from)?;
                 if arguments["compact"].as_bool().unwrap_or(false) {
                     serde_json::to_string_pretty(&report).map_err(|err| {
-                        Box::<dyn Error>::from(format!("serialise browser session transcript report: {err}"))
+                        Box::<dyn Error>::from(format!(
+                            "serialise browser session transcript report: {err}"
+                        ))
                     })?
                 } else {
-                    crate::editor::browser::render_session_transcript_report(
-                        &report,
-                    )
+                    crate::editor::browser::render_session_transcript_report(&report)
                 }
             }
         }
@@ -409,12 +436,13 @@ pub fn handle_session_tool(
                 crate::editor::browser::session_health_report(root, session_id, &sitemap_path)
                     .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser session health report: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser session health report: {err}"
+                    ))
+                })?
             } else {
-                crate::editor::browser::render_session_health_report(
-                    &report,
-                )
+                crate::editor::browser::render_session_health_report(&report)
             }
         }
         "browser_get_trace_summary" => {
@@ -424,8 +452,7 @@ pub fn handle_session_tool(
         }
         "browser_get_trace_logs" => {
             let compact = arguments["compact"].as_bool().unwrap_or(false);
-            crate::editor::browser::get_trace_logs(root, compact)
-                .map_err(Box::<dyn Error>::from)?
+            crate::editor::browser::get_trace_logs(root, compact).map_err(Box::<dyn Error>::from)?
         }
         "browser_set_session_network" => {
             let session_id = arguments["sessionId"]
@@ -467,7 +494,9 @@ pub fn handle_session_tool(
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser session network update: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser session network update: {err}"
+                    ))
                 })?
             } else {
                 crate::editor::browser::render_session_network_update_report(&report)
@@ -488,7 +517,9 @@ pub fn handle_session_tool(
                 )
                 .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser session navigation summary: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser session navigation summary: {err}"
+                    ))
                 })?
             } else {
                 crate::editor::browser::navigate_session(root, session_id, url, &sitemap_path)
@@ -511,12 +542,11 @@ pub fn handle_session_tool(
             )
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser click summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser click summary: {err}"))
+                })?
             } else {
-                crate::editor::browser::render_session_action_report(
-                    &report,
-                )
+                crate::editor::browser::render_session_action_report(&report)
             }
         }
         "browser_session_fill" => {
@@ -535,12 +565,11 @@ pub fn handle_session_tool(
             )
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser fill summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser fill summary: {err}"))
+                })?
             } else {
-                crate::editor::browser::render_session_action_report(
-                    &report,
-                )
+                crate::editor::browser::render_session_action_report(&report)
             }
         }
         "browser_session_submit" => {
@@ -556,12 +585,11 @@ pub fn handle_session_tool(
             )
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser submit summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser submit summary: {err}"))
+                })?
             } else {
-                crate::editor::browser::render_session_action_report(
-                    &report,
-                )
+                crate::editor::browser::render_session_action_report(&report)
             }
         }
         "browser_session_wait" => {
@@ -640,8 +668,9 @@ pub fn handle_session_tool(
                     &sitemap_path,
                 )
                 .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser session wait summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser session wait summary: {err}"))
+                })?
             } else {
                 crate::editor::browser::wait_for_session(
                     root,
@@ -699,12 +728,12 @@ pub fn handle_session_tool(
             .map_err(Box::<dyn Error>::from)?;
             if arguments["compact"].as_bool().unwrap_or(false) {
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser checkpoint save summary: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser checkpoint save summary: {err}"
+                    ))
                 })?
             } else {
-                crate::editor::browser::render_checkpoint_save_report(
-                    &report,
-                )
+                crate::editor::browser::render_checkpoint_save_report(&report)
             }
         }
         "browser_restore_checkpoint" => {
@@ -726,7 +755,9 @@ pub fn handle_session_tool(
                 )
                 .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser checkpoint restore summary: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser checkpoint restore summary: {err}"
+                    ))
                 })?
             } else {
                 crate::editor::browser::restore_session_checkpoint(
@@ -757,8 +788,9 @@ pub fn handle_session_tool(
                 sort_direction,
             )
             .map_err(Box::<dyn Error>::from)?;
-            serde_json::to_string_pretty(&checkpoints)
-                .map_err(|err| Box::<dyn Error>::from(format!("serialise checkpoint list: {err}")))?
+            serde_json::to_string_pretty(&checkpoints).map_err(|err| {
+                Box::<dyn Error>::from(format!("serialise checkpoint list: {err}"))
+            })?
         }
         "browser_read_checkpoint" => {
             let session_id = arguments["sessionId"]
@@ -777,8 +809,9 @@ pub fn handle_session_tool(
                     checkpoint_name,
                 )
                 .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise checkpoint summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise checkpoint summary: {err}"))
+                })?
             } else {
                 serde_json::to_string_pretty(&checkpoint)
                     .map_err(|err| Box::<dyn Error>::from(format!("serialise checkpoint: {err}")))?
@@ -809,11 +842,13 @@ pub fn handle_session_tool(
                     after_checkpoint_name,
                 )
                 .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&compact)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise checkpoint diff summary: {err}")))?
+                serde_json::to_string_pretty(&compact).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise checkpoint diff summary: {err}"))
+                })?
             } else {
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise checkpoint diff: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise checkpoint diff: {err}"))
+                })?
             }
         }
         _ => return Ok(None),

@@ -1,18 +1,18 @@
-use super::token::*;
 use super::ast::*;
-use super::signal::*;
 use super::coercion::*;
-use super::property::*;
-use super::function::*;
-use super::native::call_native;
-use super::method_dispatch::call_method;
 use super::collections::*;
-use super::core_methods::*;
-use super::web_apis::*;
-use super::intl::*;
-use super::module::apply_import;
-use super::eval_script::eval_script;
 use super::constructors::eval_new;
+use super::core_methods::*;
+use super::eval_script::eval_script;
+use super::function::*;
+use super::intl::*;
+use super::method_dispatch::call_method;
+use super::module::apply_import;
+use super::native::call_native;
+use super::property::*;
+use super::signal::*;
+use super::token::*;
+use super::web_apis::*;
 use crate::js::scope::{Scope, ScopeRef};
 use crate::js::vm::JsValue;
 use std::collections::HashMap;
@@ -34,7 +34,10 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
     match stmt {
         Stmt::Expr(e) => eval_expr_node(e, scope),
         Stmt::VarDecl { kind, name, init } => {
-            let val = match init { Some(e) => eval_expr_node(e, scope)?, None => JsValue::Undefined };
+            let val = match init {
+                Some(e) => eval_expr_node(e, scope)?,
+                None => JsValue::Undefined,
+            };
             match kind {
                 VarKind::Var => Scope::declare_var(scope, name, val),
                 VarKind::Let => Scope::declare(scope, name, val),
@@ -75,16 +78,26 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             let child = Scope::new_child(scope);
             eval_program(stmts, &child)
         }
-        Stmt::If { cond, then_branch, else_branch } => {
-            if to_boolean(&eval_expr_node(cond, scope)?) { eval_stmt(then_branch, scope) }
-            else if let Some(eb) = else_branch { eval_stmt(eb, scope) }
-            else { Ok(JsValue::Undefined) }
+        Stmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            if to_boolean(&eval_expr_node(cond, scope)?) {
+                eval_stmt(then_branch, scope)
+            } else if let Some(eb) = else_branch {
+                eval_stmt(eb, scope)
+            } else {
+                Ok(JsValue::Undefined)
+            }
         }
         Stmt::While { cond, body } => {
             let mut iterations = 0;
             while to_boolean(&eval_expr_node(cond, scope)?) {
                 iterations += 1;
-                if iterations > 100_000 { break; }
+                if iterations > 100_000 {
+                    break;
+                }
                 match eval_stmt(body, scope) {
                     Ok(_) => {}
                     Err(Signal::Break) => break,
@@ -98,36 +111,59 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             let mut iterations = 0;
             loop {
                 iterations += 1;
-                if iterations > 100_000 { break; }
+                if iterations > 100_000 {
+                    break;
+                }
                 match eval_stmt(body, scope) {
                     Ok(_) => {}
                     Err(Signal::Break) => break,
                     Err(Signal::Continue) => {}
                     Err(e) => return Err(e),
                 }
-                if !to_boolean(&eval_expr_node(cond, scope)?) { break; }
+                if !to_boolean(&eval_expr_node(cond, scope)?) {
+                    break;
+                }
             }
             Ok(JsValue::Undefined)
         }
-        Stmt::For { init, cond, update, body } => {
+        Stmt::For {
+            init,
+            cond,
+            update,
+            body,
+        } => {
             let for_scope = Scope::new_child(scope);
-            if let Some(i) = init { eval_stmt(i, &for_scope)?; }
+            if let Some(i) = init {
+                eval_stmt(i, &for_scope)?;
+            }
             let mut iterations = 0;
             loop {
                 iterations += 1;
-                if iterations > 100_000 { break; }
-                if let Some(c) = cond { if !to_boolean(&eval_expr_node(c, &for_scope)?) { break; } }
+                if iterations > 100_000 {
+                    break;
+                }
+                if let Some(c) = cond {
+                    if !to_boolean(&eval_expr_node(c, &for_scope)?) {
+                        break;
+                    }
+                }
                 match eval_stmt(body, &for_scope) {
                     Ok(_) => {}
                     Err(Signal::Break) => break,
                     Err(Signal::Continue) => {}
                     Err(e) => return Err(e),
                 }
-                if let Some(u) = update { eval_expr_node(u, &for_scope)?; }
+                if let Some(u) = update {
+                    eval_expr_node(u, &for_scope)?;
+                }
             }
             Ok(JsValue::Undefined)
         }
-        Stmt::ForIn { var_name, object, body } => {
+        Stmt::ForIn {
+            var_name,
+            object,
+            body,
+        } => {
             let obj = eval_expr_node(object, scope)?;
             match &obj {
                 JsValue::Array(arr) => {
@@ -174,7 +210,11 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             }
             Ok(JsValue::Undefined)
         }
-        Stmt::ForOf { var_name, object, body } => {
+        Stmt::ForOf {
+            var_name,
+            object,
+            body,
+        } => {
             let iterable = eval_expr_node(object, scope)?;
             for item in iterate_values(&iterable, scope) {
                 Scope::declare(scope, var_name, item);
@@ -187,7 +227,11 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             }
             Ok(JsValue::Undefined)
         }
-        Stmt::ForAwaitOf { var_name, object, body } => {
+        Stmt::ForAwaitOf {
+            var_name,
+            object,
+            body,
+        } => {
             let iterable = eval_expr_node(object, scope)?;
             for item in iterate_values(&iterable, scope) {
                 // Await each value: unwrap settled promises, re-throw rejections.
@@ -203,19 +247,29 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             Ok(JsValue::Undefined)
         }
         Stmt::Return(e) => {
-            let val = match e { Some(ex) => eval_expr_node(ex, scope)?, None => JsValue::Undefined };
+            let val = match e {
+                Some(ex) => eval_expr_node(ex, scope)?,
+                None => JsValue::Undefined,
+            };
             Err(Signal::Return(val))
         }
         Stmt::Break => Err(Signal::Break),
         Stmt::Continue => Err(Signal::Continue),
         Stmt::Throw(e) => Err(Signal::Throw(eval_expr_node(e, scope)?)),
-        Stmt::TryCatch { try_block, catch_var, catch_block, finally_block } => {
+        Stmt::TryCatch {
+            try_block,
+            catch_var,
+            catch_block,
+            finally_block,
+        } => {
             let result = eval_stmt(try_block, scope);
             let outcome: EvalResult = match result {
                 Err(Signal::Throw(thrown)) => {
                     if let Some(cb) = catch_block {
                         let catch_scope = Scope::new_child(scope);
-                        if let Some(var) = catch_var { Scope::declare(&catch_scope, var, thrown); }
+                        if let Some(var) = catch_var {
+                            Scope::declare(&catch_scope, var, thrown);
+                        }
                         eval_stmt(cb, &catch_scope)
                     } else {
                         Err(Signal::Throw(thrown))
@@ -223,7 +277,9 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
                 }
                 other => other,
             };
-            if let Some(fb) = finally_block { let _ = eval_stmt(fb, scope); }
+            if let Some(fb) = finally_block {
+                let _ = eval_stmt(fb, scope);
+            }
             outcome
         }
         Stmt::FunctionDecl { name, params, body } => {
@@ -244,13 +300,21 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
                 closure: scope.clone(),
             };
             let mut wrapper_map = HashMap::new();
-            wrapper_map.insert("__type__".to_string(), JsValue::String("AsyncFunction".to_string()));
+            wrapper_map.insert(
+                "__type__".to_string(),
+                JsValue::String("AsyncFunction".to_string()),
+            );
             wrapper_map.insert("__inner__".to_string(), func);
             let async_fn = JsValue::Object(wrapper_map);
             Scope::declare(scope, name, async_fn);
             Ok(JsValue::Undefined)
         }
-        Stmt::ClassDecl { name, parent, methods, fields } => {
+        Stmt::ClassDecl {
+            name,
+            parent,
+            methods,
+            fields,
+        } => {
             eval_class_decl(name, parent, methods, fields, scope);
             Ok(JsValue::Undefined)
         }
@@ -266,7 +330,11 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             }
             Ok(JsValue::Undefined)
         }
-        Stmt::Export { declaration, default_expr, .. } => {
+        Stmt::Export {
+            declaration,
+            default_expr,
+            ..
+        } => {
             if let Some(decl) = declaration {
                 eval_stmt(decl, scope)?;
             }
@@ -286,10 +354,11 @@ pub fn eval_stmt(stmt: &Stmt, scope: &ScopeRef) -> EvalResult {
             Scope::declare(scope, name, func);
             Ok(JsValue::Undefined)
         }
-        Stmt::Labeled { body, .. } => {
-            eval_stmt(body, scope)
-        }
-        Stmt::Switch { discriminant, cases } => {
+        Stmt::Labeled { body, .. } => eval_stmt(body, scope),
+        Stmt::Switch {
+            discriminant,
+            cases,
+        } => {
             let disc_val = eval_expr_node(discriminant, scope)?;
             let mut matched = false;
             let mut has_default = false;
@@ -364,18 +433,27 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
                 "history" => super::web_platform::make_history(),
                 "customElements" => {
                     let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("CustomElementRegistry".to_string()));
+                    m.insert(
+                        "__type__".to_string(),
+                        JsValue::String("CustomElementRegistry".to_string()),
+                    );
                     JsValue::Object(m)
                 }
                 "caches" => {
                     let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("CacheStorage".to_string()));
+                    m.insert(
+                        "__type__".to_string(),
+                        JsValue::String("CacheStorage".to_string()),
+                    );
                     JsValue::Object(m)
                 }
                 "indexedDB" => super::web_platform::make_indexed_db(),
                 "speechSynthesis" => {
                     let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("SpeechSynthesis".to_string()));
+                    m.insert(
+                        "__type__".to_string(),
+                        JsValue::String("SpeechSynthesis".to_string()),
+                    );
                     m.insert("paused".to_string(), JsValue::Boolean(false));
                     m.insert("pending".to_string(), JsValue::Boolean(false));
                     m.insert("speaking".to_string(), JsValue::Boolean(false));
@@ -383,8 +461,14 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
                 }
                 "Notification" => {
                     let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("Notification".to_string()));
-                    m.insert("permission".to_string(), JsValue::String("default".to_string()));
+                    m.insert(
+                        "__type__".to_string(),
+                        JsValue::String("Notification".to_string()),
+                    );
+                    m.insert(
+                        "permission".to_string(),
+                        JsValue::String("default".to_string()),
+                    );
                     JsValue::Object(m)
                 }
                 "CSS" => {
@@ -394,27 +478,54 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
                 }
                 "navigation" => {
                     let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("Navigation".to_string()));
+                    m.insert(
+                        "__type__".to_string(),
+                        JsValue::String("Navigation".to_string()),
+                    );
                     m.insert("canGoBack".to_string(), JsValue::Boolean(false));
                     m.insert("canGoForward".to_string(), JsValue::Boolean(false));
                     JsValue::Object(m)
                 }
                 "crypto" => {
                     let mut m = HashMap::new();
-                    m.insert("__type__".to_string(), JsValue::String("Crypto".to_string()));
+                    m.insert(
+                        "__type__".to_string(),
+                        JsValue::String("Crypto".to_string()),
+                    );
                     let mut subtle = HashMap::new();
-                    subtle.insert("__type__".to_string(), JsValue::String("SubtleCrypto".to_string()));
+                    subtle.insert(
+                        "__type__".to_string(),
+                        JsValue::String("SubtleCrypto".to_string()),
+                    );
                     m.insert("subtle".to_string(), JsValue::Object(subtle));
                     JsValue::Object(m)
                 }
-                "eval" | "structuredClone" | "parseInt" | "parseFloat" | "isNaN" | "isFinite" |
-                "encodeURIComponent" | "decodeURIComponent" | "Symbol" | "queueMicrotask" |
-                "Number" | "String" | "Boolean" | "requestAnimationFrame" | "requestIdleCallback" |
-                "atob" | "btoa" | "getComputedStyle" | "matchMedia" | "createImageBitmap" |
-                "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" | "flushTimers" |
-                "fetch" => {
-                    JsValue::NativeFunction(name.clone())
-                }
+                "eval"
+                | "structuredClone"
+                | "parseInt"
+                | "parseFloat"
+                | "isNaN"
+                | "isFinite"
+                | "encodeURIComponent"
+                | "decodeURIComponent"
+                | "Symbol"
+                | "queueMicrotask"
+                | "Number"
+                | "String"
+                | "Boolean"
+                | "requestAnimationFrame"
+                | "requestIdleCallback"
+                | "atob"
+                | "btoa"
+                | "getComputedStyle"
+                | "matchMedia"
+                | "createImageBitmap"
+                | "setTimeout"
+                | "setInterval"
+                | "clearTimeout"
+                | "clearInterval"
+                | "flushTimers"
+                | "fetch" => JsValue::NativeFunction(name.clone()),
                 _ => JsValue::Undefined,
             },
         }),
@@ -422,21 +533,29 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
             let mut arr = Vec::new();
             for e in elems {
                 if let Expr::Spread(inner) = e {
-                    if let JsValue::Array(items) = eval_expr_node(inner, scope)? { arr.extend(items); }
-                } else { arr.push(eval_expr_node(e, scope)?); }
+                    if let JsValue::Array(items) = eval_expr_node(inner, scope)? {
+                        arr.extend(items);
+                    }
+                } else {
+                    arr.push(eval_expr_node(e, scope)?);
+                }
             }
             Ok(JsValue::Array(arr))
         }
         Expr::Object(props) => {
             let mut map = HashMap::new();
-            for (k, v) in props { map.insert(k.clone(), eval_expr_node(v, scope)?); }
+            for (k, v) in props {
+                map.insert(k.clone(), eval_expr_node(v, scope)?);
+            }
             Ok(JsValue::Object(map))
         }
         Expr::ObjectWithSpread(items) => {
             let mut map = HashMap::new();
             for item in items {
                 match item {
-                    ObjectProp::KeyValue(k, v) => { map.insert(k.clone(), eval_expr_node(v, scope)?); }
+                    ObjectProp::KeyValue(k, v) => {
+                        map.insert(k.clone(), eval_expr_node(v, scope)?);
+                    }
                     ObjectProp::Getter(k, func_expr) => {
                         let func = eval_expr_node(func_expr, scope)?;
                         install_literal_accessor(&mut map, k, "get", func);
@@ -462,12 +581,18 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
         Expr::Binary(op, lhs, rhs) => eval_binary(op, lhs, rhs, scope),
         Expr::Assign(target, op, val) => eval_assign(target, op, val, scope),
         Expr::Ternary(cond, then_e, else_e) => {
-            if to_boolean(&eval_expr_node(cond, scope)?) { eval_expr_node(then_e, scope) } else { eval_expr_node(else_e, scope) }
+            if to_boolean(&eval_expr_node(cond, scope)?) {
+                eval_expr_node(then_e, scope)
+            } else {
+                eval_expr_node(else_e, scope)
+            }
         }
         Expr::Member(obj, prop) => {
             if let Expr::Ident(ns) = obj.as_ref() {
                 if Scope::resolve(scope, ns).is_none() {
-                    if let Some(v) = super::method_dispatch::builtin_namespace_constant(ns, prop) { return Ok(v); }
+                    if let Some(v) = super::method_dispatch::builtin_namespace_constant(ns, prop) {
+                        return Ok(v);
+                    }
                 }
             }
             let obj_val = eval_expr_node(obj, scope)?;
@@ -475,21 +600,29 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
         }
         Expr::OptionalMember(obj, prop) => {
             let obj_val = eval_expr_node(obj, scope)?;
-            if matches!(obj_val, JsValue::Null | JsValue::Undefined) { return Ok(JsValue::Undefined); }
+            if matches!(obj_val, JsValue::Null | JsValue::Undefined) {
+                return Ok(JsValue::Undefined);
+            }
             Ok(get_property(&obj_val, prop))
         }
         Expr::OptionalIndex(obj, idx) => {
             let obj_val = eval_expr_node(obj, scope)?;
-            if matches!(obj_val, JsValue::Null | JsValue::Undefined) { return Ok(JsValue::Undefined); }
+            if matches!(obj_val, JsValue::Null | JsValue::Undefined) {
+                return Ok(JsValue::Undefined);
+            }
             let key = eval_expr_node(idx, scope)?;
             let key_str = to_string(&key);
             Ok(get_property(&obj_val, &key_str))
         }
         Expr::OptionalCall(callee, args) => {
             let func = eval_expr_node(callee, scope)?;
-            if matches!(func, JsValue::Null | JsValue::Undefined) { return Ok(JsValue::Undefined); }
+            if matches!(func, JsValue::Null | JsValue::Undefined) {
+                return Ok(JsValue::Undefined);
+            }
             let mut evaluated_args = Vec::new();
-            for a in args { evaluated_args.push(eval_expr_node(a, scope)?); }
+            for a in args {
+                evaluated_args.push(eval_expr_node(a, scope)?);
+            }
             call_function(&func, &evaluated_args, scope)
         }
         Expr::Index(obj, idx) => {
@@ -499,13 +632,19 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
             Ok(get_property(&obj_val, &key_str))
         }
         Expr::Call(callee, args) => eval_call(callee, args, scope),
-                Expr::New(callee, args) => eval_new(callee, args, scope),
-        Expr::Arrow(params, body) => {
-            Ok(JsValue::Function { name: None, params: params.clone(), body: (**body).clone(), closure: scope.clone() })
-        }
-        Expr::Function(name, params, body) => {
-            Ok(JsValue::Function { name: name.clone(), params: params.clone(), body: (**body).clone(), closure: scope.clone() })
-        }
+        Expr::New(callee, args) => eval_new(callee, args, scope),
+        Expr::Arrow(params, body) => Ok(JsValue::Function {
+            name: None,
+            params: params.clone(),
+            body: (**body).clone(),
+            closure: scope.clone(),
+        }),
+        Expr::Function(name, params, body) => Ok(JsValue::Function {
+            name: name.clone(),
+            params: params.clone(),
+            body: (**body).clone(),
+            closure: scope.clone(),
+        }),
         Expr::Typeof(e) => {
             let val = eval_expr_node(e, scope)?;
             Ok(JsValue::String(typeof_str(&val).to_string()))
@@ -516,15 +655,22 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
             let mut val = eval_expr_node(e, scope)?;
             let mut depth = 0;
             loop {
-                if depth >= 32 { break; }
+                if depth >= 32 {
+                    break;
+                }
                 match &val {
-                    JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Promise") => {
+                    JsValue::Object(map)
+                        if map.get("__type__").map(to_string).as_deref() == Some("Promise") =>
+                    {
                         if let Some(reason) = map.get("__rejected__") {
                             if *reason != JsValue::Undefined {
                                 return Err(Signal::Throw(reason.clone()));
                             }
                         }
-                        let inner = map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined);
+                        let inner = map
+                            .get("__resolved__")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined);
                         val = inner;
                         depth += 1;
                     }
@@ -535,7 +681,9 @@ pub fn eval_expr_node(expr: &Expr, scope: &ScopeRef) -> EvalResult {
         }
         Expr::Sequence(exprs) => {
             let mut last = JsValue::Undefined;
-            for e in exprs { last = eval_expr_node(e, scope)?; }
+            for e in exprs {
+                last = eval_expr_node(e, scope)?;
+            }
             Ok(last)
         }
         Expr::Yield(e) => {
@@ -555,18 +703,31 @@ fn eval_unary(op: &Token, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
     }
     let val = eval_expr_node(rhs, scope)?;
     Ok(match op {
-        Token::Minus => { let p = to_primitive(&val); JsValue::Number(-to_number(&p)) }
-        Token::Plus => { let p = to_primitive(&val); JsValue::Number(to_number(&p)) }
+        Token::Minus => {
+            let p = to_primitive(&val);
+            JsValue::Number(-to_number(&p))
+        }
+        Token::Plus => {
+            let p = to_primitive(&val);
+            JsValue::Number(to_number(&p))
+        }
         Token::Bang => JsValue::Boolean(!to_boolean(&val)),
-        Token::Tilde => { let p = to_primitive(&val); JsValue::Number(!(to_number(&p) as i32) as f64) }
+        Token::Tilde => {
+            let p = to_primitive(&val);
+            JsValue::Number(!(to_number(&p) as i32) as f64)
+        }
         Token::PlusPlus => {
             let n = to_number(&val) + 1.0;
-            if let Expr::Ident(name) = rhs { Scope::assign(scope, name, JsValue::Number(n)); }
+            if let Expr::Ident(name) = rhs {
+                Scope::assign(scope, name, JsValue::Number(n));
+            }
             JsValue::Number(n)
         }
         Token::MinusMinus => {
             let n = to_number(&val) - 1.0;
-            if let Expr::Ident(name) = rhs { Scope::assign(scope, name, JsValue::Number(n)); }
+            if let Expr::Ident(name) = rhs {
+                Scope::assign(scope, name, JsValue::Number(n));
+            }
             JsValue::Number(n)
         }
         _ => JsValue::Undefined,
@@ -598,7 +759,9 @@ fn eval_delete(rhs: &Expr, scope: &ScopeRef) -> EvalResult {
             };
             if let Some(name) = obj_name {
                 if let Some(mut target) = Scope::resolve(scope, name) {
-                    let key = eval_expr_node(idx_expr, scope).map(|k| to_string(&k)).unwrap_or_default();
+                    let key = eval_expr_node(idx_expr, scope)
+                        .map(|k| to_string(&k))
+                        .unwrap_or_default();
                     let ok = delete_property(&mut target, &key);
                     Scope::assign(scope, name, target);
                     return Ok(JsValue::Boolean(ok));
@@ -613,15 +776,27 @@ fn eval_delete(rhs: &Expr, scope: &ScopeRef) -> EvalResult {
 fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResult {
     if matches!(op, Token::AmpAmp) {
         let l = eval_expr_node(lhs, scope)?;
-        return if to_boolean(&l) { eval_expr_node(rhs, scope) } else { Ok(l) };
+        return if to_boolean(&l) {
+            eval_expr_node(rhs, scope)
+        } else {
+            Ok(l)
+        };
     }
     if matches!(op, Token::PipePipe) {
         let l = eval_expr_node(lhs, scope)?;
-        return if to_boolean(&l) { Ok(l) } else { eval_expr_node(rhs, scope) };
+        return if to_boolean(&l) {
+            Ok(l)
+        } else {
+            eval_expr_node(rhs, scope)
+        };
     }
     if matches!(op, Token::QuestionQuestion) {
         let l = eval_expr_node(lhs, scope)?;
-        return if matches!(l, JsValue::Null | JsValue::Undefined) { eval_expr_node(rhs, scope) } else { Ok(l) };
+        return if matches!(l, JsValue::Null | JsValue::Undefined) {
+            eval_expr_node(rhs, scope)
+        } else {
+            Ok(l)
+        };
     }
     let l = eval_expr_node(lhs, scope)?;
     let r = eval_expr_node(rhs, scope)?;
@@ -631,7 +806,9 @@ fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResu
             let rp = to_primitive(&r);
             if matches!(lp, JsValue::String(_)) || matches!(rp, JsValue::String(_)) {
                 JsValue::String(format!("{}{}", to_string(&lp), to_string(&rp)))
-            } else { JsValue::Number(to_number(&lp) + to_number(&rp)) }
+            } else {
+                JsValue::Number(to_number(&lp) + to_number(&rp))
+            }
         }
         Token::Minus => JsValue::Number(to_number(&l) - to_number(&r)),
         Token::Star => JsValue::Number(to_number(&l) * to_number(&r)),
@@ -644,17 +821,31 @@ fn eval_binary(op: &Token, lhs: &Expr, rhs: &Expr, scope: &ScopeRef) -> EvalResu
         Token::BangEqEq => JsValue::Boolean(!strict_eq(&l, &r)),
         Token::Lt => JsValue::Boolean(relational_cmp(&l, &r) == Some(std::cmp::Ordering::Less)),
         Token::Gt => JsValue::Boolean(relational_cmp(&l, &r) == Some(std::cmp::Ordering::Greater)),
-        Token::LtEq => JsValue::Boolean(matches!(relational_cmp(&l, &r), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))),
-        Token::GtEq => JsValue::Boolean(matches!(relational_cmp(&l, &r), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))),
+        Token::LtEq => JsValue::Boolean(matches!(
+            relational_cmp(&l, &r),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        )),
+        Token::GtEq => JsValue::Boolean(matches!(
+            relational_cmp(&l, &r),
+            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+        )),
         Token::Amp => JsValue::Number(((to_number(&l) as i32) & (to_number(&r) as i32)) as f64),
         Token::Pipe => JsValue::Number(((to_number(&l) as i32) | (to_number(&r) as i32)) as f64),
         Token::Caret => JsValue::Number(((to_number(&l) as i32) ^ (to_number(&r) as i32)) as f64),
-        Token::LtLt => JsValue::Number(((to_number(&l) as i32) << (to_number(&r) as u32 & 31)) as f64),
-        Token::GtGt => JsValue::Number(((to_number(&l) as i32) >> (to_number(&r) as u32 & 31)) as f64),
-        Token::GtGtGt => JsValue::Number(((to_number(&l) as u32) >> (to_number(&r) as u32 & 31)) as f64),
+        Token::LtLt => {
+            JsValue::Number(((to_number(&l) as i32) << (to_number(&r) as u32 & 31)) as f64)
+        }
+        Token::GtGt => {
+            JsValue::Number(((to_number(&l) as i32) >> (to_number(&r) as u32 & 31)) as f64)
+        }
+        Token::GtGtGt => {
+            JsValue::Number(((to_number(&l) as u32) >> (to_number(&r) as u32 & 31)) as f64)
+        }
         Token::Instanceof => {
             let ctor_name: Option<String> = match &r {
-                JsValue::Object(cm) if cm.get("__type__").map(to_string).as_deref() == Some("class") => {
+                JsValue::Object(cm)
+                    if cm.get("__type__").map(to_string).as_deref() == Some("class") =>
+                {
                     cm.get("__name__").map(to_string)
                 }
                 JsValue::Function { name: Some(n), .. } => Some(n.clone()),
@@ -683,13 +874,33 @@ fn eval_assign(target: &Expr, op: &Token, val: &Expr, scope: &ScopeRef) -> EvalR
     let rhs = eval_expr_node(val, scope)?;
     let final_val = match op {
         Token::Eq => rhs,
-        Token::PlusEq => { let curr = eval_expr_node(target, scope)?; if matches!(curr, JsValue::String(_)) || matches!(rhs, JsValue::String(_)) { JsValue::String(format!("{}{}", to_string(&curr), to_string(&rhs))) } else { JsValue::Number(to_number(&curr) + to_number(&rhs)) } }
-        Token::MinusEq => { let curr = eval_expr_node(target, scope)?; JsValue::Number(to_number(&curr) - to_number(&rhs)) }
-        Token::StarEq => { let curr = eval_expr_node(target, scope)?; JsValue::Number(to_number(&curr) * to_number(&rhs)) }
-        Token::SlashEq => { let curr = eval_expr_node(target, scope)?; JsValue::Number(to_number(&curr) / to_number(&rhs)) }
+        Token::PlusEq => {
+            let curr = eval_expr_node(target, scope)?;
+            if matches!(curr, JsValue::String(_)) || matches!(rhs, JsValue::String(_)) {
+                JsValue::String(format!("{}{}", to_string(&curr), to_string(&rhs)))
+            } else {
+                JsValue::Number(to_number(&curr) + to_number(&rhs))
+            }
+        }
+        Token::MinusEq => {
+            let curr = eval_expr_node(target, scope)?;
+            JsValue::Number(to_number(&curr) - to_number(&rhs))
+        }
+        Token::StarEq => {
+            let curr = eval_expr_node(target, scope)?;
+            JsValue::Number(to_number(&curr) * to_number(&rhs))
+        }
+        Token::SlashEq => {
+            let curr = eval_expr_node(target, scope)?;
+            JsValue::Number(to_number(&curr) / to_number(&rhs))
+        }
         Token::QuestionQuestionEq => {
             let curr = eval_expr_node(target, scope)?;
-            if matches!(curr, JsValue::Null | JsValue::Undefined) { rhs } else { return Ok(curr); }
+            if matches!(curr, JsValue::Null | JsValue::Undefined) {
+                rhs
+            } else {
+                return Ok(curr);
+            }
         }
         _ => rhs,
     };
@@ -704,7 +915,9 @@ pub(super) fn assign_to_target(target: &Expr, value: JsValue, scope: &ScopeRef) 
                 // Const reassignment — silently ignore (permissive mode).
                 return;
             }
-            if !Scope::assign(scope, name, value.clone()) { Scope::declare(scope, name, value); }
+            if !Scope::assign(scope, name, value.clone()) {
+                Scope::declare(scope, name, value);
+            }
         }
         Expr::Member(obj, prop) => {
             let obj_name = match obj.as_ref() {
@@ -733,10 +946,23 @@ pub(super) fn assign_to_target(target: &Expr, value: JsValue, scope: &ScopeRef) 
         Expr::Index(obj, idx_expr) => {
             if let Expr::Ident(name) = obj.as_ref() {
                 if let Some(mut arr_or_obj) = Scope::resolve(scope, name) {
-                    let key = if let Ok(k) = eval_expr_node(idx_expr, scope) { to_string(&k) } else { return };
+                    let key = if let Ok(k) = eval_expr_node(idx_expr, scope) {
+                        to_string(&k)
+                    } else {
+                        return;
+                    };
                     match &mut arr_or_obj {
-                        JsValue::Array(arr) => { if let Ok(i) = key.parse::<usize>() { while arr.len() <= i { arr.push(JsValue::Undefined); } arr[i] = value; } }
-                        JsValue::Object(map) => { map.insert(key, value); }
+                        JsValue::Array(arr) => {
+                            if let Ok(i) = key.parse::<usize>() {
+                                while arr.len() <= i {
+                                    arr.push(JsValue::Undefined);
+                                }
+                                arr[i] = value;
+                            }
+                        }
+                        JsValue::Object(map) => {
+                            map.insert(key, value);
+                        }
                         _ => {}
                     }
                     Scope::assign(scope, name, arr_or_obj);
@@ -751,13 +977,18 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
     let mut evaluated_args = Vec::new();
     for a in args {
         if let Expr::Spread(inner) = a {
-            if let JsValue::Array(items) = eval_expr_node(inner, scope)? { evaluated_args.extend(items); }
-        } else { evaluated_args.push(eval_expr_node(a, scope)?); }
+            if let JsValue::Array(items) = eval_expr_node(inner, scope)? {
+                evaluated_args.extend(items);
+            }
+        } else {
+            evaluated_args.push(eval_expr_node(a, scope)?);
+        }
     }
     if let Expr::Member(obj_expr, method) = callee {
         if matches!(obj_expr.as_ref(), Expr::Super) {
             let parent = Scope::resolve(scope, "__super__").unwrap_or(JsValue::Undefined);
-            let this_val = Scope::resolve(scope, "this").unwrap_or_else(|| JsValue::Object(HashMap::new()));
+            let this_val =
+                Scope::resolve(scope, "this").unwrap_or_else(|| JsValue::Object(HashMap::new()));
             return call_super_method(&parent, method, &evaluated_args, this_val, scope);
         }
         if let Expr::Ident(obj_name) = obj_expr.as_ref() {
@@ -768,49 +999,152 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let value = evaluated_args.get(2).cloned().unwrap_or(JsValue::Undefined);
                     let mut ok = false;
                     if let Some(Expr::Ident(var_name)) = args.first() {
-                        if let Some(mut target) = Scope::resolve(scope, var_name) { ok = set_property(&mut target, &prop, value); Scope::assign(scope, var_name, target); }
+                        if let Some(mut target) = Scope::resolve(scope, var_name) {
+                            ok = set_property(&mut target, &prop, value);
+                            Scope::assign(scope, var_name, target);
+                        }
                     }
                     return Ok(JsValue::Boolean(ok));
                 }
                 "Reflect.deleteProperty" => {
                     let prop = evaluated_args.get(1).map(to_string).unwrap_or_default();
                     if let Some(Expr::Ident(var_name)) = args.first() {
-                        if let Some(mut target) = Scope::resolve(scope, var_name) { let ok = delete_property(&mut target, &prop); Scope::assign(scope, var_name, target); return Ok(JsValue::Boolean(ok)); }
+                        if let Some(mut target) = Scope::resolve(scope, var_name) {
+                            let ok = delete_property(&mut target, &prop);
+                            Scope::assign(scope, var_name, target);
+                            return Ok(JsValue::Boolean(ok));
+                        }
                         return Ok(JsValue::Boolean(false));
                     }
-                    let mut target = evaluated_args.first().cloned().unwrap_or(JsValue::Undefined);
+                    let mut target = evaluated_args
+                        .first()
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined);
                     return Ok(JsValue::Boolean(delete_property(&mut target, &prop)));
                 }
-                "Promise.resolve" | "Promise.reject" | "Promise.all" | "Promise.race" | "Promise.allSettled" |
-                "Promise.withResolvers" | "Promise.try" |
-                "Object.keys" | "Object.values" | "Object.entries" | "Object.fromEntries" | "Object.assign" | "Object.freeze" |
-                "Object.is" | "Object.setPrototypeOf" | "Object.hasOwn" |
-                "Object.create" | "Object.getPrototypeOf" | "Object.defineProperty" |
-                "Object.defineProperties" | "Object.getOwnPropertyDescriptor" | "Object.getOwnPropertyDescriptors" | "Object.getOwnPropertyNames" |
-                "Object.groupBy" | "Object.getOwnPropertySymbols" |
-                "Array.isArray" | "Array.from" | "Array.of" | "Array.fromAsync" |
-                "Map.groupBy" |
-                "Error.isError" | "ArrayBuffer.isView" | "Proxy.revocable" |
-                "URL.canParse" | "crypto.randomUUID" | "crypto.getRandomValues" |
-                "Intl.getCanonicalLocales" |
-                "JSON.parse" | "JSON.stringify" |
-                "Math.floor" | "Math.ceil" | "Math.round" | "Math.abs" | "Math.sqrt" |
-                "Math.trunc" | "Math.sign" | "Math.log" | "Math.pow" | "Math.max" | "Math.min" | "Math.random" |
-                "Math.sin" | "Math.cos" | "Math.tan" | "Math.asin" | "Math.acos" | "Math.atan" | "Math.atan2" |
-                "Math.sinh" | "Math.cosh" | "Math.tanh" | "Math.exp" | "Math.expm1" | "Math.log1p" |
-                "Math.log2" | "Math.log10" | "Math.cbrt" | "Math.hypot" | "Math.fround" | "Math.clz32" |
-                "Math.asinh" | "Math.acosh" | "Math.atanh" | "Math.imul" |
-                "Number.parseInt" | "Number.parseFloat" | "Number.isNaN" | "Number.isFinite" |
-                "Number.isInteger" | "Number.isSafeInteger" |
-                "String.fromCharCode" | "String.fromCodePoint" | "Date.now" | "performance.now" | "console.log" | "console.warn" | "console.error" | "console.info" |
-                "console.debug" | "console.assert" | "console.count" | "console.countReset" | "console.time" | "console.timeEnd" |
-                "console.table" | "console.trace" | "console.group" | "console.groupEnd" | "console.clear" |
-                "eval" | "structuredClone" | "queueMicrotask" | "requestAnimationFrame" | "requestIdleCallback" | "Symbol" | "Symbol.for" |
-                "Reflect.get" | "Reflect.has" |
-                "Reflect.ownKeys" | "Reflect.getOwnPropertyDescriptor" | "Reflect.apply" | "Reflect.construct" => {
+                "Promise.resolve"
+                | "Promise.reject"
+                | "Promise.all"
+                | "Promise.race"
+                | "Promise.allSettled"
+                | "Promise.withResolvers"
+                | "Promise.try"
+                | "Object.keys"
+                | "Object.values"
+                | "Object.entries"
+                | "Object.fromEntries"
+                | "Object.assign"
+                | "Object.freeze"
+                | "Object.is"
+                | "Object.setPrototypeOf"
+                | "Object.hasOwn"
+                | "Object.create"
+                | "Object.getPrototypeOf"
+                | "Object.defineProperty"
+                | "Object.defineProperties"
+                | "Object.getOwnPropertyDescriptor"
+                | "Object.getOwnPropertyDescriptors"
+                | "Object.getOwnPropertyNames"
+                | "Object.groupBy"
+                | "Object.getOwnPropertySymbols"
+                | "Array.isArray"
+                | "Array.from"
+                | "Array.of"
+                | "Array.fromAsync"
+                | "Map.groupBy"
+                | "Error.isError"
+                | "ArrayBuffer.isView"
+                | "Proxy.revocable"
+                | "URL.canParse"
+                | "crypto.randomUUID"
+                | "crypto.getRandomValues"
+                | "Intl.getCanonicalLocales"
+                | "JSON.parse"
+                | "JSON.stringify"
+                | "Math.floor"
+                | "Math.ceil"
+                | "Math.round"
+                | "Math.abs"
+                | "Math.sqrt"
+                | "Math.trunc"
+                | "Math.sign"
+                | "Math.log"
+                | "Math.pow"
+                | "Math.max"
+                | "Math.min"
+                | "Math.random"
+                | "Math.sin"
+                | "Math.cos"
+                | "Math.tan"
+                | "Math.asin"
+                | "Math.acos"
+                | "Math.atan"
+                | "Math.atan2"
+                | "Math.sinh"
+                | "Math.cosh"
+                | "Math.tanh"
+                | "Math.exp"
+                | "Math.expm1"
+                | "Math.log1p"
+                | "Math.log2"
+                | "Math.log10"
+                | "Math.cbrt"
+                | "Math.hypot"
+                | "Math.fround"
+                | "Math.clz32"
+                | "Math.asinh"
+                | "Math.acosh"
+                | "Math.atanh"
+                | "Math.imul"
+                | "Number.parseInt"
+                | "Number.parseFloat"
+                | "Number.isNaN"
+                | "Number.isFinite"
+                | "Number.isInteger"
+                | "Number.isSafeInteger"
+                | "String.fromCharCode"
+                | "String.fromCodePoint"
+                | "Date.now"
+                | "performance.now"
+                | "console.log"
+                | "console.warn"
+                | "console.error"
+                | "console.info"
+                | "console.debug"
+                | "console.assert"
+                | "console.count"
+                | "console.countReset"
+                | "console.time"
+                | "console.timeEnd"
+                | "console.table"
+                | "console.trace"
+                | "console.group"
+                | "console.groupEnd"
+                | "console.clear"
+                | "eval"
+                | "structuredClone"
+                | "queueMicrotask"
+                | "requestAnimationFrame"
+                | "requestIdleCallback"
+                | "Symbol"
+                | "Symbol.for"
+                | "Reflect.get"
+                | "Reflect.has"
+                | "Reflect.ownKeys"
+                | "Reflect.getOwnPropertyDescriptor"
+                | "Reflect.apply"
+                | "Reflect.construct" => {
                     let result = call_native(&native_name, &evaluated_args)?;
-                    if matches!(native_name.as_str(), "Object.defineProperty" | "Object.defineProperties" | "Object.assign" | "Object.setPrototypeOf") {
-                        if let Some(Expr::Ident(var_name)) = args.first() { Scope::assign(scope, var_name, result.clone()); }
+                    if matches!(
+                        native_name.as_str(),
+                        "Object.defineProperty"
+                            | "Object.defineProperties"
+                            | "Object.assign"
+                            | "Object.setPrototypeOf"
+                    ) {
+                        if let Some(Expr::Ident(var_name)) = args.first() {
+                            Scope::assign(scope, var_name, result.clone());
+                        }
                     }
                     return Ok(result);
                 }
@@ -821,44 +1155,139 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
         if let JsValue::Object(map) = &obj {
             let type_tag = map.get("__type__").map(to_string);
             match type_tag.as_deref() {
-                Some("Map") | Some("WeakMap") => { let mut m = map.clone(); let result = call_map_method(&mut m, method, &evaluated_args, scope); assign_to_target(obj_expr, JsValue::Object(m), scope); return result; }
-                Some("Set") | Some("WeakSet") => { let mut m = map.clone(); let result = call_set_method(&mut m, method, &evaluated_args, scope); assign_to_target(obj_expr, JsValue::Object(m), scope); return result; }
+                Some("Map") | Some("WeakMap") => {
+                    let mut m = map.clone();
+                    let result = call_map_method(&mut m, method, &evaluated_args, scope);
+                    assign_to_target(obj_expr, JsValue::Object(m), scope);
+                    return result;
+                }
+                Some("Set") | Some("WeakSet") => {
+                    let mut m = map.clone();
+                    let result = call_set_method(&mut m, method, &evaluated_args, scope);
+                    assign_to_target(obj_expr, JsValue::Object(m), scope);
+                    return result;
+                }
                 Some("Promise") => return call_promise_method(map, method, &evaluated_args, scope),
                 Some("Date") => return call_date_method_enhanced(map, method, &evaluated_args),
                 Some("Generator") => return call_generator_method(map, method),
                 Some("RegExp") => return call_regexp_method(map, method, &evaluated_args),
-                Some("AbortController") => { let result = call_abort_controller_method(map, method, &evaluated_args)?; if method == "abort" { assign_to_target(obj_expr, result.clone(), scope); } return Ok(result); }
-                Some("AbortSignal") => return call_abort_signal_method(map, method, &evaluated_args),
-                Some("TextEncoder") => return call_text_encoder_method(map, method, &evaluated_args),
-                Some("TextDecoder") => return call_text_decoder_method(map, method, &evaluated_args),
+                Some("AbortController") => {
+                    let result = call_abort_controller_method(map, method, &evaluated_args)?;
+                    if method == "abort" {
+                        assign_to_target(obj_expr, result.clone(), scope);
+                    }
+                    return Ok(result);
+                }
+                Some("AbortSignal") => {
+                    return call_abort_signal_method(map, method, &evaluated_args)
+                }
+                Some("TextEncoder") => {
+                    return call_text_encoder_method(map, method, &evaluated_args)
+                }
+                Some("TextDecoder") => {
+                    return call_text_decoder_method(map, method, &evaluated_args)
+                }
                 Some("Response") => return call_response_method(map, method, &evaluated_args),
                 Some("Blob") => return call_blob_method(map, method, &evaluated_args),
-                Some("Uint8Array") | Some("Int8Array") | Some("Uint16Array") | Some("Int16Array") |
-                Some("Uint32Array") | Some("Int32Array") | Some("Float32Array") | Some("Float64Array") |
-                Some("Uint8ClampedArray") => return call_typed_array_method(map, method, &evaluated_args),
+                Some("Uint8Array")
+                | Some("Int8Array")
+                | Some("Uint16Array")
+                | Some("Int16Array")
+                | Some("Uint32Array")
+                | Some("Int32Array")
+                | Some("Float32Array")
+                | Some("Float64Array")
+                | Some("Uint8ClampedArray") => {
+                    return call_typed_array_method(map, method, &evaluated_args)
+                }
                 Some("DataView") => return call_dataview_method(map, method, &evaluated_args),
-                Some("Intl.Segmenter") => return call_segmenter_method(map, method, &evaluated_args),
+                Some("Intl.Segmenter") => {
+                    return call_segmenter_method(map, method, &evaluated_args)
+                }
                 Some("Intl.Collator") => return call_collator_method(map, method, &evaluated_args),
-                Some("Intl.NumberFormat") => return call_number_format_method(map, method, &evaluated_args),
-                Some("Intl.DateTimeFormat") => return call_datetime_format_method(map, method, &evaluated_args),
-                Some("Intl.PluralRules") => return call_plural_rules_method(map, method, &evaluated_args),
-                Some("Intl.RelativeTimeFormat") => return call_relative_time_format_method(map, method, &evaluated_args),
-                Some("Intl.DurationFormat") => return call_duration_format_method(map, method, &evaluated_args),
-                Some("Intl.ListFormat") => return call_list_format_method(map, method, &evaluated_args),
-                Some("Intl.DisplayNames") => return call_display_names_method(map, method, &evaluated_args),
+                Some("Intl.NumberFormat") => {
+                    return call_number_format_method(map, method, &evaluated_args)
+                }
+                Some("Intl.DateTimeFormat") => {
+                    return call_datetime_format_method(map, method, &evaluated_args)
+                }
+                Some("Intl.PluralRules") => {
+                    return call_plural_rules_method(map, method, &evaluated_args)
+                }
+                Some("Intl.RelativeTimeFormat") => {
+                    return call_relative_time_format_method(map, method, &evaluated_args)
+                }
+                Some("Intl.DurationFormat") => {
+                    return call_duration_format_method(map, method, &evaluated_args)
+                }
+                Some("Intl.ListFormat") => {
+                    return call_list_format_method(map, method, &evaluated_args)
+                }
+                Some("Intl.DisplayNames") => {
+                    return call_display_names_method(map, method, &evaluated_args)
+                }
                 Some("Intl.Locale") => return call_locale_method(map, method),
-                Some("MessagePort") => return super::web_apis2::call_message_port_method(map, method, &evaluated_args, scope),
-                Some("EventTarget") => { let mut m = map.clone(); let result = super::web_apis2::call_event_target_method(&mut m, method, &evaluated_args, scope); assign_to_target(obj_expr, JsValue::Object(m), scope); return result; }
+                Some("MessagePort") => {
+                    return super::web_apis2::call_message_port_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                        scope,
+                    )
+                }
+                Some("EventTarget") => {
+                    let mut m = map.clone();
+                    let result = super::web_apis2::call_event_target_method(
+                        &mut m,
+                        method,
+                        &evaluated_args,
+                        scope,
+                    );
+                    assign_to_target(obj_expr, JsValue::Object(m), scope);
+                    return result;
+                }
                 Some("WeakRef") => return super::web_apis2::call_weakref_method(map, method),
-                Some("FinalizationRegistry") => return super::web_apis2::call_finalization_registry_method(method),
-                Some("Storage") => return Ok(super::browser_env::call_storage_method(map, method, &evaluated_args)),
-                Some("Headers") => { let result = super::browser_env::call_headers_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("FormData") => { let result = super::browser_env::call_form_data_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("Event") | Some("CustomEvent") => { let result = super::browser_env::call_event_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("URLSearchParams") => { let result = super::browser_env::call_url_search_params_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
+                Some("FinalizationRegistry") => {
+                    return super::web_apis2::call_finalization_registry_method(method)
+                }
+                Some("Storage") => {
+                    return Ok(super::browser_env::call_storage_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("Headers") => {
+                    let result =
+                        super::browser_env::call_headers_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("FormData") => {
+                    let result =
+                        super::browser_env::call_form_data_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("Event") | Some("CustomEvent") => {
+                    let result =
+                        super::browser_env::call_event_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("URLSearchParams") => {
+                    let result = super::browser_env::call_url_search_params_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
                 Some("Navigator") => {
                     // Navigator methods + property access.
-                    let result = super::web_platform::call_navigator_method(method, &evaluated_args);
+                    let result =
+                        super::web_platform::call_navigator_method(method, &evaluated_args);
                     if matches!(result, JsValue::Undefined) {
                         return Ok(get_property(&obj, method));
                     }
@@ -870,10 +1299,14 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 Some("Window") => {
                     // Window methods + property access.
                     let result = match method.as_str() {
-                        "postMessage" | "scrollTo" | "scrollBy" | "scroll" | "print" | "stop" | "focus" | "blur" => JsValue::Undefined,
+                        "postMessage" | "scrollTo" | "scrollBy" | "scroll" | "print" | "stop"
+                        | "focus" | "blur" => JsValue::Undefined,
                         "open" => {
                             let mut w = HashMap::new();
-                            w.insert("__type__".to_string(), JsValue::String("Window".to_string()));
+                            w.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Window".to_string()),
+                            );
                             w.insert("closed".to_string(), JsValue::Boolean(false));
                             JsValue::Object(w)
                         }
@@ -885,34 +1318,61 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         // Window shares the page's lifecycle event target with
                         // `document` — load/DOMContentLoaded land in one place.
                         "addEventListener" => {
-                            let ev = evaluated_args.first().map(super::coercion::to_string).unwrap_or_default();
-                            let handler = evaluated_args.get(1).cloned().unwrap_or(JsValue::Undefined);
+                            let ev = evaluated_args
+                                .first()
+                                .map(super::coercion::to_string)
+                                .unwrap_or_default();
+                            let handler =
+                                evaluated_args.get(1).cloned().unwrap_or(JsValue::Undefined);
                             super::browser_env::add_lifecycle_listener(&ev, handler);
                             JsValue::Undefined
                         }
                         "removeEventListener" => {
-                            let ev = evaluated_args.first().map(super::coercion::to_string).unwrap_or_default();
+                            let ev = evaluated_args
+                                .first()
+                                .map(super::coercion::to_string)
+                                .unwrap_or_default();
                             super::browser_env::remove_lifecycle_listeners(&ev);
                             JsValue::Undefined
                         }
                         "dispatchEvent" => {
-                            let ev = evaluated_args.first().and_then(|v| {
-                                if let JsValue::Object(m) = v { m.get("type").map(super::coercion::to_string) } else { None }
-                            }).unwrap_or_default();
+                            let ev = evaluated_args
+                                .first()
+                                .and_then(|v| {
+                                    if let JsValue::Object(m) = v {
+                                        m.get("type").map(super::coercion::to_string)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default();
                             super::browser_env::fire_lifecycle_event(&ev);
                             JsValue::Boolean(true)
                         }
                         "getSelection" => super::dom_bridge::make_selection(),
-                        "getComputedStyle" => super::web_platform::get_computed_style(evaluated_args.first().unwrap_or(&JsValue::Undefined), evaluated_args.get(1)),
-                        "matchMedia" => super::web_platform::match_media(&evaluated_args.first().map(super::coercion::to_string).unwrap_or_default()),
+                        "getComputedStyle" => super::web_platform::get_computed_style(
+                            evaluated_args.first().unwrap_or(&JsValue::Undefined),
+                            evaluated_args.get(1),
+                        ),
+                        "matchMedia" => super::web_platform::match_media(
+                            &evaluated_args
+                                .first()
+                                .map(super::coercion::to_string)
+                                .unwrap_or_default(),
+                        ),
                         "atob" | "btoa" => JsValue::String(String::new()),
                         // Self-referential window properties.
-                        "frames" | "self" | "top" | "parent" | "window" => super::browser_env::make_window(),
+                        "frames" | "self" | "top" | "parent" | "window" => {
+                            super::browser_env::make_window()
+                        }
                         "opener" => JsValue::Null,
                         "length" => JsValue::Number(0.0),
                         "showOpenFilePicker" | "showSaveFilePicker" | "showDirectoryPicker" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Array(Vec::new()));
                             JsValue::Object(p)
                         }
@@ -920,38 +1380,143 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     };
                     return Ok(result);
                 }
-                Some("Document") => return Ok(super::dom_bridge::call_document_method(method, &evaluated_args)),
+                Some("Document") => {
+                    return Ok(super::dom_bridge::call_document_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
                 Some("Element") => {
-                    let result = super::dom_bridge::call_element_method(map, method, &evaluated_args);
+                    let result =
+                        super::dom_bridge::call_element_method(map, method, &evaluated_args);
                     return Ok(result);
                 }
-                Some("DOMParser") => return Ok(super::browser_env::call_dom_parser_method(method, &evaluated_args)),
-                Some("XMLHttpRequest") => { let result = super::browser_env::call_xhr_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("MutationObserver") => { let result = super::browser_env::call_mutation_observer_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("BroadcastChannel") => { let result = super::browser_env::call_broadcast_channel_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("Performance") => return Ok(super::web_platform::call_performance_method(method, &evaluated_args)),
-                Some("History") => return Ok(super::web_platform::call_history_method(method, &evaluated_args)),
-                Some("IntersectionObserver") => { let result = super::web_platform::call_intersection_observer_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("ResizeObserver") => { let result = super::web_platform::call_resize_observer_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("WebSocket") => { let result = super::web_platform::call_web_socket_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("CSSStyleDeclaration") => return Ok(super::web_platform::call_css_style_declaration_method(map, method, &evaluated_args)),
-                Some("MediaQueryList") => return Ok(super::web_platform::call_media_query_list_method(map, method, &evaluated_args)),
-                Some("FileReader") => { let result = super::web_platform::call_file_reader_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("SubtleCrypto") => return Ok(super::web_platform::call_subtle_method(method, &evaluated_args)),
+                Some("DOMParser") => {
+                    return Ok(super::browser_env::call_dom_parser_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("XMLHttpRequest") => {
+                    let result = super::browser_env::call_xhr_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("MutationObserver") => {
+                    let result = super::browser_env::call_mutation_observer_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("BroadcastChannel") => {
+                    let result = super::browser_env::call_broadcast_channel_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("Performance") => {
+                    return Ok(super::web_platform::call_performance_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("History") => {
+                    return Ok(super::web_platform::call_history_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("IntersectionObserver") => {
+                    let result = super::web_platform::call_intersection_observer_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("ResizeObserver") => {
+                    let result = super::web_platform::call_resize_observer_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("WebSocket") => {
+                    let result =
+                        super::web_platform::call_web_socket_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("CSSStyleDeclaration") => {
+                    return Ok(super::web_platform::call_css_style_declaration_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("MediaQueryList") => {
+                    return Ok(super::web_platform::call_media_query_list_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("FileReader") => {
+                    let result =
+                        super::web_platform::call_file_reader_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("SubtleCrypto") => {
+                    return Ok(super::web_platform::call_subtle_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
                 Some("Crypto") => {
                     // crypto.randomUUID() / crypto.getRandomValues() as methods.
                     let result = match method.as_str() {
-                        "randomUUID" => super::web_apis2::call_native_extended("crypto.randomUUID", &evaluated_args)?,
-                        "getRandomValues" => super::web_apis2::call_native_extended("crypto.getRandomValues", &evaluated_args)?,
+                        "randomUUID" => super::web_apis2::call_native_extended(
+                            "crypto.randomUUID",
+                            &evaluated_args,
+                        )?,
+                        "getRandomValues" => super::web_apis2::call_native_extended(
+                            "crypto.getRandomValues",
+                            &evaluated_args,
+                        )?,
                         _ => get_property(&obj, method),
                     };
                     return Ok(result);
                 }
-                Some("CSSStyleSheet") => { let result = super::web_platform::call_css_style_sheet_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("DOMRect") => return Ok(super::web_platform::call_dom_rect_method(map, method, &evaluated_args)),
+                Some("CSSStyleSheet") => {
+                    let result = super::web_platform::call_css_style_sheet_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("DOMRect") => {
+                    return Ok(super::web_platform::call_dom_rect_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
                 Some("DOMMatrix") => {
                     let result = match method.as_str() {
-                        "translate" | "scale" | "rotate" | "skewX" | "skewY" | "multiply" | "flipX" | "flipY" | "inverse" => JsValue::Object(map.clone()),
+                        "translate" | "scale" | "rotate" | "skewX" | "skewY" | "multiply"
+                        | "flipX" | "flipY" | "inverse" => JsValue::Object(map.clone()),
                         "transformPoint" => super::web_platform::make_dom_rect(0.0, 0.0, 0.0, 0.0),
                         "toJSON" => JsValue::Object(map.clone()),
                         _ => get_property(&obj, method),
@@ -968,53 +1533,204 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     };
                     return Ok(result);
                 }
-                Some("CacheStorage") => return Ok(super::web_platform::call_caches_method(method, &evaluated_args)),
-                Some("Cache") => return Ok(super::web_platform::call_cache_method(map, method, &evaluated_args)),
-                Some("Clipboard") => return Ok(super::web_platform::call_clipboard_method(method, &evaluated_args)),
-                Some("Permissions") => return Ok(super::web_platform::call_permissions_method(method, &evaluated_args)),
-                Some("Geolocation") => return Ok(super::web_platform::call_geolocation_method(method, &evaluated_args)),
-                Some("ReadableStream") => return Ok(super::streams::call_readable_stream_method(map, method, &evaluated_args)),
-                Some("ReadableStreamDefaultReader") => return Ok(super::streams::call_reader_method(map, method, &evaluated_args)),
-                Some("ReadableStreamDefaultController") => return Ok(super::streams::call_readable_controller_method(map, method, &evaluated_args)),
-                Some("WritableStream") => return Ok(super::streams::call_writable_stream_method(map, method, &evaluated_args)),
-                Some("WritableStreamDefaultWriter") => return Ok(super::streams::call_writer_method(map, method, &evaluated_args)),
-                Some("TransformStream") => return Ok(super::streams::call_transform_stream_method(map, method, &evaluated_args)),
-                Some("TransformStreamDefaultController") => return Ok(super::streams::call_transform_controller_method(map, method, &evaluated_args)),
-                Some("CountQueuingStrategy") | Some("ByteLengthQueuingStrategy") => return Ok(super::streams::call_queuing_strategy_method(map, method, &evaluated_args)),
-                Some("DOMTokenList") => { let result = super::dom_bridge::call_dom_token_list_method(map, method, &evaluated_args); return Ok(result); }
+                Some("CacheStorage") => {
+                    return Ok(super::web_platform::call_caches_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("Cache") => {
+                    return Ok(super::web_platform::call_cache_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("Clipboard") => {
+                    return Ok(super::web_platform::call_clipboard_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("Permissions") => {
+                    return Ok(super::web_platform::call_permissions_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("Geolocation") => {
+                    return Ok(super::web_platform::call_geolocation_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("ReadableStream") => {
+                    return Ok(super::streams::call_readable_stream_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("ReadableStreamDefaultReader") => {
+                    return Ok(super::streams::call_reader_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("ReadableStreamDefaultController") => {
+                    return Ok(super::streams::call_readable_controller_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("WritableStream") => {
+                    return Ok(super::streams::call_writable_stream_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("WritableStreamDefaultWriter") => {
+                    return Ok(super::streams::call_writer_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("TransformStream") => {
+                    return Ok(super::streams::call_transform_stream_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("TransformStreamDefaultController") => {
+                    return Ok(super::streams::call_transform_controller_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("CountQueuingStrategy") | Some("ByteLengthQueuingStrategy") => {
+                    return Ok(super::streams::call_queuing_strategy_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("DOMTokenList") => {
+                    let result =
+                        super::dom_bridge::call_dom_token_list_method(map, method, &evaluated_args);
+                    return Ok(result);
+                }
                 Some("DOMStringMap") => {
                     // dataset.prop access handled via property; methods are no-ops.
                     return Ok(super::dom_bridge::get_dataset_property(map, method));
                 }
-                Some("TreeWalker") => return Ok(super::dom_bridge::call_tree_walker_method(map, method, &evaluated_args)),
-                Some("NodeIterator") => return Ok(super::dom_bridge::call_node_iterator_method(map, method, &evaluated_args)),
-                Some("Range") => { let result = super::dom_bridge::call_range_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("Selection") => { let result = super::dom_bridge::call_selection_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("Worker") => return Ok(super::web_platform::call_worker_method(map, method, &evaluated_args)),
-                Some("ServiceWorkerContainer") => return Ok(super::web_platform::call_service_worker_container_method(method, &evaluated_args)),
-                Some("HTMLCanvasElement") => return Ok(super::canvas::call_canvas_method(map, method, &evaluated_args)),
-                Some("CanvasRenderingContext2D") => return Ok(super::canvas::call_context_2d_method(map, method, &evaluated_args)),
-                Some("CanvasGradient") => { let result = super::canvas::call_canvas_gradient_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("Path2D") => { let result = super::canvas::call_path_2d_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
-                Some("OffscreenCanvas") => return Ok(super::canvas::call_offscreen_canvas_method(map, method, &evaluated_args)),
-                Some("ImageBitmap") => { let result = super::canvas::call_image_bitmap_method(map, method, &evaluated_args); assign_to_target(obj_expr, result.clone(), scope); return Ok(result); }
+                Some("TreeWalker") => {
+                    return Ok(super::dom_bridge::call_tree_walker_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("NodeIterator") => {
+                    return Ok(super::dom_bridge::call_node_iterator_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("Range") => {
+                    let result = super::dom_bridge::call_range_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("Selection") => {
+                    let result =
+                        super::dom_bridge::call_selection_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("Worker") => {
+                    return Ok(super::web_platform::call_worker_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("ServiceWorkerContainer") => {
+                    return Ok(super::web_platform::call_service_worker_container_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("HTMLCanvasElement") => {
+                    return Ok(super::canvas::call_canvas_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("CanvasRenderingContext2D") => {
+                    return Ok(super::canvas::call_context_2d_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("CanvasGradient") => {
+                    let result =
+                        super::canvas::call_canvas_gradient_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("Path2D") => {
+                    let result = super::canvas::call_path_2d_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
+                Some("OffscreenCanvas") => {
+                    return Ok(super::canvas::call_offscreen_canvas_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    ))
+                }
+                Some("ImageBitmap") => {
+                    let result =
+                        super::canvas::call_image_bitmap_method(map, method, &evaluated_args);
+                    assign_to_target(obj_expr, result.clone(), scope);
+                    return Ok(result);
+                }
                 Some("Animation") => {
                     // Web Animations API with state tracking
                     let result = match method.as_str() {
                         "play" => {
                             let mut m = map.clone();
-                            m.insert("playState".to_string(), JsValue::String("running".to_string()));
-                            m.insert("startTime".to_string(), JsValue::Number(
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs_f64() * 1000.0)
-                                    .unwrap_or(0.0)
-                            ));
+                            m.insert(
+                                "playState".to_string(),
+                                JsValue::String("running".to_string()),
+                            );
+                            m.insert(
+                                "startTime".to_string(),
+                                JsValue::Number(
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs_f64() * 1000.0)
+                                        .unwrap_or(0.0),
+                                ),
+                            );
                             JsValue::Object(m)
                         }
                         "pause" => {
                             let mut m = map.clone();
-                            m.insert("playState".to_string(), JsValue::String("paused".to_string()));
+                            m.insert(
+                                "playState".to_string(),
+                                JsValue::String("paused".to_string()),
+                            );
                             JsValue::Object(m)
                         }
                         "cancel" => {
@@ -1026,12 +1742,22 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         }
                         "finish" => {
                             let mut m = map.clone();
-                            m.insert("playState".to_string(), JsValue::String("finished".to_string()));
+                            m.insert(
+                                "playState".to_string(),
+                                JsValue::String("finished".to_string()),
+                            );
                             // Set currentTime to effect end
                             if let Some(JsValue::Object(effect)) = map.get("effect") {
                                 if let Some(JsValue::Object(timing)) = effect.get("timing") {
-                                    let duration = timing.get("duration")
-                                        .and_then(|d| if let JsValue::Number(n) = d { Some(*n) } else { None })
+                                    let duration = timing
+                                        .get("duration")
+                                        .and_then(|d| {
+                                            if let JsValue::Number(n) = d {
+                                                Some(*n)
+                                            } else {
+                                                None
+                                            }
+                                        })
                                         .unwrap_or(0.0);
                                     m.insert("currentTime".to_string(), JsValue::Number(duration));
                                 }
@@ -1041,15 +1767,23 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         "reverse" => {
                             let mut m = map.clone();
                             // Toggle playbackRate sign
-                            let rate = m.get("playbackRate")
-                                .and_then(|r| if let JsValue::Number(n) = r { Some(*n) } else { None })
+                            let rate = m
+                                .get("playbackRate")
+                                .and_then(|r| {
+                                    if let JsValue::Number(n) = r {
+                                        Some(*n)
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .unwrap_or(1.0);
                             m.insert("playbackRate".to_string(), JsValue::Number(-rate));
                             JsValue::Object(m)
                         }
                         "updatePlaybackRate" => {
                             let mut m = map.clone();
-                            let new_rate = evaluated_args.first()
+                            let new_rate = evaluated_args
+                                .first()
                                 .map(crate::js::interpreter::coercion::to_number)
                                 .unwrap_or(1.0);
                             m.insert("playbackRate".to_string(), JsValue::Number(new_rate));
@@ -1057,7 +1791,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         }
                         "finished" | "ready" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Object(map.clone()));
                             JsValue::Object(p)
                         }
@@ -1076,7 +1813,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         "get" => JsValue::Undefined,
                         "whenDefined" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Undefined);
                             JsValue::Object(p)
                         }
@@ -1086,18 +1826,35 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                 }
                 Some("PerformanceObserver") => {
                     if method == "supportedEntryTypes" {
-                        return Ok(super::web_platform::performance_observer_supported_entry_types());
+                        return Ok(
+                            super::web_platform::performance_observer_supported_entry_types(),
+                        );
                     }
-                    let result = super::web_platform::call_performance_observer_method(map, method, &evaluated_args);
+                    let result = super::web_platform::call_performance_observer_method(
+                        map,
+                        method,
+                        &evaluated_args,
+                    );
                     assign_to_target(obj_expr, result.clone(), scope);
                     return Ok(result);
                 }
-                Some("IDBFactory") => return Ok(super::web_platform::call_indexed_db_method(method, &evaluated_args)),
+                Some("IDBFactory") => {
+                    return Ok(super::web_platform::call_indexed_db_method(
+                        method,
+                        &evaluated_args,
+                    ))
+                }
                 Some("CSS") => {
                     let result = match method.as_str() {
                         "escape" => {
                             let s = evaluated_args.first().map(to_string).unwrap_or_default();
-                            JsValue::String(s.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "\\").to_string())
+                            JsValue::String(
+                                s.replace(
+                                    |c: char| !c.is_alphanumeric() && c != '-' && c != '_',
+                                    "\\",
+                                )
+                                .to_string(),
+                            )
                         }
                         "supports" => JsValue::Boolean(true),
                         _ => JsValue::Undefined,
@@ -1109,7 +1866,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         "check" => JsValue::Boolean(true),
                         "load" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Array(Vec::new()));
                             JsValue::Object(p)
                         }
@@ -1123,7 +1883,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let result = match method.as_str() {
                         "back" | "forward" | "reload" | "navigate" | "traverseTo" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Undefined);
                             JsValue::Object(p)
                         }
@@ -1144,7 +1907,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let result = match method.as_str() {
                         "lock" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Undefined);
                             JsValue::Object(p)
                         }
@@ -1161,7 +1927,10 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let result = match method.as_str() {
                         "estimate" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             let mut est = HashMap::new();
                             est.insert("quota".to_string(), JsValue::Number(1_073_741_824.0));
                             est.insert("usage".to_string(), JsValue::Number(0.0));
@@ -1170,13 +1939,19 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                         }
                         "persist" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Boolean(true));
                             JsValue::Object(p)
                         }
                         "persisted" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Boolean(true));
                             JsValue::Object(p)
                         }
@@ -1197,13 +1972,19 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let result = match method.as_str() {
                         "enumerateDevices" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Array(Vec::new()));
                             JsValue::Object(p)
                         }
                         "getUserMedia" | "getDisplayMedia" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             p.insert("__resolved__".to_string(), JsValue::Undefined);
                             JsValue::Object(p)
                         }
@@ -1216,9 +1997,15 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     let result = match method.as_str() {
                         "request" => {
                             let mut p = HashMap::new();
-                            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                            p.insert(
+                                "__type__".to_string(),
+                                JsValue::String("Promise".to_string()),
+                            );
                             let mut sentinel = HashMap::new();
-                            sentinel.insert("__type__".to_string(), JsValue::String("WakeLockSentinel".to_string()));
+                            sentinel.insert(
+                                "__type__".to_string(),
+                                JsValue::String("WakeLockSentinel".to_string()),
+                            );
                             sentinel.insert("released".to_string(), JsValue::Boolean(false));
                             p.insert("__resolved__".to_string(), JsValue::Object(sentinel));
                             JsValue::Object(p)
@@ -1228,20 +2015,38 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
                     return Ok(result);
                 }
                 Some("class") => {
-                    if let Some(func) = find_static_method(&obj, method) { let (result, _) = call_method_with_this_writeback(&func, &evaluated_args, scope, obj.clone()); return result; }
+                    if let Some(func) = find_static_method(&obj, method) {
+                        let (result, _) = call_method_with_this_writeback(
+                            &func,
+                            &evaluated_args,
+                            scope,
+                            obj.clone(),
+                        );
+                        return result;
+                    }
                     return Ok(JsValue::Undefined);
                 }
                 _ => {}
             }
             if let Some(func) = map.get(method).cloned() {
-                let (result, updated_this) = call_method_with_this_writeback(&func, &evaluated_args, scope, obj.clone());
-                if let Expr::Ident(var_name) = obj_expr.as_ref() { Scope::assign(scope, var_name, updated_this); }
+                let (result, updated_this) =
+                    call_method_with_this_writeback(&func, &evaluated_args, scope, obj.clone());
+                if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                    Scope::assign(scope, var_name, updated_this);
+                }
                 return result;
             }
             let proto_func = get_property(&obj, method);
             if let JsValue::Function { .. } = &proto_func {
-                let (result, updated_this) = call_method_with_this_writeback(&proto_func, &evaluated_args, scope, obj.clone());
-                if let Expr::Ident(var_name) = obj_expr.as_ref() { Scope::assign(scope, var_name, updated_this); }
+                let (result, updated_this) = call_method_with_this_writeback(
+                    &proto_func,
+                    &evaluated_args,
+                    scope,
+                    obj.clone(),
+                );
+                if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                    Scope::assign(scope, var_name, updated_this);
+                }
                 return result;
             }
             return call_object_method_enhanced(map, method, &evaluated_args);
@@ -1256,17 +2061,36 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
     }
     if let Expr::OptionalMember(obj_expr, method) = callee {
         let obj = eval_expr_node(obj_expr, scope)?;
-        if matches!(obj, JsValue::Null | JsValue::Undefined) { return Ok(JsValue::Undefined); }
+        if matches!(obj, JsValue::Null | JsValue::Undefined) {
+            return Ok(JsValue::Undefined);
+        }
         return call_method(&obj, method, &evaluated_args, scope);
     }
     if let Expr::Ident(name) = callee {
         match name.as_str() {
-            "eval" | "structuredClone" | "parseInt" | "parseFloat" | "isNaN" | "isFinite" |
-            "encodeURIComponent" | "decodeURIComponent" | "Symbol" | "queueMicrotask" |
-            "Number" | "String" | "Boolean" | "requestAnimationFrame" | "requestIdleCallback" |
-            "atob" | "btoa" |
-            "setTimeout" | "setInterval" | "clearTimeout" | "clearInterval" | "flushTimers" |
-            "fetch" => {
+            "eval"
+            | "structuredClone"
+            | "parseInt"
+            | "parseFloat"
+            | "isNaN"
+            | "isFinite"
+            | "encodeURIComponent"
+            | "decodeURIComponent"
+            | "Symbol"
+            | "queueMicrotask"
+            | "Number"
+            | "String"
+            | "Boolean"
+            | "requestAnimationFrame"
+            | "requestIdleCallback"
+            | "atob"
+            | "btoa"
+            | "setTimeout"
+            | "setInterval"
+            | "clearTimeout"
+            | "clearInterval"
+            | "flushTimers"
+            | "fetch" => {
                 return call_native(name, &evaluated_args);
             }
             _ => {}
@@ -1274,29 +2098,57 @@ fn eval_call(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalResult {
     }
     if matches!(callee, Expr::Super) {
         let parent = Scope::resolve(scope, "__super__").unwrap_or(JsValue::Undefined);
-        let this_val = Scope::resolve(scope, "this").unwrap_or_else(|| JsValue::Object(HashMap::new()));
+        let this_val =
+            Scope::resolve(scope, "this").unwrap_or_else(|| JsValue::Object(HashMap::new()));
         return call_super_constructor(&parent, &evaluated_args, this_val, scope);
     }
     let func = eval_expr_node(callee, scope)?;
     call_function(&func, &evaluated_args, scope)
 }
 
-fn call_super_constructor(parent_class: &JsValue, args: &[JsValue], this_val: JsValue, scope: &ScopeRef) -> EvalResult {
+fn call_super_constructor(
+    parent_class: &JsValue,
+    args: &[JsValue],
+    this_val: JsValue,
+    scope: &ScopeRef,
+) -> EvalResult {
     if let JsValue::Object(parent_map) = parent_class {
-        if let Some(JsValue::Function { params, body, closure, .. }) = parent_map.get("__constructor__") {
+        if let Some(JsValue::Function {
+            params,
+            body,
+            closure,
+            ..
+        }) = parent_map.get("__constructor__")
+        {
             let ctor_scope = Scope::new_child(closure);
             Scope::declare(&ctor_scope, "this", this_val);
-            if let Some(grandparent) = parent_map.get("__parent__") { Scope::declare(&ctor_scope, "__super__", grandparent.clone()); }
-            for (i, p) in params.iter().enumerate() { Scope::declare(&ctor_scope, p, args.get(i).cloned().unwrap_or(JsValue::Undefined)); }
+            if let Some(grandparent) = parent_map.get("__parent__") {
+                Scope::declare(&ctor_scope, "__super__", grandparent.clone());
+            }
+            for (i, p) in params.iter().enumerate() {
+                Scope::declare(
+                    &ctor_scope,
+                    p,
+                    args.get(i).cloned().unwrap_or(JsValue::Undefined),
+                );
+            }
             Scope::declare(&ctor_scope, "arguments", JsValue::Array(args.to_vec()));
             let _ = eval_stmt(body, &ctor_scope);
-            if let Some(updated) = Scope::resolve(&ctor_scope, "this") { Scope::assign(scope, "this", updated); }
+            if let Some(updated) = Scope::resolve(&ctor_scope, "this") {
+                Scope::assign(scope, "this", updated);
+            }
         }
     }
     Ok(JsValue::Undefined)
 }
 
-fn call_super_method(parent_class: &JsValue, method: &str, args: &[JsValue], this_val: JsValue, scope: &ScopeRef) -> EvalResult {
+fn call_super_method(
+    parent_class: &JsValue,
+    method: &str,
+    args: &[JsValue],
+    this_val: JsValue,
+    scope: &ScopeRef,
+) -> EvalResult {
     if let Some(func) = find_proto_method(parent_class, method) {
         let (result, updated_this) = call_method_with_this_writeback(&func, args, scope, this_val);
         Scope::assign(scope, "this", updated_this);
@@ -1309,10 +2161,24 @@ pub(super) fn find_proto_method(class_val: &JsValue, method: &str) -> Option<JsV
     let mut current = class_val.clone();
     let mut depth = 0;
     loop {
-        if depth > 64 { return None; }
-        let JsValue::Object(cm) = &current else { return None };
-        if let Some(JsValue::Object(proto)) = cm.get("__proto_methods__") { if let Some(func) = proto.get(method) { return Some(func.clone()); } }
-        match cm.get("__parent__") { Some(parent) => { current = parent.clone(); depth += 1; } None => return None, }
+        if depth > 64 {
+            return None;
+        }
+        let JsValue::Object(cm) = &current else {
+            return None;
+        };
+        if let Some(JsValue::Object(proto)) = cm.get("__proto_methods__") {
+            if let Some(func) = proto.get(method) {
+                return Some(func.clone());
+            }
+        }
+        match cm.get("__parent__") {
+            Some(parent) => {
+                current = parent.clone();
+                depth += 1;
+            }
+            None => return None,
+        }
     }
 }
 
@@ -1320,10 +2186,24 @@ pub(super) fn find_static_method(class_val: &JsValue, method: &str) -> Option<Js
     let mut current = class_val.clone();
     let mut depth = 0;
     loop {
-        if depth > 64 { return None; }
-        let JsValue::Object(cm) = &current else { return None };
-        if let Some(JsValue::Object(statics)) = cm.get("__static_methods__") { if let Some(func) = statics.get(method) { return Some(func.clone()); } }
-        match cm.get("__parent__") { Some(parent) => { current = parent.clone(); depth += 1; } None => return None, }
+        if depth > 64 {
+            return None;
+        }
+        let JsValue::Object(cm) = &current else {
+            return None;
+        };
+        if let Some(JsValue::Object(statics)) = cm.get("__static_methods__") {
+            if let Some(func) = statics.get(method) {
+                return Some(func.clone());
+            }
+        }
+        match cm.get("__parent__") {
+            Some(parent) => {
+                current = parent.clone();
+                depth += 1;
+            }
+            None => return None,
+        }
     }
 }
 
@@ -1333,61 +2213,194 @@ fn eval_template_literal(raw: &str, scope: &ScopeRef) -> EvalResult {
     let mut i = 0;
     while i < chars.len() {
         if i + 1 < chars.len() && chars[i] == '$' && chars[i + 1] == '{' {
-            i += 2; let mut depth = 1; let mut expr_str = String::new();
-            while i < chars.len() && depth > 0 { if chars[i] == '{' { depth += 1; } else if chars[i] == '}' { depth -= 1; if depth == 0 { i += 1; break; } } expr_str.push(chars[i]); i += 1; }
-            match eval_script(&expr_str, scope) { Ok(val) => result.push_str(&to_string(&val)), Err(_) => result.push_str("undefined"), }
-        } else { result.push(chars[i]); i += 1; }
+            i += 2;
+            let mut depth = 1;
+            let mut expr_str = String::new();
+            while i < chars.len() && depth > 0 {
+                if chars[i] == '{' {
+                    depth += 1;
+                } else if chars[i] == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                expr_str.push(chars[i]);
+                i += 1;
+            }
+            match eval_script(&expr_str, scope) {
+                Ok(val) => result.push_str(&to_string(&val)),
+                Err(_) => result.push_str("undefined"),
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
     }
     Ok(JsValue::String(result))
 }
 
 // eval_new lives in constructors.rs (imported above) to keep this file under the LOC budget.
 
-fn eval_class_decl(name: &str, parent: &Option<String>, methods: &[ClassMethod], fields: &[ClassField], scope: &ScopeRef) {
+fn eval_class_decl(
+    name: &str,
+    parent: &Option<String>,
+    methods: &[ClassMethod],
+    fields: &[ClassField],
+    scope: &ScopeRef,
+) {
     let mut class_obj = HashMap::new();
     class_obj.insert("__type__".to_string(), JsValue::String("class".to_string()));
     class_obj.insert("__name__".to_string(), JsValue::String(name.to_string()));
-    if let Some(parent_name) = parent { if let Some(parent_val) = Scope::resolve(scope, parent_name) { class_obj.insert("__parent__".to_string(), parent_val); } }
+    if let Some(parent_name) = parent {
+        if let Some(parent_val) = Scope::resolve(scope, parent_name) {
+            class_obj.insert("__parent__".to_string(), parent_val);
+        }
+    }
     let mut proto = HashMap::new();
     let mut statics = HashMap::new();
     for m in methods {
-        let func = JsValue::Function { name: Some(m.name.clone()), params: m.params.clone(), body: m.body.clone(), closure: scope.clone() };
-        if m.name == "constructor" { class_obj.insert("__constructor__".to_string(), func); }
-        else if m.is_static { statics.insert(m.name.clone(), func); }
-        else { match m.kind { ClassMemberKind::Getter => install_literal_accessor(&mut proto, &m.name, "get", func), ClassMemberKind::Setter => install_literal_accessor(&mut proto, &m.name, "set", func), ClassMemberKind::Method => { proto.insert(m.name.clone(), func); } } }
+        let func = JsValue::Function {
+            name: Some(m.name.clone()),
+            params: m.params.clone(),
+            body: m.body.clone(),
+            closure: scope.clone(),
+        };
+        if m.name == "constructor" {
+            class_obj.insert("__constructor__".to_string(), func);
+        } else if m.is_static {
+            statics.insert(m.name.clone(), func);
+        } else {
+            match m.kind {
+                ClassMemberKind::Getter => {
+                    install_literal_accessor(&mut proto, &m.name, "get", func)
+                }
+                ClassMemberKind::Setter => {
+                    install_literal_accessor(&mut proto, &m.name, "set", func)
+                }
+                ClassMemberKind::Method => {
+                    proto.insert(m.name.clone(), func);
+                }
+            }
+        }
     }
     class_obj.insert("__proto_methods__".to_string(), JsValue::Object(proto));
     class_obj.insert("__static_methods__".to_string(), JsValue::Object(statics));
     let mut instance_fields: Vec<JsValue> = Vec::new();
     for f in fields {
-        if f.is_static { let val = match &f.init { Some(expr) => eval_expr_node(expr, scope).unwrap_or(JsValue::Undefined), None => JsValue::Undefined }; class_obj.insert(f.name.clone(), val); }
-        else { let init_func = JsValue::Function { name: None, params: Vec::new(), body: Stmt::Return(f.init.clone()), closure: scope.clone() }; instance_fields.push(JsValue::Array(vec![JsValue::String(f.name.clone()), init_func])); }
+        if f.is_static {
+            let val = match &f.init {
+                Some(expr) => eval_expr_node(expr, scope).unwrap_or(JsValue::Undefined),
+                None => JsValue::Undefined,
+            };
+            class_obj.insert(f.name.clone(), val);
+        } else {
+            let init_func = JsValue::Function {
+                name: None,
+                params: Vec::new(),
+                body: Stmt::Return(f.init.clone()),
+                closure: scope.clone(),
+            };
+            instance_fields.push(JsValue::Array(vec![
+                JsValue::String(f.name.clone()),
+                init_func,
+            ]));
+        }
     }
-    class_obj.insert("__instance_fields__".to_string(), JsValue::Array(instance_fields));
+    class_obj.insert(
+        "__instance_fields__".to_string(),
+        JsValue::Array(instance_fields),
+    );
     Scope::declare(scope, name, JsValue::Object(class_obj));
 }
 
-pub(super) fn call_class_constructor(class_map: &HashMap<String, JsValue>, args: &[JsValue], _scope: &ScopeRef) -> EvalResult {
+pub(super) fn call_class_constructor(
+    class_map: &HashMap<String, JsValue>,
+    args: &[JsValue],
+    _scope: &ScopeRef,
+) -> EvalResult {
     let mut instance = HashMap::new();
-    if let Some(JsValue::Object(proto)) = class_map.get("__proto_methods__") { instance.extend(proto.iter().map(|(k, v)| (k.clone(), v.clone()))); }
-    if let Some(JsValue::Object(parent_class)) = class_map.get("__parent__") { if let Some(JsValue::Object(parent_proto)) = parent_class.get("__proto_methods__") { for (k, v) in parent_proto { instance.entry(k.clone()).or_insert_with(|| v.clone()); } } }
-    if let Some(JsValue::String(class_name)) = class_map.get("__name__") { instance.insert("__class_name__".to_string(), JsValue::String(class_name.clone())); }
-    instance.insert("__instanceof__".to_string(), JsValue::Array(class_ancestry_names(class_map)));
+    if let Some(JsValue::Object(proto)) = class_map.get("__proto_methods__") {
+        instance.extend(proto.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+    if let Some(JsValue::Object(parent_class)) = class_map.get("__parent__") {
+        if let Some(JsValue::Object(parent_proto)) = parent_class.get("__proto_methods__") {
+            for (k, v) in parent_proto {
+                instance.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+    }
+    if let Some(JsValue::String(class_name)) = class_map.get("__name__") {
+        instance.insert(
+            "__class_name__".to_string(),
+            JsValue::String(class_name.clone()),
+        );
+    }
+    instance.insert(
+        "__instanceof__".to_string(),
+        JsValue::Array(class_ancestry_names(class_map)),
+    );
     let mut chain: Vec<&HashMap<String, JsValue>> = Vec::new();
     let mut cur = Some(class_map);
     let mut depth = 0;
-    while let Some(cm) = cur { if depth > 64 { break; } chain.push(cm); cur = match cm.get("__parent__") { Some(JsValue::Object(p)) => Some(p), _ => None }; depth += 1; }
-    for cm in chain.iter().rev() { if let Some(JsValue::Array(fields_arr)) = cm.get("__instance_fields__") { for entry in fields_arr { if let JsValue::Array(pair) = entry { if let (Some(JsValue::String(fname)), Some(func)) = (pair.first(), pair.get(1)) { let this_val = JsValue::Object(instance.clone()); let val = call_function_with_this(func, &[], &Scope::new_global(), Some(this_val)).unwrap_or(JsValue::Undefined); instance.insert(fname.clone(), val); } } } } }
+    while let Some(cm) = cur {
+        if depth > 64 {
+            break;
+        }
+        chain.push(cm);
+        cur = match cm.get("__parent__") {
+            Some(JsValue::Object(p)) => Some(p),
+            _ => None,
+        };
+        depth += 1;
+    }
+    for cm in chain.iter().rev() {
+        if let Some(JsValue::Array(fields_arr)) = cm.get("__instance_fields__") {
+            for entry in fields_arr {
+                if let JsValue::Array(pair) = entry {
+                    if let (Some(JsValue::String(fname)), Some(func)) = (pair.first(), pair.get(1))
+                    {
+                        let this_val = JsValue::Object(instance.clone());
+                        let val = call_function_with_this(
+                            func,
+                            &[],
+                            &Scope::new_global(),
+                            Some(this_val),
+                        )
+                        .unwrap_or(JsValue::Undefined);
+                        instance.insert(fname.clone(), val);
+                    }
+                }
+            }
+        }
+    }
     if let Some(ctor) = class_map.get("__constructor__") {
-        if let JsValue::Function { params, body, closure, .. } = ctor {
+        if let JsValue::Function {
+            params,
+            body,
+            closure,
+            ..
+        } = ctor
+        {
             let ctor_scope = Scope::new_child(closure);
             Scope::declare(&ctor_scope, "this", JsValue::Object(instance.clone()));
-            if let Some(parent) = class_map.get("__parent__") { Scope::declare(&ctor_scope, "__super__", parent.clone()); }
-            for (i, p) in params.iter().enumerate() { Scope::declare(&ctor_scope, p, args.get(i).cloned().unwrap_or(JsValue::Undefined)); }
+            if let Some(parent) = class_map.get("__parent__") {
+                Scope::declare(&ctor_scope, "__super__", parent.clone());
+            }
+            for (i, p) in params.iter().enumerate() {
+                Scope::declare(
+                    &ctor_scope,
+                    p,
+                    args.get(i).cloned().unwrap_or(JsValue::Undefined),
+                );
+            }
             Scope::declare(&ctor_scope, "arguments", JsValue::Array(args.to_vec()));
             let result = eval_stmt(body, &ctor_scope);
             let _ = result;
-            if let Some(JsValue::Object(updated)) = Scope::resolve(&ctor_scope, "this") { instance = updated; }
+            if let Some(JsValue::Object(updated)) = Scope::resolve(&ctor_scope, "this") {
+                instance = updated;
+            }
         }
     }
     Ok(JsValue::Object(instance))
@@ -1398,7 +2411,9 @@ fn class_ancestry_names(class_map: &HashMap<String, JsValue>) -> Vec<JsValue> {
     let mut current: Option<&HashMap<String, JsValue>> = Some(class_map);
     let mut depth = 0;
     while let Some(cm) = current {
-        if depth > 64 { break; }
+        if depth > 64 {
+            break;
+        }
         if let Some(JsValue::String(n)) = cm.get("__name__") {
             names.push(JsValue::String(n.clone()));
         }

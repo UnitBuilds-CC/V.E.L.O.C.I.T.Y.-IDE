@@ -23,7 +23,11 @@ fn string_array(value: &Value) -> Vec<String> {
 }
 
 /// Build a single `ExpertMember` from a JSON member spec.
-fn parse_member(spec: &Value, team_slug: &str, index: usize) -> Result<ExpertMember, Box<dyn Error>> {
+fn parse_member(
+    spec: &Value,
+    team_slug: &str,
+    index: usize,
+) -> Result<ExpertMember, Box<dyn Error>> {
     let name = spec["name"]
         .as_str()
         .map(str::trim)
@@ -89,7 +93,11 @@ fn create_expert_team(root: &Path, arguments: &Value) -> Result<String, Box<dyn 
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or("'name' is required")?;
-    let description = arguments["description"].as_str().unwrap_or("").trim().to_string();
+    let description = arguments["description"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
     let member_specs = arguments["members"]
         .as_array()
@@ -163,7 +171,11 @@ fn create_skill_file(root: &Path, arguments: &Value) -> Result<String, Box<dyn E
         .filter(|s| !s.is_empty())
         .ok_or("'body' is required")?;
     let name = arguments["name"].as_str().unwrap_or(&id).trim().to_string();
-    let description = arguments["description"].as_str().unwrap_or("").trim().to_string();
+    let description = arguments["description"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
     let skill = SkillFile::new(&id, &name, &description, body);
     if !save_skill_file(root, &skill) {

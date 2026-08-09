@@ -24,9 +24,8 @@ const MIN_SCORE: f32 = 0.01;
 /// File extensions treated as plain-text extractable. The extractor is a seam:
 /// future binary formats (PDF, docx) can plug in without touching callers.
 const TEXT_EXTENSIONS: &[&str] = &[
-    "md", "txt", "rs", "py", "js", "ts", "tsx", "jsx", "go", "java", "c", "cpp",
-    "h", "hpp", "cs", "rb", "toml", "yaml", "yml", "json", "csv", "sql", "sh",
-    "html", "css", "log", "ini", "cfg",
+    "md", "txt", "rs", "py", "js", "ts", "tsx", "jsx", "go", "java", "c", "cpp", "h", "hpp", "cs",
+    "rb", "toml", "yaml", "yml", "json", "csv", "sql", "sh", "html", "css", "log", "ini", "cfg",
 ];
 
 /// One indexed passage of a source.
@@ -180,8 +179,10 @@ impl KnowledgeBase {
         for c in &self.chunks {
             *counts.entry(c.source.as_str()).or_default() += 1;
         }
-        let mut out: Vec<(String, usize)> =
-            counts.into_iter().map(|(s, n)| (s.to_string(), n)).collect();
+        let mut out: Vec<(String, usize)> = counts
+            .into_iter()
+            .map(|(s, n)| (s.to_string(), n))
+            .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
@@ -453,7 +454,10 @@ mod tests {
     fn persistence_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let mut kb = KnowledgeBase::new();
-        kb.ingest_text("doc.md", "persistent knowledge about neural networks and training");
+        kb.ingest_text(
+            "doc.md",
+            "persistent knowledge about neural networks and training",
+        );
         kb.save(tmp.path()).expect("save");
 
         let loaded = KnowledgeBase::load(tmp.path());
@@ -467,7 +471,11 @@ mod tests {
     fn ingest_file_and_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        std::fs::write(root.join("readme.md"), "project overview and setup instructions").unwrap();
+        std::fs::write(
+            root.join("readme.md"),
+            "project overview and setup instructions",
+        )
+        .unwrap();
         std::fs::write(root.join("data.bin"), [0u8, 1, 2, 3]).unwrap();
 
         let mut kb = KnowledgeBase::new();

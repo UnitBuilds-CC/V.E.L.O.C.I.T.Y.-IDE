@@ -89,8 +89,14 @@ fn wa_registry_hive_parsing_and_script_generation() {
     use crate::wa::registry::*;
 
     // Test hive parsing
-    assert_eq!(RegistryHive::from_str("HKCU"), Some(RegistryHive::CurrentUser));
-    assert_eq!(RegistryHive::from_str("HKLM"), Some(RegistryHive::LocalMachine));
+    assert_eq!(
+        RegistryHive::from_str("HKCU"),
+        Some(RegistryHive::CurrentUser)
+    );
+    assert_eq!(
+        RegistryHive::from_str("HKLM"),
+        Some(RegistryHive::LocalMachine)
+    );
     assert_eq!(RegistryHive::from_str("invalid"), None);
 
     // Test PS path conversion
@@ -98,11 +104,7 @@ fn wa_registry_hive_parsing_and_script_generation() {
     assert_eq!(RegistryHive::LocalMachine.as_ps_path(), "HKLM:");
 
     // Test script generation
-    let script = build_read_registry_script(
-        RegistryHive::CurrentUser,
-        "SOFTWARE\\Test",
-        "Value1",
-    );
+    let script = build_read_registry_script(RegistryHive::CurrentUser, "SOFTWARE\\Test", "Value1");
     assert!(script.contains("HKCU:"));
     assert!(script.contains("Get-ItemProperty"));
     assert!(script.contains("Value1"));
@@ -172,12 +174,18 @@ fn wa_virtual_desktop_script_generation() {
     let state = VirtualDesktopState {
         desktops: vec![
             VirtualDesktop {
-                id: "a".into(), name: Some("Work".into()),
-                index: 0, is_current: true, window_count: Some(5),
+                id: "a".into(),
+                name: Some("Work".into()),
+                index: 0,
+                is_current: true,
+                window_count: Some(5),
             },
             VirtualDesktop {
-                id: "b".into(), name: Some("Personal".into()),
-                index: 1, is_current: false, window_count: Some(3),
+                id: "b".into(),
+                name: Some("Personal".into()),
+                index: 1,
+                is_current: false,
+                window_count: Some(3),
             },
         ],
         current_index: 0,
@@ -195,14 +203,15 @@ fn wa_process_tools_are_dispatched_and_return_json() {
     fs::create_dir_all(&root).unwrap();
 
     // A bogus PID should report not-running rather than erroring.
-    let running = call_tool_in_workspace(&root, "wa_process_running", &json!({"pid": 0xFFFF_FFFEu32}))
-        .unwrap();
+    let running =
+        call_tool_in_workspace(&root, "wa_process_running", &json!({"pid": 0xFFFF_FFFEu32}))
+            .unwrap();
     let v: serde_json::Value = serde_json::from_str(&running).unwrap();
     assert_eq!(v["running"], json!(false));
 
     // info for a bogus PID reports found:false (graceful, no panic).
-    let info = call_tool_in_workspace(&root, "wa_process_info", &json!({"pid": 0xFFFF_FFFEu32}))
-        .unwrap();
+    let info =
+        call_tool_in_workspace(&root, "wa_process_info", &json!({"pid": 0xFFFF_FFFEu32})).unwrap();
     let v: serde_json::Value = serde_json::from_str(&info).unwrap();
     assert_eq!(v["found"], json!(false));
 
@@ -231,8 +240,8 @@ fn wa_uia_tools_validate_arguments() {
 
 #[test]
 fn wa_uia_element_json_serialises_fields() {
-    use crate::wa::uia_ffi::{CachedUiaElement, UiaPattern, UiaRect};
     use crate::registry::wa_tools::uia_element_json;
+    use crate::wa::uia_ffi::{CachedUiaElement, UiaPattern, UiaRect};
 
     let el = CachedUiaElement {
         runtime_id: vec![1, 2, 3],
@@ -240,7 +249,12 @@ fn wa_uia_element_json_serialises_fields() {
         name: "OK".to_string(),
         control_type: "Button".to_string(),
         class_name: "Button".to_string(),
-        bounding_rect: UiaRect { x: 10.0, y: 20.0, width: 80.0, height: 24.0 },
+        bounding_rect: UiaRect {
+            x: 10.0,
+            y: 20.0,
+            width: 80.0,
+            height: 24.0,
+        },
         is_enabled: true,
         is_offscreen: false,
         process_id: 4242,

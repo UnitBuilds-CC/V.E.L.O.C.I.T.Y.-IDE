@@ -37,8 +37,21 @@ impl Specificity {
             if part.contains(':') {
                 classes += part.matches(':').count();
             }
-            let clean = part.split('#').next().unwrap_or(part).split('.').next().unwrap_or(part).split('[').next().unwrap_or(part);
-            if !clean.is_empty() && !clean.starts_with('#') && !clean.starts_with('.') && !clean.starts_with('[') {
+            let clean = part
+                .split('#')
+                .next()
+                .unwrap_or(part)
+                .split('.')
+                .next()
+                .unwrap_or(part)
+                .split('[')
+                .next()
+                .unwrap_or(part);
+            if !clean.is_empty()
+                && !clean.starts_with('#')
+                && !clean.starts_with('.')
+                && !clean.starts_with('[')
+            {
                 tags += 1;
             }
         }
@@ -61,7 +74,7 @@ pub enum MediaFeature {
     MaxWidth(f64),
     MinHeight(f64),
     MaxHeight(f64),
-    Orientation(String),   // "portrait" or "landscape"
+    Orientation(String),        // "portrait" or "landscape"
     PrefersColorScheme(String), // "dark" or "light"
     PreferReducedMotion,
 }
@@ -82,7 +95,11 @@ impl MediaQuery {
             MediaFeature::MinHeight(h) => viewport.height >= *h,
             MediaFeature::MaxHeight(h) => viewport.height <= *h,
             MediaFeature::Orientation(o) => {
-                let actual = if viewport.width >= viewport.height { "landscape" } else { "portrait" };
+                let actual = if viewport.width >= viewport.height {
+                    "landscape"
+                } else {
+                    "portrait"
+                };
                 actual == o
             }
             MediaFeature::PrefersColorScheme(scheme) => &viewport.color_scheme == scheme,
@@ -152,15 +169,23 @@ impl StyleCascader {
     }
 
     /// Add a @media block with features and rules.
-    pub fn add_media_query(&mut self, features: Vec<MediaFeature>, rules: Vec<(String, HashMap<String, String>)>) {
-        let css_rules: Vec<CssRule> = rules.into_iter().map(|(sel, decls)| {
-            CssRule {
+    pub fn add_media_query(
+        &mut self,
+        features: Vec<MediaFeature>,
+        rules: Vec<(String, HashMap<String, String>)>,
+    ) {
+        let css_rules: Vec<CssRule> = rules
+            .into_iter()
+            .map(|(sel, decls)| CssRule {
                 selector: sel.clone(),
                 specificity: Specificity::compute(&sel),
                 declarations: decls,
-            }
-        }).collect();
-        self.media_queries.push(MediaQuery { features, rules: css_rules });
+            })
+            .collect();
+        self.media_queries.push(MediaQuery {
+            features,
+            rules: css_rules,
+        });
     }
 
     /// Parse a simple media query string like "(min-width: 768px)" into features.
@@ -213,9 +238,16 @@ impl StyleCascader {
     }
 
     /// Compute the final computed style, including @media rules that match.
-    pub fn compute_computed_style(&self, selector_match_fn: impl Fn(&str) -> bool) -> HashMap<String, String> {
+    pub fn compute_computed_style(
+        &self,
+        selector_match_fn: impl Fn(&str) -> bool,
+    ) -> HashMap<String, String> {
         let mut computed = HashMap::new();
-        let mut applicable_rules: Vec<&CssRule> = self.rules.iter().filter(|r| selector_match_fn(&r.selector)).collect();
+        let mut applicable_rules: Vec<&CssRule> = self
+            .rules
+            .iter()
+            .filter(|r| selector_match_fn(&r.selector))
+            .collect();
 
         // Also include rules from matching media queries
         for mq in &self.media_queries {
@@ -280,7 +312,8 @@ impl TimingFunction {
             "ease-in-out" => Self::EaseInOut,
             s if s.starts_with("cubic-bezier(") => {
                 let inner = s.trim_start_matches("cubic-bezier(").trim_end_matches(')');
-                let parts: Vec<f64> = inner.split(',')
+                let parts: Vec<f64> = inner
+                    .split(',')
                     .filter_map(|p| p.trim().parse().ok())
                     .collect();
                 if parts.len() == 4 {
@@ -340,8 +373,12 @@ fn cubic_bezier(x1: f64, y1: f64, x2: f64, y2: f64, t: f64) -> f64 {
         let x_u = ((ax * u + bx) * u + cx) * u;
         let dx_u = (3.0 * ax * u + 2.0 * bx) * u + cx;
         let err = x_u - t;
-        if err.abs() < 1e-7 { break; }
-        if dx_u.abs() < 1e-9 { break; } // derivative too small, stop
+        if err.abs() < 1e-7 {
+            break;
+        }
+        if dx_u.abs() < 1e-9 {
+            break;
+        } // derivative too small, stop
         u -= err / dx_u;
         u = u.clamp(0.0, 1.0); // keep within valid range
     }
@@ -403,19 +440,35 @@ impl CssAnimation {
         for part in &parts {
             if part.ends_with("ms") {
                 let val = part.trim_end_matches("ms").parse::<f64>().unwrap_or(0.0);
-                if time_idx == 0 { duration_ms = val; time_idx += 1; }
-                else { delay_ms = val; }
+                if time_idx == 0 {
+                    duration_ms = val;
+                    time_idx += 1;
+                } else {
+                    delay_ms = val;
+                }
             } else if part.ends_with('s') && !part.ends_with("ms") {
                 let val = part.trim_end_matches('s').parse::<f64>().unwrap_or(0.0) * 1000.0;
-                if time_idx == 0 { duration_ms = val; time_idx += 1; }
-                else { delay_ms = val; }
-            } else if matches!(*part, "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out") || part.starts_with("cubic-bezier") || part.starts_with("steps") {
+                if time_idx == 0 {
+                    duration_ms = val;
+                    time_idx += 1;
+                } else {
+                    delay_ms = val;
+                }
+            } else if matches!(
+                *part,
+                "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out"
+            ) || part.starts_with("cubic-bezier")
+                || part.starts_with("steps")
+            {
                 timing = TimingFunction::parse(part);
             } else if *part == "infinite" {
                 iterations = f64::INFINITY;
             } else if let Ok(n) = part.parse::<f64>() {
                 iterations = n;
-            } else if matches!(*part, "normal" | "reverse" | "alternate" | "alternate-reverse") {
+            } else if matches!(
+                *part,
+                "normal" | "reverse" | "alternate" | "alternate-reverse"
+            ) {
                 direction = match *part {
                     "reverse" => AnimationDirection::Reverse,
                     "alternate" => AnimationDirection::Alternate,
@@ -430,15 +483,25 @@ impl CssAnimation {
                     _ => FillMode::None,
                 };
             } else if matches!(*part, "running" | "paused") {
-                play = if *part == "paused" { PlayState::Paused } else { PlayState::Running };
+                play = if *part == "paused" {
+                    PlayState::Paused
+                } else {
+                    PlayState::Running
+                };
             } else if name.is_empty() {
                 name = part.to_string();
             }
         }
 
         Self {
-            name, duration_ms, delay_ms, iteration_count: iterations,
-            timing_function: timing, fill_mode: fill, direction, play_state: play,
+            name,
+            duration_ms,
+            delay_ms,
+            iteration_count: iterations,
+            timing_function: timing,
+            fill_mode: fill,
+            direction,
+            play_state: play,
         }
     }
 }
@@ -460,14 +523,20 @@ pub struct KeyframesRule {
 impl KeyframesRule {
     /// Interpolate declarations between two keyframe stops at a given progress.
     pub fn interpolate(&self, progress: f64) -> HashMap<String, String> {
-        if self.stops.is_empty() { return HashMap::new(); }
-        if self.stops.len() == 1 { return self.stops[0].declarations.clone(); }
+        if self.stops.is_empty() {
+            return HashMap::new();
+        }
+        if self.stops.len() == 1 {
+            return self.stops[0].declarations.clone();
+        }
 
         let p = progress.clamp(0.0, 1.0);
         // Find the two surrounding stops
         let mut lower_idx = 0;
         for (i, stop) in self.stops.iter().enumerate() {
-            if stop.progress <= p { lower_idx = i; }
+            if stop.progress <= p {
+                lower_idx = i;
+            }
         }
         let upper_idx = (lower_idx + 1).min(self.stops.len() - 1);
 
@@ -478,14 +547,20 @@ impl KeyframesRule {
         let lower = &self.stops[lower_idx];
         let upper = &self.stops[upper_idx];
         let range = upper.progress - lower.progress;
-        let t = if range > 0.0 { (p - lower.progress) / range } else { 0.0 };
+        let t = if range > 0.0 {
+            (p - lower.progress) / range
+        } else {
+            0.0
+        };
 
         // Merge declarations: interpolate numeric values, snap non-numeric
         let mut result = lower.declarations.clone();
         for (prop, upper_val) in &upper.declarations {
             if let Some(lower_val) = lower.declarations.get(prop) {
                 result.insert(prop.clone(), interpolate_value(lower_val, upper_val, t));
-            } else if t >= 0.5 { result.insert(prop.clone(), upper_val.clone()); }
+            } else if t >= 0.5 {
+                result.insert(prop.clone(), upper_val.clone());
+            }
         }
         result
     }
@@ -548,7 +623,11 @@ pub fn parse_keyframes(css: &str) -> Option<KeyframesRule> {
     if stops.is_empty() {
         return None;
     }
-    stops.sort_by(|a, b| a.progress.partial_cmp(&b.progress).unwrap_or(std::cmp::Ordering::Equal));
+    stops.sort_by(|a, b| {
+        a.progress
+            .partial_cmp(&b.progress)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Some(KeyframesRule { name, stops })
 }
 
@@ -609,7 +688,11 @@ pub fn interpolate_value(from: &str, to: &str, t: f64) -> String {
         return format!("#{:02x}{:02x}{:02x}", r, g, b);
     }
     // Snap for non-numeric values
-    if t >= 0.5 { to.to_string() } else { from.to_string() }
+    if t >= 0.5 {
+        to.to_string()
+    } else {
+        from.to_string()
+    }
 }
 
 /// Animation state machine: tracks the current state of a running animation.
@@ -637,9 +720,12 @@ impl AnimationInstance {
         if elapsed < 0.0 {
             self.state = AnimationState::Delayed;
             return match self.animation.fill_mode {
-                FillMode::Backwards | FillMode::Both => {
-                    self.keyframes.stops.first().map(|s| s.declarations.clone()).unwrap_or_default()
-                }
+                FillMode::Backwards | FillMode::Both => self
+                    .keyframes
+                    .stops
+                    .first()
+                    .map(|s| s.declarations.clone())
+                    .unwrap_or_default(),
                 _ => HashMap::new(),
             };
         }
@@ -647,7 +733,9 @@ impl AnimationInstance {
             self.state = AnimationState::Paused;
         }
         let duration = self.animation.duration_ms;
-        if duration <= 0.0 { return HashMap::new(); }
+        if duration <= 0.0 {
+            return HashMap::new();
+        }
         let raw_progress = elapsed / duration;
         self.current_iteration = raw_progress.floor();
         if raw_progress >= self.animation.iteration_count {
@@ -672,7 +760,11 @@ impl AnimationInstance {
             AnimationDirection::Alternate => (self.current_iteration as i64) % 2 == 1,
             AnimationDirection::AlternateReverse => (self.current_iteration as i64) % 2 == 0,
         };
-        let progress = if is_reversed { 1.0 - cycle_progress } else { cycle_progress };
+        let progress = if is_reversed {
+            1.0 - cycle_progress
+        } else {
+            cycle_progress
+        };
         // Apply timing function
         let eased = self.animation.timing_function.evaluate(progress);
         self.keyframes.interpolate(eased)
@@ -837,10 +929,18 @@ mod tests {
             features: vec![MediaFeature::MinWidth(768.0)],
             rules: vec![],
         };
-        let vp = ViewportConfig { width: 1920.0, height: 1080.0, ..Default::default() };
+        let vp = ViewportConfig {
+            width: 1920.0,
+            height: 1080.0,
+            ..Default::default()
+        };
         assert!(mq.matches(&vp));
 
-        let small_vp = ViewportConfig { width: 600.0, height: 800.0, ..Default::default() };
+        let small_vp = ViewportConfig {
+            width: 600.0,
+            height: 800.0,
+            ..Default::default()
+        };
         assert!(!mq.matches(&small_vp));
     }
 
@@ -850,10 +950,16 @@ mod tests {
             features: vec![MediaFeature::MaxWidth(768.0)],
             rules: vec![],
         };
-        let small = ViewportConfig { width: 375.0, ..Default::default() };
+        let small = ViewportConfig {
+            width: 375.0,
+            ..Default::default()
+        };
         assert!(mq.matches(&small));
 
-        let large = ViewportConfig { width: 1024.0, ..Default::default() };
+        let large = ViewportConfig {
+            width: 1024.0,
+            ..Default::default()
+        };
         assert!(!mq.matches(&large));
     }
 
@@ -863,10 +969,18 @@ mod tests {
             features: vec![MediaFeature::Orientation("portrait".to_string())],
             rules: vec![],
         };
-        let portrait = ViewportConfig { width: 375.0, height: 812.0, ..Default::default() };
+        let portrait = ViewportConfig {
+            width: 375.0,
+            height: 812.0,
+            ..Default::default()
+        };
         assert!(mq.matches(&portrait));
 
-        let landscape = ViewportConfig { width: 1920.0, height: 1080.0, ..Default::default() };
+        let landscape = ViewportConfig {
+            width: 1920.0,
+            height: 1080.0,
+            ..Default::default()
+        };
         assert!(!mq.matches(&landscape));
     }
 
@@ -876,7 +990,10 @@ mod tests {
             features: vec![MediaFeature::PrefersColorScheme("dark".to_string())],
             rules: vec![],
         };
-        let dark = ViewportConfig { color_scheme: "dark".to_string(), ..Default::default() };
+        let dark = ViewportConfig {
+            color_scheme: "dark".to_string(),
+            ..Default::default()
+        };
         assert!(mq.matches(&dark));
 
         let light = ViewportConfig::default();
@@ -935,7 +1052,8 @@ mod tests {
 
     #[test]
     fn parse_media_features_compound() {
-        let features = StyleCascader::parse_media_features("(min-width: 768px) and (max-width: 1024px)");
+        let features =
+            StyleCascader::parse_media_features("(min-width: 768px) and (max-width: 1024px)");
         assert_eq!(features.len(), 2);
         assert_eq!(features[0], MediaFeature::MinWidth(768.0));
         assert_eq!(features[1], MediaFeature::MaxWidth(1024.0));
@@ -950,8 +1068,22 @@ mod tests {
         let kf = KeyframesRule {
             name: "fadeIn".to_string(),
             stops: vec![
-                KeyframeStop { progress: 0.0, declarations: { let mut m = HashMap::new(); m.insert("opacity".to_string(), "0".to_string()); m } },
-                KeyframeStop { progress: 1.0, declarations: { let mut m = HashMap::new(); m.insert("opacity".to_string(), "1".to_string()); m } },
+                KeyframeStop {
+                    progress: 0.0,
+                    declarations: {
+                        let mut m = HashMap::new();
+                        m.insert("opacity".to_string(), "0".to_string());
+                        m
+                    },
+                },
+                KeyframeStop {
+                    progress: 1.0,
+                    declarations: {
+                        let mut m = HashMap::new();
+                        m.insert("opacity".to_string(), "1".to_string());
+                        m
+                    },
+                },
             ],
         };
         mgr.register_keyframes(kf);
@@ -1026,7 +1158,8 @@ mod tests {
 
     #[test]
     fn parse_keyframes_round_trips_into_manager() {
-        let kf = parse_keyframes("@keyframes grow { from { width: 0px; } to { width: 100px; } }").unwrap();
+        let kf = parse_keyframes("@keyframes grow { from { width: 0px; } to { width: 100px; } }")
+            .unwrap();
         let mut mgr = AnimationManager::new();
         mgr.register_keyframes(kf);
         let anim = CssAnimation {
@@ -1048,7 +1181,12 @@ mod tests {
     fn specificity_ids_outweigh_classes() {
         let s_id = Specificity::compute("#main");
         let s_classes = Specificity::compute(".a.b.c.d.e.f.g.h.i.j");
-        assert!(s_id > s_classes, "#main ({:?}) should beat 10 classes ({:?})", s_id, s_classes);
+        assert!(
+            s_id > s_classes,
+            "#main ({:?}) should beat 10 classes ({:?})",
+            s_id,
+            s_classes
+        );
     }
 
     #[test]
@@ -1113,7 +1251,10 @@ mod tests {
 
     #[test]
     fn media_query_no_features_matches_any_viewport() {
-        let mq = MediaQuery { features: vec![], rules: vec![] };
+        let mq = MediaQuery {
+            features: vec![],
+            rules: vec![],
+        };
         let vp = ViewportConfig::default();
         assert!(mq.matches(&vp));
     }

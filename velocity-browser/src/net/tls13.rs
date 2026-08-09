@@ -316,8 +316,7 @@ mod tests {
     fn rfc8448_handshake_secret() {
         // Handshake Secret = HKDF-Extract(derived, ECDHE), RFC 8448 §3.
         let early = derive_early_secret(None);
-        let ecdhe =
-            from_hex("8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d");
+        let ecdhe = from_hex("8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d");
         assert_eq!(
             to_hex(&derive_handshake_secret(&early, &ecdhe)),
             "1dc826e93606aa6fdc0aadc12f741b01046aa6b99f691ed221a9f0ca043fbeac"

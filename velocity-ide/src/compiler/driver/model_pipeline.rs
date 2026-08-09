@@ -96,15 +96,18 @@ impl VulkanModelPipeline {
         let instance = driver.instance.clone();
         let queue = driver.compute_queue;
 
-        let shader_rms_norm = create_shader_module(&device, crate::compiler::shaders::RMS_NORM_SPV)?;
+        let shader_rms_norm =
+            create_shader_module(&device, crate::compiler::shaders::RMS_NORM_SPV)?;
         let shader_rope = create_shader_module(&device, crate::compiler::shaders::ROPE_SPV)?;
-        let shader_kv_write = create_shader_module(&device, crate::compiler::shaders::KV_WRITE_SPV)?;
+        let shader_kv_write =
+            create_shader_module(&device, crate::compiler::shaders::KV_WRITE_SPV)?;
         let shader_attn_softmax =
             create_shader_module(&device, crate::compiler::shaders::ATTN_SOFTMAX_SPV)?;
         let shader_swiglu = create_shader_module(&device, crate::compiler::shaders::SWIGLU_SPV)?;
         let shader_residual_add =
             create_shader_module(&device, crate::compiler::shaders::RESIDUAL_ADD_SPV)?;
-        let shader_bias_add = create_shader_module(&device, crate::compiler::shaders::BIAS_ADD_SPV)?;
+        let shader_bias_add =
+            create_shader_module(&device, crate::compiler::shaders::BIAS_ADD_SPV)?;
 
         let bindings_2 = [
             vk::DescriptorSetLayoutBinding::builder()
@@ -360,99 +363,101 @@ impl VulkanModelPipeline {
         let mut buffer_infos = Vec::with_capacity(total_sets * 3);
         let mut writes = Vec::new();
 
-        let push_write_2 = |set: vk::DescriptorSet,
-                            b0: vk::Buffer,
-                            b1: vk::Buffer,
-                            infos: &mut Vec<vk::DescriptorBufferInfo>,
-                            writes_list: &mut Vec<vk::WriteDescriptorSet>| {
-            let idx = infos.len();
-            infos.push(
-                vk::DescriptorBufferInfo::builder()
-                    .buffer(b0)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)
-                    .build(),
-            );
-            infos.push(
-                vk::DescriptorBufferInfo::builder()
-                    .buffer(b1)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)
-                    .build(),
-            );
+        let push_write_2 =
+            |set: vk::DescriptorSet,
+             b0: vk::Buffer,
+             b1: vk::Buffer,
+             infos: &mut Vec<vk::DescriptorBufferInfo>,
+             writes_list: &mut Vec<vk::WriteDescriptorSet>| {
+                let idx = infos.len();
+                infos.push(
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(b0)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)
+                        .build(),
+                );
+                infos.push(
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(b1)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)
+                        .build(),
+                );
 
-            writes_list.push(
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&infos[idx..idx + 1])
-                    .build(),
-            );
-            writes_list.push(
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(set)
-                    .dst_binding(1)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&infos[idx + 1..idx + 2])
-                    .build(),
-            );
-        };
+                writes_list.push(
+                    vk::WriteDescriptorSet::builder()
+                        .dst_set(set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[idx..idx + 1])
+                        .build(),
+                );
+                writes_list.push(
+                    vk::WriteDescriptorSet::builder()
+                        .dst_set(set)
+                        .dst_binding(1)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[idx + 1..idx + 2])
+                        .build(),
+                );
+            };
 
-        let push_write_3 = |set: vk::DescriptorSet,
-                            b0: vk::Buffer,
-                            b1: vk::Buffer,
-                            b2: vk::Buffer,
-                            infos: &mut Vec<vk::DescriptorBufferInfo>,
-                            writes_list: &mut Vec<vk::WriteDescriptorSet>| {
-            let idx = infos.len();
-            infos.push(
-                vk::DescriptorBufferInfo::builder()
-                    .buffer(b0)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)
-                    .build(),
-            );
-            infos.push(
-                vk::DescriptorBufferInfo::builder()
-                    .buffer(b1)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)
-                    .build(),
-            );
-            infos.push(
-                vk::DescriptorBufferInfo::builder()
-                    .buffer(b2)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)
-                    .build(),
-            );
+        let push_write_3 =
+            |set: vk::DescriptorSet,
+             b0: vk::Buffer,
+             b1: vk::Buffer,
+             b2: vk::Buffer,
+             infos: &mut Vec<vk::DescriptorBufferInfo>,
+             writes_list: &mut Vec<vk::WriteDescriptorSet>| {
+                let idx = infos.len();
+                infos.push(
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(b0)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)
+                        .build(),
+                );
+                infos.push(
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(b1)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)
+                        .build(),
+                );
+                infos.push(
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(b2)
+                        .offset(0)
+                        .range(vk::WHOLE_SIZE)
+                        .build(),
+                );
 
-            writes_list.push(
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&infos[idx..idx + 1])
-                    .build(),
-            );
-            writes_list.push(
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(set)
-                    .dst_binding(1)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&infos[idx + 1..idx + 2])
-                    .build(),
-            );
-            writes_list.push(
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(set)
-                    .dst_binding(2)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&infos[idx + 2..idx + 3])
-                    .build(),
-            );
-        };
+                writes_list.push(
+                    vk::WriteDescriptorSet::builder()
+                        .dst_set(set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[idx..idx + 1])
+                        .build(),
+                );
+                writes_list.push(
+                    vk::WriteDescriptorSet::builder()
+                        .dst_set(set)
+                        .dst_binding(1)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[idx + 1..idx + 2])
+                        .build(),
+                );
+                writes_list.push(
+                    vk::WriteDescriptorSet::builder()
+                        .dst_set(set)
+                        .dst_binding(2)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&infos[idx + 2..idx + 3])
+                        .build(),
+                );
+            };
 
         for i in 0..n_layers {
             let lg = layers_gpu[i];
@@ -803,9 +808,11 @@ impl Drop for VulkanModelPipeline {
             self.device
                 .destroy_descriptor_set_layout(self.desc_layout_3, None);
 
-            self.device.destroy_shader_module(self.shader_rms_norm, None);
+            self.device
+                .destroy_shader_module(self.shader_rms_norm, None);
             self.device.destroy_shader_module(self.shader_rope, None);
-            self.device.destroy_shader_module(self.shader_kv_write, None);
+            self.device
+                .destroy_shader_module(self.shader_kv_write, None);
             self.device
                 .destroy_shader_module(self.shader_attn_softmax, None);
             self.device.destroy_shader_module(self.shader_swiglu, None);

@@ -8,9 +8,7 @@
 use serde_json::Value;
 use std::error::Error;
 
-use crate::editor::browser::native_bridge::{
-    get_or_create_native_bridge, NativeBrowserBridge,
-};
+use crate::editor::browser::native_bridge::{get_or_create_native_bridge, NativeBrowserBridge};
 
 /// Size of the distilled content projection (readability markdown, with the
 /// plain markdown as fallback) — the baseline `browser_native_wait` watches.
@@ -36,7 +34,10 @@ pub(super) fn wait_on_session(
     compact: bool,
 ) -> Result<Option<String>, Box<dyn Error>> {
     let mode = arguments["mode"].as_str().unwrap_or("content");
-    let timeout_ms = arguments["timeout"].as_u64().unwrap_or(10_000).clamp(1, 60_000);
+    let timeout_ms = arguments["timeout"]
+        .as_u64()
+        .unwrap_or(10_000)
+        .clamp(1, 60_000);
     let poll_ms = arguments["poll"].as_u64().unwrap_or(100).clamp(20, 1_000);
     // Significance threshold for mode=content: ignore tiny fluctuations
     // (timestamps, counters) and only wake on a real content move.
@@ -57,11 +58,10 @@ pub(super) fn wait_on_session(
     let arc = get_or_create_native_bridge(session_id);
     let start = std::time::Instant::now();
     let (baseline, baseline_url) = {
-        let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
-        (
-            distilled_content_chars(&bridge),
-            bridge.current_view().url,
-        )
+        let bridge = arc
+            .lock()
+            .map_err(|_| "native browser bridge lock poisoned")?;
+        (distilled_content_chars(&bridge), bridge.current_view().url)
     };
     let want = label.to_lowercase();
     let mut matched: Option<String> = None;
@@ -71,7 +71,9 @@ pub(super) fn wait_on_session(
     let mut quiet = 0usize;
     while start.elapsed().as_millis() < u128::from(timeout_ms) {
         std::thread::sleep(std::time::Duration::from_millis(poll_ms));
-        let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        let bridge = arc
+            .lock()
+            .map_err(|_| "native browser bridge lock poisoned")?;
         if mode == "element" {
             let view = bridge.current_view();
             let found = view
@@ -111,8 +113,9 @@ pub(super) fn wait_on_session(
             } else {
                 quiet += 1;
                 if quiet >= quiet_needed {
-                    matched =
-                        Some(format!("content stable at {now} chars ({quiet} quiet polls)"));
+                    matched = Some(format!(
+                        "content stable at {now} chars ({quiet} quiet polls)"
+                    ));
                     break;
                 }
             }

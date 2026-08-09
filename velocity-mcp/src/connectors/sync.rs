@@ -163,7 +163,8 @@ impl SyncEngine {
     pub fn remove_rule(&mut self, id: &str) -> bool {
         let removed = self.rules.remove(id).is_some();
         if removed {
-            self.items.retain(|key, _| !key.starts_with(&format!("{}:", id)));
+            self.items
+                .retain(|key, _| !key.starts_with(&format!("{}:", id)));
             self.conflicts.retain(|c| c.rule_id != id);
         }
         removed
@@ -171,12 +172,15 @@ impl SyncEngine {
 
     /// Get rules that are due for polling.
     pub fn due_rules(&self, now: u64) -> Vec<&SyncRule> {
-        self.rules.values()
+        self.rules
+            .values()
             .filter(|r| {
-                r.enabled && r.poll_interval_secs > 0 && match r.last_sync {
-                    Some(last) => now - last >= r.poll_interval_secs,
-                    None => true,
-                }
+                r.enabled
+                    && r.poll_interval_secs > 0
+                    && match r.last_sync {
+                        Some(last) => now - last >= r.poll_interval_secs,
+                        None => true,
+                    }
             })
             .collect()
     }
@@ -238,7 +242,13 @@ impl SyncEngine {
     }
 
     /// Resolve an item as successfully synced.
-    pub fn mark_synced(&mut self, rule_id: &str, local_id: &str, local_hash: u64, remote_hash: u64) {
+    pub fn mark_synced(
+        &mut self,
+        rule_id: &str,
+        local_id: &str,
+        local_hash: u64,
+        remote_hash: u64,
+    ) {
         let key = format!("{}:{}", rule_id, local_id);
         if let Some(item) = self.items.get_mut(&key) {
             item.local_hash = local_hash;
@@ -285,12 +295,17 @@ impl SyncEngine {
 
     /// Count unresolved conflicts.
     pub fn unresolved_conflicts(&self) -> Vec<&SyncConflict> {
-        self.conflicts.iter().filter(|c| c.resolution.is_none()).collect()
+        self.conflicts
+            .iter()
+            .filter(|c| c.resolution.is_none())
+            .collect()
     }
 
     /// Get sync statistics for a rule.
     pub fn rule_stats(&self, rule_id: &str) -> SyncStats {
-        let items: Vec<&SyncedItem> = self.items.values()
+        let items: Vec<&SyncedItem> = self
+            .items
+            .values()
             .filter(|i| i.rule_id == rule_id)
             .collect();
 
@@ -298,7 +313,11 @@ impl SyncEngine {
             total_items: items.len(),
             dirty_local: items.iter().filter(|i| i.local_dirty).count(),
             dirty_remote: items.iter().filter(|i| i.remote_dirty).count(),
-            conflicts: self.conflicts.iter().filter(|c| c.rule_id == rule_id && c.resolution.is_none()).count(),
+            conflicts: self
+                .conflicts
+                .iter()
+                .filter(|c| c.rule_id == rule_id && c.resolution.is_none())
+                .count(),
         }
     }
 
@@ -319,8 +338,8 @@ impl SyncEngine {
             items: self.items.values().cloned().collect(),
             conflicts: self.conflicts.clone(),
         };
-        let json = serde_json::to_vec_pretty(&state)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("sync_state.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -558,7 +577,12 @@ mod tests {
         let mut engine = SyncEngine::new();
         engine.add_rule(test_rule());
 
-        let id = engine.record_conflict("rule1", "i1", serde_json::json!({"a": 1}), serde_json::json!({"a": 2}));
+        let id = engine.record_conflict(
+            "rule1",
+            "i1",
+            serde_json::json!({"a": 1}),
+            serde_json::json!({"a": 2}),
+        );
         assert_eq!(engine.unresolved_conflicts().len(), 1);
 
         engine.resolve_conflict(&id, ConflictResolution::KeepLocal);

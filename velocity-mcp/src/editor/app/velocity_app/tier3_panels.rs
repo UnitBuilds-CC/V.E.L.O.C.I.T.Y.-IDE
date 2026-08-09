@@ -8,9 +8,9 @@
 use eframe::egui;
 use egui::RichText;
 
+use super::struct_def::VelocityApp;
 use crate::editor::deploy_pipeline::{PipelineStage, StageStatus};
 use crate::editor::extensions::ExtensionState;
-use super::struct_def::VelocityApp;
 
 /// A deferred mutation captured while rendering the extensions list (avoids
 /// borrowing `self` mutably during immutable iteration).
@@ -21,7 +21,13 @@ enum ExtAction {
 
 impl VelocityApp {
     // ── Section header shared by the Tier-3 panels ─────────────────────────
-        pub(crate) fn tier3_header(ui: &mut egui::Ui, title: &str, subtitle: &str, accent: egui::Color32, muted: egui::Color32) {
+    pub(crate) fn tier3_header(
+        ui: &mut egui::Ui,
+        title: &str,
+        subtitle: &str,
+        accent: egui::Color32,
+        muted: egui::Color32,
+    ) {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.heading(RichText::new(title).strong().color(accent));
@@ -131,7 +137,8 @@ impl VelocityApp {
         if rescan {
             let ws = self.workspace_root.clone();
             self.extension_registry.scan(&ws);
-            self.toasts.push(crate::editor::toast::Toast::info("Extensions rescanned"));
+            self.toasts
+                .push(crate::editor::toast::Toast::info("Extensions rescanned"));
         }
         match pending {
             Some(ExtAction::Activate(id)) => {
@@ -164,15 +171,32 @@ impl VelocityApp {
 
         // Session stat strip.
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("✔ {}", lo.total_tasks_completed)).size(10.0).color(palette.success));
-            ui.label(RichText::new(format!("✖ {}", lo.total_tasks_failed)).size(10.0).color(palette.error));
-            ui.label(RichText::new(format!("⋯ {} active", lo.worker_progress.len())).size(10.0).color(palette.warning));
+            ui.label(
+                RichText::new(format!("✔ {}", lo.total_tasks_completed))
+                    .size(10.0)
+                    .color(palette.success),
+            );
+            ui.label(
+                RichText::new(format!("✖ {}", lo.total_tasks_failed))
+                    .size(10.0)
+                    .color(palette.error),
+            );
+            ui.label(
+                RichText::new(format!("⋯ {} active", lo.worker_progress.len()))
+                    .size(10.0)
+                    .color(palette.warning),
+            );
         });
         ui.add_space(4.0);
 
         // Active worker progress bars.
         if !lo.worker_progress.is_empty() {
-            ui.label(RichText::new("WORKERS").small().strong().color(palette.accent));
+            ui.label(
+                RichText::new("WORKERS")
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
             for wp in &lo.worker_progress {
                 egui::Frame::new()
                     .fill(palette.bg_secondary)
@@ -180,11 +204,27 @@ impl VelocityApp {
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(format!("#{}", wp.task_id)).size(9.0).color(palette.text_muted));
-                            ui.label(RichText::new(&wp.title).size(10.0).strong().color(palette.text));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(wp.elapsed_label()).size(9.0).color(palette.text_muted));
-                            });
+                            ui.label(
+                                RichText::new(format!("#{}", wp.task_id))
+                                    .size(9.0)
+                                    .color(palette.text_muted),
+                            );
+                            ui.label(
+                                RichText::new(&wp.title)
+                                    .size(10.0)
+                                    .strong()
+                                    .color(palette.text),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        RichText::new(wp.elapsed_label())
+                                            .size(9.0)
+                                            .color(palette.text_muted),
+                                    );
+                                },
+                            );
                         });
                         ui.add(
                             egui::ProgressBar::new(wp.progress_fraction())
@@ -192,9 +232,12 @@ impl VelocityApp {
                                 .fill(palette.accent),
                         );
                         ui.label(
-                            RichText::new(format!("{} · {} file(s) changed", wp.status_text, wp.files_changed))
-                                .size(8.0)
-                                .color(palette.text_muted),
+                            RichText::new(format!(
+                                "{} · {} file(s) changed",
+                                wp.status_text, wp.files_changed
+                            ))
+                            .size(8.0)
+                            .color(palette.text_muted),
                         );
                     });
                 ui.add_space(3.0);
@@ -204,9 +247,17 @@ impl VelocityApp {
 
         // Pre-computation cache (id 0 = manual workspace warm).
         ui.horizontal(|ui| {
-            ui.label(RichText::new("CONTEXT CACHE").small().strong().color(palette.accent));
+            ui.label(
+                RichText::new("CONTEXT CACHE")
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button(RichText::new("Warm from open files").size(9.0)).clicked() {
+                if ui
+                    .small_button(RichText::new("Warm from open files").size(9.0))
+                    .clicked()
+                {
                     self.warm_precompute_cache();
                 }
             });
@@ -223,7 +274,11 @@ impl VelocityApp {
                 .color(palette.text_muted),
             );
         } else {
-            ui.label(RichText::new("Cache empty — warm it to pre-index open files.").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new("Cache empty — warm it to pre-index open files.")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
         }
         ui.add_space(4.0);
 
@@ -257,20 +312,27 @@ impl VelocityApp {
     /// Pre-index the currently open editor files into the speculative cache
     /// under the manual slot (task id 0) and report a summary.
     pub fn warm_precompute_cache(&mut self) {
-        let files: Vec<std::path::PathBuf> =
-            self.tabs.iter().filter_map(|t| t.editor_path().cloned()).collect();
+        let files: Vec<std::path::PathBuf> = self
+            .tabs
+            .iter()
+            .filter_map(|t| t.editor_path().cloned())
+            .collect();
         if files.is_empty() {
-            self.toasts.push(crate::editor::toast::Toast::info("No open files to pre-index"));
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "No open files to pre-index",
+            ));
             return;
         }
-        let result = crate::editor::speculative_precomp::precompute_files(&self.workspace_root, &files);
+        let result =
+            crate::editor::speculative_precomp::precompute_files(&self.workspace_root, &files);
         let summary = format!(
             "Pre-indexed {} file(s), {} symbols",
             result.files.len(),
             result.total_symbols
         );
         self.precomp_cache.store(0, result);
-        self.toasts.push(crate::editor::toast::Toast::success(summary));
+        self.toasts
+            .push(crate::editor::toast::Toast::success(summary));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -324,7 +386,12 @@ impl VelocityApp {
             .id_salt("coverage_scroll")
             .show(ui, |ui| {
                 if !analysis.untested_functions.is_empty() {
-                    ui.label(RichText::new("UNTESTED FUNCTIONS").small().strong().color(palette.accent));
+                    ui.label(
+                        RichText::new("UNTESTED FUNCTIONS")
+                            .small()
+                            .strong()
+                            .color(palette.accent),
+                    );
                     for func in analysis.untested_functions.iter().take(200) {
                         let file = func
                             .file
@@ -332,23 +399,48 @@ impl VelocityApp {
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(&func.name).monospace().size(9.0).color(palette.text));
-                            ui.label(RichText::new(format!("{file}:{}", func.line)).size(8.0).color(palette.text_muted));
+                            ui.label(
+                                RichText::new(&func.name)
+                                    .monospace()
+                                    .size(9.0)
+                                    .color(palette.text),
+                            );
+                            ui.label(
+                                RichText::new(format!("{file}:{}", func.line))
+                                    .size(8.0)
+                                    .color(palette.text_muted),
+                            );
                         });
                     }
                     ui.add_space(6.0);
                 }
 
                 if !self.test_generator.generated_tests.is_empty() {
-                    ui.label(RichText::new("GENERATED SKELETONS").small().strong().color(palette.accent));
+                    ui.label(
+                        RichText::new("GENERATED SKELETONS")
+                            .small()
+                            .strong()
+                            .color(palette.accent),
+                    );
                     for gen in &self.test_generator.generated_tests {
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
                             .corner_radius(5.0)
                             .inner_margin(8.0)
                             .show(ui, |ui| {
-                                ui.label(RichText::new(&gen.test_name).monospace().size(9.0).strong().color(palette.accent));
-                                ui.label(RichText::new(&gen.test_body).monospace().size(8.0).color(palette.text_muted));
+                                ui.label(
+                                    RichText::new(&gen.test_name)
+                                        .monospace()
+                                        .size(9.0)
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                                ui.label(
+                                    RichText::new(&gen.test_body)
+                                        .monospace()
+                                        .size(8.0)
+                                        .color(palette.text_muted),
+                                );
                             });
                         ui.add_space(3.0);
                     }
@@ -363,7 +455,10 @@ impl VelocityApp {
         }
         if generate {
             let n = self.test_generator.generate_tests().len();
-            self.toasts.push(crate::editor::toast::Toast::success(format!("Generated {n} test skeleton(s)")));
+            self.toasts
+                .push(crate::editor::toast::Toast::success(format!(
+                    "Generated {n} test skeleton(s)"
+                )));
         }
     }
 
@@ -380,8 +475,9 @@ impl VelocityApp {
     /// file is open or no language server is available.
     pub fn run_lsp_coverage_analysis(&mut self) {
         let Some((path, ext, content)) = self.active_lsp_target() else {
-            self.toasts
-                .push(crate::editor::toast::Toast::info("No file open for LSP coverage analysis"));
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "No file open for LSP coverage analysis",
+            ));
             return;
         };
         let symbols = match self.lsp_manager.as_mut() {
@@ -396,9 +492,10 @@ impl VelocityApp {
         }
         self.test_generator.ingest_lsp_symbol_list(&path, &symbols);
         let summary = self.test_generator.coverage_summary();
-        self.toasts.push(crate::editor::toast::Toast::success(format!(
-            "LSP coverage: {summary}"
-        )));
+        self.toasts
+            .push(crate::editor::toast::Toast::success(format!(
+                "LSP coverage: {summary}"
+            )));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -411,7 +508,13 @@ impl VelocityApp {
         let (status, target, deployments): (String, String, usize) = self
             .deploy_pipeline
             .as_ref()
-            .map(|p| (p.status_label().to_string(), p.config.deploy_target.clone(), p.deployments.len()))
+            .map(|p| {
+                (
+                    p.status_label().to_string(),
+                    p.config.deploy_target.clone(),
+                    p.deployments.len(),
+                )
+            })
             .unwrap_or_default();
 
         Self::tier3_header(
@@ -426,14 +529,20 @@ impl VelocityApp {
         let mut deploy = false;
         let mut rollback = false;
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("▶ Run build+test").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("▶ Run build+test").size(10.0))
+                .clicked()
+            {
                 run = true;
             }
             if ui.button(RichText::new("▲ Deploy").size(10.0)).clicked() {
                 deploy = true;
             }
             if ui
-                .add_enabled(deployments >= 2, egui::Button::new(RichText::new("⟲ Rollback").size(10.0)))
+                .add_enabled(
+                    deployments >= 2,
+                    egui::Button::new(RichText::new("⟲ Rollback").size(10.0)),
+                )
                 .clicked()
             {
                 rollback = true;
@@ -453,9 +562,18 @@ impl VelocityApp {
                     };
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icon).size(11.0).color(color));
-                        ui.label(RichText::new(stage.label()).size(10.0).strong().color(palette.text));
+                        ui.label(
+                            RichText::new(stage.label())
+                                .size(10.0)
+                                .strong()
+                                .color(palette.text),
+                        );
                         if let Some(ms) = sr.duration_ms {
-                            ui.label(RichText::new(format!("{ms} ms")).size(8.0).color(palette.text_muted));
+                            ui.label(
+                                RichText::new(format!("{ms} ms"))
+                                    .size(8.0)
+                                    .color(palette.text_muted),
+                            );
                         }
                     });
                 }
@@ -463,7 +581,12 @@ impl VelocityApp {
             ui.add_space(6.0);
 
             if !pipeline.deployments.is_empty() {
-                ui.label(RichText::new("DEPLOYMENTS").small().strong().color(palette.accent));
+                ui.label(
+                    RichText::new("DEPLOYMENTS")
+                        .small()
+                        .strong()
+                        .color(palette.accent),
+                );
                 for dep in pipeline.deployments.iter().rev().take(10) {
                     let color = match dep.status {
                         StageStatus::Passed => palette.success,
@@ -471,8 +594,17 @@ impl VelocityApp {
                         _ => palette.text_muted,
                     };
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("#{}", dep.id)).size(8.0).color(palette.text_muted));
-                        ui.label(RichText::new(&dep.version).monospace().size(9.0).color(palette.text));
+                        ui.label(
+                            RichText::new(format!("#{}", dep.id))
+                                .size(8.0)
+                                .color(palette.text_muted),
+                        );
+                        ui.label(
+                            RichText::new(&dep.version)
+                                .monospace()
+                                .size(9.0)
+                                .color(palette.text),
+                        );
                         ui.label(RichText::new(&dep.target).size(8.0).color(color));
                     });
                 }
@@ -485,7 +617,9 @@ impl VelocityApp {
         if deploy {
             if let Some(pipeline) = &mut self.deploy_pipeline {
                 match pipeline.deploy() {
-                    Ok(()) => self.toasts.push(crate::editor::toast::Toast::success("Deploy stage complete")),
+                    Ok(()) => self.toasts.push(crate::editor::toast::Toast::success(
+                        "Deploy stage complete",
+                    )),
                     Err(e) => self.toasts.push(crate::editor::toast::Toast::error(e)),
                 }
             }
@@ -504,7 +638,11 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Voice Commands",
-            &format!("{:.0}% recognized · {} total", self.voice_input.accuracy(), self.voice_input.total_commands),
+            &format!(
+                "{:.0}% recognized · {} total",
+                self.voice_input.accuracy(),
+                self.voice_input.total_commands
+            ),
             palette.accent,
             palette.text_muted,
         );
@@ -515,7 +653,10 @@ impl VelocityApp {
             } else {
                 ("○ Start listening", palette.text_muted)
             };
-            if ui.button(RichText::new(label).size(10.0).color(color)).clicked() {
+            if ui
+                .button(RichText::new(label).size(10.0).color(color))
+                .clicked()
+            {
                 self.voice_input.toggle_listening();
             }
         });
@@ -543,27 +684,57 @@ impl VelocityApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Intent:").size(9.0).color(palette.text_muted));
-                        ui.label(RichText::new(cmd.intent.label()).size(10.0).strong().color(palette.accent));
-                        ui.label(RichText::new(format!("({:.0}%)", cmd.confidence * 100.0)).size(8.0).color(palette.text_muted));
+                        ui.label(
+                            RichText::new(cmd.intent.label())
+                                .size(10.0)
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.label(
+                            RichText::new(format!("({:.0}%)", cmd.confidence * 100.0))
+                                .size(8.0)
+                                .color(palette.text_muted),
+                        );
                     });
                     if let Some(target) = cmd.parameters.get("target") {
-                        ui.label(RichText::new(format!("Target: {target}")).size(9.0).color(palette.text));
+                        ui.label(
+                            RichText::new(format!("Target: {target}"))
+                                .size(9.0)
+                                .color(palette.text),
+                        );
                     }
                 });
             ui.add_space(6.0);
         }
 
-        ui.label(RichText::new("HISTORY").small().strong().color(palette.accent));
+        ui.label(
+            RichText::new("HISTORY")
+                .small()
+                .strong()
+                .color(palette.accent),
+        );
         egui::ScrollArea::vertical()
             .id_salt("voice_history_scroll")
             .show(ui, |ui| {
                 if self.voice_input.command_history.is_empty() {
-                    ui.label(RichText::new("No commands parsed yet.").size(9.0).color(palette.text_muted));
+                    ui.label(
+                        RichText::new("No commands parsed yet.")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
                 }
                 for cmd in self.voice_input.command_history.iter().rev() {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(cmd.intent.label()).size(8.0).color(palette.accent));
-                        ui.label(RichText::new(&cmd.raw_text).size(9.0).color(palette.text_muted));
+                        ui.label(
+                            RichText::new(cmd.intent.label())
+                                .size(8.0)
+                                .color(palette.accent),
+                        );
+                        ui.label(
+                            RichText::new(&cmd.raw_text)
+                                .size(9.0)
+                                .color(palette.text_muted),
+                        );
                     });
                 }
             });
@@ -571,8 +742,15 @@ impl VelocityApp {
         if parse {
             let text = self.voice_input.last_transcription.clone();
             if !text.trim().is_empty() {
-                let intent = self.voice_input.process_transcription(&text).intent.label().to_string();
-                self.toasts.push(crate::editor::toast::Toast::info(format!("Parsed intent: {intent}")));
+                let intent = self
+                    .voice_input
+                    .process_transcription(&text)
+                    .intent
+                    .label()
+                    .to_string();
+                self.toasts.push(crate::editor::toast::Toast::info(format!(
+                    "Parsed intent: {intent}"
+                )));
             }
         }
     }
@@ -607,7 +785,10 @@ impl VelocityApp {
             if ui.button(RichText::new("Ingest").size(10.0)).clicked() {
                 ingest_path = true;
             }
-            if ui.button(RichText::new("Index workspace").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("Index workspace").size(10.0))
+                .clicked()
+            {
                 ingest_workspace = true;
             }
         });
@@ -674,10 +855,17 @@ impl VelocityApp {
         ui.add_space(8.0);
         let mut clear_all = false;
         ui.horizontal(|ui| {
-            ui.label(RichText::new("SOURCES").small().strong().color(palette.accent));
+            ui.label(
+                RichText::new("SOURCES")
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if !self.knowledge_base.is_empty()
-                    && ui.small_button(RichText::new("Clear all").size(8.0)).clicked()
+                    && ui
+                        .small_button(RichText::new("Clear all").size(8.0))
+                        .clicked()
                 {
                     clear_all = true;
                 }
@@ -773,7 +961,9 @@ impl VelocityApp {
     }
 
     pub fn render_triggers_panel(&mut self, ui: &mut egui::Ui) {
-        use crate::editor::triggers::{now_secs, parse_schedule, Trigger, TriggerAction, TriggerKind};
+        use crate::editor::triggers::{
+            now_secs, parse_schedule, Trigger, TriggerAction, TriggerKind,
+        };
         let palette = self.palette();
         Self::tier3_header(
             ui,
@@ -844,23 +1034,33 @@ impl VelocityApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let dot = if t.enabled { "●" } else { "○" };
+                                ui.label(RichText::new(dot).size(10.0).color(if t.enabled {
+                                    palette.success
+                                } else {
+                                    palette.text_muted
+                                }));
                                 ui.label(
-                                    RichText::new(dot)
+                                    RichText::new(&t.name)
                                         .size(10.0)
-                                        .color(if t.enabled { palette.success } else { palette.text_muted }),
+                                        .strong()
+                                        .color(palette.text),
                                 );
-                                ui.label(RichText::new(&t.name).size(10.0).strong().color(palette.text));
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if ui.small_button(RichText::new("✖").size(8.0)).clicked() {
+                                        if ui.small_button(RichText::new("✖").size(8.0)).clicked()
+                                        {
                                             remove = Some(t.id.clone());
                                         }
                                         let label = if t.enabled { "Disable" } else { "Enable" };
-                                        if ui.small_button(RichText::new(label).size(8.0)).clicked() {
+                                        if ui.small_button(RichText::new(label).size(8.0)).clicked()
+                                        {
                                             toggle = Some(t.id.clone());
                                         }
-                                        if ui.small_button(RichText::new("Run now").size(8.0)).clicked() {
+                                        if ui
+                                            .small_button(RichText::new("Run now").size(8.0))
+                                            .clicked()
+                                        {
                                             run_now = Some(t.id.clone());
                                         }
                                     },
@@ -913,8 +1113,9 @@ impl VelocityApp {
                 self.trigger_name_input.clear();
                 self.trigger_interval_input.clear();
                 self.trigger_prompt_input.clear();
-                self.toasts
-                    .push(crate::editor::toast::Toast::info(format!("Added trigger '{name}'")));
+                self.toasts.push(crate::editor::toast::Toast::info(format!(
+                    "Added trigger '{name}'"
+                )));
             }
         }
         if let Some(id) = toggle {
@@ -940,8 +1141,9 @@ impl VelocityApp {
                     self.triggers.mark_run(&id, now_secs());
                     let ws = self.workspace_root.clone();
                     let _ = self.triggers.save(&ws);
-                    self.toasts
-                        .push(crate::editor::toast::Toast::info("Trigger dispatched to agent"));
+                    self.toasts.push(crate::editor::toast::Toast::info(
+                        "Trigger dispatched to agent",
+                    ));
                 }
                 Some(TriggerAction::RunWorkflow { workflow_id }) => {
                     if let Some(wf) = self.workflows.get(&workflow_id).cloned() {
@@ -965,7 +1167,6 @@ impl VelocityApp {
         }
     }
 }
-
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {
     use crate::editor::triggers::TriggerKind;

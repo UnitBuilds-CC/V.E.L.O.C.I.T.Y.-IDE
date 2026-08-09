@@ -3,7 +3,6 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
-
 fn html_contains_compatibility_marker(html: &str, needles: &[&str]) -> bool {
     contains_any_case_insensitive(html, needles)
 }
@@ -369,7 +368,11 @@ fn latest_session_checkpoint_summary(
             Err(err) => return Err(format!("read checkpoint dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         checkpoint_count += 1;
@@ -597,4 +600,3 @@ pub fn session_health_report(
         session_json_path,
     })
 }
-

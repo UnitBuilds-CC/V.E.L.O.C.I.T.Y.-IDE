@@ -69,7 +69,10 @@ impl ParallelLayoutEngine {
         if total_width > root_box.width {
             root_box.width = total_width;
         }
-        root_box.height = root_box.padding[0] + root_box.padding[2] + cursor_y - root_box.y - root_box.margin[0] - root_box.margin[2];
+        root_box.height = root_box.padding[0] + root_box.padding[2] + cursor_y
+            - root_box.y
+            - root_box.margin[0]
+            - root_box.margin[2];
 
         // Phase 4: Recursively lay out deeper levels
         for child in &mut root_box.children {
@@ -229,10 +232,7 @@ mod tests {
 
     #[test]
     fn test_margin_collapsing() {
-        let mut children = vec![
-            make_box(1, 100.0, 50.0),
-            make_box(2, 100.0, 50.0),
-        ];
+        let mut children = vec![make_box(1, 100.0, 50.0), make_box(2, 100.0, 50.0)];
         children[0].margin[2] = 20.0;
         children[1].margin[0] = 30.0;
 
@@ -313,7 +313,7 @@ mod tests {
         let mut root = make_box_with_children(0, vec![child]);
         engine.compute_parallel_subtrees(&mut root);
         assert_eq!(root.children[0].x, 15.0); // left margin
-        assert_eq!(root.children[0].y, 5.0);  // top margin
+        assert_eq!(root.children[0].y, 5.0); // top margin
     }
 
     #[test]

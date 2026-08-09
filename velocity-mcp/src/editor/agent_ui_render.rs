@@ -32,11 +32,7 @@ pub fn render_agent_metrics(ui: &mut egui::Ui, snapshot: &RenderSnapshot, palett
             AgentState::Thinking => "Thinking",
             AgentState::Waiting => "Waiting",
         };
-        ui.label(
-            egui::RichText::new(state_icon)
-                .size(10.0)
-                .strong(),
-        );
+        ui.label(egui::RichText::new(state_icon).size(10.0).strong());
 
         ui.separator();
 

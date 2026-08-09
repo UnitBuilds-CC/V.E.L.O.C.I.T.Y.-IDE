@@ -56,7 +56,11 @@ impl HistoryStack {
         let mut triples = Vec::new();
         for (idx, item) in self.items.iter().enumerate() {
             let key = format!("history_{}", idx);
-            triples.push(NdaTriple::new(session_id, 190, &format!("{}:{}", key, item.url)));
+            triples.push(NdaTriple::new(
+                session_id,
+                190,
+                &format!("{}:{}", key, item.url),
+            ));
         }
         triples
     }

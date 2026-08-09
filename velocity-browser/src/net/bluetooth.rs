@@ -32,12 +32,17 @@ pub struct WebBluetoothTransport {
 }
 
 impl Default for WebBluetoothTransport {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebBluetoothTransport {
     pub fn new() -> Self {
-        Self { discovered_devices: Vec::new(), active_connection: None }
+        Self {
+            discovered_devices: Vec::new(),
+            active_connection: None,
+        }
     }
 
     /// Request a device by name filter.
@@ -63,16 +68,24 @@ impl WebBluetoothTransport {
     }
 
     /// Request a device with service filter.
-    pub fn request_device_with_services(&mut self, service_uuids: &[&str]) -> Option<BluetoothDevice> {
+    pub fn request_device_with_services(
+        &mut self,
+        service_uuids: &[&str],
+    ) -> Option<BluetoothDevice> {
         let dev = BluetoothDevice {
             id: format!("bt_dev_{}", self.discovered_devices.len() + 1),
             name: "Filtered Device".to_string(),
             gatt_services: service_uuids.iter().map(|s| s.to_string()).collect(),
             rssi: -60,
             is_connected: false,
-            services: service_uuids.iter().map(|uuid| GattService {
-                uuid: uuid.to_string(), is_primary: true, characteristics: Vec::new(),
-            }).collect(),
+            services: service_uuids
+                .iter()
+                .map(|uuid| GattService {
+                    uuid: uuid.to_string(),
+                    is_primary: true,
+                    characteristics: Vec::new(),
+                })
+                .collect(),
         };
         self.discovered_devices.push(dev.clone());
         Some(dev)
@@ -80,7 +93,10 @@ impl WebBluetoothTransport {
 
     /// Connect to a device by ID.
     pub fn connect(&mut self, device_id: &str) -> Result<(), &'static str> {
-        let dev = self.discovered_devices.iter_mut().find(|d| d.id == device_id)
+        let dev = self
+            .discovered_devices
+            .iter_mut()
+            .find(|d| d.id == device_id)
             .ok_or("Device not found")?;
         dev.is_connected = true;
         self.active_connection = Some(device_id.to_string());
@@ -90,7 +106,11 @@ impl WebBluetoothTransport {
     /// Disconnect from the active device.
     pub fn disconnect(&mut self) -> Result<(), &'static str> {
         if let Some(ref conn_id) = self.active_connection {
-            if let Some(dev) = self.discovered_devices.iter_mut().find(|d| d.id == *conn_id) {
+            if let Some(dev) = self
+                .discovered_devices
+                .iter_mut()
+                .find(|d| d.id == *conn_id)
+            {
                 dev.is_connected = false;
             }
         }
@@ -99,10 +119,20 @@ impl WebBluetoothTransport {
     }
 
     /// Read a characteristic value.
-    pub fn read_characteristic(&self, device_id: &str, service_uuid: &str, char_uuid: &str) -> Result<Vec<u8>, &'static str> {
-        let dev = self.discovered_devices.iter().find(|d| d.id == device_id)
+    pub fn read_characteristic(
+        &self,
+        device_id: &str,
+        service_uuid: &str,
+        char_uuid: &str,
+    ) -> Result<Vec<u8>, &'static str> {
+        let dev = self
+            .discovered_devices
+            .iter()
+            .find(|d| d.id == device_id)
             .ok_or("Device not found")?;
-        if !dev.is_connected { return Err("Not connected"); }
+        if !dev.is_connected {
+            return Err("Not connected");
+        }
         for svc in &dev.services {
             if svc.uuid == service_uuid {
                 for ch in &svc.characteristics {
@@ -116,10 +146,21 @@ impl WebBluetoothTransport {
     }
 
     /// Write a characteristic value.
-    pub fn write_characteristic(&mut self, device_id: &str, service_uuid: &str, char_uuid: &str, data: &[u8]) -> Result<(), &'static str> {
-        let dev = self.discovered_devices.iter_mut().find(|d| d.id == device_id)
+    pub fn write_characteristic(
+        &mut self,
+        device_id: &str,
+        service_uuid: &str,
+        char_uuid: &str,
+        data: &[u8],
+    ) -> Result<(), &'static str> {
+        let dev = self
+            .discovered_devices
+            .iter_mut()
+            .find(|d| d.id == device_id)
             .ok_or("Device not found")?;
-        if !dev.is_connected { return Err("Not connected"); }
+        if !dev.is_connected {
+            return Err("Not connected");
+        }
         for svc in &mut dev.services {
             if svc.uuid == service_uuid {
                 for ch in &mut svc.characteristics {
@@ -166,14 +207,21 @@ mod tests {
         let dev_id = dev.id.clone();
         bt.connect(&dev_id).unwrap();
         // Write
-        let result = bt.write_characteristic(&dev_id, "0000180d-0000-1000-8000-00805f9b34fb", "00002a37-0000-1000-8000-00805f9b34fb", &[0x01, 0x02]);
+        let result = bt.write_characteristic(
+            &dev_id,
+            "0000180d-0000-1000-8000-00805f9b34fb",
+            "00002a37-0000-1000-8000-00805f9b34fb",
+            &[0x01, 0x02],
+        );
         assert!(result.is_err()); // not writable (only read+notify)
     }
 
     #[test]
     fn test_request_with_services() {
         let mut bt = WebBluetoothTransport::new();
-        let dev = bt.request_device_with_services(&["heart_rate", "battery"]).unwrap();
+        let dev = bt
+            .request_device_with_services(&["heart_rate", "battery"])
+            .unwrap();
         assert_eq!(dev.gatt_services.len(), 2);
     }
 

@@ -26,46 +26,46 @@ use sha2::{Digest, Sha256};
 #[repr(u8)]
 pub enum NdaOpcode {
     // ── Original opcodes ─────────────────────────────────────────────────
-    Scope       = 0,   // begin a group of child nodes
-    EndScope    = 1,   // close a SCOPE, finalise its hash
-    Matrix      = 2,   // weight matrix node (rows × cols, sign[], extra[], scale)
-    Norm        = 3,   // layer-norm node (weight[], bias[])
-    Call        = 4,   // reference another node by its u64 hash
-    Int         = 5,   // scalar integer constant
-    Root        = 6,   // top-level Merkle commit — must be the final token
-    Bit0        = 7,   // bit value 0 (used inside Matrix/Norm payload)
-    Bit1        = 8,   // bit value 1
+    Scope = 0,    // begin a group of child nodes
+    EndScope = 1, // close a SCOPE, finalise its hash
+    Matrix = 2,   // weight matrix node (rows × cols, sign[], extra[], scale)
+    Norm = 3,     // layer-norm node (weight[], bias[])
+    Call = 4,     // reference another node by its u64 hash
+    Int = 5,      // scalar integer constant
+    Root = 6,     // top-level Merkle commit — must be the final token
+    Bit0 = 7,     // bit value 0 (used inside Matrix/Norm payload)
+    Bit1 = 8,     // bit value 1
     // ── Language opcodes (NDA-as-a-language) ──────────────────────────────
-    Loop        = 9,   // bounded loop: count + body
-    While       = 10,  // conditional loop: cond + body
-    If          = 11,  // branch: cond + then + optional else
-    Compare     = 12,  // comparison: op + lhs + rhs → bool vec
-    Let         = 13,  // variable binding: name_hash + init
-    Load        = 14,  // variable read: name_hash
-    Store       = 15,  // variable write: name_hash + value
-    Add         = 16,  // vector addition: lhs + rhs
-    VecOp       = 17,  // unary vector op: kind + operand
-    Print       = 18,  // output to stdout: source
-    Return      = 19,  // function return: value
-    Break       = 20,  // exit loop
+    Loop = 9,     // bounded loop: count + body
+    While = 10,   // conditional loop: cond + body
+    If = 11,      // branch: cond + then + optional else
+    Compare = 12, // comparison: op + lhs + rhs → bool vec
+    Let = 13,     // variable binding: name_hash + init
+    Load = 14,    // variable read: name_hash
+    Store = 15,   // variable write: name_hash + value
+    Add = 16,     // vector addition: lhs + rhs
+    VecOp = 17,   // unary vector op: kind + operand
+    Print = 18,   // output to stdout: source
+    Return = 19,  // function return: value
+    Break = 20,   // exit loop
     // ── New bytecode opcodes ──────────────────────────────────────────────
-    Bitwise     = 21,  // bitwise operations
-    Float       = 22,  // scalar float constant
-    Math        = 23,  // scalar float arithmetic
-    MathFunc    = 24,  // scalar float functions (sin, cos, exp, etc.)
-    Peek        = 25,  // MMIO read
-    Poke        = 26,  // MMIO write
-    Gemv        = 27,  // matrix-vector multiply
-    Dot         = 28,  // vector-vector dot product
-    Syscall     = 29,  // syscall transition
-    Spawn       = 30,  // spawn thread
-    Atomic      = 31,  // atomic hardware instruction (CAS, FAA)
-    Alloc       = 32,  // virtual heap allocation
-    Free        = 33,  // virtual heap free
-    RegInt      = 34,  // register hardware interrupt handler
-    Cast        = 35,  // type casting
-    GpuDispatch = 36,  // shader dispatch to UGAL
-    Triple      = 37,  // semantic graph subject-predicate-object triple
+    Bitwise = 21,     // bitwise operations
+    Float = 22,       // scalar float constant
+    Math = 23,        // scalar float arithmetic
+    MathFunc = 24,    // scalar float functions (sin, cos, exp, etc.)
+    Peek = 25,        // MMIO read
+    Poke = 26,        // MMIO write
+    Gemv = 27,        // matrix-vector multiply
+    Dot = 28,         // vector-vector dot product
+    Syscall = 29,     // syscall transition
+    Spawn = 30,       // spawn thread
+    Atomic = 31,      // atomic hardware instruction (CAS, FAA)
+    Alloc = 32,       // virtual heap allocation
+    Free = 33,        // virtual heap free
+    RegInt = 34,      // register hardware interrupt handler
+    Cast = 35,        // type casting
+    GpuDispatch = 36, // shader dispatch to UGAL
+    Triple = 37,      // semantic graph subject-predicate-object triple
 }
 
 impl NdaOpcode {
@@ -73,16 +73,16 @@ impl NdaOpcode {
 
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
-            0  => Some(Self::Scope),
-            1  => Some(Self::EndScope),
-            2  => Some(Self::Matrix),
-            3  => Some(Self::Norm),
-            4  => Some(Self::Call),
-            5  => Some(Self::Int),
-            6  => Some(Self::Root),
-            7  => Some(Self::Bit0),
-            8  => Some(Self::Bit1),
-            9  => Some(Self::Loop),
+            0 => Some(Self::Scope),
+            1 => Some(Self::EndScope),
+            2 => Some(Self::Matrix),
+            3 => Some(Self::Norm),
+            4 => Some(Self::Call),
+            5 => Some(Self::Int),
+            6 => Some(Self::Root),
+            7 => Some(Self::Bit0),
+            8 => Some(Self::Bit1),
+            9 => Some(Self::Loop),
             10 => Some(Self::While),
             11 => Some(Self::If),
             12 => Some(Self::Compare),
@@ -111,51 +111,51 @@ impl NdaOpcode {
             35 => Some(Self::Cast),
             36 => Some(Self::GpuDispatch),
             37 => Some(Self::Triple),
-            _  => None,
+            _ => None,
         }
     }
 
     /// Human-readable name for logging.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Scope       => "SCOPE",
-            Self::EndScope    => "END_SCOPE",
-            Self::Matrix      => "MATRIX",
-            Self::Norm        => "NORM",
-            Self::Call        => "CALL",
-            Self::Int         => "INT",
-            Self::Root        => "ROOT",
-            Self::Bit0        => "0",
-            Self::Bit1        => "1",
-            Self::Loop        => "LOOP",
-            Self::While       => "WHILE",
-            Self::If          => "IF",
-            Self::Compare     => "COMPARE",
-            Self::Let         => "LET",
-            Self::Load        => "LOAD",
-            Self::Store       => "STORE",
-            Self::Add         => "ADD",
-            Self::VecOp       => "VECOP",
-            Self::Print       => "PRINT",
-            Self::Return      => "RETURN",
-            Self::Break       => "BREAK",
-            Self::Bitwise     => "BITWISE",
-            Self::Float       => "FLOAT",
-            Self::Math        => "MATH",
-            Self::MathFunc    => "MATH_FUNC",
-            Self::Peek        => "PEEK",
-            Self::Poke        => "POKE",
-            Self::Gemv        => "GEMV",
-            Self::Dot         => "DOT",
-            Self::Syscall     => "SYSCALL",
-            Self::Spawn       => "SPAWN",
-            Self::Atomic      => "ATOMIC",
-            Self::Alloc       => "ALLOC",
-            Self::Free        => "FREE",
-            Self::RegInt      => "REG_INT",
-            Self::Cast        => "CAST",
+            Self::Scope => "SCOPE",
+            Self::EndScope => "END_SCOPE",
+            Self::Matrix => "MATRIX",
+            Self::Norm => "NORM",
+            Self::Call => "CALL",
+            Self::Int => "INT",
+            Self::Root => "ROOT",
+            Self::Bit0 => "0",
+            Self::Bit1 => "1",
+            Self::Loop => "LOOP",
+            Self::While => "WHILE",
+            Self::If => "IF",
+            Self::Compare => "COMPARE",
+            Self::Let => "LET",
+            Self::Load => "LOAD",
+            Self::Store => "STORE",
+            Self::Add => "ADD",
+            Self::VecOp => "VECOP",
+            Self::Print => "PRINT",
+            Self::Return => "RETURN",
+            Self::Break => "BREAK",
+            Self::Bitwise => "BITWISE",
+            Self::Float => "FLOAT",
+            Self::Math => "MATH",
+            Self::MathFunc => "MATH_FUNC",
+            Self::Peek => "PEEK",
+            Self::Poke => "POKE",
+            Self::Gemv => "GEMV",
+            Self::Dot => "DOT",
+            Self::Syscall => "SYSCALL",
+            Self::Spawn => "SPAWN",
+            Self::Atomic => "ATOMIC",
+            Self::Alloc => "ALLOC",
+            Self::Free => "FREE",
+            Self::RegInt => "REG_INT",
+            Self::Cast => "CAST",
             Self::GpuDispatch => "GPU_DISPATCH",
-            Self::Triple      => "TRIPLE",
+            Self::Triple => "TRIPLE",
         }
     }
 }
@@ -166,12 +166,12 @@ impl NdaOpcode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CmpOp {
-    Eq = 0,   // ==
-    Ne = 1,   // !=
-    Lt = 2,   // <
-    Gt = 3,   // >
-    Le = 4,   // <=
-    Ge = 5,   // >=
+    Eq = 0, // ==
+    Ne = 1, // !=
+    Lt = 2, // <
+    Gt = 3, // >
+    Le = 4, // <=
+    Ge = 5, // >=
 }
 
 impl CmpOp {
@@ -205,10 +205,10 @@ impl CmpOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum VecOpKind {
-    SiLU      = 0,   // SiLU activation (lookup table)
-    Negate    = 1,   // element-wise negate
-    Abs       = 2,   // element-wise absolute value
-    ReduceSum = 3,   // sum all elements → scalar vec
+    SiLU = 0,      // SiLU activation (lookup table)
+    Negate = 1,    // element-wise negate
+    Abs = 2,       // element-wise absolute value
+    ReduceSum = 3, // sum all elements → scalar vec
 }
 
 impl VecOpKind {
@@ -224,9 +224,9 @@ impl VecOpKind {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::SiLU      => "silu",
-            Self::Negate    => "negate",
-            Self::Abs       => "abs",
+            Self::SiLU => "silu",
+            Self::Negate => "negate",
+            Self::Abs => "abs",
             Self::ReduceSum => "reduce_sum",
         }
     }
@@ -238,7 +238,7 @@ impl VecOpKind {
 #[repr(u8)]
 pub enum BitwiseOp {
     And = 0,
-    Or  = 1,
+    Or = 1,
     Xor = 2,
     Not = 3,
     Shl = 4,
@@ -260,7 +260,7 @@ impl BitwiseOp {
     pub fn name(self) -> &'static str {
         match self {
             Self::And => "and",
-            Self::Or  => "or",
+            Self::Or => "or",
             Self::Xor => "xor",
             Self::Not => "not",
             Self::Shl => "shl",
@@ -301,10 +301,10 @@ impl MathOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MathFuncKind {
-    Sin  = 0,
-    Cos  = 1,
+    Sin = 0,
+    Cos = 1,
     Sqrt = 2,
-    Exp  = 3,
+    Exp = 3,
 }
 
 impl MathFuncKind {
@@ -319,10 +319,10 @@ impl MathFuncKind {
     }
     pub fn name(self) -> &'static str {
         match self {
-            Self::Sin  => "sin",
-            Self::Cos  => "cos",
+            Self::Sin => "sin",
+            Self::Cos => "cos",
             Self::Sqrt => "sqrt",
-            Self::Exp  => "exp",
+            Self::Exp => "exp",
         }
     }
 }
@@ -353,8 +353,8 @@ impl AtomicOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TypeKind {
-    Int    = 0,
-    Float  = 1,
+    Int = 0,
+    Float = 1,
     Vector = 2,
 }
 
@@ -369,8 +369,8 @@ impl TypeKind {
     }
     pub fn name(self) -> &'static str {
         match self {
-            Self::Int    => "int",
-            Self::Float  => "float",
+            Self::Int => "int",
+            Self::Float => "float",
             Self::Vector => "vector",
         }
     }
@@ -387,19 +387,19 @@ impl TypeKind {
 #[derive(Clone, Debug)]
 pub enum NdaNode {
     Matrix {
-        rows:   u16,
-        cols:   u16,
-        scale:  i8,
-        sign:   Vec<u8>,   // bit-packed, rows*cols bits
-        extra:  Vec<u8>,
+        rows: u16,
+        cols: u16,
+        scale: i8,
+        sign: Vec<u8>, // bit-packed, rows*cols bits
+        extra: Vec<u8>,
     },
     Norm {
-        size:   u16,
+        size: u16,
         weight: Vec<u8>,
-        bias:   Vec<u8>,
+        bias: Vec<u8>,
     },
     Call {
-        target: u64,       // hash of the referenced node
+        target: u64, // hash of the referenced node
     },
     Int {
         value: i32,
@@ -409,25 +409,25 @@ pub enum NdaNode {
     },
     Loop {
         count: u32,
-        body:  Vec<NdaNode>,
+        body: Vec<NdaNode>,
     },
     While {
         cond: Box<NdaNode>,
         body: Vec<NdaNode>,
     },
     If {
-        cond:      Box<NdaNode>,
+        cond: Box<NdaNode>,
         then_body: Vec<NdaNode>,
         else_body: Option<Vec<NdaNode>>,
     },
     Compare {
-        op:  CmpOp,
+        op: CmpOp,
         lhs: Box<NdaNode>,
         rhs: Box<NdaNode>,
     },
     Let {
         name_hash: u64,
-        init:      Box<NdaNode>,
+        init: Box<NdaNode>,
     },
     Load {
         name_hash: u64,
@@ -441,7 +441,7 @@ pub enum NdaNode {
         rhs: Box<NdaNode>,
     },
     VecOp {
-        op:      VecOpKind,
+        op: VecOpKind,
         operand: Box<NdaNode>,
     },
     Print {
@@ -452,7 +452,7 @@ pub enum NdaNode {
     },
     Break,
     Bitwise {
-        op:  BitwiseOp,
+        op: BitwiseOp,
         lhs: Box<NdaNode>,
         rhs: Option<Box<NdaNode>>,
     },
@@ -460,7 +460,7 @@ pub enum NdaNode {
         value: f32,
     },
     Math {
-        op:  MathOp,
+        op: MathOp,
         lhs: Box<NdaNode>,
         rhs: Box<NdaNode>,
     },
@@ -541,7 +541,13 @@ impl NdaNode {
     fn hash_into(&self, h: &mut Sha256) {
         match self {
             // ── Original computation nodes ───────────────────────────────
-            NdaNode::Matrix { rows, cols, scale, sign, extra } => {
+            NdaNode::Matrix {
+                rows,
+                cols,
+                scale,
+                sign,
+                extra,
+            } => {
                 h.update(b"M");
                 h.update(rows.to_le_bytes());
                 h.update(cols.to_le_bytes());
@@ -579,7 +585,11 @@ impl NdaNode {
                 h.update(cond.hash().to_le_bytes());
                 Self::hash_children(h, body);
             }
-            NdaNode::If { cond, then_body, else_body } => {
+            NdaNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
                 h.update(b"IF");
                 h.update(cond.hash().to_le_bytes());
                 Self::hash_children(h, then_body);
@@ -701,12 +711,19 @@ impl NdaNode {
                 h.update(b"FRE");
                 h.update(addr.hash().to_le_bytes());
             }
-            NdaNode::RegInt { vector, handler_hash } => {
+            NdaNode::RegInt {
+                vector,
+                handler_hash,
+            } => {
                 h.update(b"RGI");
                 h.update(vector.to_le_bytes());
                 h.update(handler_hash.to_le_bytes());
             }
-            NdaNode::Cast { from_type, to_type, operand } => {
+            NdaNode::Cast {
+                from_type,
+                to_type,
+                operand,
+            } => {
                 h.update(b"CST");
                 h.update([*from_type as u8, *to_type as u8]);
                 h.update(operand.hash().to_le_bytes());
@@ -716,7 +733,11 @@ impl NdaNode {
                 h.update(shader_hash.to_le_bytes());
                 Self::hash_children(h, args);
             }
-            NdaNode::Triple { subject_hash, predicate_id, object_hash } => {
+            NdaNode::Triple {
+                subject_hash,
+                predicate_id,
+                object_hash,
+            } => {
                 h.update(b"TPL");
                 h.update(subject_hash.to_le_bytes());
                 h.update(predicate_id.to_le_bytes());
@@ -744,9 +765,9 @@ impl NdaNode {
 pub struct MerkleVerifier {
     /// Stack of hash lists, one per open SCOPE.
     /// `stack[0]` = top-level, `stack[last]` = innermost open SCOPE.
-    pub(crate) stack:        Vec<Vec<u64>>,
+    pub(crate) stack: Vec<Vec<u64>>,
     /// Set when ROOT token is emitted; used for final validation.
-    claimed_root:  Option<u64>,
+    claimed_root: Option<u64>,
     /// Completed root hash (set when stack fully unwinds).
     computed_root: Option<u64>,
 }
@@ -754,16 +775,16 @@ pub struct MerkleVerifier {
 impl MerkleVerifier {
     pub fn new() -> Self {
         Self {
-            stack:         vec![vec![]],   // start with one open top-level scope
-            claimed_root:  None,
+            stack: vec![vec![]], // start with one open top-level scope
+            claimed_root: None,
             computed_root: None,
         }
     }
 
     /// Reset for a new generation.
     pub fn reset(&mut self) {
-        self.stack         = vec![vec![]];
-        self.claimed_root  = None;
+        self.stack = vec![vec![]];
+        self.claimed_root = None;
         self.computed_root = None;
     }
 
@@ -815,7 +836,7 @@ impl MerkleVerifier {
     pub fn is_valid(&self) -> bool {
         match (self.claimed_root, self.computed_root) {
             (Some(c), Some(r)) => c == r,
-            _                  => false,
+            _ => false,
         }
     }
 
@@ -845,7 +866,9 @@ impl MerkleVerifier {
 }
 
 impl Default for MerkleVerifier {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -870,8 +893,12 @@ mod tests {
 
     #[test]
     fn scope_hash_depends_on_children() {
-        let s1 = NdaNode::Scope { children: vec![NdaNode::Int { value: 1 }] };
-        let s2 = NdaNode::Scope { children: vec![NdaNode::Int { value: 2 }] };
+        let s1 = NdaNode::Scope {
+            children: vec![NdaNode::Int { value: 1 }],
+        };
+        let s2 = NdaNode::Scope {
+            children: vec![NdaNode::Int { value: 2 }],
+        };
         assert_ne!(s1.hash(), s2.hash());
     }
 
@@ -887,7 +914,7 @@ mod tests {
         // In real generation the top-level scope is implicit; the last hash
         // on the stack IS the root.  Simulate ROOT token:
         v.computed_root = Some(leaf.hash());
-        v.claimed_root  = Some(leaf.hash());
+        v.claimed_root = Some(leaf.hash());
         assert!(v.is_valid());
     }
 
@@ -897,7 +924,7 @@ mod tests {
         let leaf = NdaNode::Int { value: 7 };
         v.push_leaf(&leaf);
         v.computed_root = Some(leaf.hash());
-        v.claimed_root  = Some(leaf.hash() ^ 0xDEAD_BEEF);   // tampered
+        v.claimed_root = Some(leaf.hash() ^ 0xDEAD_BEEF); // tampered
         assert!(!v.is_valid());
     }
 

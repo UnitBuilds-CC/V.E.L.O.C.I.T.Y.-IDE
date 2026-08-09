@@ -1,12 +1,12 @@
-use std::path::PathBuf;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
-use crate::agent::{AgentToUiMessage, UiToAgentMessage};
-use crate::automation::{read_latest_diagnostics, WorkspaceCoordinator, AgentTaskKind};
-use crate::editor::agent_ui_state::AgentUiState;
 use super::super::helpers::*;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use crate::agent::{AgentToUiMessage, UiToAgentMessage};
+use crate::automation::{read_latest_diagnostics, AgentTaskKind, WorkspaceCoordinator};
+use crate::editor::agent_ui_state::AgentUiState;
 
 impl VelocityApp {
     pub fn mirror_worker_events_into_timeline(
@@ -110,9 +110,9 @@ impl VelocityApp {
         }
 
         let (id, tool_name, _) = self.pending_approvals[idx].clone();
-        let _ = self.agent_tx.send(UiToAgentMessage::RejectTool {
-            id: id.clone(),
-        });
+        let _ = self
+            .agent_tx
+            .send(UiToAgentMessage::RejectTool { id: id.clone() });
         self.pending_approvals.remove(idx);
         self.chat
             .pending_approvals
@@ -338,17 +338,44 @@ impl VelocityApp {
             lsp.poll_notifications();
             // If LSP has diagnostics, use those (they're more accurate/real-time)
             if !lsp.diagnostics.is_empty() {
-                let errors: Vec<String> = lsp.diagnostics.iter()
-                    .filter(|d| d.severity == crate::editor::lsp_client::DiagnosticSeverity::Error && !d.message.is_empty())
-                    .map(|d| format!("{}:{}:{}: {}", d.file.display(), d.line + 1, d.col + 1, d.message))
+                let errors: Vec<String> = lsp
+                    .diagnostics
+                    .iter()
+                    .filter(|d| {
+                        d.severity == crate::editor::lsp_client::DiagnosticSeverity::Error
+                            && !d.message.is_empty()
+                    })
+                    .map(|d| {
+                        format!(
+                            "{}:{}:{}: {}",
+                            d.file.display(),
+                            d.line + 1,
+                            d.col + 1,
+                            d.message
+                        )
+                    })
                     .collect();
-                let warnings: Vec<String> = lsp.diagnostics.iter()
-                    .filter(|d| d.severity == crate::editor::lsp_client::DiagnosticSeverity::Warning && !d.message.is_empty())
-                    .map(|d| format!("{}:{}:{}: {}", d.file.display(), d.line + 1, d.col + 1, d.message))
+                let warnings: Vec<String> = lsp
+                    .diagnostics
+                    .iter()
+                    .filter(|d| {
+                        d.severity == crate::editor::lsp_client::DiagnosticSeverity::Warning
+                            && !d.message.is_empty()
+                    })
+                    .map(|d| {
+                        format!(
+                            "{}:{}:{}: {}",
+                            d.file.display(),
+                            d.line + 1,
+                            d.col + 1,
+                            d.message
+                        )
+                    })
                     .collect();
                 self.bottom_panel_state.error_count = errors.len();
                 self.bottom_panel_state.warning_count = warnings.len();
-                self.bottom_panel_state.diagnostic_messages = errors.iter()
+                self.bottom_panel_state.diagnostic_messages = errors
+                    .iter()
                     .chain(warnings.iter())
                     .take(50)
                     .cloned()
@@ -356,10 +383,12 @@ impl VelocityApp {
                 let count = errors.len();
                 if count != self.build_errors_count {
                     if count == 0 {
-                        self.toasts.push(crate::editor::toast::Toast::success("No LSP errors"));
+                        self.toasts
+                            .push(crate::editor::toast::Toast::success("No LSP errors"));
                     } else {
                         self.toasts.push(crate::editor::toast::Toast::error(format!(
-                            "LSP: {} error(s)", count
+                            "LSP: {} error(s)",
+                            count
                         )));
                     }
                     self.build_errors_count = count;
@@ -386,7 +415,9 @@ impl VelocityApp {
         // Sync diagnostics into bottom panel Problems tab
         self.bottom_panel_state.error_count = diag.errors.len();
         self.bottom_panel_state.warning_count = diag.warnings.len();
-        self.bottom_panel_state.diagnostic_messages = diag.errors.iter()
+        self.bottom_panel_state.diagnostic_messages = diag
+            .errors
+            .iter()
             .chain(diag.warnings.iter())
             .take(50)
             .cloned()
@@ -484,10 +515,9 @@ impl VelocityApp {
                     ));
                     let should_auto = self.chat.auto_approve || self.auto_approve;
                     if should_auto {
-                        let _ = self.agent_tx.send(UiToAgentMessage::ApproveTool {
-                            id,
-                            arguments,
-                        });
+                        let _ = self
+                            .agent_tx
+                            .send(UiToAgentMessage::ApproveTool { id, arguments });
                     } else {
                         self.pending_approvals.push((
                             id.clone(),
@@ -514,9 +544,10 @@ impl VelocityApp {
                         let label = format!("Before agent: {}", tool_name);
                         // Clean workspace or no git — skip silently on error
                         if self.checkpoint_manager.create_checkpoint(&label).is_ok() {
-                            self.toasts.push(crate::editor::toast::Toast::info(
-                                format!("\u{1F4BE} Checkpoint: {}", label),
-                            ));
+                            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                                "\u{1F4BE} Checkpoint: {}",
+                                label
+                            )));
                         }
                     }
 

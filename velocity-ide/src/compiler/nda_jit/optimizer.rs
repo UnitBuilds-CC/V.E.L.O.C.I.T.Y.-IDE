@@ -152,10 +152,7 @@ fn gather_loaded_vars(node: &NdaNode, set: &mut std::collections::HashSet<u64>) 
     }
 }
 
-fn dce_sequence(
-    nodes: &[NdaNode],
-    live_vars: &mut std::collections::HashSet<u64>,
-) -> Vec<NdaNode> {
+fn dce_sequence(nodes: &[NdaNode], live_vars: &mut std::collections::HashSet<u64>) -> Vec<NdaNode> {
     let mut optimized = Vec::new();
 
     for node in nodes.iter().rev() {
@@ -416,10 +413,7 @@ fn dce_node(node: &NdaNode, live_vars: &mut std::collections::HashSet<u64>) -> N
     }
 }
 
-fn optimize_sequence(
-    nodes: &[NdaNode],
-    var_constants: &mut HashMap<u64, i32>,
-) -> Vec<NdaNode> {
+fn optimize_sequence(nodes: &[NdaNode], var_constants: &mut HashMap<u64, i32>) -> Vec<NdaNode> {
     let mut optimized = Vec::new();
     for node in nodes {
         let opt_node = optimize_node(node.clone(), var_constants);
@@ -639,14 +633,10 @@ fn optimize_node(node: NdaNode, var_constants: &mut HashMap<u64, i32>) -> NdaNod
             if let NdaNode::Int { value } = opt_cond {
                 if value > 0 {
                     let opt_then = optimize_sequence(&then_body, var_constants);
-                    NdaNode::Scope {
-                        children: opt_then,
-                    }
+                    NdaNode::Scope { children: opt_then }
                 } else if let Some(eb) = else_body {
                     let opt_else = optimize_sequence(&eb, var_constants);
-                    NdaNode::Scope {
-                        children: opt_else,
-                    }
+                    NdaNode::Scope { children: opt_else }
                 } else {
                     NdaNode::Scope { children: vec![] }
                 }
@@ -704,9 +694,7 @@ fn optimize_node(node: NdaNode, var_constants: &mut HashMap<u64, i32>) -> NdaNod
             let opt_operand = optimize_node(*operand, var_constants);
             match (&op, &opt_operand) {
                 (VecOpKind::Negate, NdaNode::Int { value }) => NdaNode::Int { value: -value },
-                (VecOpKind::Abs, NdaNode::Int { value }) => NdaNode::Int {
-                    value: value.abs(),
-                },
+                (VecOpKind::Abs, NdaNode::Int { value }) => NdaNode::Int { value: value.abs() },
                 (VecOpKind::ReduceSum, NdaNode::Int { value }) => NdaNode::Int { value: *value },
                 _ => NdaNode::VecOp {
                     op,

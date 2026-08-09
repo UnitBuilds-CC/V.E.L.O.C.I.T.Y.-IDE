@@ -117,7 +117,10 @@ pub fn storage_signature(bucket: &BrowserStorageBucket) -> Vec<String> {
     entries
 }
 
-pub fn apply_storage_updates(target: &mut HashMap<String, String>, updates: &HashMap<String, String>) {
+pub fn apply_storage_updates(
+    target: &mut HashMap<String, String>,
+    updates: &HashMap<String, String>,
+) {
     for (key, value) in updates {
         target.insert(String::from(key), String::from(value));
     }
@@ -591,4 +594,3 @@ pub fn load_snapshot_json(url: &str, sitemap_path: &Path) -> Result<BrowserPageS
     let raw = fs::read(&snapshot_path).map_err(|err| format!("read browser snapshot: {err}"))?;
     serde_json::from_slice(&raw).map_err(|err| format!("parse browser snapshot: {err}"))
 }
-

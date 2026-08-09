@@ -59,7 +59,11 @@ impl ShadowFrameExtractor {
                 triples.push(NdaTriple::new(
                     &host.host_id,
                     22,
-                    &format!("slot:{}:{}", slot.slot_name, slot.assigned_node_ids.join(",")),
+                    &format!(
+                        "slot:{}:{}",
+                        slot.slot_name,
+                        slot.assigned_node_ids.join(",")
+                    ),
                 ));
             }
         }
@@ -135,8 +139,7 @@ impl ShadowFrameExtractor {
         for line in html_content.lines() {
             let trimmed = line.trim().to_lowercase();
             if trimmed.contains("<iframe") || trimmed.contains("<frame") {
-                let url = extract_attribute_value(&trimmed, "src")
-                    .unwrap_or_default();
+                let url = extract_attribute_value(&trimmed, "src").unwrap_or_default();
                 let sandbox = extract_attribute_value(&trimmed, "sandbox");
                 let frame_id = format!("frame_{}", frame_idx);
                 frame_idx += 1;
@@ -153,7 +156,9 @@ impl ShadowFrameExtractor {
                     url,
                     security_origin,
                     is_sandboxed: sandbox.is_some(),
-                    sandbox_flags: sandbox.map(|s| s.split_whitespace().map(|w| w.to_string()).collect()).unwrap_or_default(),
+                    sandbox_flags: sandbox
+                        .map(|s| s.split_whitespace().map(|w| w.to_string()).collect())
+                        .unwrap_or_default(),
                 });
             }
         }
@@ -251,8 +256,14 @@ mod tests {
 
     #[test]
     fn test_extract_attribute_value() {
-        assert_eq!(extract_attribute_value(r#"<div src="hello.html">"#, "src"), Some("hello.html".into()));
-        assert_eq!(extract_attribute_value("<div src='single.html'>", "src"), Some("single.html".into()));
+        assert_eq!(
+            extract_attribute_value(r#"<div src="hello.html">"#, "src"),
+            Some("hello.html".into())
+        );
+        assert_eq!(
+            extract_attribute_value("<div src='single.html'>", "src"),
+            Some("single.html".into())
+        );
         assert_eq!(extract_attribute_value("<div class='x'>", "src"), None);
     }
 
@@ -286,7 +297,9 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert!(frames[0].is_sandboxed);
         assert_eq!(frames[0].sandbox_flags.len(), 2);
-        assert!(frames[0].sandbox_flags.contains(&"allow-scripts".to_string()));
+        assert!(frames[0]
+            .sandbox_flags
+            .contains(&"allow-scripts".to_string()));
         assert!(frames[0].sandbox_flags.contains(&"allow-forms".to_string()));
     }
 

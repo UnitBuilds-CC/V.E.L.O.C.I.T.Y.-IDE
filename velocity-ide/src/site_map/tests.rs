@@ -4,13 +4,13 @@ use std::fs;
 use tempfile::TempDir;
 
 #[cfg(test)]
-use crate::nda_int::NdaVec;
-#[cfg(test)]
 use super::store::SiteMap;
 #[cfg(test)]
 use super::types::VcTriple;
 #[cfg(test)]
 use super::verifier::NdaNode;
+#[cfg(test)]
+use crate::nda_int::NdaVec;
 
 #[cfg(test)]
 fn make_ndavec(len: usize, val: u8) -> NdaVec {
@@ -198,10 +198,19 @@ fn test_graph_query_engine() {
     sm.put_file_snapshot(
         "src/main.rs",
         &[
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 2 },
-            VcTriple { subject_hash: 1, predicate_id: 2, object_hash: 3 },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 2,
+            },
+            VcTriple {
+                subject_hash: 1,
+                predicate_id: 2,
+                object_hash: 3,
+            },
         ],
-    ).unwrap();
+    )
+    .unwrap();
     let live_triples = sm.find_live_triples(Some(1), Some(2), None);
     assert_eq!(live_triples.len(), 2);
 
@@ -222,14 +231,24 @@ fn file_snapshots_replace_live_semantic_state() {
 
     sm.put_file_snapshot(
         "src/main.rs",
-        &[VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 20 }],
-    ).unwrap();
+        &[VcTriple {
+            subject_hash: 10,
+            predicate_id: 2,
+            object_hash: 20,
+        }],
+    )
+    .unwrap();
     assert_eq!(sm.find_live_triples(Some(10), Some(2), None).len(), 1);
 
     sm.put_file_snapshot(
         "src/main.rs",
-        &[VcTriple { subject_hash: 10, predicate_id: 2, object_hash: 30 }],
-    ).unwrap();
+        &[VcTriple {
+            subject_hash: 10,
+            predicate_id: 2,
+            object_hash: 30,
+        }],
+    )
+    .unwrap();
     let live = sm.find_live_triples(Some(10), Some(2), None);
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].object_hash, 30);

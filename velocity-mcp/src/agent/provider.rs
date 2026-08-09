@@ -1,5 +1,5 @@
 use super::models::*;
-use std::sync::{Mutex, LazyLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// Cached model catalog entry with expiration.
@@ -144,7 +144,9 @@ pub fn infer_openrouter_model_info(item: &serde_json::Value) -> Option<ModelInfo
     })
 }
 
-pub fn fetch_model_catalog(accounts: &[crate::usage::CloudflareAccount]) -> Result<Vec<ModelInfo>, String> {
+pub fn fetch_model_catalog(
+    accounts: &[crate::usage::CloudflareAccount],
+) -> Result<Vec<ModelInfo>, String> {
     for account in accounts {
         let url = format!(
             "https://api.cloudflare.com/client/v4/accounts/{}/ai/models/search",
@@ -300,7 +302,10 @@ pub fn default_model_info(id: &str) -> ModelInfo {
     })
 }
 
-pub fn enrich_model_profile(accounts: &[crate::usage::CloudflareAccount], profile: &ModelInfo) -> ModelInfo {
+pub fn enrich_model_profile(
+    accounts: &[crate::usage::CloudflareAccount],
+    profile: &ModelInfo,
+) -> ModelInfo {
     let Some(account) = accounts.first() else {
         return profile.clone();
     };
@@ -391,7 +396,10 @@ pub fn default_provider_model(provider: AiProvider) -> String {
 pub fn fetch_local_ollama_models(
     accounts: &[crate::usage::LocalOllamaAccount],
 ) -> Result<Vec<ModelInfo>, String> {
-    let host = accounts.first().map(|a| a.host.as_str()).unwrap_or("http://localhost:11434");
+    let host = accounts
+        .first()
+        .map(|a| a.host.as_str())
+        .unwrap_or("http://localhost:11434");
     Ok(vec![
         ModelInfo {
             id: "llama3.2".to_string(),
@@ -491,7 +499,11 @@ fn fetch_openai_compatible_models(
             let id = item["id"].as_str()?.to_string();
             let lower = id.to_lowercase();
             // Filter out embedding/non-chat models
-            if lower.contains("embed") || lower.contains("whisper") || lower.contains("tts") || lower.contains("image") {
+            if lower.contains("embed")
+                || lower.contains("whisper")
+                || lower.contains("tts")
+                || lower.contains("image")
+            {
                 return None;
             }
             let supports_thinking = lower.contains("thinking")
@@ -517,7 +529,11 @@ fn fetch_openai_compatible_models(
             Some(ModelInfo {
                 label: id.rsplit('/').next().unwrap_or(&id).to_string(),
                 id: id.clone(),
-                api_style: if supports_tools { ApiStyle::OpenAiTools } else { ApiStyle::OpenAiChat },
+                api_style: if supports_tools {
+                    ApiStyle::OpenAiTools
+                } else {
+                    ApiStyle::OpenAiChat
+                },
                 supports_tools,
                 supports_thinking,
             })
@@ -550,7 +566,11 @@ pub fn fetch_deepseek_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
 }
 
 pub fn fetch_alibaba_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
-    fetch_openai_compatible_models("https://dashscope.aliyuncs.com/compatible-mode", api_key, "Alibaba Qwen")
+    fetch_openai_compatible_models(
+        "https://dashscope.aliyuncs.com/compatible-mode",
+        api_key,
+        "Alibaba Qwen",
+    )
 }
 
 pub fn fetch_google_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
@@ -578,12 +598,19 @@ pub fn fetch_google_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
             if lower.contains("embed") || lower.contains("image") || lower.contains("tts") {
                 return None;
             }
-            let supports_thinking = lower.contains("thinking") || lower.contains("reasoning") || lower.contains("flash");
-            let supports_tools = lower.contains("gemini") || lower.contains("flash") || lower.contains("pro");
+            let supports_thinking = lower.contains("thinking")
+                || lower.contains("reasoning")
+                || lower.contains("flash");
+            let supports_tools =
+                lower.contains("gemini") || lower.contains("flash") || lower.contains("pro");
             Some(ModelInfo {
                 label: id.replace('-', " ").replace("gemini ", "Gemini "),
                 id: id.clone(),
-                api_style: if supports_tools { ApiStyle::OpenAiTools } else { ApiStyle::OpenAiChat },
+                api_style: if supports_tools {
+                    ApiStyle::OpenAiTools
+                } else {
+                    ApiStyle::OpenAiChat
+                },
                 supports_tools,
                 supports_thinking,
             })
@@ -601,7 +628,11 @@ pub fn fetch_together_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
 }
 
 pub fn fetch_fireworks_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
-    fetch_openai_compatible_models("https://api.fireworks.ai/inference", api_key, "Fireworks AI")
+    fetch_openai_compatible_models(
+        "https://api.fireworks.ai/inference",
+        api_key,
+        "Fireworks AI",
+    )
 }
 
 pub fn fetch_perplexity_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
@@ -632,18 +663,26 @@ pub fn fetch_anthropic_models(api_key: &str) -> Result<Vec<ModelInfo>, String> {
     let body: serde_json::Value = response
         .into_json()
         .map_err(|e| format!("Anthropic model catalog parse failed: {e}"))?;
-    let models = body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default();
-    let result: Vec<ModelInfo> = models.iter().filter_map(|m| {
-        let id = m.get("id").and_then(|v| v.as_str())?;
-        let display = m.get("display_name").and_then(|v| v.as_str()).unwrap_or(id);
-        Some(ModelInfo {
-            id: id.to_string(),
-            label: display.to_string(),
-            api_style: ApiStyle::OpenAiTools,
-            supports_tools: id.contains("claude") && !id.contains("haiku"),
-            supports_thinking: id.contains("claude") && (id.contains("sonnet") || id.contains("opus")),
+    let models = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let result: Vec<ModelInfo> = models
+        .iter()
+        .filter_map(|m| {
+            let id = m.get("id").and_then(|v| v.as_str())?;
+            let display = m.get("display_name").and_then(|v| v.as_str()).unwrap_or(id);
+            Some(ModelInfo {
+                id: id.to_string(),
+                label: display.to_string(),
+                api_style: ApiStyle::OpenAiTools,
+                supports_tools: id.contains("claude") && !id.contains("haiku"),
+                supports_thinking: id.contains("claude")
+                    && (id.contains("sonnet") || id.contains("opus")),
+            })
         })
-    }).collect();
+        .collect();
     // Cache the result
     set_cached_catalog(cache_key, result.clone());
     Ok(result)
@@ -654,7 +693,11 @@ pub fn fetch_bedrock_models() -> Result<Vec<ModelInfo>, String> {
     if let Ok(proxy_url) = std::env::var("BEDROCK_PROXY_URL") {
         if !proxy_url.trim().is_empty() {
             let api_key = std::env::var("BEDROCK_API_KEY").unwrap_or_default();
-            return fetch_openai_compatible_models(proxy_url.trim_end_matches('/'), &api_key, "AWS Bedrock");
+            return fetch_openai_compatible_models(
+                proxy_url.trim_end_matches('/'),
+                &api_key,
+                "AWS Bedrock",
+            );
         }
     }
     Err("AWS Bedrock requires BEDROCK_PROXY_URL env var pointing to an OpenAI-compatible proxy. Configure in Settings > Provider Settings.".to_string())

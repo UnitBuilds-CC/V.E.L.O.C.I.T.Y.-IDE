@@ -105,8 +105,7 @@ pub fn run_jit_tests_in_sandbox(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     // Count passed/failed from output
-    let passed = stdout.matches(" test result: ok").count()
-        + stdout.matches("... ok").count();
+    let passed = stdout.matches(" test result: ok").count() + stdout.matches("... ok").count();
     let failed = stdout.matches("... FAILED").count();
 
     let success = output.status.success();

@@ -1,10 +1,10 @@
 use super::cpu::*;
 use super::gpu::*;
-use velocity_ide::compiler::driver::VulkanDriver;
 use crate::ipc::shmem::SharedMemoryBuffer;
 use crate::protocol::nmcp_binary::NmcpBinaryFrame;
 use std::hint::black_box;
 use std::time::Instant;
+use velocity_ide::compiler::driver::VulkanDriver;
 
 pub fn run_benchmarks() {
     println!("============================================================");

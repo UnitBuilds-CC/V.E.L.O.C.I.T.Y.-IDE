@@ -60,10 +60,7 @@ mod e2e_tests {
             first_seen: 1000,
             last_seen: 1000,
             online: true,
-            capabilities: vec![
-                PeerCapability::BuildSystem,
-                PeerCapability::FileExecution,
-            ],
+            capabilities: vec![PeerCapability::BuildSystem, PeerCapability::FileExecution],
             environment: Some("windows".into()),
         };
         b.add_peer(peer_a);
@@ -208,7 +205,11 @@ mod e2e_tests {
 
         // ── Step 5: Verify overall state ───────────────────────────────
         // Agent A: 1 completed task, 2 outgoing transfers.
-        let completed: Vec<_> = agent_a.tasks.values().filter(|t| t.status == TaskStatus::Completed).collect();
+        let completed: Vec<_> = agent_a
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Completed)
+            .collect();
         assert_eq!(completed.len(), 1);
         assert_eq!(agent_a.transfers.len(), 2);
 
@@ -243,15 +244,18 @@ mod e2e_tests {
         let mut bridge = PeerBridge::new(bus.clone(), mgr);
 
         // ── Inbound: Remote agent sends a chat message ─────────────────
-        bridge.peer_manager_mut().inbox.push(crate::agent::peer_link::PeerMessage {
-            id: "msg_in_1".into(),
-            from: "remote_x".into(),
-            to: "local".into(),
-            kind: PeerMessageKind::Chat,
-            payload: serde_json::json!({"text": "Server is ready for testing"}),
-            timestamp: 5000,
-            acknowledged: false,
-        });
+        bridge
+            .peer_manager_mut()
+            .inbox
+            .push(crate::agent::peer_link::PeerMessage {
+                id: "msg_in_1".into(),
+                from: "remote_x".into(),
+                to: "local".into(),
+                kind: PeerMessageKind::Chat,
+                payload: serde_json::json!({"text": "Server is ready for testing"}),
+                timestamp: 5000,
+                acknowledged: false,
+            });
 
         let inbound_count = bridge.pump_inbound();
         assert_eq!(inbound_count, 1);
@@ -467,7 +471,10 @@ mod e2e_tests {
         // Simulate the message arriving at B.
         b.inbox.push(a.outbox.last().unwrap().clone());
         assert_eq!(b.inbox.len(), 1);
-        assert_eq!(b.inbox[0].payload["text"].as_str().unwrap(), "Hey B, are you ready?");
+        assert_eq!(
+            b.inbox[0].payload["text"].as_str().unwrap(),
+            "Hey B, are you ready?"
+        );
 
         // B responds.
         b.send_message(
@@ -479,7 +486,10 @@ mod e2e_tests {
         // Simulate the response arriving at A.
         a.inbox.push(b.outbox.last().unwrap().clone());
         assert_eq!(a.inbox.len(), 1);
-        assert_eq!(a.inbox[0].payload["text"].as_str().unwrap(), "Yes, ready to test!");
+        assert_eq!(
+            a.inbox[0].payload["text"].as_str().unwrap(),
+            "Yes, ready to test!"
+        );
 
         // Both agents have clean communication state.
         assert_eq!(a.online_peers().len(), 1);

@@ -13,7 +13,9 @@ impl Default for NdaEncoder {
 
 impl NdaEncoder {
     pub fn new() -> Self {
-        Self { triples: Vec::new() }
+        Self {
+            triples: Vec::new(),
+        }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
@@ -23,7 +25,8 @@ impl NdaEncoder {
     }
 
     pub fn encode_fact(&mut self, subject: &str, predicate_id: u16, object: &str) {
-        self.triples.push(NdaTriple::new(subject, predicate_id, object));
+        self.triples
+            .push(NdaTriple::new(subject, predicate_id, object));
     }
 
     pub fn encode_fact_raw(&mut self, subject_hash: u64, predicate_id: u16, object_hash: u64) {

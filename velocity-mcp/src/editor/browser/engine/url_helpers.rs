@@ -1,8 +1,7 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use sha2::{Digest, Sha256};
-
 
 pub fn empty_browser_session_state(session_id: &str) -> BrowserSessionState {
     BrowserSessionState {
@@ -22,7 +21,9 @@ pub fn default_browser_user_agent() -> &'static str {
 }
 
 pub fn normalize_network_config(config: &mut BrowserSessionNetworkConfig) {
-    config.headers.retain(|key: &String, _| !key.trim().is_empty());
+    config
+        .headers
+        .retain(|key: &String, _| !key.trim().is_empty());
     config.allowed_url_prefixes = config
         .allowed_url_prefixes
         .iter()
@@ -77,7 +78,12 @@ pub fn replay_lookup<'a>(state: &'a BrowserReplayState, key: &str) -> Option<&'a
         .outputs
         .get(key)
         .map(|value: &String| value.as_str())
-        .or_else(|| state.variables.get(key).map(|value: &String| value.as_str()))
+        .or_else(|| {
+            state
+                .variables
+                .get(key)
+                .map(|value: &String| value.as_str())
+        })
 }
 
 pub fn resolve_template(input: &str, state: &BrowserReplayState) -> String {

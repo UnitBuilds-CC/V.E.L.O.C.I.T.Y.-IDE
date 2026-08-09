@@ -13,8 +13,12 @@ fn build_session_action_report(
     state: &BrowserReplayState,
 ) -> Result<BrowserSessionActionReport, String> {
     let diff = diff_snapshots(before, &state.snapshot);
-    let (snapshot_path, session_path, facts_path, html_fallback_path): (PathBuf, PathBuf, PathBuf, Option<PathBuf>) =
-        persist_replay_state(workspace_root, state, sitemap_path)?;
+    let (snapshot_path, session_path, facts_path, html_fallback_path): (
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        Option<PathBuf>,
+    ) = persist_replay_state(workspace_root, state, sitemap_path)?;
     let report = BrowserSessionActionReport {
         action: action.to_string(),
         target: target.to_string(),
@@ -264,7 +268,7 @@ pub fn navigate_session_report(
     let mut session = load_session_state(workspace_root, session_id)
         .unwrap_or_else(|_| empty_browser_session_state(session_id));
     let snapshot = crawl_page_snapshot_with_session(&mut session, url)?;
-    
+
     let bridge_arc = crate::editor::browser::native_bridge::get_or_create_native_bridge(session_id);
     if let Ok(mut bridge) = bridge_arc.lock() {
         if let Ok(triples) = bridge.navigate(url) {
@@ -370,4 +374,3 @@ pub fn navigate_session(
         }
     }
 }
-

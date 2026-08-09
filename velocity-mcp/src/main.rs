@@ -1,18 +1,27 @@
 // Structural patterns that are intentional in this codebase
-#![allow(clippy::too_many_arguments)]         // Tool dispatch / WA functions take many params
-#![allow(clippy::type_complexity)]            // Channel/callback types are inherently complex
-#![allow(clippy::result_large_err)]           // Error types carry diagnostic context
-#![allow(clippy::ptr_arg)]                    // &PathBuf kept for API symmetry in places
-#![allow(clippy::needless_range_loop)]        // Index-based loops clearer for parallel arrays
+#![allow(clippy::too_many_arguments)] // Tool dispatch / WA functions take many params
+#![allow(clippy::type_complexity)] // Channel/callback types are inherently complex
+#![allow(clippy::result_large_err)] // Error types carry diagnostic context
+#![allow(clippy::ptr_arg)] // &PathBuf kept for API symmetry in places
+#![allow(clippy::needless_range_loop)] // Index-based loops clearer for parallel arrays
 #![allow(clippy::field_reassign_with_default)] // Stepwise struct config for readability
-#![allow(clippy::manual_strip)]               // Explicit prefix/suffix handling for clarity
-#![allow(clippy::enum_variant_names)]         // Shared-prefix variants are intentional
-#![allow(clippy::upper_case_acronyms)]        // Windows FFI type names (STARTUPINFOW, etc.)
-#![allow(clippy::only_used_in_recursion)]     // Recursion params kept for signature clarity
-#![allow(clippy::manual_c_str_literals)]      // Explicit nul-terminated construction for FFI
-#![allow(dead_code)]                          // Scaffolding modules for future features
-#![allow(unused_imports)]                     // Imports retained for API completeness
-#![allow(unused_variables)]                   // Variables retained for future wiring
+#![allow(clippy::manual_strip)] // Explicit prefix/suffix handling for clarity
+#![allow(clippy::enum_variant_names)] // Shared-prefix variants are intentional
+#![allow(clippy::upper_case_acronyms)] // Windows FFI type names (STARTUPINFOW, etc.)
+#![allow(clippy::only_used_in_recursion)] // Recursion params kept for signature clarity
+#![allow(clippy::manual_c_str_literals)] // Explicit nul-terminated construction for FFI
+#![allow(clippy::derivable_impls)] // Derive would change semantics in some cases
+#![allow(clippy::manual_div_ceil)] // Explicit div_ceil for clarity
+#![allow(clippy::manual_map)] // Manual map for readability in some contexts
+#![allow(clippy::while_let_loop)] // Explicit loop+match sometimes more readable
+#![allow(clippy::new_without_default)] // Not all types need Default
+#![allow(clippy::collapsible_if)] // Nested ifs sometimes clearer
+#![allow(clippy::redundant_closure)] // Explicit closures for type inference
+#![allow(clippy::if_same_then_else)] // Identical branches for semantic clarity
+#![allow(clippy::should_implement_trait)] // from_str methods don't always need FromStr trait
+#![allow(dead_code)] // Scaffolding modules for future features
+#![allow(unused_imports)] // Imports retained for API completeness
+#![allow(unused_variables)] // Variables retained for future wiring
 
 use eframe::egui;
 use std::env;
@@ -469,20 +478,23 @@ fn main() {
 fn run_daemon() {
     use editor::triggers::{now_secs, TriggerAction, TriggerRegistry};
 
-    let workspace_root =
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let workspace_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let poll = std::time::Duration::from_secs(30);
     println!("Starting V.E.L.O.C.I.T.Y. daemon (headless trigger loop)...");
     println!("  Workspace: {}", workspace_root.display());
-    println!("  Poll interval: {}s. Press Ctrl+C to stop.", poll.as_secs());
+    println!(
+        "  Poll interval: {}s. Press Ctrl+C to stop.",
+        poll.as_secs()
+    );
 
     loop {
         let mut registry = TriggerRegistry::load(&workspace_root);
         let now = now_secs();
         let due = registry.due_triggers(now);
         for id in due {
-            let Some((name, action)) =
-                registry.get(&id).map(|t| (t.name.clone(), t.action.clone()))
+            let Some((name, action)) = registry
+                .get(&id)
+                .map(|t| (t.name.clone(), t.action.clone()))
             else {
                 continue;
             };

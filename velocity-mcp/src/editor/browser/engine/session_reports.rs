@@ -486,4 +486,3 @@ pub fn browser_runtime_capture_report_internal(
     )?;
     Ok(report)
 }
-

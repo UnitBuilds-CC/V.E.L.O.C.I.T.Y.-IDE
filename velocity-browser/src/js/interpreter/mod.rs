@@ -1,48 +1,53 @@
 // Sub-modules
-mod token;
-mod lexer;
+mod agent_layer;
 mod ast;
-mod parser;
-mod signal;
-mod eval;
-mod constructors;
-mod function;
-mod native;
-mod console;
-mod module;
-mod property;
-mod method_dispatch;
+mod browser_env;
+mod canvas;
+mod coercion;
 mod collections;
+mod console;
+mod constructors;
 mod core_methods;
+mod dom_bridge;
+mod eval;
+mod eval_script;
+mod function;
+mod intl;
+mod lexer;
+mod method_dispatch;
+mod module;
+mod native;
+mod parser;
+mod property;
+mod signal;
+mod streams;
+mod token;
 mod web_apis;
 mod web_apis2;
-mod browser_env;
-mod dom_bridge;
 mod web_platform;
-mod streams;
-mod canvas;
-mod agent_layer;
-mod intl;
-mod coercion;
-mod eval_script;
 
 #[cfg(test)]
 mod tests;
 
 // Public API re-exports — preserves external paths like
 // `crate::js::interpreter::call_function`, `crate::js::interpreter::Expr`, etc.
-pub use token::*;
-pub use lexer::lex;
-pub use ast::*;
-pub use signal::*;
-pub use eval::*;
-pub use function::{call_function, call_function_with_this, parse_int_js, parse_float_js};
-pub use module::*;
-pub use property::{get_property, set_property, has_property, delete_property, own_keys_of, own_property_names, enumerable_keys};
-pub use method_dispatch::call_method;
-pub use coercion::{to_number, to_string, to_boolean, typeof_str};
-pub use eval_script::{eval_expr, eval_script};
-pub use native::{call_native, json_parse, json_stringify, encode_uri_component, decode_uri_component};
-pub use console::*;
-pub use browser_env::{set_network_enabled, network_enabled};
 pub use agent_layer::export_agent_state_nda;
+pub use ast::*;
+pub use browser_env::{network_enabled, set_network_enabled};
+pub use coercion::{to_boolean, to_number, to_string, typeof_str};
+pub use console::*;
+pub use eval::*;
+pub use eval_script::{eval_expr, eval_script};
+pub use function::{call_function, call_function_with_this, parse_float_js, parse_int_js};
+pub use lexer::lex;
+pub use method_dispatch::call_method;
+pub use module::*;
+pub use native::{
+    call_native, decode_uri_component, encode_uri_component, json_parse, json_stringify,
+};
+pub use property::{
+    delete_property, enumerable_keys, get_property, has_property, own_keys_of, own_property_names,
+    set_property,
+};
+pub use signal::*;
+pub use token::*;

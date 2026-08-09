@@ -691,4 +691,3 @@ pub fn browser_runtime_visual_capture(
         ))
     }
 }
-

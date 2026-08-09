@@ -11,13 +11,21 @@ pub struct WorktreeIsolationGuard {
 
 impl WorktreeIsolationGuard {
     pub fn new(original_root: &Path, subagent_id: &str) -> Result<Self, String> {
-        let worktree_dir = original_root.join(".git").join("worktrees").join(format!("velocity_subagent_{}", subagent_id));
+        let worktree_dir = original_root
+            .join(".git")
+            .join("worktrees")
+            .join(format!("velocity_subagent_{}", subagent_id));
         if let Some(parent) = worktree_dir.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         let output = Command::new("git")
-            .args(["worktree", "add", "--detach", worktree_dir.to_str().unwrap_or_default()])
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                worktree_dir.to_str().unwrap_or_default(),
+            ])
             .current_dir(original_root)
             .output();
 
@@ -42,7 +50,12 @@ impl WorktreeIsolationGuard {
     pub fn cleanup(&mut self) {
         if self.active {
             let _ = Command::new("git")
-                .args(["worktree", "remove", "--force", self.worktree_root.to_str().unwrap_or_default()])
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    self.worktree_root.to_str().unwrap_or_default(),
+                ])
                 .current_dir(&self.original_root)
                 .output();
             self.active = false;

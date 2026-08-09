@@ -161,7 +161,8 @@ impl WebhookManager {
 
     /// Get all outgoing webhooks that should fire for a given event.
     pub fn matching_outgoing(&self, event: &WebhookEvent) -> Vec<&OutgoingWebhook> {
-        self.outgoing.values()
+        self.outgoing
+            .values()
             .filter(|wh| wh.enabled && wh.events.contains(event))
             .collect()
     }
@@ -214,7 +215,9 @@ impl WebhookManager {
         body: &str,
         signature: Option<&str>,
     ) -> Result<WebhookPayload, String> {
-        let webhook = self.incoming.get(webhook_id)
+        let webhook = self
+            .incoming
+            .get(webhook_id)
             .ok_or_else(|| format!("Incoming webhook '{}' not found", webhook_id))?;
 
         if !webhook.enabled {
@@ -267,8 +270,8 @@ impl WebhookManager {
             outgoing: self.outgoing.values().cloned().collect(),
             incoming: self.incoming.values().cloned().collect(),
         };
-        let json = serde_json::to_vec_pretty(&state)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("webhooks.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -304,16 +307,24 @@ fn extract_event_type(body: &str, source: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     match source {
         "github" => value.get("action").and_then(|v| v.as_str()).map(|s| {
-            let _event = value.get("sender").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let _event = value
+                .get("sender")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             format!("github:{}", s)
         }),
-        "slack" => value.get("type").and_then(|v| v.as_str()).map(|s| {
-            format!("slack:{}", s)
-        }),
-        "gitlab" => value.get("object_kind").and_then(|v| v.as_str()).map(|s| {
-            format!("gitlab:{}", s)
-        }),
-        _ => value.get("event").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        "slack" => value
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|s| format!("slack:{}", s)),
+        "gitlab" => value
+            .get("object_kind")
+            .and_then(|v| v.as_str())
+            .map(|s| format!("gitlab:{}", s)),
+        _ => value
+            .get("event")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     }
 }
 
@@ -459,7 +470,10 @@ mod tests {
     fn incoming_url_generation() {
         let mut mgr = WebhookManager::new();
         mgr.register_incoming(test_incoming());
-        assert_eq!(mgr.incoming_url("in1"), Some("/webhook/incoming/in1".to_string()));
+        assert_eq!(
+            mgr.incoming_url("in1"),
+            Some("/webhook/incoming/in1".to_string())
+        );
         assert_eq!(mgr.incoming_url("nonexistent"), None);
     }
 
@@ -477,14 +491,23 @@ mod tests {
 
     #[test]
     fn webhook_event_labels() {
-        assert_eq!(WebhookEvent::WorkflowCompleted.label(), "workflow.completed");
+        assert_eq!(
+            WebhookEvent::WorkflowCompleted.label(),
+            "workflow.completed"
+        );
         assert_eq!(WebhookEvent::CriticalAlert.label(), "agent.critical_alert");
-        assert_eq!(WebhookEvent::Custom("my.event".to_string()).label(), "my.event");
+        assert_eq!(
+            WebhookEvent::Custom("my.event".to_string()).label(),
+            "my.event"
+        );
     }
 
     #[test]
     fn webhook_event_from_label() {
-        assert_eq!(WebhookEvent::from_label("build.failed"), WebhookEvent::BuildFailed);
+        assert_eq!(
+            WebhookEvent::from_label("build.failed"),
+            WebhookEvent::BuildFailed
+        );
         assert_eq!(
             WebhookEvent::from_label("custom.thing"),
             WebhookEvent::Custom("custom.thing".to_string())
@@ -514,18 +537,30 @@ mod tests {
     fn extract_event_type_sources() {
         // GitHub
         let gh = r#"{"action":"closed","sender":"user"}"#;
-        assert_eq!(extract_event_type(gh, "github"), Some("github:closed".to_string()));
+        assert_eq!(
+            extract_event_type(gh, "github"),
+            Some("github:closed".to_string())
+        );
 
         // Slack
         let sl = r#"{"type":"event_callback"}"#;
-        assert_eq!(extract_event_type(sl, "slack"), Some("slack:event_callback".to_string()));
+        assert_eq!(
+            extract_event_type(sl, "slack"),
+            Some("slack:event_callback".to_string())
+        );
 
         // GitLab
         let gl = r#"{"object_kind":"merge_request"}"#;
-        assert_eq!(extract_event_type(gl, "gitlab"), Some("gitlab:merge_request".to_string()));
+        assert_eq!(
+            extract_event_type(gl, "gitlab"),
+            Some("gitlab:merge_request".to_string())
+        );
 
         // Generic
         let gen = r#"{"event":"deploy"}"#;
-        assert_eq!(extract_event_type(gen, "custom"), Some("deploy".to_string()));
+        assert_eq!(
+            extract_event_type(gen, "custom"),
+            Some("deploy".to_string())
+        );
     }
 }

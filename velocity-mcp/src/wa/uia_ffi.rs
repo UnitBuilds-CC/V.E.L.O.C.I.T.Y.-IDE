@@ -342,16 +342,20 @@ impl UiaDirectClient {
 
             // Initialize COM (ignore RPC_E_CHANGED_MODE if already initialized)
             let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-            let com_ok = hr.is_ok()
-                || hr.0 == 0x80010106u32 as i32; // RPC_E_CHANGED_MODE
+            let com_ok = hr.is_ok() || hr.0 == 0x80010106u32 as i32; // RPC_E_CHANGED_MODE
 
             if !com_ok {
                 return Err(format!("CoInitializeEx failed: {:?}", hr));
             }
 
             // Create the IUIAutomation instance
-            let automation: Result<windows::Win32::UI::Accessibility::IUIAutomation, _> =
-                unsafe { windows::Win32::System::Com::CoCreateInstance(&CUIAutomation, None, windows::Win32::System::Com::CLSCTX_INPROC_SERVER) };
+            let automation: Result<windows::Win32::UI::Accessibility::IUIAutomation, _> = unsafe {
+                windows::Win32::System::Com::CoCreateInstance(
+                    &CUIAutomation,
+                    None,
+                    windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+                )
+            };
 
             match automation {
                 Ok(auto) => Ok(Self {
@@ -413,7 +417,10 @@ impl UiaDirectClient {
                 return Ok(el.clone());
             }
         }
-        Err(format!("Element with automation_id '{}' not found", automation_id))
+        Err(format!(
+            "Element with automation_id '{}' not found",
+            automation_id
+        ))
     }
 
     /// Find element by name (O(1) via index).
@@ -430,7 +437,10 @@ impl UiaDirectClient {
         {
             if let Some(auto) = &self.automation {
                 use windows::Win32::Foundation::POINT;
-                let pt = POINT { x: x as i32, y: y as i32 };
+                let pt = POINT {
+                    x: x as i32,
+                    y: y as i32,
+                };
                 let result = unsafe { auto.ElementFromPoint(pt) };
                 match result {
                     Ok(elem) => {
@@ -555,18 +565,27 @@ fn com_element_to_cached(
             width: (r.right - r.left) as f64,
             height: (r.bottom - r.top) as f64,
         })
-        .unwrap_or(UiaRect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 });
+        .unwrap_or(UiaRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        });
 
-    let is_enabled = unsafe { elem.CurrentIsEnabled() }.map(|b| b.as_bool()).unwrap_or(false);
-    let is_offscreen = unsafe { elem.CurrentIsOffscreen() }.map(|b| b.as_bool()).unwrap_or(true);
+    let is_enabled = unsafe { elem.CurrentIsEnabled() }
+        .map(|b| b.as_bool())
+        .unwrap_or(false);
+    let is_offscreen = unsafe { elem.CurrentIsOffscreen() }
+        .map(|b| b.as_bool())
+        .unwrap_or(true);
     let process_id = unsafe { elem.CurrentProcessId() }.unwrap_or(0) as u32;
 
     // Detect supported patterns via GetCurrentPattern
     let mut supported_patterns = Vec::new();
     use windows::Win32::UI::Accessibility::{
-        UIA_InvokePatternId, UIA_ValuePatternId, UIA_TogglePatternId,
-        UIA_SelectionPatternId, UIA_SelectionItemPatternId,
-        UIA_ExpandCollapsePatternId, UIA_ScrollPatternId, UIA_RangeValuePatternId,
+        UIA_ExpandCollapsePatternId, UIA_InvokePatternId, UIA_RangeValuePatternId,
+        UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+        UIA_TogglePatternId, UIA_ValuePatternId,
     };
     if unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Invoke);
@@ -613,40 +632,75 @@ fn com_element_to_cached(
 #[cfg(windows)]
 fn control_type_name(ct: i32) -> String {
     use windows::Win32::UI::Accessibility::*;
-    let name = if ct == UIA_ButtonControlTypeId.0 { "Button" }
-    else if ct == UIA_EditControlTypeId.0 { "Edit" }
-    else if ct == UIA_WindowControlTypeId.0 { "Window" }
-    else if ct == UIA_TextControlTypeId.0 { "Text" }
-    else if ct == UIA_CheckBoxControlTypeId.0 { "CheckBox" }
-    else if ct == UIA_ComboBoxControlTypeId.0 { "ComboBox" }
-    else if ct == UIA_ListItemControlTypeId.0 { "ListItem" }
-    else if ct == UIA_ListControlTypeId.0 { "List" }
-    else if ct == UIA_MenuControlTypeId.0 { "Menu" }
-    else if ct == UIA_MenuItemControlTypeId.0 { "MenuItem" }
-    else if ct == UIA_TabControlTypeId.0 { "Tab" }
-    else if ct == UIA_TabItemControlTypeId.0 { "TabItem" }
-    else if ct == UIA_TreeControlTypeId.0 { "Tree" }
-    else if ct == UIA_TreeItemControlTypeId.0 { "TreeItem" }
-    else if ct == UIA_DataGridControlTypeId.0 { "DataGrid" }
-    else if ct == UIA_DataItemControlTypeId.0 { "DataItem" }
-    else if ct == UIA_ToolBarControlTypeId.0 { "ToolBar" }
-    else if ct == UIA_StatusBarControlTypeId.0 { "StatusBar" }
-    else if ct == UIA_ProgressBarControlTypeId.0 { "ProgressBar" }
-    else if ct == UIA_ScrollBarControlTypeId.0 { "ScrollBar" }
-    else if ct == UIA_GroupControlTypeId.0 { "Group" }
-    else if ct == UIA_PaneControlTypeId.0 { "Pane" }
-    else if ct == UIA_DocumentControlTypeId.0 { "Document" }
-    else if ct == UIA_ImageControlTypeId.0 { "Image" }
-    else if ct == UIA_HyperlinkControlTypeId.0 { "Hyperlink" }
-    else if ct == UIA_RadioButtonControlTypeId.0 { "RadioButton" }
-    else if ct == UIA_SliderControlTypeId.0 { "Slider" }
-    else if ct == UIA_SpinnerControlTypeId.0 { "Spinner" }
-    else if ct == UIA_TableControlTypeId.0 { "Table" }
-    else if ct == UIA_HeaderControlTypeId.0 { "Header" }
-    else if ct == UIA_HeaderItemControlTypeId.0 { "HeaderItem" }
-    else if ct == UIA_ToolTipControlTypeId.0 { "ToolTip" }
-    else if ct == UIA_SeparatorControlTypeId.0 { "Separator" }
-    else { "Unknown" };
+    let name = if ct == UIA_ButtonControlTypeId.0 {
+        "Button"
+    } else if ct == UIA_EditControlTypeId.0 {
+        "Edit"
+    } else if ct == UIA_WindowControlTypeId.0 {
+        "Window"
+    } else if ct == UIA_TextControlTypeId.0 {
+        "Text"
+    } else if ct == UIA_CheckBoxControlTypeId.0 {
+        "CheckBox"
+    } else if ct == UIA_ComboBoxControlTypeId.0 {
+        "ComboBox"
+    } else if ct == UIA_ListItemControlTypeId.0 {
+        "ListItem"
+    } else if ct == UIA_ListControlTypeId.0 {
+        "List"
+    } else if ct == UIA_MenuControlTypeId.0 {
+        "Menu"
+    } else if ct == UIA_MenuItemControlTypeId.0 {
+        "MenuItem"
+    } else if ct == UIA_TabControlTypeId.0 {
+        "Tab"
+    } else if ct == UIA_TabItemControlTypeId.0 {
+        "TabItem"
+    } else if ct == UIA_TreeControlTypeId.0 {
+        "Tree"
+    } else if ct == UIA_TreeItemControlTypeId.0 {
+        "TreeItem"
+    } else if ct == UIA_DataGridControlTypeId.0 {
+        "DataGrid"
+    } else if ct == UIA_DataItemControlTypeId.0 {
+        "DataItem"
+    } else if ct == UIA_ToolBarControlTypeId.0 {
+        "ToolBar"
+    } else if ct == UIA_StatusBarControlTypeId.0 {
+        "StatusBar"
+    } else if ct == UIA_ProgressBarControlTypeId.0 {
+        "ProgressBar"
+    } else if ct == UIA_ScrollBarControlTypeId.0 {
+        "ScrollBar"
+    } else if ct == UIA_GroupControlTypeId.0 {
+        "Group"
+    } else if ct == UIA_PaneControlTypeId.0 {
+        "Pane"
+    } else if ct == UIA_DocumentControlTypeId.0 {
+        "Document"
+    } else if ct == UIA_ImageControlTypeId.0 {
+        "Image"
+    } else if ct == UIA_HyperlinkControlTypeId.0 {
+        "Hyperlink"
+    } else if ct == UIA_RadioButtonControlTypeId.0 {
+        "RadioButton"
+    } else if ct == UIA_SliderControlTypeId.0 {
+        "Slider"
+    } else if ct == UIA_SpinnerControlTypeId.0 {
+        "Spinner"
+    } else if ct == UIA_TableControlTypeId.0 {
+        "Table"
+    } else if ct == UIA_HeaderControlTypeId.0 {
+        "Header"
+    } else if ct == UIA_HeaderItemControlTypeId.0 {
+        "HeaderItem"
+    } else if ct == UIA_ToolTipControlTypeId.0 {
+        "ToolTip"
+    } else if ct == UIA_SeparatorControlTypeId.0 {
+        "Separator"
+    } else {
+        "Unknown"
+    };
     name.to_string()
 }
 
@@ -659,8 +713,8 @@ fn build_tree_com(
     max_children: u32,
 ) -> Result<CachedUiaTree, String> {
     // Get the desktop root
-    let desktop = unsafe { auto.GetRootElement() }
-        .map_err(|e| format!("GetRootElement failed: {:?}", e))?;
+    let desktop =
+        unsafe { auto.GetRootElement() }.map_err(|e| format!("GetRootElement failed: {:?}", e))?;
 
     // Create a content view walker via true condition
     let true_cond = unsafe { auto.CreateTrueCondition() }
@@ -685,8 +739,8 @@ fn build_tree_com(
         }
     }
 
-    let target = target_window
-        .ok_or_else(|| format!("No top-level window found for process {}", pid))?;
+    let target =
+        target_window.ok_or_else(|| format!("No top-level window found for process {}", pid))?;
 
     // Recursively walk the tree
     let root_element = walk_element_com(&walker, &target, 0, 0, max_depth, max_children);
@@ -746,28 +800,24 @@ fn invoke_pattern_com(
     pattern: UiaPattern,
     value: Option<&str>,
 ) -> Result<(), String> {
+    use windows::core::{Interface, BSTR, VARIANT};
     use windows::Win32::UI::Accessibility::{
-        IUIAutomationInvokePattern, IUIAutomationValuePattern,
-        IUIAutomationTogglePattern, IUIAutomationExpandCollapsePattern,
-        IUIAutomationSelectionItemPattern, IUIAutomationRangeValuePattern,
-        IUIAutomationScrollPattern, IUIAutomationTransformPattern,
-        IUIAutomationScrollItemPattern, IUIAutomationWindowPattern,
-        UIA_AutomationIdPropertyId, UIA_NamePropertyId,
-        UIA_InvokePatternId, UIA_ValuePatternId, UIA_TogglePatternId,
-        UIA_ExpandCollapsePatternId, UIA_SelectionItemPatternId,
-        UIA_RangeValuePatternId, UIA_ScrollPatternId,
-        UIA_TransformPatternId, UIA_ScrollItemPatternId, UIA_WindowPatternId,
-        TreeScope_Descendants, ScrollAmount_NoAmount,
-        ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement,
-        ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement,
-        WindowVisualState_Normal, WindowVisualState_Maximized,
-        WindowVisualState_Minimized,
+        IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+        IUIAutomationRangeValuePattern, IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
+        IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
+        IUIAutomationTransformPattern, IUIAutomationValuePattern, IUIAutomationWindowPattern,
+        ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
+        ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, TreeScope_Descendants,
+        UIA_AutomationIdPropertyId, UIA_ExpandCollapsePatternId, UIA_InvokePatternId,
+        UIA_NamePropertyId, UIA_RangeValuePatternId, UIA_ScrollItemPatternId, UIA_ScrollPatternId,
+        UIA_SelectionItemPatternId, UIA_TogglePatternId, UIA_TransformPatternId,
+        UIA_ValuePatternId, UIA_WindowPatternId, WindowVisualState_Maximized,
+        WindowVisualState_Minimized, WindowVisualState_Normal,
     };
-    use windows::core::{BSTR, Interface, VARIANT};
 
     // Find the element via COM using its automation ID or name
-    let desktop = unsafe { auto.GetRootElement() }
-        .map_err(|e| format!("GetRootElement: {:?}", e))?;
+    let desktop =
+        unsafe { auto.GetRootElement() }.map_err(|e| format!("GetRootElement: {:?}", e))?;
 
     let condition = if !element.automation_id.is_empty() {
         let bstr = BSTR::from(element.automation_id.as_str());
@@ -780,25 +830,24 @@ fn invoke_pattern_com(
     }
     .map_err(|e| format!("CreatePropertyCondition: {:?}", e))?;
 
-    let com_elem = unsafe {
-        desktop.FindFirst(TreeScope_Descendants, &condition)
-    }
-    .map_err(|e| format!("FindFirst: {:?}", e))?;
+    let com_elem = unsafe { desktop.FindFirst(TreeScope_Descendants, &condition) }
+        .map_err(|e| format!("FindFirst: {:?}", e))?;
 
     match pattern {
         UiaPattern::Invoke => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_InvokePatternId) }
                 .map_err(|e| format!("GetInvokePattern: {:?}", e))?;
-            let invoke: IUIAutomationInvokePattern = pattern_obj.cast()
+            let invoke: IUIAutomationInvokePattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast InvokePattern: {:?}", e))?;
-            unsafe { invoke.Invoke() }
-                .map_err(|e| format!("Invoke: {:?}", e))?;
+            unsafe { invoke.Invoke() }.map_err(|e| format!("Invoke: {:?}", e))?;
         }
         UiaPattern::Value => {
             let val = value.unwrap_or("");
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ValuePatternId) }
                 .map_err(|e| format!("GetValuePattern: {:?}", e))?;
-            let value_pattern: IUIAutomationValuePattern = pattern_obj.cast()
+            let value_pattern: IUIAutomationValuePattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast ValuePattern: {:?}", e))?;
             unsafe { value_pattern.SetValue(&BSTR::from(val)) }
                 .map_err(|e| format!("SetValue: {:?}", e))?;
@@ -806,15 +855,16 @@ fn invoke_pattern_com(
         UiaPattern::Toggle => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TogglePatternId) }
                 .map_err(|e| format!("GetTogglePattern: {:?}", e))?;
-            let toggle: IUIAutomationTogglePattern = pattern_obj.cast()
+            let toggle: IUIAutomationTogglePattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast TogglePattern: {:?}", e))?;
-            unsafe { toggle.Toggle() }
-                .map_err(|e| format!("Toggle: {:?}", e))?;
+            unsafe { toggle.Toggle() }.map_err(|e| format!("Toggle: {:?}", e))?;
         }
         UiaPattern::ExpandCollapse => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) }
                 .map_err(|e| format!("GetExpandCollapsePattern: {:?}", e))?;
-            let ec: IUIAutomationExpandCollapsePattern = pattern_obj.cast()
+            let ec: IUIAutomationExpandCollapsePattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast ExpandCollapsePattern: {:?}", e))?;
             match value.unwrap_or("Expand") {
                 "Collapse" => unsafe { ec.Collapse() }.map_err(|e| format!("Collapse: {:?}", e))?,
@@ -824,11 +874,14 @@ fn invoke_pattern_com(
         UiaPattern::SelectionItem => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_SelectionItemPatternId) }
                 .map_err(|e| format!("GetSelectionItemPattern: {:?}", e))?;
-            let si: IUIAutomationSelectionItemPattern = pattern_obj.cast()
+            let si: IUIAutomationSelectionItemPattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast SelectionItemPattern: {:?}", e))?;
             match value.unwrap_or("Select") {
-                "AddToSelection" => unsafe { si.AddToSelection() }.map_err(|e| format!("AddToSelection: {:?}", e))?,
-                "RemoveFromSelection" => unsafe { si.RemoveFromSelection() }.map_err(|e| format!("RemoveFromSelection: {:?}", e))?,
+                "AddToSelection" => unsafe { si.AddToSelection() }
+                    .map_err(|e| format!("AddToSelection: {:?}", e))?,
+                "RemoveFromSelection" => unsafe { si.RemoveFromSelection() }
+                    .map_err(|e| format!("RemoveFromSelection: {:?}", e))?,
                 _ => unsafe { si.Select() }.map_err(|e| format!("Select: {:?}", e))?,
             }
         }
@@ -836,15 +889,16 @@ fn invoke_pattern_com(
             let val: f64 = value.unwrap_or("50").parse().unwrap_or(50.0);
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_RangeValuePatternId) }
                 .map_err(|e| format!("GetRangeValuePattern: {:?}", e))?;
-            let rv: IUIAutomationRangeValuePattern = pattern_obj.cast()
+            let rv: IUIAutomationRangeValuePattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast RangeValuePattern: {:?}", e))?;
-            unsafe { rv.SetValue(val) }
-                .map_err(|e| format!("SetRangeValue: {:?}", e))?;
+            unsafe { rv.SetValue(val) }.map_err(|e| format!("SetRangeValue: {:?}", e))?;
         }
         UiaPattern::Scroll => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollPatternId) }
                 .map_err(|e| format!("GetScrollPattern: {:?}", e))?;
-            let scroll: IUIAutomationScrollPattern = pattern_obj.cast()
+            let scroll: IUIAutomationScrollPattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast ScrollPattern: {:?}", e))?;
             let amount = value.unwrap_or("LineDown");
             let (h, v) = match amount {
@@ -854,14 +908,14 @@ fn invoke_pattern_com(
                 "PageDown" => (ScrollAmount_NoAmount, ScrollAmount_LargeIncrement),
                 _ => (ScrollAmount_NoAmount, ScrollAmount_SmallIncrement),
             };
-            unsafe { scroll.Scroll(h, v) }
-                .map_err(|e| format!("Scroll: {:?}", e))?;
+            unsafe { scroll.Scroll(h, v) }.map_err(|e| format!("Scroll: {:?}", e))?;
         }
         UiaPattern::Transform => {
             let spec = value.unwrap_or("");
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TransformPatternId) }
                 .map_err(|e| format!("GetTransformPattern: {:?}", e))?;
-            let tf: IUIAutomationTransformPattern = pattern_obj.cast()
+            let tf: IUIAutomationTransformPattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast TransformPattern: {:?}", e))?;
             let (op, args) = spec.split_once(':').ok_or_else(|| {
                 format!("Transform expects 'move:X,Y' | 'resize:W,H' | 'rotate:DEG', got '{spec}'")
@@ -879,8 +933,14 @@ fn invoke_pattern_com(
                     let (w, h) = args
                         .split_once(',')
                         .ok_or_else(|| "Transform resize expects 'W,H'".to_string())?;
-                    let w: f64 = w.trim().parse().map_err(|_| "invalid resize W".to_string())?;
-                    let h: f64 = h.trim().parse().map_err(|_| "invalid resize H".to_string())?;
+                    let w: f64 = w
+                        .trim()
+                        .parse()
+                        .map_err(|_| "invalid resize W".to_string())?;
+                    let h: f64 = h
+                        .trim()
+                        .parse()
+                        .map_err(|_| "invalid resize H".to_string())?;
                     unsafe { tf.Resize(w, h) }.map_err(|e| format!("Resize: {:?}", e))?;
                 }
                 "rotate" => {
@@ -896,15 +956,16 @@ fn invoke_pattern_com(
         UiaPattern::ScrollItem => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollItemPatternId) }
                 .map_err(|e| format!("GetScrollItemPattern: {:?}", e))?;
-            let si: IUIAutomationScrollItemPattern = pattern_obj.cast()
+            let si: IUIAutomationScrollItemPattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast ScrollItemPattern: {:?}", e))?;
-            unsafe { si.ScrollIntoView() }
-                .map_err(|e| format!("ScrollIntoView: {:?}", e))?;
+            unsafe { si.ScrollIntoView() }.map_err(|e| format!("ScrollIntoView: {:?}", e))?;
         }
         UiaPattern::Window => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_WindowPatternId) }
                 .map_err(|e| format!("GetWindowPattern: {:?}", e))?;
-            let win: IUIAutomationWindowPattern = pattern_obj.cast()
+            let win: IUIAutomationWindowPattern = pattern_obj
+                .cast()
                 .map_err(|e| format!("Cast WindowPattern: {:?}", e))?;
             match value.unwrap_or("Normal") {
                 "Close" => unsafe { win.Close() }.map_err(|e| format!("Close: {:?}", e))?,
@@ -917,7 +978,10 @@ fn invoke_pattern_com(
             }
         }
         _ => {
-            return Err(format!("Pattern {:?} not yet supported via direct COM", pattern));
+            return Err(format!(
+                "Pattern {:?} not yet supported via direct COM",
+                pattern
+            ));
         }
     }
     Ok(())
@@ -990,7 +1054,14 @@ fn run_ps_capture(script: &str) -> Result<String, String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1492,7 +1563,12 @@ mod tests {
             name: "Submit".to_string(),
             control_type: "Button".to_string(),
             class_name: "Button".to_string(),
-            bounding_rect: UiaRect { x: 10.0, y: 10.0, width: 80.0, height: 30.0 },
+            bounding_rect: UiaRect {
+                x: 10.0,
+                y: 10.0,
+                width: 80.0,
+                height: 30.0,
+            },
             is_enabled: true,
             is_offscreen: false,
             process_id: 1234,
@@ -1507,7 +1583,12 @@ mod tests {
             name: "Email".to_string(),
             control_type: "Edit".to_string(),
             class_name: "TextBox".to_string(),
-            bounding_rect: UiaRect { x: 10.0, y: 50.0, width: 200.0, height: 25.0 },
+            bounding_rect: UiaRect {
+                x: 10.0,
+                y: 50.0,
+                width: 200.0,
+                height: 25.0,
+            },
             is_enabled: true,
             is_offscreen: false,
             process_id: 1234,
@@ -1522,7 +1603,12 @@ mod tests {
             name: "Login".to_string(),
             control_type: "Window".to_string(),
             class_name: "WinForm".to_string(),
-            bounding_rect: UiaRect { x: 0.0, y: 0.0, width: 400.0, height: 300.0 },
+            bounding_rect: UiaRect {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 300.0,
+            },
             is_enabled: true,
             is_offscreen: false,
             process_id: 1234,
@@ -1618,7 +1704,12 @@ mod tests {
             name: "Sample".to_string(),
             control_type: "Window".to_string(),
             class_name: String::new(),
-            bounding_rect: UiaRect { x: 0.0, y: 0.0, width: 100.0, height: 40.0 },
+            bounding_rect: UiaRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 40.0,
+            },
             is_enabled: true,
             is_offscreen: false,
             process_id: 1234,
@@ -1654,7 +1745,8 @@ mod tests {
         let mv = build_pattern_invoke_script(&el, UiaPattern::Transform, Some("move:10,20"));
         assert!(mv.contains("TransformPattern"));
         assert!(mv.contains("$pattern.Move(10, 20)"));
-        let rs = build_pattern_invoke_script(&el, UiaPattern::Transform, Some(" resize : 100 , 50 "));
+        let rs =
+            build_pattern_invoke_script(&el, UiaPattern::Transform, Some(" resize : 100 , 50 "));
         assert!(rs.contains("$pattern.Resize(100, 50)"));
         let rot = build_pattern_invoke_script(&el, UiaPattern::Transform, Some("rotate:90"));
         assert!(rot.contains("$pattern.Rotate(90)"));
@@ -1665,12 +1757,18 @@ mod tests {
     #[test]
     fn dock_scrollitem_virtualized_text_are_wired() {
         let el = sample_element();
-        assert!(build_pattern_invoke_script(&el, UiaPattern::Dock, Some("Top"))
-            .contains("SetDockPosition([System.Windows.Automation.DockPosition]::Top)"));
-        assert!(build_pattern_invoke_script(&el, UiaPattern::ScrollItem, None)
-            .contains("$pattern.ScrollIntoView()"));
-        assert!(build_pattern_invoke_script(&el, UiaPattern::VirtualizedItem, None)
-            .contains("$pattern.Realize()"));
+        assert!(
+            build_pattern_invoke_script(&el, UiaPattern::Dock, Some("Top"))
+                .contains("SetDockPosition([System.Windows.Automation.DockPosition]::Top)")
+        );
+        assert!(
+            build_pattern_invoke_script(&el, UiaPattern::ScrollItem, None)
+                .contains("$pattern.ScrollIntoView()")
+        );
+        assert!(
+            build_pattern_invoke_script(&el, UiaPattern::VirtualizedItem, None)
+                .contains("$pattern.Realize()")
+        );
         assert!(build_pattern_invoke_script(&el, UiaPattern::Text, None)
             .contains("DocumentRange.GetText(-1)"));
     }
@@ -1679,19 +1777,19 @@ mod tests {
     fn container_patterns_emit_read_scripts() {
         let el = sample_element();
         // Grid/Table return row/column counts.
-        assert!(build_pattern_invoke_script(&el, UiaPattern::Grid, None)
-            .contains("GridPattern"));
-        assert!(build_pattern_invoke_script(&el, UiaPattern::Grid, None)
-            .contains("RowCount"));
-        assert!(build_pattern_invoke_script(&el, UiaPattern::Table, None)
-            .contains("TablePattern"));
-        assert!(build_pattern_invoke_script(&el, UiaPattern::Table, None)
-            .contains("RowOrColumnMajor"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Grid, None).contains("GridPattern"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Grid, None).contains("RowCount"));
+        assert!(build_pattern_invoke_script(&el, UiaPattern::Table, None).contains("TablePattern"));
+        assert!(
+            build_pattern_invoke_script(&el, UiaPattern::Table, None).contains("RowOrColumnMajor")
+        );
         // GridItem/TableItem return cell coordinates / headers.
         assert!(build_pattern_invoke_script(&el, UiaPattern::GridItem, None)
             .contains("GridItemPattern"));
-        assert!(build_pattern_invoke_script(&el, UiaPattern::TableItem, None)
-            .contains("GetRowHeaderItems"));
+        assert!(
+            build_pattern_invoke_script(&el, UiaPattern::TableItem, None)
+                .contains("GetRowHeaderItems")
+        );
         // ItemContainer uses the value as the search key.
         let ic = build_pattern_invoke_script(&el, UiaPattern::ItemContainer, Some("Row 5"));
         assert!(ic.contains("ItemContainerPattern"));

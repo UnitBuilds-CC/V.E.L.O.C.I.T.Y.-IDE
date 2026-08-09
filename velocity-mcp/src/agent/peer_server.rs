@@ -86,10 +86,18 @@ impl HttpResponse {
         }
     }
 
-    fn ok(body: &serde_json::Value) -> Self { Self::json(200, body) }
-    fn not_found() -> Self { Self::json(404, &serde_json::json!({"error": "not found"})) }
-    fn bad_request(msg: &str) -> Self { Self::json(400, &serde_json::json!({"error": msg})) }
-    fn server_error(msg: &str) -> Self { Self::json(500, &serde_json::json!({"error": msg})) }
+    fn ok(body: &serde_json::Value) -> Self {
+        Self::json(200, body)
+    }
+    fn not_found() -> Self {
+        Self::json(404, &serde_json::json!({"error": "not found"}))
+    }
+    fn bad_request(msg: &str) -> Self {
+        Self::json(400, &serde_json::json!({"error": msg}))
+    }
+    fn server_error(msg: &str) -> Self {
+        Self::json(500, &serde_json::json!({"error": msg}))
+    }
 
     fn to_bytes(&self) -> Vec<u8> {
         let mut response = format!("HTTP/1.1 {} {}\r\n", self.status, self.status_text);
@@ -110,7 +118,8 @@ fn status_text(code: u16) -> String {
         405 => "Method Not Allowed",
         500 => "Internal Server Error",
         _ => "Unknown",
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Parse a minimal HTTP request from raw bytes.
@@ -118,7 +127,9 @@ fn parse_request(raw: &str) -> Option<HttpRequest> {
     let mut lines = raw.lines();
     let request_line = lines.next()?;
     let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 { return None; }
+    if parts.len() < 2 {
+        return None;
+    }
 
     let method = parts[0].to_string();
     let path = parts[1].to_string();
@@ -138,64 +149,64 @@ fn parse_request(raw: &str) -> Option<HttpRequest> {
         }
     }
 
-    Some(HttpRequest { method, path, headers, body: body.trim().to_string() })
+    Some(HttpRequest {
+        method,
+        path,
+        headers,
+        body: body.trim().to_string(),
+    })
 }
 
 /// Handle a single HTTP request and produce a response.
 fn handle_request(req: &HttpRequest, peer_mgr: &PeerManager) -> HttpResponse {
     match (req.method.as_str(), req.path.as_str()) {
         // Health check.
-        ("GET", "/peer/health") => {
-            HttpResponse::ok(&serde_json::json!({
-                "status": "ok",
-                "identity": peer_mgr.local_identity.as_ref().map(|id| serde_json::json!({
-                    "id": id.id,
-                    "name": id.name,
-                    "port": id.port,
-                })),
-            }))
-        }
+        ("GET", "/peer/health") => HttpResponse::ok(&serde_json::json!({
+            "status": "ok",
+            "identity": peer_mgr.local_identity.as_ref().map(|id| serde_json::json!({
+                "id": id.id,
+                "name": id.name,
+                "port": id.port,
+            })),
+        })),
 
         // Get local identity.
-        ("GET", "/peer/identity") => {
-            match &peer_mgr.local_identity {
-                Some(id) => HttpResponse::ok(&serde_json::json!({
-                    "id": id.id,
-                    "name": id.name,
-                    "host": id.host,
-                    "port": id.port,
-                    "capabilities": id.capabilities.iter().map(|c| c.label()).collect::<Vec<_>>(),
-                    "environment": id.environment,
-                })),
-                None => HttpResponse::server_error("Identity not initialized"),
-            }
-        }
+        ("GET", "/peer/identity") => match &peer_mgr.local_identity {
+            Some(id) => HttpResponse::ok(&serde_json::json!({
+                "id": id.id,
+                "name": id.name,
+                "host": id.host,
+                "port": id.port,
+                "capabilities": id.capabilities.iter().map(|c| c.label()).collect::<Vec<_>>(),
+                "environment": id.environment,
+            })),
+            None => HttpResponse::server_error("Identity not initialized"),
+        },
 
         // Pairing request.
-        ("POST", "/peer/pair") => {
-            match serde_json::from_str::<serde_json::Value>(&req.body) {
-                Ok(val) => HttpResponse::ok(&serde_json::json!({
-                    "accepted": true,
-                    "message": "Pairing request received",
-                    "peer_id": val.get("peer_id").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                })),
-                Err(e) => HttpResponse::bad_request(&format!("Invalid JSON: {e}")),
-            }
-        }
+        ("POST", "/peer/pair") => match serde_json::from_str::<serde_json::Value>(&req.body) {
+            Ok(val) => HttpResponse::ok(&serde_json::json!({
+                "accepted": true,
+                "message": "Pairing request received",
+                "peer_id": val.get("peer_id").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            })),
+            Err(e) => HttpResponse::bad_request(&format!("Invalid JSON: {e}")),
+        },
 
         // Receive a message.
-        ("POST", "/peer/message") => {
-            match serde_json::from_str::<PeerMessage>(&req.body) {
-                Ok(_msg) => HttpResponse::ok(&serde_json::json!({"received": true})),
-                Err(e) => HttpResponse::bad_request(&format!("Invalid message: {e}")),
-            }
-        }
+        ("POST", "/peer/message") => match serde_json::from_str::<PeerMessage>(&req.body) {
+            Ok(_msg) => HttpResponse::ok(&serde_json::json!({"received": true})),
+            Err(e) => HttpResponse::bad_request(&format!("Invalid message: {e}")),
+        },
 
         // File transfer start.
         ("POST", "/peer/file/start") => {
             match serde_json::from_str::<serde_json::Value>(&req.body) {
                 Ok(val) => {
-                    let transfer_id = val.get("transfer_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let transfer_id = val
+                        .get("transfer_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     HttpResponse::ok(&serde_json::json!({
                         "accepted": true,
                         "transfer_id": transfer_id,
@@ -206,9 +217,7 @@ fn handle_request(req: &HttpRequest, peer_mgr: &PeerManager) -> HttpResponse {
         }
 
         // File chunk.
-        ("POST", "/peer/file/chunk") => {
-            HttpResponse::ok(&serde_json::json!({"received": true}))
-        }
+        ("POST", "/peer/file/chunk") => HttpResponse::ok(&serde_json::json!({"received": true})),
 
         // File transfer complete.
         ("POST", "/peer/file/complete") => {
@@ -216,19 +225,20 @@ fn handle_request(req: &HttpRequest, peer_mgr: &PeerManager) -> HttpResponse {
         }
 
         // Task delegation.
-        ("POST", "/peer/task") => {
-            match serde_json::from_str::<serde_json::Value>(&req.body) {
-                Ok(val) => {
-                    let task_id = val.get("task_id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    HttpResponse::ok(&serde_json::json!({
-                        "accepted": true,
-                        "task_id": task_id,
-                        "status": "pending",
-                    }))
-                }
-                Err(e) => HttpResponse::bad_request(&format!("Invalid: {e}")),
+        ("POST", "/peer/task") => match serde_json::from_str::<serde_json::Value>(&req.body) {
+            Ok(val) => {
+                let task_id = val
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                HttpResponse::ok(&serde_json::json!({
+                    "accepted": true,
+                    "task_id": task_id,
+                    "status": "pending",
+                }))
             }
-        }
+            Err(e) => HttpResponse::bad_request(&format!("Invalid: {e}")),
+        },
 
         // Task progress.
         ("POST", "/peer/task/progress") => {
@@ -269,10 +279,11 @@ impl PeerServer {
     /// `peer_mgr` is read-only for request handling.
     pub fn start(&self, peer_mgr: &PeerManager) -> Result<(), String> {
         let addr = format!("{}:{}", self.config.bind_addr, self.config.port);
-        let listener = TcpListener::bind(&addr)
-            .map_err(|e| format!("Failed to bind {}: {e}", addr))?;
+        let listener =
+            TcpListener::bind(&addr).map_err(|e| format!("Failed to bind {}: {e}", addr))?;
 
-        listener.set_nonblocking(false)
+        listener
+            .set_nonblocking(false)
             .map_err(|e| format!("set_nonblocking: {e}"))?;
 
         self.running.store(true, Ordering::SeqCst);
@@ -285,7 +296,8 @@ impl PeerServer {
             // For simplicity, we just accept and handle one at a time.
             match listener.accept() {
                 Ok((mut stream, _addr)) => {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(self.config.timeout_secs)));
+                    let _ = stream
+                        .set_read_timeout(Some(Duration::from_secs(self.config.timeout_secs)));
                     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
                     let mut buf = vec![0u8; self.config.max_body_size];
@@ -307,7 +319,9 @@ impl PeerServer {
                                 } else if find_header_end(&buf[..total]).is_some() {
                                     break; // No body expected.
                                 }
-                                if total >= self.config.max_body_size { break; }
+                                if total >= self.config.max_body_size {
+                                    break;
+                                }
                             }
                             Err(_) => break,
                         }
@@ -372,10 +386,14 @@ pub fn peer_url(host: &str, port: u16, endpoint: &str) -> String {
 }
 
 /// Send a message to a remote peer via HTTP.
-pub fn send_to_peer(peer_host: &str, peer_port: u16, endpoint: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+pub fn send_to_peer(
+    peer_host: &str,
+    peer_port: u16,
+    endpoint: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let url = peer_url(peer_host, peer_port, endpoint);
-    let body_str = serde_json::to_string(body)
-        .map_err(|e| format!("Serialize: {e}"))?;
+    let body_str = serde_json::to_string(body).map_err(|e| format!("Serialize: {e}"))?;
 
     let response = ureq::post(&url)
         .set("Content-Type", "application/json")
@@ -383,11 +401,11 @@ pub fn send_to_peer(peer_host: &str, peer_port: u16, endpoint: &str, body: &serd
         .send_string(&body_str)
         .map_err(|e| format!("Request failed: {e}"))?;
 
-    let response_body = response.into_string()
+    let response_body = response
+        .into_string()
         .map_err(|e| format!("Read response: {e}"))?;
 
-    serde_json::from_str(&response_body)
-        .map_err(|e| format!("Parse response: {e}"))
+    serde_json::from_str(&response_body).map_err(|e| format!("Parse response: {e}"))
 }
 
 /// Check if a remote peer is reachable.
@@ -396,10 +414,19 @@ pub fn peer_health_check(host: &str, port: u16) -> Result<serde_json::Value, Str
 }
 
 /// Request pairing with a remote peer.
-pub fn request_pairing(host: &str, port: u16, local_name: &str) -> Result<serde_json::Value, String> {
-    send_to_peer(host, port, "/peer/pair", &serde_json::json!({
-        "name": local_name,
-    }))
+pub fn request_pairing(
+    host: &str,
+    port: u16,
+    local_name: &str,
+) -> Result<serde_json::Value, String> {
+    send_to_peer(
+        host,
+        port,
+        "/peer/pair",
+        &serde_json::json!({
+            "name": local_name,
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -482,8 +509,10 @@ mod tests {
 
     #[test]
     fn peer_url_format() {
-        assert_eq!(peer_url("192.168.1.10", 9191, "/peer/health"),
-            "http://192.168.1.10:9191/peer/health");
+        assert_eq!(
+            peer_url("192.168.1.10", 9191, "/peer/health"),
+            "http://192.168.1.10:9191/peer/health"
+        );
     }
 
     #[test]

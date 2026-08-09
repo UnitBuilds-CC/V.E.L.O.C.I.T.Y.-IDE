@@ -135,7 +135,10 @@ impl ChallengeObserver {
     }
 
     /// Extract interactive elements from the challenge container's subtree.
-    fn extract_interactive_elements(tree: &DomTree, container_id: usize) -> Vec<InteractiveElement> {
+    fn extract_interactive_elements(
+        tree: &DomTree,
+        container_id: usize,
+    ) -> Vec<InteractiveElement> {
         let mut elements = Vec::new();
         Self::walk_subtree(tree, container_id, &mut |node_id, node| {
             let role = Self::classify_element_role(node);
@@ -184,7 +187,11 @@ impl ChallengeObserver {
         // Tag-based classification
         match tag {
             "input" => {
-                let input_type = node.attributes.get("type").map(|t| t.as_str()).unwrap_or("text");
+                let input_type = node
+                    .attributes
+                    .get("type")
+                    .map(|t| t.as_str())
+                    .unwrap_or("text");
                 Some(match input_type {
                     "checkbox" => "checkbox".to_string(),
                     "range" => "slider".to_string(),
@@ -215,19 +222,27 @@ impl ChallengeObserver {
 
     /// Extract position from layout-related attributes.
     fn extract_position(node: &crate::parser::html::DomNode) -> (f64, f64, f64, f64) {
-        let x = node.attributes.get("data-x")
+        let x = node
+            .attributes
+            .get("data-x")
             .or(node.attributes.get("left"))
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
-        let y = node.attributes.get("data-y")
+        let y = node
+            .attributes
+            .get("data-y")
             .or(node.attributes.get("top"))
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
-        let w = node.attributes.get("data-width")
+        let w = node
+            .attributes
+            .get("data-width")
             .or(node.attributes.get("width"))
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
-        let h = node.attributes.get("data-height")
+        let h = node
+            .attributes
+            .get("data-height")
             .or(node.attributes.get("height"))
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
@@ -261,7 +276,11 @@ impl ChallengeObserver {
     fn detect_grid_layout(tree: &DomTree, container_id: usize) -> Option<GridLayout> {
         let mut cells = Vec::new();
         Self::walk_subtree(tree, container_id, &mut |node_id, node| {
-            let class = node.attributes.get("class").map(|c| c.to_lowercase()).unwrap_or_default();
+            let class = node
+                .attributes
+                .get("class")
+                .map(|c| c.to_lowercase())
+                .unwrap_or_default();
             if class.contains("tile") || class.contains("cell") || class.contains("grid-item") {
                 cells.push(node_id);
             }
@@ -310,16 +329,27 @@ impl ChallengeObserver {
                 return;
             }
             // Look for instruction-like elements
-            let class = node.attributes.get("class").map(|c| c.to_lowercase()).unwrap_or_default();
-            if (class.contains("instruction") || class.contains("prompt") || class.contains("label"))
-                && !node.text_content.is_empty() {
-                    text = Some(node.text_content.clone());
-                }
+            let class = node
+                .attributes
+                .get("class")
+                .map(|c| c.to_lowercase())
+                .unwrap_or_default();
+            if (class.contains("instruction")
+                || class.contains("prompt")
+                || class.contains("label"))
+                && !node.text_content.is_empty()
+            {
+                text = Some(node.text_content.clone());
+            }
             // Also check for heading tags
-            if matches!(node.tag_name.as_str(), "h1" | "h2" | "h3" | "h4" | "p" | "span")
-                && !node.text_content.is_empty() && node.text_content.len() > 5 {
-                    text = Some(node.text_content.clone());
-                }
+            if matches!(
+                node.tag_name.as_str(),
+                "h1" | "h2" | "h3" | "h4" | "p" | "span"
+            ) && !node.text_content.is_empty()
+                && node.text_content.len() > 5
+            {
+                text = Some(node.text_content.clone());
+            }
         });
         text
     }
@@ -348,7 +378,10 @@ impl ChallengeObserver {
             // Collect class-based markers
             if let Some(class) = node.attributes.get("class") {
                 for cls in class.split_whitespace() {
-                    if cls.contains("captcha") || cls.contains("challenge") || cls.contains("verify") {
+                    if cls.contains("captcha")
+                        || cls.contains("challenge")
+                        || cls.contains("verify")
+                    {
                         markers.push(format!("class:{}", cls));
                     }
                 }
@@ -423,7 +456,12 @@ mod tests {
     fn detect_container_by_iframe_src() {
         let nodes = vec![
             make_node(0, "div", &[], vec![1]),
-            make_node(1, "iframe", &[("src", "https://hcaptcha.com/1/api2/anchor")], vec![]),
+            make_node(
+                1,
+                "iframe",
+                &[("src", "https://hcaptcha.com/1/api2/anchor")],
+                vec![],
+            ),
         ];
         let tree = DomTree::new(nodes);
         let snapshot = ChallengeObserver::observe(&tree);
@@ -434,7 +472,12 @@ mod tests {
     #[test]
     fn extract_grid_layout() {
         let nodes = vec![
-            make_node(0, "div", &[("class", "captcha-container")], vec![1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            make_node(
+                0,
+                "div",
+                &[("class", "captcha-container")],
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9],
+            ),
             make_node(1, "div", &[("class", "tile")], vec![]),
             make_node(2, "div", &[("class", "tile")], vec![]),
             make_node(3, "div", &[("class", "tile")], vec![]),
@@ -457,7 +500,12 @@ mod tests {
     fn classify_interactive_elements() {
         let nodes = vec![
             make_node(0, "div", &[("class", "recaptcha-container")], vec![1, 2, 3]),
-            make_node(1, "input", &[("type", "checkbox"), ("role", "checkbox")], vec![]),
+            make_node(
+                1,
+                "input",
+                &[("type", "checkbox"), ("role", "checkbox")],
+                vec![],
+            ),
             make_node(2, "button", &[("class", "verify-btn")], vec![]),
             make_node(3, "img", &[("src", "challenge.png")], vec![]),
         ];
@@ -465,7 +513,11 @@ mod tests {
         let snapshot = ChallengeObserver::observe(&tree).unwrap();
         assert_eq!(snapshot.interactive_elements.len(), 3);
 
-        let roles: Vec<&str> = snapshot.interactive_elements.iter().map(|e| e.role.as_str()).collect();
+        let roles: Vec<&str> = snapshot
+            .interactive_elements
+            .iter()
+            .map(|e| e.role.as_str())
+            .collect();
         assert!(roles.contains(&"checkbox"));
         assert!(roles.contains(&"button"));
         assert!(roles.contains(&"image"));

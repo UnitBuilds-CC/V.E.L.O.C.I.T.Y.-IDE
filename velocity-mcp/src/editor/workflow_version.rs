@@ -78,10 +78,26 @@ impl WorkflowHistory {
         let ver1 = self.get_version(v1)?;
         let ver2 = self.get_version(v2)?;
 
-        let nodes_added = ver2.canvas.nodes.len().saturating_sub(ver1.canvas.nodes.len());
-        let nodes_removed = ver1.canvas.nodes.len().saturating_sub(ver2.canvas.nodes.len());
-        let edges_added = ver2.canvas.edges.len().saturating_sub(ver1.canvas.edges.len());
-        let edges_removed = ver1.canvas.edges.len().saturating_sub(ver2.canvas.edges.len());
+        let nodes_added = ver2
+            .canvas
+            .nodes
+            .len()
+            .saturating_sub(ver1.canvas.nodes.len());
+        let nodes_removed = ver1
+            .canvas
+            .nodes
+            .len()
+            .saturating_sub(ver2.canvas.nodes.len());
+        let edges_added = ver2
+            .canvas
+            .edges
+            .len()
+            .saturating_sub(ver1.canvas.edges.len());
+        let edges_removed = ver1
+            .canvas
+            .edges
+            .len()
+            .saturating_sub(ver2.canvas.edges.len());
 
         Some(VersionDiff {
             from_version: v1,
@@ -159,8 +175,7 @@ impl VersionRegistry {
     /// Persist version histories to disk.
     pub fn save(&self, workspace_root: &std::path::Path) -> Result<(), String> {
         let dir = workspace_root.join(".velocity").join("workflow_versions");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create version dir: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create version dir: {e}"))?;
 
         for (id, history) in &self.histories {
             let json = serde_json::to_vec_pretty(history)
@@ -209,7 +224,10 @@ mod tests {
         let start = c.nodes[0].id.clone();
         let end = c.nodes[1].id.clone();
         let mid = c.add_node(
-            CanvasNodeKind::Tool { name: "test".into(), args: serde_json::json!({}) },
+            CanvasNodeKind::Tool {
+                name: "test".into(),
+                args: serde_json::json!({}),
+            },
             NodePosition { x: 300.0, y: 200.0 },
         );
         c.add_edge(start, "ok", mid.clone());
@@ -225,7 +243,10 @@ mod tests {
 
         let mut canvas_v2 = canvas_v1.clone();
         canvas_v2.add_node(
-            CanvasNodeKind::AgentTask { prompt: "test".into(), team: None },
+            CanvasNodeKind::AgentTask {
+                prompt: "test".into(),
+                team: None,
+            },
             NodePosition { x: 500.0, y: 300.0 },
         );
         history.snapshot(&canvas_v2, "added agent node");
@@ -245,11 +266,17 @@ mod tests {
 
         let mut canvas_v2 = canvas_v1.clone();
         canvas_v2.add_node(
-            CanvasNodeKind::Tool { name: "new".into(), args: serde_json::json!({}) },
+            CanvasNodeKind::Tool {
+                name: "new".into(),
+                args: serde_json::json!({}),
+            },
             NodePosition { x: 500.0, y: 300.0 },
         );
         canvas_v2.add_node(
-            CanvasNodeKind::Tool { name: "new2".into(), args: serde_json::json!({}) },
+            CanvasNodeKind::Tool {
+                name: "new2".into(),
+                args: serde_json::json!({}),
+            },
             NodePosition { x: 700.0, y: 300.0 },
         );
         history.snapshot(&canvas_v2, "v2");

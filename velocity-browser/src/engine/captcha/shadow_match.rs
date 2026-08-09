@@ -26,7 +26,12 @@ pub struct Transform2D {
 
 impl Transform2D {
     pub fn identity() -> Self {
-        Self { rotation: 0.0, scale: 1.0, dx: 0.0, dy: 0.0 }
+        Self {
+            rotation: 0.0,
+            scale: 1.0,
+            dx: 0.0,
+            dy: 0.0,
+        }
     }
 }
 
@@ -215,7 +220,7 @@ mod tests {
         // One buffer holding a reference square and two candidate regions.
         let mut buf = PixelBuffer::new(180, 60);
         buf.fill_rect(10, 10, 40, 40, 20, 20, 20, 255); // reference: square
-        // candidate 0: disc
+                                                        // candidate 0: disc
         for y in 0..60 {
             for x in 60..120 {
                 let dx = x as i32 - 90;

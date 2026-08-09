@@ -75,11 +75,13 @@ impl FontShaperEngine {
             return CharWidthClass::Zero;
         }
         // CJK ranges
-        if matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}' | '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FFEF}') {
+        if matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}' | '\u{3000}'..='\u{303F}' | '\u{FF00}'..='\u{FFEF}')
+        {
             return CharWidthClass::Cjk;
         }
         match ch {
-            'i' | 'l' | 't' | 'f' | 'j' | 'r' | 'I' | '1' | '|' | '!' | '.' | ',' | ';' | ':' | '\'' => CharWidthClass::Narrow,
+            'i' | 'l' | 't' | 'f' | 'j' | 'r' | 'I' | '1' | '|' | '!' | '.' | ',' | ';' | ':'
+            | '\'' => CharWidthClass::Narrow,
             'm' | 'w' | 'M' | 'W' | 'q' | 'Q' | '@' | '#' | '%' | '&' => CharWidthClass::Wide,
             _ => CharWidthClass::Normal,
         }
@@ -144,8 +146,12 @@ impl FontShaperEngine {
     fn kerning_pair(left: char, right: char, font_size: f32) -> f32 {
         let base = font_size * -0.03; // slight negative kern
         match (left, right) {
-            ('A', 'V') | ('A', 'W') | ('A', 'Y') | ('V', 'A') | ('W', 'A') | ('Y', 'A') => base * 1.5,
-            ('T', 'a') | ('T', 'e') | ('T', 'o') | ('V', 'a') | ('V', 'e') | ('W', 'a') => base * 1.2,
+            ('A', 'V') | ('A', 'W') | ('A', 'Y') | ('V', 'A') | ('W', 'A') | ('Y', 'A') => {
+                base * 1.5
+            }
+            ('T', 'a') | ('T', 'e') | ('T', 'o') | ('V', 'a') | ('V', 'e') | ('W', 'a') => {
+                base * 1.2
+            }
             ('f', 'i') | ('f', 'l') | ('f', 't') => base * 0.8,
             ('r', 'n') | ('r', 'm') | ('r', 'v') => base * 0.6,
             _ => 0.0,
@@ -189,7 +195,12 @@ mod tests {
         // 'i' and 'l' should be narrower than 'm' and 'w'
         let i_width = glyphs[0].advance_width;
         let m_width = glyphs[3].advance_width; // 'm' is at index 3 (after 'i','l',' ')
-        assert!(i_width < m_width, "Narrow char 'i' ({}) should be less than wide char 'm' ({})", i_width, m_width);
+        assert!(
+            i_width < m_width,
+            "Narrow char 'i' ({}) should be less than wide char 'm' ({})",
+            i_width,
+            m_width
+        );
     }
 
     #[test]
@@ -217,7 +228,12 @@ mod tests {
         // AV should have kerning applied (narrower total)
         let av_total: f32 = glyphs_av.iter().map(|g| g.advance_width).sum();
         let ab_total: f32 = glyphs_ab.iter().map(|g| g.advance_width).sum();
-        assert!(av_total < ab_total, "AV ({}) should be narrower than AB ({}) due to kerning", av_total, ab_total);
+        assert!(
+            av_total < ab_total,
+            "AV ({}) should be narrower than AB ({}) due to kerning",
+            av_total,
+            ab_total
+        );
     }
 
     #[test]

@@ -177,10 +177,10 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let d1 = ChallengeDescriptor::from_known_provider("hcaptcha", "tile_flip")
-            .with_visual_hash(42);
-        let d2 = ChallengeDescriptor::from_known_provider("hcaptcha", "tile_flip")
-            .with_visual_hash(42);
+        let d1 =
+            ChallengeDescriptor::from_known_provider("hcaptcha", "tile_flip").with_visual_hash(42);
+        let d2 =
+            ChallengeDescriptor::from_known_provider("hcaptcha", "tile_flip").with_visual_hash(42);
         assert_eq!(d1, d2);
 
         let mut h1 = DefaultHasher::new();

@@ -1,22 +1,27 @@
-use super::signal::*;
+use super::coercion::*;
+use super::eval::{eval_expr_node, eval_program};
 use super::lexer::lex;
 use super::parser::Parser;
-use super::coercion::*;
-use super::eval::{eval_program, eval_expr_node};
+use super::signal::*;
 use crate::js::scope::{Scope, ScopeRef};
 use crate::js::vm::JsValue;
-use velocity_ide::safety::SafeMutex;
 use std::collections::HashMap;
+use velocity_ide::safety::SafeMutex;
 
 /// Evaluate a single JS expression against a flat variable scope.
 /// This is the backward-compatible interface used by vm.rs.
 pub fn eval_expr(input: &str, scope_map: &HashMap<String, JsValue>) -> Result<JsValue, String> {
     let tokens = lex(input)?;
-    if tokens.len() <= 1 { return Ok(JsValue::Undefined); } // only Eof
+    if tokens.len() <= 1 {
+        return Ok(JsValue::Undefined);
+    } // only Eof
     let mut parser = Parser::new(tokens);
     let expr = parser.parse_expr().map_err(|e| e.to_string())?;
     let scope = Scope::new_global();
-    { let mut s = scope.lock_safe(); s.locals = scope_map.clone(); }
+    {
+        let mut s = scope.lock_safe();
+        s.locals = scope_map.clone();
+    }
     match eval_expr_node(&expr, &scope) {
         Ok(v) => Ok(v),
         Err(Signal::Throw(v)) => Err(to_string(&v)),
@@ -27,7 +32,9 @@ pub fn eval_expr(input: &str, scope_map: &HashMap<String, JsValue>) -> Result<Js
 /// Parse and evaluate a full script (multiple statements). Used by the new VM.
 pub fn eval_script(input: &str, scope: &ScopeRef) -> Result<JsValue, String> {
     let tokens = lex(input)?;
-    if tokens.len() <= 1 { return Ok(JsValue::Undefined); }
+    if tokens.len() <= 1 {
+        return Ok(JsValue::Undefined);
+    }
     let mut parser = Parser::new(tokens);
     let stmts = parser.parse_program().map_err(|e| e.to_string())?;
     match eval_program(&stmts, scope) {

@@ -72,7 +72,9 @@ impl CaptchaSolverEngine {
             // Check for text-based captcha
             if n.tag_name == "img" {
                 if let Some(alt) = n.attributes.get("alt") {
-                    if alt.to_lowercase().contains("captcha") || alt.to_lowercase().contains("verification") {
+                    if alt.to_lowercase().contains("captcha")
+                        || alt.to_lowercase().contains("verification")
+                    {
                         return Some(CaptchaType::TextCaptcha);
                     }
                 }
@@ -86,23 +88,39 @@ impl CaptchaSolverEngine {
         for n in &tree.nodes {
             if let Some(captcha_type) = Self::detect_captcha_from_node(n) {
                 // Extract position from style/layout attributes
-                let x = n.attributes.get("data-x")
+                let x = n
+                    .attributes
+                    .get("data-x")
                     .or(n.attributes.get("left"))
                     .and_then(|v| v.parse::<f64>().ok())
                     .unwrap_or(0.0);
-                let y = n.attributes.get("data-y")
+                let y = n
+                    .attributes
+                    .get("data-y")
                     .or(n.attributes.get("top"))
                     .and_then(|v| v.parse::<f64>().ok())
                     .unwrap_or(0.0);
-                let w = n.attributes.get("data-width")
+                let w = n
+                    .attributes
+                    .get("data-width")
                     .or(n.attributes.get("width"))
                     .and_then(|v| v.parse::<f64>().ok())
                     .unwrap_or(300.0);
-                let h = n.attributes.get("data-height")
+                let h = n
+                    .attributes
+                    .get("data-height")
                     .or(n.attributes.get("height"))
                     .and_then(|v| v.parse::<f64>().ok())
                     .unwrap_or(150.0);
-                return Some((captcha_type, CaptchaPosition { x, y, width: w, height: h }));
+                return Some((
+                    captcha_type,
+                    CaptchaPosition {
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    },
+                ));
             }
         }
         None
@@ -110,10 +128,18 @@ impl CaptchaSolverEngine {
 
     fn detect_captcha_from_node(node: &crate::parser::html::DomNode) -> Option<CaptchaType> {
         if let Some(src) = node.attributes.get("src") {
-            if src.contains("hcaptcha.com") { return Some(CaptchaType::HCaptcha); }
-            if src.contains("recaptcha") { return Some(CaptchaType::ReCaptchaV2); }
-            if src.contains("turnstile") { return Some(CaptchaType::Turnstile); }
-            if src.contains("funcaptcha") || src.contains("arkoselabs") { return Some(CaptchaType::FunCaptcha); }
+            if src.contains("hcaptcha.com") {
+                return Some(CaptchaType::HCaptcha);
+            }
+            if src.contains("recaptcha") {
+                return Some(CaptchaType::ReCaptchaV2);
+            }
+            if src.contains("turnstile") {
+                return Some(CaptchaType::Turnstile);
+            }
+            if src.contains("funcaptcha") || src.contains("arkoselabs") {
+                return Some(CaptchaType::FunCaptcha);
+            }
         }
         None
     }
@@ -285,14 +311,23 @@ mod tests {
     fn detect_hcaptcha() {
         let node = make_node("iframe", &[("src", "https://hcaptcha.com/1.html")]);
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::HCaptcha));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::HCaptcha)
+        );
     }
 
     #[test]
     fn detect_recaptcha_v2() {
-        let node = make_node("script", &[("src", "https://www.google.com/recaptcha/api.js")]);
+        let node = make_node(
+            "script",
+            &[("src", "https://www.google.com/recaptcha/api.js")],
+        );
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::ReCaptchaV2));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::ReCaptchaV2)
+        );
     }
 
     #[test]
@@ -310,37 +345,64 @@ mod tests {
 
     #[test]
     fn detect_recaptcha_v3() {
-        let node = make_node("script", &[("src", "https://www.google.com/recaptcha/enterprise.js")]);
+        let node = make_node(
+            "script",
+            &[("src", "https://www.google.com/recaptcha/enterprise.js")],
+        );
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::ReCaptchaV3));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::ReCaptchaV3)
+        );
     }
 
     #[test]
     fn detect_turnstile() {
-        let node = make_node("script", &[("src", "https://challenges.cloudflare.com/turnstile/v0/api.js")]);
+        let node = make_node(
+            "script",
+            &[(
+                "src",
+                "https://challenges.cloudflare.com/turnstile/v0/api.js",
+            )],
+        );
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::Turnstile));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::Turnstile)
+        );
     }
 
     #[test]
     fn detect_funcaptcha() {
         let node = make_node("script", &[("src", "https://api.funcaptcha.com/fc.js")]);
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::FunCaptcha));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::FunCaptcha)
+        );
     }
 
     #[test]
     fn detect_text_captcha_by_alt() {
         let node = make_node("img", &[("alt", "Enter the captcha text")]);
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::TextCaptcha));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::TextCaptcha)
+        );
     }
 
     #[test]
     fn detect_recaptcha_by_data_attrs() {
-        let node = make_node("div", &[("data-sitekey", "abc123"), ("data-callback", "onSubmit")]);
+        let node = make_node(
+            "div",
+            &[("data-sitekey", "abc123"), ("data-callback", "onSubmit")],
+        );
         let tree = DomTree::new(vec![node]);
-        assert_eq!(CaptchaSolverEngine::detect_challenge(&tree), Some(CaptchaType::ReCaptchaV2));
+        assert_eq!(
+            CaptchaSolverEngine::detect_challenge(&tree),
+            Some(CaptchaType::ReCaptchaV2)
+        );
     }
 
     #[test]

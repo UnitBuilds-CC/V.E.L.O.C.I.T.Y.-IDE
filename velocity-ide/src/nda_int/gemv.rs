@@ -10,43 +10,46 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
         let mut out_i32 = vec![0i32; matrix.rows];
         let global_scale_log2 = matrix.scale.log2().round() as i8;
 
-        out_i32.par_iter_mut().enumerate().for_each(|(row, out_val)| {
-            let row_start = row * matrix.cols;
-            let mut acc = 0i32;
-            let block_size = matrix.block_size;
-            let n_blocks = matrix.cols.div_ceil(block_size);
+        out_i32
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(row, out_val)| {
+                let row_start = row * matrix.cols;
+                let mut acc = 0i32;
+                let block_size = matrix.block_size;
+                let n_blocks = matrix.cols.div_ceil(block_size);
 
-            for block_idx in 0..n_blocks {
-                let q_scale = matrix.q_scales[block_idx] as i32;
-                if q_scale == 0 {
-                    continue;
+                for block_idx in 0..n_blocks {
+                    let q_scale = matrix.q_scales[block_idx] as i32;
+                    if q_scale == 0 {
+                        continue;
+                    }
+
+                    let mut block_acc = 0i32;
+                    let start_col = block_idx * block_size;
+                    let end_col = (start_col + block_size).min(matrix.cols);
+
+                    for col in start_col..end_col {
+                        let w_idx = row_start + col;
+                        let byte_idx = w_idx / 2;
+                        let nibble_shift = (w_idx % 2) * 4;
+                        let byte = matrix.packed_codes[byte_idx];
+                        let code = ((byte >> nibble_shift) & 0x0F) as usize;
+
+                        let x_byte = col / 8;
+                        let x_bit = col % 8;
+                        let xs = (x.sign[x_byte] >> x_bit) & 1;
+                        let xe = (x.extra[x_byte] >> x_bit) & 1;
+                        let x_code = ((xs << 1) | xe) as usize;
+
+                        block_acc += FP4_PRODUCT_LUT[x_code][code];
+                    }
+
+                    acc += block_acc * q_scale;
                 }
 
-                let mut block_acc = 0i32;
-                let start_col = block_idx * block_size;
-                let end_col = (start_col + block_size).min(matrix.cols);
-
-                for col in start_col..end_col {
-                    let w_idx = row_start + col;
-                    let byte_idx = w_idx / 2;
-                    let nibble_shift = (w_idx % 2) * 4;
-                    let byte = matrix.packed_codes[byte_idx];
-                    let code = ((byte >> nibble_shift) & 0x0F) as usize;
-
-                    let x_byte = col / 8;
-                    let x_bit = col % 8;
-                    let xs = (x.sign[x_byte] >> x_bit) & 1;
-                    let xe = (x.extra[x_byte] >> x_bit) & 1;
-                    let x_code = ((xs << 1) | xe) as usize;
-
-                    block_acc += FP4_PRODUCT_LUT[x_code][code];
-                }
-
-                acc += block_acc * q_scale;
-            }
-
-            *out_val = (acc + 128) >> 8;
-        });
+                *out_val = (acc + 128) >> 8;
+            });
 
         let out_log2 = combine_log2_scales(global_scale_log2.saturating_add(12), x.log2_scale);
         return NdaVec::from_i32_slice(&out_i32, out_log2);
@@ -58,50 +61,56 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
         let mut out_i32 = vec![0i32; matrix.rows];
         let global_scale_log2 = matrix.scale.log2().round() as i8;
 
-        out_i32.par_iter_mut().enumerate().for_each(|(row, out_val)| {
-            let row_start = row * matrix.cols;
-            let mut acc = 0i32;
-            let block_size = matrix.block_size;
-            let n_blocks = matrix.cols.div_ceil(block_size);
+        out_i32
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(row, out_val)| {
+                let row_start = row * matrix.cols;
+                let mut acc = 0i32;
+                let block_size = matrix.block_size;
+                let n_blocks = matrix.cols.div_ceil(block_size);
 
-            for block_idx in 0..n_blocks {
-                let q_scale = matrix.q_scales[block_idx] as i32;
-                if q_scale == 0 {
-                    continue;
+                for block_idx in 0..n_blocks {
+                    let q_scale = matrix.q_scales[block_idx] as i32;
+                    if q_scale == 0 {
+                        continue;
+                    }
+
+                    let mut block_acc = 0i32;
+                    let start_col = block_idx * block_size;
+                    let end_col = (start_col + block_size).min(matrix.cols);
+
+                    for col in start_col..end_col {
+                        let w_idx = row_start + col;
+                        let byte_idx = w_idx / 4;
+                        let pair_shift = (w_idx % 4) * 2;
+                        let byte = matrix.packed_codes[byte_idx];
+                        let code = ((byte >> pair_shift) & 0x03) as usize;
+
+                        let x_byte = col / 8;
+                        let x_bit = col % 8;
+                        let xs = (x.sign[x_byte] >> x_bit) & 1;
+                        let xe = (x.extra[x_byte] >> x_bit) & 1;
+                        let x_code = ((xs << 1) | xe) as usize;
+
+                        block_acc += FP2_PRODUCT_LUT[x_code][code];
+                    }
+
+                    acc += block_acc * q_scale;
                 }
 
-                let mut block_acc = 0i32;
-                let start_col = block_idx * block_size;
-                let end_col = (start_col + block_size).min(matrix.cols);
-
-                for col in start_col..end_col {
-                    let w_idx = row_start + col;
-                    let byte_idx = w_idx / 4;
-                    let pair_shift = (w_idx % 4) * 2;
-                    let byte = matrix.packed_codes[byte_idx];
-                    let code = ((byte >> pair_shift) & 0x03) as usize;
-
-                    let x_byte = col / 8;
-                    let x_bit = col % 8;
-                    let xs = (x.sign[x_byte] >> x_bit) & 1;
-                    let xe = (x.extra[x_byte] >> x_bit) & 1;
-                    let x_code = ((xs << 1) | xe) as usize;
-
-                    block_acc += FP2_PRODUCT_LUT[x_code][code];
-                }
-
-                acc += block_acc * q_scale;
-            }
-
-            *out_val = (acc + 128) >> 8;
-        });
+                *out_val = (acc + 128) >> 8;
+            });
 
         let out_log2 = combine_log2_scales(global_scale_log2.saturating_add(14), x.log2_scale);
         return NdaVec::from_i32_slice(&out_i32, out_log2);
     }
 
     // Default legacy v2 quad path
-    debug_assert!(matrix.is_quad(), "nda_gemv_nda_to_nda requires v2 quad matrix");
+    debug_assert!(
+        matrix.is_quad(),
+        "nda_gemv_nda_to_nda requires v2 quad matrix"
+    );
     debug_assert_eq!(x.len, matrix.cols);
 
     let stride = matrix.cols.div_ceil(8);
@@ -119,21 +128,24 @@ pub fn nda_gemv_nda_to_nda(matrix: &NdaMatrix, x: &NdaVec) -> NdaVec {
         x_high[b] = (((xs >> 4) & 0x0F) | (xe & 0xF0)) as usize;
     }
 
-    out_i32.par_iter_mut().enumerate().for_each(|(row, out_val)| {
-        let base = row * stride;
-        let mut acc = 0i32;
+    out_i32
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(row, out_val)| {
+            let base = row * stride;
+            let mut acc = 0i32;
 
-        for b in 0..stride {
-            let ws = matrix.sign[base + b];
-            let we = matrix.extra[base + b];
-            let w_low = ((ws & 0x0F) | ((we & 0x0F) << 4)) as usize;
-            let w_high = (((ws >> 4) & 0x0F) | (we & 0xF0)) as usize;
+            for b in 0..stride {
+                let ws = matrix.sign[base + b];
+                let we = matrix.extra[base + b];
+                let w_low = ((ws & 0x0F) | ((we & 0x0F) << 4)) as usize;
+                let w_high = (((ws >> 4) & 0x0F) | (we & 0xF0)) as usize;
 
-            acc += (DOT_4_LUT[w_low][x_low[b]] + DOT_4_LUT[w_high][x_high[b]]) as i32;
-        }
+                acc += (DOT_4_LUT[w_low][x_low[b]] + DOT_4_LUT[w_high][x_high[b]]) as i32;
+            }
 
-        *out_val = acc;
-    });
+            *out_val = acc;
+        });
 
     let out_log2 = combine_log2_scales(mat_log2, x.log2_scale);
     NdaVec::from_i32_slice(&out_i32, out_log2)

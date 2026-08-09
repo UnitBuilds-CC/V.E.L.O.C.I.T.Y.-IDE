@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
-use crate::agent::UiToAgentMessage;
 use super::super::types::*;
 use super::struct_def::VelocityApp;
+use crate::agent::UiToAgentMessage;
 
 impl VelocityApp {
-
     pub fn focus_panel(&mut self, kind: TabKind) {
         if let Some(dock) = self.dock_state.as_mut() {
             let found_tab = dock
@@ -75,8 +74,9 @@ impl VelocityApp {
 
     /// True for `.nda` files that live in internal state dirs (`.velocity/`,
     /// `memory/`) — those are at-rest envelopes, never routed to the NDA editor.
-        pub(crate) fn is_internal_nda_path(path: &std::path::Path) -> bool {
-        path.components().any(|c| matches!(c.as_os_str().to_str(), Some(".velocity") | Some("memory")))
+    pub(crate) fn is_internal_nda_path(path: &std::path::Path) -> bool {
+        path.components()
+            .any(|c| matches!(c.as_os_str().to_str(), Some(".velocity") | Some("memory")))
     }
 
     /// Open (or focus) an NDA document tab. With `None`, opens a fresh blank
@@ -94,7 +94,10 @@ impl VelocityApp {
             }
         }
         let id = TabId::next(&mut self.tab_counter);
-        let tab = Tab { id: id.clone(), kind: TabKind::NdaDoc { path: path.clone() } };
+        let tab = Tab {
+            id: id.clone(),
+            kind: TabKind::NdaDoc { path: path.clone() },
+        };
         let mut view = crate::editor::nda_document::NdaDocumentView::new();
         if let Some(ref p) = path {
             let ws = self.workspace_root.clone();
@@ -119,16 +122,24 @@ impl VelocityApp {
     pub fn open_nda_viewer(&mut self) {
         let dir = self.workspace_root.join(".velocity");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.toasts.push(crate::editor::toast::Toast::error(format!("Viewer failed: {e}")));
+            self.toasts.push(crate::editor::toast::Toast::error(format!(
+                "Viewer failed: {e}"
+            )));
             return;
         }
         let out = dir.join("nda_viewer.html");
         match std::fs::write(&out, crate::editor::nda_viewer::pwa_viewer_html()) {
             Ok(_) => {
-                self.toasts.push(crate::editor::toast::Toast::success(format!("NDA viewer at {}", out.display())));
+                self.toasts
+                    .push(crate::editor::toast::Toast::success(format!(
+                        "NDA viewer at {}",
+                        out.display()
+                    )));
                 crate::editor::nda_document::open_in_browser(&out);
             }
-            Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!("Viewer failed: {e}"))),
+            Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!(
+                "Viewer failed: {e}"
+            ))),
         }
     }
 
@@ -139,23 +150,50 @@ impl VelocityApp {
             .as_ref()
             .and_then(|id| self.tab_path(id).cloned());
         let Some(path) = path else {
-            self.toasts.push(crate::editor::toast::Toast::info("Open a file first, then import it to NDA"));
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "Open a file first, then import it to NDA",
+            ));
             return;
         };
         match crate::editor::nda_document::convert_file_to_doc(&path) {
             Ok(doc) => {
-                let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "imported".to_string());
-                let safe: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+                let stem = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "imported".to_string());
+                let safe: String = stem
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
                 let out = self.workspace_root.join(format!("{safe}.nda"));
-                match crate::editor::nda_document::save_to_disk(&self.workspace_root, &out, &doc, false) {
+                match crate::editor::nda_document::save_to_disk(
+                    &self.workspace_root,
+                    &out,
+                    &doc,
+                    false,
+                ) {
                     Ok(_) => {
-                        self.toasts.push(crate::editor::toast::Toast::success(format!("Imported to {}", out.display())));
+                        self.toasts
+                            .push(crate::editor::toast::Toast::success(format!(
+                                "Imported to {}",
+                                out.display()
+                            )));
                         self.open_nda_document(Some(out));
                     }
-                    Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!("Import failed: {e}"))),
+                    Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!(
+                        "Import failed: {e}"
+                    ))),
                 }
             }
-            Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!("Import failed: {e}"))),
+            Err(e) => self.toasts.push(crate::editor::toast::Toast::error(format!(
+                "Import failed: {e}"
+            ))),
         }
     }
 
@@ -267,7 +305,9 @@ impl VelocityApp {
             .buffers
             .get(&id)
             .map(|buf| (buf.content.clone(), buf.path.clone()));
-        let Some((content, path)) = snapshot else { return };
+        let Some((content, path)) = snapshot else {
+            return;
+        };
 
         let prefix = content
             .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
@@ -334,8 +374,11 @@ impl VelocityApp {
         self.push_nav_location();
         self.open_editor(Some(target.file));
         self.pending_cursor_line = Some(target_line);
-        self.status_message =
-            format!("Definition \u{2192} {}:{}", target_path.display(), target_line);
+        self.status_message = format!(
+            "Definition \u{2192} {}:{}",
+            target_path.display(),
+            target_line
+        );
     }
 
     /// Shift+F12: find all references to the symbol under the cursor via LSP and
@@ -414,11 +457,19 @@ impl VelocityApp {
     }
 
     /// Render the debug panel (call stack, variables, watches, toolbar).
-    pub fn render_debug_panel(&mut self, ui: &mut eframe::egui::Ui, palette: crate::editor::theme::IdePalette) {
-        use eframe::egui;
+    pub fn render_debug_panel(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        palette: crate::editor::theme::IdePalette,
+    ) {
         use crate::editor::debugger::DebugState;
+        use eframe::egui;
 
-        let state = self.dap_client.as_ref().map(|d| d.state).unwrap_or(DebugState::Inactive);
+        let state = self
+            .dap_client
+            .as_ref()
+            .map(|d| d.state)
+            .unwrap_or(DebugState::Inactive);
 
         // Debug toolbar
         ui.horizontal(|ui| {
@@ -429,39 +480,61 @@ impl VelocityApp {
                 DebugState::Paused => "Paused",
                 DebugState::Stopped => "Stopped",
             };
-            ui.label(egui::RichText::new(format!("\u{1F41E} {}", state_label)).size(10.0).color(match state {
-                DebugState::Running => palette.success,
-                DebugState::Paused => palette.warning,
-                DebugState::Stopped => palette.error,
-                _ => palette.text_muted,
-            }));
+            ui.label(
+                egui::RichText::new(format!("\u{1F41E} {}", state_label))
+                    .size(10.0)
+                    .color(match state {
+                        DebugState::Running => palette.success,
+                        DebugState::Paused => palette.warning,
+                        DebugState::Stopped => palette.error,
+                        _ => palette.text_muted,
+                    }),
+            );
 
             ui.add_space(8.0);
             let can_continue = state == DebugState::Paused;
             let can_step = state == DebugState::Paused;
             let can_stop = state == DebugState::Running || state == DebugState::Paused;
 
-            if ui.add_enabled(can_continue, egui::Button::new("\u{25B6} Continue")).clicked() {
+            if ui
+                .add_enabled(can_continue, egui::Button::new("\u{25B6} Continue"))
+                .clicked()
+            {
                 if let Some(dap) = &mut self.dap_client {
                     let _ = dap.continue_execution();
                 }
             }
-            if ui.add_enabled(can_step, egui::Button::new("\u{23ED} Step Over")).clicked() {
+            if ui
+                .add_enabled(can_step, egui::Button::new("\u{23ED} Step Over"))
+                .clicked()
+            {
                 if let Some(dap) = &mut self.dap_client {
                     let _ = dap.step_over();
                 }
             }
-            if ui.add_enabled(can_step, egui::Button::new("\u{2B07} Step Into")).clicked() {
+            if ui
+                .add_enabled(can_step, egui::Button::new("\u{2B07} Step Into"))
+                .clicked()
+            {
                 if let Some(dap) = &mut self.dap_client {
                     let _ = dap.step_into();
                 }
             }
-            if ui.add_enabled(can_step, egui::Button::new("\u{2B06} Step Out")).clicked() {
+            if ui
+                .add_enabled(can_step, egui::Button::new("\u{2B06} Step Out"))
+                .clicked()
+            {
                 if let Some(dap) = &mut self.dap_client {
                     let _ = dap.step_out();
                 }
             }
-            if ui.add_enabled(can_stop, egui::Button::new("\u{23F9} Stop").fill(palette.error)).clicked() {
+            if ui
+                .add_enabled(
+                    can_stop,
+                    egui::Button::new("\u{23F9} Stop").fill(palette.error),
+                )
+                .clicked()
+            {
                 if let Some(dap) = &mut self.dap_client {
                     let _ = dap.stop();
                 }
@@ -470,50 +543,103 @@ impl VelocityApp {
         ui.separator();
 
         if state == DebugState::Inactive {
-            ui.label(egui::RichText::new("No active debug session. Press F5 to start debugging.").size(9.0).color(palette.text_muted));
+            ui.label(
+                egui::RichText::new("No active debug session. Press F5 to start debugging.")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
             return;
         }
 
         // Split: Call Stack | Variables | Watches
         ui.columns(3, |cols| {
             // Call Stack
-            cols[0].label(egui::RichText::new("Call Stack").size(9.0).strong().color(palette.accent));
+            cols[0].label(
+                egui::RichText::new("Call Stack")
+                    .size(9.0)
+                    .strong()
+                    .color(palette.accent),
+            );
             if let Some(dap) = &self.dap_client {
                 for frame in &dap.stack_frames {
-                    let file = frame.file.as_ref()
-                        .map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string())
+                    let file = frame
+                        .file
+                        .as_ref()
+                        .map(|f| {
+                            f.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string()
+                        })
                         .unwrap_or_default();
-                    cols[0].label(egui::RichText::new(format!("  {} ({}:{})", frame.name, file, frame.line))
-                        .monospace().size(9.0).color(palette.text));
+                    cols[0].label(
+                        egui::RichText::new(format!("  {} ({}:{})", frame.name, file, frame.line))
+                            .monospace()
+                            .size(9.0)
+                            .color(palette.text),
+                    );
                 }
                 if dap.stack_frames.is_empty() {
-                    cols[0].label(egui::RichText::new("  (no frames)").size(9.0).color(palette.text_muted));
+                    cols[0].label(
+                        egui::RichText::new("  (no frames)")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
                 }
             }
 
             // Variables
-            cols[1].label(egui::RichText::new("Variables").size(9.0).strong().color(palette.accent));
+            cols[1].label(
+                egui::RichText::new("Variables")
+                    .size(9.0)
+                    .strong()
+                    .color(palette.accent),
+            );
             if let Some(dap) = &self.dap_client {
                 for var in &dap.variables {
                     let type_hint = var.type_name.as_deref().unwrap_or("");
-                    cols[1].label(egui::RichText::new(format!("  {} = {} {}", var.name, var.value, type_hint))
-                        .monospace().size(9.0).color(palette.text));
+                    cols[1].label(
+                        egui::RichText::new(format!(
+                            "  {} = {} {}",
+                            var.name, var.value, type_hint
+                        ))
+                        .monospace()
+                        .size(9.0)
+                        .color(palette.text),
+                    );
                 }
                 if dap.variables.is_empty() {
-                    cols[1].label(egui::RichText::new("  (no variables)").size(9.0).color(palette.text_muted));
+                    cols[1].label(
+                        egui::RichText::new("  (no variables)")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
                 }
             }
 
             // Watches
-            cols[2].label(egui::RichText::new("Watches").size(9.0).strong().color(palette.accent));
+            cols[2].label(
+                egui::RichText::new("Watches")
+                    .size(9.0)
+                    .strong()
+                    .color(palette.accent),
+            );
             if let Some(dap) = &self.dap_client {
                 for watch in &dap.watches {
                     let result = watch.result.as_deref().unwrap_or("<not evaluated>");
-                    cols[2].label(egui::RichText::new(format!("  {} = {}", watch.expression, result))
-                        .monospace().size(9.0).color(palette.text));
+                    cols[2].label(
+                        egui::RichText::new(format!("  {} = {}", watch.expression, result))
+                            .monospace()
+                            .size(9.0)
+                            .color(palette.text),
+                    );
                 }
                 if dap.watches.is_empty() {
-                    cols[2].label(egui::RichText::new("  (no watches)").size(9.0).color(palette.text_muted));
+                    cols[2].label(
+                        egui::RichText::new("  (no watches)")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
                 }
             }
         });
@@ -528,7 +654,8 @@ impl VelocityApp {
         if cargo_toml.exists() {
             // Rust project — look for the target binary
             let target_dir = self.workspace_root.join("target").join("debug");
-            let project_name = self.workspace_root
+            let project_name = self
+                .workspace_root
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -541,7 +668,10 @@ impl VelocityApp {
             };
 
             if !binary.exists() {
-                self.status_message = format!("Debug: binary not found at {}. Run 'cargo build' first.", binary.display());
+                self.status_message = format!(
+                    "Debug: binary not found at {}. Run 'cargo build' first.",
+                    binary.display()
+                );
                 self.toasts.push(crate::editor::toast::Toast::error(
                     "Build project before debugging (cargo build)",
                 ));
@@ -554,16 +684,19 @@ impl VelocityApp {
                 Ok(()) => {
                     self.dap_client = Some(dap);
                     self.status_message = "Debug: session started".to_string();
-                    self.toasts.push(crate::editor::toast::Toast::success("Debug session launched"));
+                    self.toasts.push(crate::editor::toast::Toast::success(
+                        "Debug session launched",
+                    ));
                     // Open debug tab in bottom panel
                     self.bottom_panel_state.collapsed = false;
                     self.bottom_panel_state.active_tab = 2; // Debug tab
                 }
                 Err(e) => {
                     self.status_message = format!("Debug: failed to launch — {}", e);
-                    self.toasts.push(crate::editor::toast::Toast::error(
-                        format!("Debug launch failed: {}", e),
-                    ));
+                    self.toasts.push(crate::editor::toast::Toast::error(format!(
+                        "Debug launch failed: {}",
+                        e
+                    )));
                 }
             }
         } else {
@@ -584,9 +717,9 @@ impl VelocityApp {
         }
         // Ensure the index is built.
         if self.semantic_index.is_none() {
-            self.semantic_index = Some(
-                crate::editor::semantic_search::SemanticIndex::build(&self.workspace_root),
-            );
+            self.semantic_index = Some(crate::editor::semantic_search::SemanticIndex::build(
+                &self.workspace_root,
+            ));
         }
         if let Some(ref index) = self.semantic_index {
             let hits = index.search(&self.search_query, 50);
@@ -608,30 +741,27 @@ impl VelocityApp {
     pub fn request_inline_suggestion(&mut self) {
         use crate::editor::inline_suggestions::SuggestionRequest;
 
-        let (file_path, prefix, suffix, language) = match self.active_tab.as_ref()
-            .and_then(|id| {
-                let path = self.tab_path(id)?.clone();
-                let buf = self.buffers.get(id)?;
-                let content = buf.content().to_string();
-                // Split at roughly the middle or the end (no cursor byte available)
-                // Use the last 500 chars as prefix context
-                let split = content.len().min(2000);
-                let prefix = content[..split].to_string();
-                let suffix = content[split..].to_string();
-                let ext = path.extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("txt");
-                let language = match ext {
-                    "rs" => "rust",
-                    "py" => "python",
-                    "js" | "jsx" => "javascript",
-                    "ts" | "tsx" => "typescript",
-                    "go" => "go",
-                    "java" => "java",
-                    _ => "plaintext",
-                };
-                Some((path, prefix, suffix, language.to_string()))
-            }) {
+        let (file_path, prefix, suffix, language) = match self.active_tab.as_ref().and_then(|id| {
+            let path = self.tab_path(id)?.clone();
+            let buf = self.buffers.get(id)?;
+            let content = buf.content().to_string();
+            // Split at roughly the middle or the end (no cursor byte available)
+            // Use the last 500 chars as prefix context
+            let split = content.len().min(2000);
+            let prefix = content[..split].to_string();
+            let suffix = content[split..].to_string();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("txt");
+            let language = match ext {
+                "rs" => "rust",
+                "py" => "python",
+                "js" | "jsx" => "javascript",
+                "ts" | "tsx" => "typescript",
+                "go" => "go",
+                "java" => "java",
+                _ => "plaintext",
+            };
+            Some((path, prefix, suffix, language.to_string()))
+        }) {
             Some(tuple) => tuple,
             None => return,
         };
@@ -658,7 +788,9 @@ impl VelocityApp {
         let Some(text) = self.inline_suggestions.accept() else {
             return;
         };
-        let Some(id) = self.active_tab.clone() else { return };
+        let Some(id) = self.active_tab.clone() else {
+            return;
+        };
 
         // Resolve the current cursor byte offset from the editor's text state.
         let cursor_char = self.buffers.get(&id).and_then(|buf| {
@@ -739,7 +871,9 @@ impl VelocityApp {
     pub fn init_deploy_pipeline(&mut self) {
         if self.deploy_pipeline.is_none() {
             self.deploy_pipeline = Some(
-                crate::editor::deploy_pipeline::PipelineManager::from_workspace(&self.workspace_root),
+                crate::editor::deploy_pipeline::PipelineManager::from_workspace(
+                    &self.workspace_root,
+                ),
             );
         }
     }
@@ -750,7 +884,9 @@ impl VelocityApp {
         if let Some(ref mut pipeline) = self.deploy_pipeline {
             pipeline.trigger_run();
             self.status_message = "Deploy pipeline started.".into();
-            self.toasts.push(crate::editor::toast::Toast::info("▲ Deploy pipeline running"));
+            self.toasts.push(crate::editor::toast::Toast::info(
+                "▲ Deploy pipeline running",
+            ));
         }
     }
 
@@ -760,10 +896,14 @@ impl VelocityApp {
             match pipeline.rollback() {
                 Ok(()) => {
                     self.status_message = "Rolled back to previous deployment.".into();
-                    self.toasts.push(crate::editor::toast::Toast::success("Rollback successful"));
+                    self.toasts
+                        .push(crate::editor::toast::Toast::success("Rollback successful"));
                 }
                 Err(e) => {
-                    self.toasts.push(crate::editor::toast::Toast::error(format!("Rollback failed: {}", e)));
+                    self.toasts.push(crate::editor::toast::Toast::error(format!(
+                        "Rollback failed: {}",
+                        e
+                    )));
                 }
             }
         }

@@ -8,19 +8,70 @@ use crate::engine::PixelBuffer;
 /// (the whole point of an agent-first browser).
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
-    ClearRect { x: f64, y: f64, w: f64, h: f64 },
-    FillRect { x: f64, y: f64, w: f64, h: f64, style: String },
-    StrokeRect { x: f64, y: f64, w: f64, h: f64, style: String },
-    FillText { text: String, x: f64, y: f64, font: String, style: String },
-    StrokeText { text: String, x: f64, y: f64, font: String, style: String },
-    DrawImage { src: String, dx: f64, dy: f64, dw: f64, dh: f64 },
+    ClearRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    },
+    FillRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        style: String,
+    },
+    StrokeRect {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        style: String,
+    },
+    FillText {
+        text: String,
+        x: f64,
+        y: f64,
+        font: String,
+        style: String,
+    },
+    StrokeText {
+        text: String,
+        x: f64,
+        y: f64,
+        font: String,
+        style: String,
+    },
+    DrawImage {
+        src: String,
+        dx: f64,
+        dy: f64,
+        dw: f64,
+        dh: f64,
+    },
     BeginPath,
-    MoveTo { x: f64, y: f64 },
-    LineTo { x: f64, y: f64 },
-    Arc { x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64 },
+    MoveTo {
+        x: f64,
+        y: f64,
+    },
+    LineTo {
+        x: f64,
+        y: f64,
+    },
+    Arc {
+        x: f64,
+        y: f64,
+        radius: f64,
+        start_angle: f64,
+        end_angle: f64,
+    },
     ClosePath,
-    Fill { style: String },
-    Stroke { style: String },
+    Fill {
+        style: String,
+    },
+    Stroke {
+        style: String,
+    },
 }
 
 /// A 2D canvas context that records every drawing operation into a semantic
@@ -70,7 +121,13 @@ impl Canvas2DContext {
     pub fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         let (r, g, b, a) = parse_css_color(&self.fill_style);
         self.rasterize_rect(x, y, w, h, r, g, b, a);
-        self.display_list.push(DrawCommand::FillRect { x, y, w, h, style: self.fill_style.clone() });
+        self.display_list.push(DrawCommand::FillRect {
+            x,
+            y,
+            w,
+            h,
+            style: self.fill_style.clone(),
+        });
     }
 
     pub fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
@@ -106,12 +163,19 @@ impl Canvas2DContext {
                 self.pixel_buffer.set_pixel(rx, cy, r, g, b, a);
             }
         }
-        self.display_list.push(DrawCommand::StrokeRect { x, y, w, h, style: self.stroke_style.clone() });
+        self.display_list.push(DrawCommand::StrokeRect {
+            x,
+            y,
+            w,
+            h,
+            style: self.stroke_style.clone(),
+        });
     }
 
     pub fn clear_rect(&mut self, x: f64, y: f64, w: f64, h: f64) {
         self.rasterize_rect(x, y, w, h, 0, 0, 0, 0);
-        self.display_list.push(DrawCommand::ClearRect { x, y, w, h });
+        self.display_list
+            .push(DrawCommand::ClearRect { x, y, w, h });
     }
 
     pub fn fill_text(&mut self, text: &str, x: f64, y: f64) {
@@ -135,7 +199,13 @@ impl Canvas2DContext {
     }
 
     pub fn draw_image(&mut self, src: &str, dx: f64, dy: f64, dw: f64, dh: f64) {
-        self.display_list.push(DrawCommand::DrawImage { src: src.to_string(), dx, dy, dw, dh });
+        self.display_list.push(DrawCommand::DrawImage {
+            src: src.to_string(),
+            dx,
+            dy,
+            dw,
+            dh,
+        });
     }
 
     pub fn begin_path(&mut self) {
@@ -151,7 +221,13 @@ impl Canvas2DContext {
     }
 
     pub fn arc(&mut self, x: f64, y: f64, radius: f64, start_angle: f64, end_angle: f64) {
-        self.display_list.push(DrawCommand::Arc { x, y, radius, start_angle, end_angle });
+        self.display_list.push(DrawCommand::Arc {
+            x,
+            y,
+            radius,
+            start_angle,
+            end_angle,
+        });
     }
 
     pub fn close_path(&mut self) {
@@ -159,11 +235,15 @@ impl Canvas2DContext {
     }
 
     pub fn fill(&mut self) {
-        self.display_list.push(DrawCommand::Fill { style: self.fill_style.clone() });
+        self.display_list.push(DrawCommand::Fill {
+            style: self.fill_style.clone(),
+        });
     }
 
     pub fn stroke(&mut self) {
-        self.display_list.push(DrawCommand::Stroke { style: self.stroke_style.clone() });
+        self.display_list.push(DrawCommand::Stroke {
+            style: self.stroke_style.clone(),
+        });
     }
 
     /// All text (fill + stroke) drawn to the canvas, in draw order.
@@ -183,7 +263,11 @@ impl Canvas2DContext {
     /// This produces a minimal uncompressed BMP-like encoding wrapped in base64
     /// since we don't have a PNG encoder, but matches the toDataURL() API shape.
     pub fn to_data_url(&self, mime_type: &str) -> String {
-        let _mime = if mime_type.is_empty() { "image/png" } else { mime_type };
+        let _mime = if mime_type.is_empty() {
+            "image/png"
+        } else {
+            mime_type
+        };
         // Encode as uncompressed BMP and then base64
         let bmp = self.encode_bmp();
         let b64 = base64_encode(&bmp);
@@ -219,14 +303,14 @@ impl Canvas2DContext {
         bmp.extend_from_slice(&(file_size as u32).to_le_bytes());
         bmp.extend_from_slice(&[0u8; 4]); // reserved
         bmp.extend_from_slice(&54u32.to_le_bytes()); // pixel data offset
-        // DIB header (BITMAPINFOHEADER)
+                                                     // DIB header (BITMAPINFOHEADER)
         bmp.extend_from_slice(&40u32.to_le_bytes()); // header size
         bmp.extend_from_slice(&(w as i32).to_le_bytes());
         bmp.extend_from_slice(&(h as i32).to_le_bytes());
         bmp.extend_from_slice(&1u16.to_le_bytes()); // planes
         bmp.extend_from_slice(&24u16.to_le_bytes()); // bits per pixel
         bmp.extend_from_slice(&[0u8; 24]); // compression through to color table (all zeros)
-        // Pixel data (bottom-up row order for BMP)
+                                           // Pixel data (bottom-up row order for BMP)
         for row in (0..h).rev() {
             for col in 0..w {
                 let px = self.pixel_buffer.get_pixel(col, row);

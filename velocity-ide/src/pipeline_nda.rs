@@ -51,18 +51,18 @@ pub struct NdaHead {
 }
 
 impl NdaHead {
-    const IN:  usize = 896;
+    const IN: usize = 896;
     const MID: usize = 64;
-    const OUT: usize = NdaOpcode::VOCAB_SIZE;   // 9
+    const OUT: usize = NdaOpcode::VOCAB_SIZE; // 9
 
     /// Initialise with small random weights (Xavier uniform).
     pub fn random() -> Self {
         use std::f32::consts::SQRT_2;
         // Xavier uniform scale: sqrt(2 / (fan_in + fan_out))
-        let s1 = SQRT_2 / ((Self::IN  + Self::MID) as f32).sqrt();
+        let s1 = SQRT_2 / ((Self::IN + Self::MID) as f32).sqrt();
         let s2 = SQRT_2 / ((Self::MID + Self::OUT) as f32).sqrt();
         Self {
-            w1: random_uniform(Self::MID * Self::IN,  s1),
+            w1: random_uniform(Self::MID * Self::IN, s1),
             b1: vec![0.0; Self::MID],
             w2: random_uniform(Self::OUT * Self::MID, s2),
             b2: vec![0.0; Self::OUT],
@@ -86,7 +86,9 @@ impl NdaHead {
 
         // Layer 1: linear + ReLU
         let mut mid = [0.0f32; Self::MID];
-        for (o, (row, &b)) in self.w1.chunks_exact(Self::IN)
+        for (o, (row, &b)) in self
+            .w1
+            .chunks_exact(Self::IN)
             .zip(self.b1.iter())
             .enumerate()
         {
@@ -94,12 +96,14 @@ impl NdaHead {
             for (&w, &x) in row.iter().zip(hidden.iter()) {
                 s += w * x;
             }
-            mid[o] = s.max(0.0);   // ReLU
+            mid[o] = s.max(0.0); // ReLU
         }
 
         // Layer 2: linear (no activation — raw logits)
         let mut out = [0.0f32; Self::OUT];
-        for (o, (row, &b)) in self.w2.chunks_exact(Self::MID)
+        for (o, (row, &b)) in self
+            .w2
+            .chunks_exact(Self::MID)
             .zip(self.b2.iter())
             .enumerate()
         {
@@ -140,7 +144,8 @@ impl NdaHead {
         anyhow::ensure!(
             floats.len() == n1 + n2 + n3 + n4,
             "NdaHead weight count mismatch: expected {}, got {}",
-            n1 + n2 + n3 + n4, floats.len()
+            n1 + n2 + n3 + n4,
+            floats.len()
         );
         let mut it = floats.into_iter();
         Ok(Self {
@@ -156,13 +161,15 @@ fn random_uniform(n: usize, scale: f32) -> Vec<f32> {
     // Simple deterministic PRNG (xorshift32) — no rand crate needed here,
     // and results are reproducible across platforms.
     let mut state: u32 = 0x6D2B_79F5;
-    (0..n).map(|_| {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        let t = (state as f32 / u32::MAX as f32) * 2.0 - 1.0;  // [-1, 1]
-        t * scale
-    }).collect()
+    (0..n)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let t = (state as f32 / u32::MAX as f32) * 2.0 - 1.0; // [-1, 1]
+            t * scale
+        })
+        .collect()
 }
 
 // ─── PipelineMode ─────────────────────────────────────────────────────────────
@@ -183,8 +190,8 @@ impl PipelineMode {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "nda" | "native" => Self::Nda,
-            "auto"           => Self::Auto,
-            _                => Self::Text,
+            "auto" => Self::Auto,
+            _ => Self::Text,
         }
     }
 
@@ -193,9 +200,21 @@ impl PipelineMode {
     pub fn detect(prompt: &str) -> Self {
         let p = prompt.to_lowercase();
         let nda_triggers = [
-            "implement", "write", "define", "create", "build",
-            "refactor", "fix", "port", "translate", "generate",
-            "def ", "fn ", "func ", "class ", "struct ",
+            "implement",
+            "write",
+            "define",
+            "create",
+            "build",
+            "refactor",
+            "fix",
+            "port",
+            "translate",
+            "generate",
+            "def ",
+            "fn ",
+            "func ",
+            "class ",
+            "struct ",
         ];
         if nda_triggers.iter().any(|&kw| p.contains(kw)) {
             Self::Nda
@@ -210,11 +229,11 @@ impl PipelineMode {
 /// Output of a Path 2 generation call.
 pub struct NdaGenerationResult {
     /// The emitted NDA nodes, in emission order.
-    pub nodes:       Vec<NdaNode>,
+    pub nodes: Vec<NdaNode>,
     /// Merkle root of the full program (0 if generation did not complete).
-    pub root_hash:   u64,
+    pub root_hash: u64,
     /// Whether the Merkle root was valid (structural correctness guaranteed).
-    pub valid:       bool,
+    pub valid: bool,
     /// True if the program was truncated by forced termination (structurally
     /// valid Merkle hash, but semantically incomplete — budget was exhausted
     /// before the model naturally closed all scopes).  These programs are
@@ -223,20 +242,19 @@ pub struct NdaGenerationResult {
     /// Hash under which the program was stored in the site map.
     pub site_map_key: Option<u64>,
     /// Sandbox execution result.
-    pub sandbox:      Option<crate::sandbox::SandboxResult>,
+    pub sandbox: Option<crate::sandbox::SandboxResult>,
     /// Scope validation result.
-    pub scope:        Option<crate::sandbox::scope_validator::ScopeValidation>,
+    pub scope: Option<crate::sandbox::scope_validator::ScopeValidation>,
     /// Generation statistics.
-    pub stats:       NdaGenStats,
+    pub stats: NdaGenStats,
 }
-
 
 #[derive(Default, Debug)]
 pub struct NdaGenStats {
-    pub tokens_emitted:  usize,
-    pub site_map_hits:   usize,   // KV lookups that hit the persistent cache
-    pub site_map_misses: usize,   // KV lookups that required recomputation
-    pub elapsed_ms:      u128,
+    pub tokens_emitted: usize,
+    pub site_map_hits: usize,   // KV lookups that hit the persistent cache
+    pub site_map_misses: usize, // KV lookups that required recomputation
+    pub elapsed_ms: u128,
 }
 
 // ─── NdaPipeline ──────────────────────────────────────────────────────────────
@@ -248,8 +266,8 @@ pub struct NdaGenStats {
 ///   - A SiteMap (persistent KV store, replaces session cache)
 ///   - A MerkleVerifier (structural validity enforcer)
 pub struct NdaPipeline {
-    model:    ZeroTransformer,
-    head:     NdaHead,
+    model: ZeroTransformer,
+    head: NdaHead,
     site_map: SiteMap,
     verifier: MerkleVerifier,
 }
@@ -263,22 +281,22 @@ impl NdaPipeline {
     /// - `head_path`: path to saved NdaHead weights
     ///   (initialises randomly if absent).
     pub fn open(
-        model_dir:    &Path,
+        model_dir: &Path,
         site_map_dir: Option<&Path>,
-        head_path:    Option<&Path>,
-        cfg:          ModelConfig,
+        head_path: Option<&Path>,
+        cfg: ModelConfig,
     ) -> Result<Self> {
         // Load NDA-Zero transformer weights.
-        let weights  = ModelWeights::load(model_dir, &cfg)?;
-        let model    = ZeroTransformer::new(cfg, weights);
+        let weights = ModelWeights::load(model_dir, &cfg)?;
+        let model = ZeroTransformer::new(cfg, weights);
 
         // Open site map.
         let sm_dir: PathBuf = match site_map_dir {
             Some(d) => d.to_path_buf(),
-            None    => model_dir.join("../site_map"),
+            None => model_dir.join("../site_map"),
         };
         let weight_root = SiteMap::hash_weight_dir(model_dir);
-        let site_map    = SiteMap::open(&sm_dir, weight_root)?;
+        let site_map = SiteMap::open(&sm_dir, weight_root)?;
 
         // Load or initialise NDA head.
         let head = match head_path {
@@ -309,9 +327,9 @@ impl NdaPipeline {
     /// If `condition` is `None`, generation starts from a learned start token.
     pub fn generate(
         &mut self,
-        condition:      Option<&[f32]>,
-        max_opcodes:    usize,
-        on_opcode:      impl FnMut(NdaOpcode),
+        condition: Option<&[f32]>,
+        max_opcodes: usize,
+        on_opcode: impl FnMut(NdaOpcode),
     ) -> NdaGenerationResult {
         let t_start = std::time::Instant::now();
         self.verifier.reset();
@@ -321,15 +339,15 @@ impl NdaPipeline {
     #[allow(clippy::explicit_counter_loop)]
     fn _generate_inner(
         &mut self,
-        condition:   Option<&[f32]>,
+        condition: Option<&[f32]>,
         max_opcodes: usize,
         mut on_opcode: impl FnMut(NdaOpcode),
         t_start: std::time::Instant,
     ) -> NdaGenerationResult {
-        let mut stats           = NdaGenStats::default();
-        let mut nodes           = Vec::new();
-        let mut root_hash       = 0u64;
-        let mut valid           = false;
+        let mut stats = NdaGenStats::default();
+        let mut nodes = Vec::new();
+        let mut root_hash = 0u64;
+        let mut valid = false;
         let mut force_terminated = false;
 
         self.model.reset_cache();
@@ -343,9 +361,9 @@ impl NdaPipeline {
         // Rep-penalty state: sliding window of recent opcode IDs (mirrors
         // the integer rep-penalty in transformer_zero.rs).
         const REP_WINDOW: usize = 6;
-        const REP_PENALTY: i32  = 1024;   // subtracted per occurrence in window
+        const REP_PENALTY: i32 = 1024; // subtracted per occurrence in window
         let mut recent_ops: [u8; REP_WINDOW] = [NdaOpcode::VOCAB_SIZE as u8; REP_WINDOW];
-        let mut rep_ptr    = 0usize;
+        let mut rep_ptr = 0usize;
 
         let mut current_width = condition.map(|c| c.len()).unwrap_or(896);
         let mut matrix_count = 0;
@@ -365,15 +383,12 @@ impl NdaPipeline {
             );
 
             // ── Convert to f32 and project through NdaHead → 9 logits ─────────
-            let hidden_f32: Vec<f32> = logits_i32.iter()
-                .map(|&v| v as f32)
-                .collect();
+            let hidden_f32: Vec<f32> = logits_i32.iter().map(|&v| v as f32).collect();
             let raw_logits = self.head.forward(&hidden_f32);
 
             // ── Scale to i32 for integer rep-penalty arithmetic ───────────────
-            let mut logits_i32_op: [i32; 9] = std::array::from_fn(|i| {
-                (raw_logits[i] * 4096.0) as i32
-            });
+            let mut logits_i32_op: [i32; 9] =
+                std::array::from_fn(|i| (raw_logits[i] * 4096.0) as i32);
 
             // ── Rep penalty (bit-shift right per occurrence) ──────────────────
             for &past_op in &recent_ops {
@@ -394,7 +409,7 @@ impl NdaPipeline {
             // Budget pressure: start biasing toward closure at 60% of budget.
             let budget_pressure = step * 10 >= max_opcodes * 6;
             // Hard close: at 85% of budget, force END_SCOPE above all else.
-            let hard_close      = step * 20 >= max_opcodes * 17;
+            let hard_close = step * 20 >= max_opcodes * 17;
 
             const NEG_INF: i32 = i32::MIN / 2;
             // Block ROOT entirely — we emit it ourselves on scope close.
@@ -420,8 +435,7 @@ impl NdaPipeline {
                 .map(|(i, _)| i)
                 .unwrap_or(NdaOpcode::Int as usize);
 
-            let opcode = NdaOpcode::from_u8(best_op as u8)
-                .unwrap_or(NdaOpcode::Int);
+            let opcode = NdaOpcode::from_u8(best_op as u8).unwrap_or(NdaOpcode::Int);
 
             // ── Update rep-penalty window ─────────────────────────────────────
             recent_ops[rep_ptr % REP_WINDOW] = best_op as u8;
@@ -438,30 +452,36 @@ impl NdaPipeline {
                             // If we've closed back to depth 1 (top-level only),
                             // emit ROOT immediately to seal the program.
                             if self.verifier.stack.len() == 1 {
-                                let top = self.verifier.stack.first()
+                                let top = self
+                                    .verifier
+                                    .stack
+                                    .first()
                                     .and_then(|v| v.last())
                                     .copied()
                                     .unwrap_or(0);
                                 self.verifier.record_root(top);
                                 root_hash = top;
-                                valid     = self.verifier.is_valid();
-                                on_opcode(opcode);   // END_SCOPE
+                                valid = self.verifier.is_valid();
+                                on_opcode(opcode); // END_SCOPE
                                 on_opcode(NdaOpcode::Root);
                                 stats.tokens_emitted += 2;
                                 break;
                             }
                         }
-                        Err(_) => break,  // malformed — prune
+                        Err(_) => break, // malformed — prune
                     }
                 }
                 NdaOpcode::Root => {
-                    let computed = self.verifier.stack.first()
+                    let computed = self
+                        .verifier
+                        .stack
+                        .first()
                         .and_then(|v| v.last())
                         .copied()
                         .unwrap_or(0);
                     self.verifier.record_root(computed);
                     root_hash = computed;
-                    valid     = self.verifier.is_valid();
+                    valid = self.verifier.is_valid();
                     on_opcode(opcode);
                     stats.tokens_emitted += 1;
                     break;
@@ -476,7 +496,8 @@ impl NdaPipeline {
                         if budget_pressure {
                             896
                         } else {
-                            let abs_sum: u64 = logits_i32.iter().map(|&x| x.unsigned_abs() as u64).sum();
+                            let abs_sum: u64 =
+                                logits_i32.iter().map(|&x| x.unsigned_abs() as u64).sum();
                             match abs_sum % 4 {
                                 0 => 64,
                                 1 => 128,
@@ -535,16 +556,35 @@ impl NdaPipeline {
                 // Language opcodes: not emitted by the model head during
                 // generation — only used when executing .nda programs directly.
                 // If the model head somehow emits these, treat as a no-op.
-                NdaOpcode::Loop | NdaOpcode::While | NdaOpcode::If |
-                NdaOpcode::Compare | NdaOpcode::Let | NdaOpcode::Load |
-                NdaOpcode::Store | NdaOpcode::Add | NdaOpcode::VecOp |
-                NdaOpcode::Print | NdaOpcode::Return | NdaOpcode::Break |
-                NdaOpcode::Bitwise | NdaOpcode::Float | NdaOpcode::Math |
-                NdaOpcode::MathFunc | NdaOpcode::Peek | NdaOpcode::Poke |
-                NdaOpcode::Gemv | NdaOpcode::Dot | NdaOpcode::Syscall |
-                NdaOpcode::Spawn | NdaOpcode::Atomic | NdaOpcode::Alloc |
-                NdaOpcode::Free | NdaOpcode::RegInt | NdaOpcode::Cast |
-                NdaOpcode::GpuDispatch | NdaOpcode::Triple => {
+                NdaOpcode::Loop
+                | NdaOpcode::While
+                | NdaOpcode::If
+                | NdaOpcode::Compare
+                | NdaOpcode::Let
+                | NdaOpcode::Load
+                | NdaOpcode::Store
+                | NdaOpcode::Add
+                | NdaOpcode::VecOp
+                | NdaOpcode::Print
+                | NdaOpcode::Return
+                | NdaOpcode::Break
+                | NdaOpcode::Bitwise
+                | NdaOpcode::Float
+                | NdaOpcode::Math
+                | NdaOpcode::MathFunc
+                | NdaOpcode::Peek
+                | NdaOpcode::Poke
+                | NdaOpcode::Gemv
+                | NdaOpcode::Dot
+                | NdaOpcode::Syscall
+                | NdaOpcode::Spawn
+                | NdaOpcode::Atomic
+                | NdaOpcode::Alloc
+                | NdaOpcode::Free
+                | NdaOpcode::RegInt
+                | NdaOpcode::Cast
+                | NdaOpcode::GpuDispatch
+                | NdaOpcode::Triple => {
                     // Reserved for direct .nda program execution.
                     // During model generation, skip.
                 }
@@ -560,27 +600,35 @@ impl NdaPipeline {
         if !valid {
             let open_scopes = self.verifier.stack.len().saturating_sub(1);
             if open_scopes > 0 {
-                eprintln!("[pipeline_nda] WARNING: forced termination — \
+                eprintln!(
+                    "[pipeline_nda] WARNING: forced termination — \
                     budget exhausted with {open_scopes} unclosed scope(s). \
-                    Output is TRUNCATED (structurally valid, semantically incomplete).");
+                    Output is TRUNCATED (structurally valid, semantically incomplete)."
+                );
                 force_terminated = true;
             }
             // Close all inner scopes (stack depth > 1).
             while self.verifier.stack.len() > 1 {
                 match self.verifier.close_scope() {
-                    Ok(_)  => { on_opcode(NdaOpcode::EndScope); stats.tokens_emitted += 1; }
+                    Ok(_) => {
+                        on_opcode(NdaOpcode::EndScope);
+                        stats.tokens_emitted += 1;
+                    }
                     Err(_) => break,
                 }
             }
             // Commit the root from whatever nodes completed naturally.
-            let top = self.verifier.stack.first()
+            let top = self
+                .verifier
+                .stack
+                .first()
                 .and_then(|v| v.last())
                 .copied()
                 .unwrap_or(0);
             if top != 0 {
                 self.verifier.record_root(top);
                 root_hash = top;
-                valid     = self.verifier.is_valid();
+                valid = self.verifier.is_valid();
                 on_opcode(NdaOpcode::Root);
                 stats.tokens_emitted += 1;
             }
@@ -605,7 +653,9 @@ impl NdaPipeline {
         // Truncated programs (force_terminated) or failed scope programs are NOT stored.
         let scope_passed = scope.as_ref().map(|s| s.passed).unwrap_or(true);
         let site_map_key = if valid && !force_terminated && scope_passed && !nodes.is_empty() {
-            let program = NdaNode::Scope { children: nodes.clone() };
+            let program = NdaNode::Scope {
+                children: nodes.clone(),
+            };
             self.site_map.put_program(&program).ok()
         } else {
             None
@@ -626,7 +676,6 @@ impl NdaPipeline {
             scope,
             stats,
         }
-
     }
 
     /// Site map statistics.
@@ -663,17 +712,17 @@ mod tests {
 
     #[test]
     fn nda_head_forward_shape() {
-        let head    = NdaHead::random();
-        let hidden  = vec![0.1f32; 896];
-        let logits  = head.forward(&hidden);
+        let head = NdaHead::random();
+        let hidden = vec![0.1f32; 896];
+        let logits = head.forward(&hidden);
         assert_eq!(logits.len(), NdaOpcode::VOCAB_SIZE);
     }
 
     #[test]
     fn nda_head_round_trip() {
         use tempfile::NamedTempFile;
-        let head  = NdaHead::random();
-        let file  = NamedTempFile::new().unwrap();
+        let head = NdaHead::random();
+        let file = NamedTempFile::new().unwrap();
         head.save(file.path()).unwrap();
         let head2 = NdaHead::load(file.path()).unwrap();
         assert!((head.w1[0] - head2.w1[0]).abs() < 1e-6);
@@ -682,18 +731,27 @@ mod tests {
 
     #[test]
     fn pipeline_mode_detection() {
-        assert_eq!(PipelineMode::detect("implement binary search"), PipelineMode::Nda);
-        assert_eq!(PipelineMode::detect("def foo():"),              PipelineMode::Nda);
-        assert_eq!(PipelineMode::detect("what is binary search?"),  PipelineMode::Text);
-        assert_eq!(PipelineMode::detect("explain how sorting works"), PipelineMode::Text);
+        assert_eq!(
+            PipelineMode::detect("implement binary search"),
+            PipelineMode::Nda
+        );
+        assert_eq!(PipelineMode::detect("def foo():"), PipelineMode::Nda);
+        assert_eq!(
+            PipelineMode::detect("what is binary search?"),
+            PipelineMode::Text
+        );
+        assert_eq!(
+            PipelineMode::detect("explain how sorting works"),
+            PipelineMode::Text
+        );
     }
 
     #[test]
     fn pipeline_mode_from_str() {
-        assert_eq!(PipelineMode::from_str("nda"),    PipelineMode::Nda);
+        assert_eq!(PipelineMode::from_str("nda"), PipelineMode::Nda);
         assert_eq!(PipelineMode::from_str("native"), PipelineMode::Nda);
-        assert_eq!(PipelineMode::from_str("auto"),   PipelineMode::Auto);
-        assert_eq!(PipelineMode::from_str("text"),   PipelineMode::Text);
-        assert_eq!(PipelineMode::from_str("unknown"),PipelineMode::Text);
+        assert_eq!(PipelineMode::from_str("auto"), PipelineMode::Auto);
+        assert_eq!(PipelineMode::from_str("text"), PipelineMode::Text);
+        assert_eq!(PipelineMode::from_str("unknown"), PipelineMode::Text);
     }
 }

@@ -87,8 +87,8 @@ pub fn deserialise_node(data: &[u8], offset: &mut usize) -> Result<NdaNode> {
                 *offset += 2;
                 let from_type = TypeKind::from_u8(from_val)
                     .ok_or_else(|| anyhow::anyhow!("Invalid from_type"))?;
-                let to_type = TypeKind::from_u8(to_val)
-                    .ok_or_else(|| anyhow::anyhow!("Invalid to_type"))?;
+                let to_type =
+                    TypeKind::from_u8(to_val).ok_or_else(|| anyhow::anyhow!("Invalid to_type"))?;
                 let operand = deserialise_node(data, offset)?;
                 Ok(NdaNode::Cast {
                     from_type,
@@ -192,9 +192,8 @@ pub fn deserialise_node(data: &[u8], offset: &mut usize) -> Result<NdaNode> {
                         anyhow::bail!("Truncated Loop count/len");
                     }
                     let count = u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
-                    let len =
-                        u32::from_le_bytes(data[*offset + 4..*offset + 8].try_into().unwrap())
-                            as usize;
+                    let len = u32::from_le_bytes(data[*offset + 4..*offset + 8].try_into().unwrap())
+                        as usize;
                     *offset += 8;
                     let mut body = Vec::with_capacity(len);
                     for _ in 0..len {
@@ -475,7 +474,8 @@ pub fn deserialise_node(data: &[u8], offset: &mut usize) -> Result<NdaNode> {
                 anyhow::bail!("Truncated Triple");
             }
             let subject_hash = u64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
-            let predicate_id = u16::from_le_bytes(data[*offset + 8..*offset + 10].try_into().unwrap());
+            let predicate_id =
+                u16::from_le_bytes(data[*offset + 8..*offset + 10].try_into().unwrap());
             let object_hash =
                 u64::from_le_bytes(data[*offset + 10..*offset + 18].try_into().unwrap());
             *offset += 18;

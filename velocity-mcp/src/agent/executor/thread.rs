@@ -1,7 +1,7 @@
+use super::super::coordination::CoordinationBus;
 use super::super::models::*;
 use super::super::nda::*;
 use super::super::provider::*;
-use super::super::coordination::CoordinationBus;
 use super::loop_runner::run_agent_reasoning_loop;
 use super::team_routing::try_route_team_prompt;
 use super::utils::{build_inline_tool_docs, send_usage_update};
@@ -33,10 +33,13 @@ fn load_runtime_accounts(
 /// settings UI without needing to set env vars.
 fn resolve_api_key(workspace_root: &PathBuf, settings_field: &str, env_var: &str) -> String {
     // Try workspace settings first
-    let settings_path = workspace_root.join(".velocity").join("workspace-preferences.json");
+    let settings_path = workspace_root
+        .join(".velocity")
+        .join("workspace-preferences.json");
     if let Ok(contents) = std::fs::read_to_string(&settings_path) {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
-            if let Some(key) = json.get("provider_settings")
+            if let Some(key) = json
+                .get("provider_settings")
                 .and_then(|ps| ps.get(settings_field))
                 .and_then(|s| s.get("api_key"))
                 .and_then(|k| k.as_str())
@@ -64,10 +67,14 @@ fn initial_provider_from_env() -> AiProvider {
     }
 }
 
-fn initial_model_for_provider(provider: AiProvider, ollama_accounts: &[LocalOllamaAccount]) -> String {
+fn initial_model_for_provider(
+    provider: AiProvider,
+    ollama_accounts: &[LocalOllamaAccount],
+) -> String {
     match provider {
-        AiProvider::OpenRouter => std::env::var("OPENROUTER_MODEL")
-            .unwrap_or_else(|_| default_provider_model(provider)),
+        AiProvider::OpenRouter => {
+            std::env::var("OPENROUTER_MODEL").unwrap_or_else(|_| default_provider_model(provider))
+        }
         AiProvider::CloudflareWorkersAi => {
             std::env::var("CF_MODEL").unwrap_or_else(|_| default_provider_model(provider))
         }
@@ -169,7 +176,10 @@ fn sync_model_state(
     ui_tx: &Sender<AgentToUiMessage>,
 ) {
     let fallback_model = requested_model.unwrap_or_else(|| model.clone());
-    if model_catalog.iter().any(|candidate| candidate.id == fallback_model) {
+    if model_catalog
+        .iter()
+        .any(|candidate| candidate.id == fallback_model)
+    {
         *model = fallback_model;
     } else {
         *model = model_catalog
@@ -186,7 +196,10 @@ fn sync_model_state(
 
     if provider == AiProvider::CloudflareWorkersAi {
         *selected_profile = enrich_model_profile(accounts, selected_profile);
-        if let Some(entry) = model_catalog.iter_mut().find(|candidate| candidate.id == *model) {
+        if let Some(entry) = model_catalog
+            .iter_mut()
+            .find(|candidate| candidate.id == *model)
+        {
             *entry = selected_profile.clone();
         }
     }
@@ -398,7 +411,9 @@ fn process_ui_message(
                     ui_tx,
                 );
                 ui_tx
-                    .send(AgentToUiMessage::StatusUpdate(format!("Model set to {model}")))
+                    .send(AgentToUiMessage::StatusUpdate(format!(
+                        "Model set to {model}"
+                    )))
                     .ok();
             }
         }
@@ -442,7 +457,9 @@ fn process_ui_message(
             thinking: requested_thinking,
         } => {
             *provider = requested_provider;
-            ui_tx.send(AgentToUiMessage::ProviderChanged(*provider)).ok();
+            ui_tx
+                .send(AgentToUiMessage::ProviderChanged(*provider))
+                .ok();
 
             match fetch_models_for_provider(
                 *provider,
@@ -485,7 +502,9 @@ fn process_ui_message(
         }
         UiToAgentMessage::SetProvider(new_provider) => {
             *provider = new_provider;
-            ui_tx.send(AgentToUiMessage::ProviderChanged(*provider)).ok();
+            ui_tx
+                .send(AgentToUiMessage::ProviderChanged(*provider))
+                .ok();
 
             match fetch_models_for_provider(
                 *provider,

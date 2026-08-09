@@ -15,8 +15,9 @@ pub fn handle_navigation_tool(
                 let report =
                     crate::editor::browser::crawl_and_sync_sitemap_report(url, &sitemap_path)
                         .map_err(Box::<dyn Error>::from)?;
-                serde_json::to_string_pretty(&report)
-                    .map_err(|err| Box::<dyn Error>::from(format!("serialise browser crawl summary: {err}")))?
+                serde_json::to_string_pretty(&report).map_err(|err| {
+                    Box::<dyn Error>::from(format!("serialise browser crawl summary: {err}"))
+                })?
             } else {
                 crate::editor::browser::crawl_and_sync_sitemap(url, &sitemap_path)
                     .map_err(Box::<dyn Error>::from)?
@@ -41,7 +42,9 @@ pub fn handle_navigation_tool(
                 )
                 .map_err(Box::<dyn Error>::from)?;
                 serde_json::to_string_pretty(&report).map_err(|err| {
-                    Box::<dyn Error>::from(format!("serialise browser runtime capture summary: {err}"))
+                    Box::<dyn Error>::from(format!(
+                        "serialise browser runtime capture summary: {err}"
+                    ))
                 })?
             } else {
                 crate::editor::browser::runtime_capture(
@@ -228,9 +231,7 @@ pub fn handle_navigation_tool(
                     Box::<dyn Error>::from(format!("serialise runtime auth reseed report: {err}"))
                 })?
             } else {
-                crate::editor::browser::render_runtime_auth_reseed_report(
-                    &report,
-                )
+                crate::editor::browser::render_runtime_auth_reseed_report(&report)
             }
         }
         _ => return Ok(None),

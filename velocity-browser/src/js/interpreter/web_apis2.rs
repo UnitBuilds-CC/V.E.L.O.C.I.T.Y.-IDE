@@ -3,11 +3,11 @@
 //! FinalizationRegistry and Proxy.revocable — plus `call_native_extended`, the
 //! overflow dispatch table for newer global statics (delegated from `call_native`).
 
-use super::signal::*;
 use super::coercion::*;
-use super::function::call_function;
 use super::core_methods::*;
+use super::function::call_function;
 use super::intl::get_canonical_locales;
+use super::signal::*;
 use crate::js::scope::ScopeRef;
 use crate::js::vm::JsValue;
 use std::cell::{Cell, RefCell};
@@ -26,7 +26,11 @@ thread_local! {
 }
 
 fn next_id() -> u64 {
-    NEXT_ID.with(|c| { let v = c.get(); c.set(v + 1); v })
+    NEXT_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    })
 }
 
 /// Build a plain error object matching the shape produced by `new Error(...)`.
@@ -47,7 +51,9 @@ pub(super) fn call_native_extended(name: &str, args: &[JsValue]) -> EvalResult {
     // the native-function name because NativeFunction carries only a string.
     if let Some(id_str) = name.strip_prefix("__proxy_revoke__:") {
         if let Ok(id) = id_str.parse::<u64>() {
-            REVOKED_PROXIES.with(|r| { r.borrow_mut().insert(id); });
+            REVOKED_PROXIES.with(|r| {
+                r.borrow_mut().insert(id);
+            });
         }
         return Ok(JsValue::Undefined);
     }
@@ -61,7 +67,9 @@ pub(super) fn call_native_extended(name: &str, args: &[JsValue]) -> EvalResult {
         "Object.getOwnPropertySymbols" => get_own_property_symbols(args.first()),
         "ArrayBuffer.isView" => JsValue::Boolean(is_array_buffer_view(args.first())),
         "Proxy.revocable" => proxy_revocable(args),
-        "URL.canParse" => JsValue::Boolean(url_can_parse(&args.first().map(to_string).unwrap_or_default())),
+        "URL.canParse" => JsValue::Boolean(url_can_parse(
+            &args.first().map(to_string).unwrap_or_default(),
+        )),
         "crypto.randomUUID" => JsValue::String(random_uuid()),
         "crypto.getRandomValues" => crypto_get_random_values(args),
         "atob" => return atob_impl(&args.first().map(to_string).unwrap_or_default()),
@@ -81,7 +89,8 @@ fn next_rand() -> u64 {
             x = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0x9E37_79B9_7F4A_7C15) | 1;
+                .unwrap_or(0x9E37_79B9_7F4A_7C15)
+                | 1;
         }
         x ^= x << 13;
         x ^= x >> 7;
@@ -98,7 +107,9 @@ fn rand_byte() -> u8 {
 /// RFC4122 version-4 UUID string.
 fn random_uuid() -> String {
     let mut b = [0u8; 16];
-    for byte in b.iter_mut() { *byte = rand_byte(); }
+    for byte in b.iter_mut() {
+        *byte = rand_byte();
+    }
     b[6] = (b[6] & 0x0f) | 0x40; // version 4
     b[8] = (b[8] & 0x3f) | 0x80; // RFC4122 variant
     format!(
@@ -115,12 +126,19 @@ fn crypto_get_random_values(args: &[JsValue]) -> JsValue {
         Some(JsValue::Object(m)) => {
             let mut out = m.clone();
             if let Some(JsValue::Array(data)) = m.get("__data__") {
-                let filled: Vec<JsValue> = data.iter().map(|_| JsValue::Number(rand_byte() as f64)).collect();
+                let filled: Vec<JsValue> = data
+                    .iter()
+                    .map(|_| JsValue::Number(rand_byte() as f64))
+                    .collect();
                 out.insert("__data__".to_string(), JsValue::Array(filled));
             }
             JsValue::Object(out)
         }
-        Some(JsValue::Array(a)) => JsValue::Array(a.iter().map(|_| JsValue::Number(rand_byte() as f64)).collect()),
+        Some(JsValue::Array(a)) => JsValue::Array(
+            a.iter()
+                .map(|_| JsValue::Number(rand_byte() as f64))
+                .collect(),
+        ),
         _ => JsValue::Undefined,
     }
 }
@@ -136,7 +154,10 @@ pub(super) fn btoa_impl(s: &str) -> EvalResult {
     for c in s.chars() {
         let v = c as u32;
         if v > 0xFF {
-            return Err(throw("InvalidCharacterError", "btoa: character outside of the Latin1 range"));
+            return Err(throw(
+                "InvalidCharacterError",
+                "btoa: character outside of the Latin1 range",
+            ));
         }
         bytes.push(v as u8);
     }
@@ -148,8 +169,16 @@ pub(super) fn btoa_impl(s: &str) -> EvalResult {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(B64_ALPHABET[(n >> 18) as usize & 63] as char);
         out.push(B64_ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { B64_ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { B64_ALPHABET[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            B64_ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64_ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     Ok(JsValue::String(out))
 }
@@ -160,7 +189,10 @@ pub(super) fn atob_impl(s: &str) -> EvalResult {
     let cleaned: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     let trimmed = cleaned.trim_end_matches('=');
     if cleaned.len() - trimmed.len() > 2 || trimmed.len() % 4 == 1 {
-        return Err(throw("InvalidCharacterError", "atob: invalid base64 input length"));
+        return Err(throw(
+            "InvalidCharacterError",
+            "atob: invalid base64 input length",
+        ));
     }
     let mut acc: u32 = 0;
     let mut nbits = 0;
@@ -172,7 +204,12 @@ pub(super) fn atob_impl(s: &str) -> EvalResult {
             '0'..='9' => c as u32 - '0' as u32 + 52,
             '+' => 62,
             '/' => 63,
-            _ => return Err(throw("InvalidCharacterError", "atob: invalid base64 character")),
+            _ => {
+                return Err(throw(
+                    "InvalidCharacterError",
+                    "atob: invalid base64 character",
+                ))
+            }
         };
         acc = (acc << 6) | v;
         nbits += 6;
@@ -181,7 +218,9 @@ pub(super) fn atob_impl(s: &str) -> EvalResult {
             out_bytes.push((acc >> nbits) as u8);
         }
     }
-    Ok(JsValue::String(out_bytes.iter().map(|b| *b as char).collect()))
+    Ok(JsValue::String(
+        out_bytes.iter().map(|b| *b as char).collect(),
+    ))
 }
 
 // ── URL.canParse ─────────────────────────────────────────────────────────────
@@ -192,17 +231,27 @@ fn url_can_parse(url: &str) -> bool {
     let url = url.trim();
     if let Some(rest) = url.split_once("://").map(|(scheme, rest)| {
         (!scheme.is_empty()
-            && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.'))
-            .then_some(rest)
+            && scheme
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.'))
+        .then_some(rest)
     }) {
         return rest.is_some_and(|r| !r.is_empty() && !r.starts_with('/'));
     }
     // Scheme-only URLs like data:, about:, mailto: are parseable too.
     url.split_once(':').is_some_and(|(scheme, rest)| {
         !scheme.is_empty()
-            && scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+            && scheme
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
             && !rest.is_empty()
     })
 }
@@ -215,7 +264,10 @@ fn url_can_parse(url: &str) -> bool {
 /// `check_revoked` makes subsequent member access throw a TypeError.
 fn proxy_revocable(args: &[JsValue]) -> JsValue {
     let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let handler = args.get(1).cloned().unwrap_or_else(|| JsValue::Object(HashMap::new()));
+    let handler = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| JsValue::Object(HashMap::new()));
     let id = next_id();
     let mut handler_map = match handler {
         JsValue::Object(m) => m,
@@ -228,7 +280,10 @@ fn proxy_revocable(args: &[JsValue]) -> JsValue {
     };
     let mut out = HashMap::new();
     out.insert("proxy".to_string(), proxy);
-    out.insert("revoke".to_string(), JsValue::NativeFunction(format!("__proxy_revoke__:{}", id)));
+    out.insert(
+        "revoke".to_string(),
+        JsValue::NativeFunction(format!("__proxy_revoke__:{}", id)),
+    );
     JsValue::Object(out)
 }
 
@@ -239,7 +294,10 @@ pub(super) fn check_revoked(v: &JsValue) -> Result<(), Signal> {
             if let Some(JsValue::Number(id)) = h.get("__revoke_id__") {
                 let revoked = REVOKED_PROXIES.with(|r| r.borrow().contains(&(*id as u64)));
                 if revoked {
-                    return Err(throw("TypeError", "Cannot perform operation on a proxy that has been revoked"));
+                    return Err(throw(
+                        "TypeError",
+                        "Cannot perform operation on a proxy that has been revoked",
+                    ));
                 }
             }
         }
@@ -256,13 +314,19 @@ pub(super) fn make_message_channel() -> JsValue {
     let id = next_id();
     let make_port = |port_no: u8| {
         let mut p = HashMap::new();
-        p.insert("__type__".to_string(), JsValue::String("MessagePort".to_string()));
+        p.insert(
+            "__type__".to_string(),
+            JsValue::String("MessagePort".to_string()),
+        );
         p.insert("__channel__".to_string(), JsValue::Number(id as f64));
         p.insert("__port__".to_string(), JsValue::Number(port_no as f64));
         JsValue::Object(p)
     };
     let mut out = HashMap::new();
-    out.insert("__type__".to_string(), JsValue::String("MessageChannel".to_string()));
+    out.insert(
+        "__type__".to_string(),
+        JsValue::String("MessageChannel".to_string()),
+    );
     out.insert("port1".to_string(), make_port(1));
     out.insert("port2".to_string(), make_port(2));
     JsValue::Object(out)
@@ -271,24 +335,46 @@ pub(super) fn make_message_channel() -> JsValue {
 /// Called from set_property when assigning `port.onmessage = fn` so the
 /// handler is visible to the sibling port despite value semantics.
 pub(super) fn register_port_handler(map: &HashMap<String, JsValue>, handler: &JsValue) {
-    let channel = match map.get("__channel__") { Some(JsValue::Number(n)) => *n as u64, _ => return };
-    let port = match map.get("__port__") { Some(JsValue::Number(n)) => *n as u8, _ => return };
-    PORT_HANDLERS.with(|h| { h.borrow_mut().insert((channel, port), handler.clone()); });
+    let channel = match map.get("__channel__") {
+        Some(JsValue::Number(n)) => *n as u64,
+        _ => return,
+    };
+    let port = match map.get("__port__") {
+        Some(JsValue::Number(n)) => *n as u8,
+        _ => return,
+    };
+    PORT_HANDLERS.with(|h| {
+        h.borrow_mut().insert((channel, port), handler.clone());
+    });
 }
 
-pub(super) fn call_message_port_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+pub(super) fn call_message_port_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
     match method {
         // Delivery is synchronous (pragmatic model — no task queue).
         "postMessage" => {
-            let channel = match map.get("__channel__") { Some(JsValue::Number(n)) => *n as u64, _ => return Ok(JsValue::Undefined) };
-            let port = match map.get("__port__") { Some(JsValue::Number(n)) => *n as u8, _ => return Ok(JsValue::Undefined) };
+            let channel = match map.get("__channel__") {
+                Some(JsValue::Number(n)) => *n as u64,
+                _ => return Ok(JsValue::Undefined),
+            };
+            let port = match map.get("__port__") {
+                Some(JsValue::Number(n)) => *n as u8,
+                _ => return Ok(JsValue::Undefined),
+            };
             let other = if port == 1 { 2 } else { 1 };
             // Clone the handler out so the borrow is released before the call
             // (the handler itself may post messages back).
             let handler = PORT_HANDLERS.with(|h| h.borrow().get(&(channel, other)).cloned());
             if let Some(handler) = handler {
                 let mut event = HashMap::new();
-                event.insert("data".to_string(), args.first().cloned().unwrap_or(JsValue::Undefined));
+                event.insert(
+                    "data".to_string(),
+                    args.first().cloned().unwrap_or(JsValue::Undefined),
+                );
                 call_function(&handler, &[JsValue::Object(event)], scope)?;
             }
             Ok(JsValue::Undefined)
@@ -301,7 +387,10 @@ pub(super) fn call_message_port_method(map: &HashMap<String, JsValue>, method: &
 
 pub(super) fn make_event_target() -> JsValue {
     let mut m = HashMap::new();
-    m.insert("__type__".to_string(), JsValue::String("EventTarget".to_string()));
+    m.insert(
+        "__type__".to_string(),
+        JsValue::String("EventTarget".to_string()),
+    );
     m.insert("__listeners__".to_string(), JsValue::Object(HashMap::new()));
     JsValue::Object(m)
 }
@@ -310,7 +399,9 @@ pub(super) fn make_event_target() -> JsValue {
 /// this value-semantics engine, so we key on name + parameter list.
 fn listener_key(v: &JsValue) -> String {
     match v {
-        JsValue::Function { name, params, .. } => format!("fn:{}({})", name.as_deref().unwrap_or(""), params.join(",")),
+        JsValue::Function { name, params, .. } => {
+            format!("fn:{}({})", name.as_deref().unwrap_or(""), params.join(","))
+        }
         JsValue::NativeFunction(n) => format!("native:{}", n),
         other => to_string(other),
     }
@@ -318,7 +409,12 @@ fn listener_key(v: &JsValue) -> String {
 
 /// addEventListener / removeEventListener / dispatchEvent — synchronous
 /// dispatch; mutations to __listeners__ persist via the caller's writeback.
-pub(super) fn call_event_target_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+pub(super) fn call_event_target_method(
+    map: &mut HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
     let mut listeners = match map.get("__listeners__") {
         Some(JsValue::Object(l)) => l.clone(),
         _ => HashMap::new(),
@@ -327,8 +423,13 @@ pub(super) fn call_event_target_method(map: &mut HashMap<String, JsValue>, metho
         "addEventListener" => {
             let ev_type = args.first().map(to_string).unwrap_or_default();
             let handler = args.get(1).cloned().unwrap_or(JsValue::Undefined);
-            if matches!(handler, JsValue::Function { .. } | JsValue::NativeFunction(_)) {
-                let entry = listeners.entry(ev_type).or_insert_with(|| JsValue::Array(Vec::new()));
+            if matches!(
+                handler,
+                JsValue::Function { .. } | JsValue::NativeFunction(_)
+            ) {
+                let entry = listeners
+                    .entry(ev_type)
+                    .or_insert_with(|| JsValue::Array(Vec::new()));
                 if let JsValue::Array(list) = entry {
                     // Per spec, adding the same listener twice is a no-op.
                     let key = listener_key(&handler);
@@ -601,9 +702,16 @@ mod tests {
         if let JsValue::Array(filled) = result {
             assert_eq!(filled.len(), 10);
             // Check that at least some values are non-zero (probabilistic)
-            let non_zero = filled.iter().filter(|v| {
-                if let JsValue::Number(n) = v { *n != 0.0 } else { false }
-            }).count();
+            let non_zero = filled
+                .iter()
+                .filter(|v| {
+                    if let JsValue::Number(n) = v {
+                        *n != 0.0
+                    } else {
+                        false
+                    }
+                })
+                .count();
             assert!(non_zero > 0);
         } else {
             panic!("expected Array");
@@ -613,7 +721,10 @@ mod tests {
     #[test]
     fn crypto_get_random_values_object() {
         let mut obj = HashMap::new();
-        obj.insert("__data__".to_string(), JsValue::Array(vec![JsValue::Number(0.0); 5]));
+        obj.insert(
+            "__data__".to_string(),
+            JsValue::Array(vec![JsValue::Number(0.0); 5]),
+        );
         let result = crypto_get_random_values(&[JsValue::Object(obj)]);
         if let JsValue::Object(m) = result {
             if let JsValue::Array(data) = m.get("__data__").unwrap() {
@@ -644,19 +755,28 @@ mod tests {
 
     #[test]
     fn call_native_extended_atob() {
-        let result = unwrap(call_native_extended("atob", &[JsValue::String("aGVsbG8=".into())]));
+        let result = unwrap(call_native_extended(
+            "atob",
+            &[JsValue::String("aGVsbG8=".into())],
+        ));
         assert_eq!(get_str(&result), "hello");
     }
 
     #[test]
     fn call_native_extended_btoa() {
-        let result = unwrap(call_native_extended("btoa", &[JsValue::String("hello".into())]));
+        let result = unwrap(call_native_extended(
+            "btoa",
+            &[JsValue::String("hello".into())],
+        ));
         assert_eq!(get_str(&result), "aGVsbG8=");
     }
 
     #[test]
     fn call_native_extended_url_can_parse() {
-        let result = unwrap(call_native_extended("URL.canParse", &[JsValue::String("https://example.com".into())]));
+        let result = unwrap(call_native_extended(
+            "URL.canParse",
+            &[JsValue::String("https://example.com".into())],
+        ));
         assert!(get_bool(&result));
     }
 

@@ -174,7 +174,10 @@ fn confidence_for(samples: u32) -> f32 {
 fn blend_into(target: &mut ShapeSignature, incoming: &ShapeSignature, prior_samples: u32) {
     let w = prior_samples as f32;
     let denom = w + 1.0;
-    let n = target.radial_profile.len().min(incoming.radial_profile.len());
+    let n = target
+        .radial_profile
+        .len()
+        .min(incoming.radial_profile.len());
     for i in 0..n {
         target.radial_profile[i] =
             (target.radial_profile[i] * w + incoming.radial_profile[i]) / denom;
@@ -214,7 +217,11 @@ mod tests {
         let mut lib = SplineLibrary::new();
         lib.learn_from_region("box", &square_buffer(80, 20, 20, 40), (0, 0, 80, 80));
         let result = lib.classify_region(&square_buffer(80, 22, 22, 38), (0, 0, 80, 80));
-        assert!(matches!(result, Some((ref c, _)) if c == "box"), "got {:?}", result);
+        assert!(
+            matches!(result, Some((ref c, _)) if c == "box"),
+            "got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -223,7 +230,11 @@ mod tests {
         lib.learn_from_region("box", &square_buffer(80, 20, 20, 40), (0, 0, 80, 80));
         lib.learn_from_region("circle", &disc_buffer(80, 40, 40, 25), (0, 0, 80, 80));
         let r = lib.classify_region(&disc_buffer(80, 41, 39, 24), (0, 0, 80, 80));
-        assert!(matches!(r, Some((ref c, _)) if c == "circle"), "got {:?}", r);
+        assert!(
+            matches!(r, Some((ref c, _)) if c == "circle"),
+            "got {:?}",
+            r
+        );
         assert_eq!(lib.class_count(), 2);
     }
 
@@ -262,6 +273,9 @@ mod tests {
         let mut lib = SplineLibrary::new();
         lib.learn_from_region("zebra", &square_buffer(80, 20, 20, 40), (0, 0, 80, 80));
         lib.learn_from_region("apple", &disc_buffer(80, 40, 40, 25), (0, 0, 80, 80));
-        assert_eq!(lib.known_classes(), vec!["apple".to_string(), "zebra".to_string()]);
+        assert_eq!(
+            lib.known_classes(),
+            vec!["apple".to_string(), "zebra".to_string()]
+        );
     }
 }

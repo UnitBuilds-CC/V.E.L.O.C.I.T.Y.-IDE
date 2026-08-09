@@ -13,19 +13,32 @@ use std::collections::HashMap;
 
 pub(super) fn make_canvas_element(width: u32, height: u32) -> JsValue {
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("HTMLCanvasElement".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("HTMLCanvasElement".to_string()),
+    );
     map.insert("width".to_string(), JsValue::Number(width as f64));
     map.insert("height".to_string(), JsValue::Number(height as f64));
     map.insert("tagName".to_string(), JsValue::String("CANVAS".to_string()));
-    map.insert("nodeName".to_string(), JsValue::String("CANVAS".to_string()));
+    map.insert(
+        "nodeName".to_string(),
+        JsValue::String("CANVAS".to_string()),
+    );
     map.insert("nodeType".to_string(), JsValue::Number(1.0));
     JsValue::Object(map)
 }
 
-pub(super) fn call_canvas_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_canvas_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     match method {
         "getContext" => {
-            let ctx_type = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let ctx_type = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             if ctx_type == "2d" {
                 make_context_2d(map)
             } else {
@@ -34,7 +47,10 @@ pub(super) fn call_canvas_method(map: &HashMap<String, JsValue>, method: &str, a
             }
         }
         "toDataURL" => {
-            let mime = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_else(|| "image/png".into());
+            let mime = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_else(|| "image/png".into());
             JsValue::String(format!("data:{};base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", mime))
         }
         "toBlob" => {
@@ -47,9 +63,18 @@ pub(super) fn call_canvas_method(map: &HashMap<String, JsValue>, method: &str, a
         }
         "transferControlToOffscreen" => {
             let mut offscreen = HashMap::new();
-            offscreen.insert("__type__".to_string(), JsValue::String("OffscreenCanvas".to_string()));
-            offscreen.insert("width".to_string(), map.get("width").cloned().unwrap_or(JsValue::Number(300.0)));
-            offscreen.insert("height".to_string(), map.get("height").cloned().unwrap_or(JsValue::Number(150.0)));
+            offscreen.insert(
+                "__type__".to_string(),
+                JsValue::String("OffscreenCanvas".to_string()),
+            );
+            offscreen.insert(
+                "width".to_string(),
+                map.get("width").cloned().unwrap_or(JsValue::Number(300.0)),
+            );
+            offscreen.insert(
+                "height".to_string(),
+                map.get("height").cloned().unwrap_or(JsValue::Number(150.0)),
+            );
             JsValue::Object(offscreen)
         }
         _ => JsValue::Undefined,
@@ -60,28 +85,61 @@ pub(super) fn call_canvas_method(map: &HashMap<String, JsValue>, method: &str, a
 
 fn make_context_2d(canvas: &HashMap<String, JsValue>) -> JsValue {
     let mut ctx = HashMap::new();
-    ctx.insert("__type__".to_string(), JsValue::String("CanvasRenderingContext2D".to_string()));
+    ctx.insert(
+        "__type__".to_string(),
+        JsValue::String("CanvasRenderingContext2D".to_string()),
+    );
     // State properties.
-    ctx.insert("fillStyle".to_string(), JsValue::String("#000000".to_string()));
-    ctx.insert("strokeStyle".to_string(), JsValue::String("#000000".to_string()));
+    ctx.insert(
+        "fillStyle".to_string(),
+        JsValue::String("#000000".to_string()),
+    );
+    ctx.insert(
+        "strokeStyle".to_string(),
+        JsValue::String("#000000".to_string()),
+    );
     ctx.insert("lineWidth".to_string(), JsValue::Number(1.0));
     ctx.insert("lineCap".to_string(), JsValue::String("butt".to_string()));
     ctx.insert("lineJoin".to_string(), JsValue::String("miter".to_string()));
     ctx.insert("miterLimit".to_string(), JsValue::Number(10.0));
-    ctx.insert("font".to_string(), JsValue::String("10px sans-serif".to_string()));
-    ctx.insert("textAlign".to_string(), JsValue::String("start".to_string()));
-    ctx.insert("textBaseline".to_string(), JsValue::String("alphabetic".to_string()));
-    ctx.insert("direction".to_string(), JsValue::String("inherit".to_string()));
+    ctx.insert(
+        "font".to_string(),
+        JsValue::String("10px sans-serif".to_string()),
+    );
+    ctx.insert(
+        "textAlign".to_string(),
+        JsValue::String("start".to_string()),
+    );
+    ctx.insert(
+        "textBaseline".to_string(),
+        JsValue::String("alphabetic".to_string()),
+    );
+    ctx.insert(
+        "direction".to_string(),
+        JsValue::String("inherit".to_string()),
+    );
     ctx.insert("globalAlpha".to_string(), JsValue::Number(1.0));
-    ctx.insert("globalCompositeOperation".to_string(), JsValue::String("source-over".to_string()));
+    ctx.insert(
+        "globalCompositeOperation".to_string(),
+        JsValue::String("source-over".to_string()),
+    );
     ctx.insert("shadowBlur".to_string(), JsValue::Number(0.0));
-    ctx.insert("shadowColor".to_string(), JsValue::String("rgba(0, 0, 0, 0)".to_string()));
+    ctx.insert(
+        "shadowColor".to_string(),
+        JsValue::String("rgba(0, 0, 0, 0)".to_string()),
+    );
     ctx.insert("shadowOffsetX".to_string(), JsValue::Number(0.0));
     ctx.insert("shadowOffsetY".to_string(), JsValue::Number(0.0));
     ctx.insert("imageSmoothingEnabled".to_string(), JsValue::Boolean(true));
     // Canvas back-reference.
-    let w = canvas.get("width").cloned().unwrap_or(JsValue::Number(300.0));
-    let h = canvas.get("height").cloned().unwrap_or(JsValue::Number(150.0));
+    let w = canvas
+        .get("width")
+        .cloned()
+        .unwrap_or(JsValue::Number(300.0));
+    let h = canvas
+        .get("height")
+        .cloned()
+        .unwrap_or(JsValue::Number(150.0));
     ctx.insert("__canvas_width__".to_string(), w);
     ctx.insert("__canvas_height__".to_string(), h);
     // Record of operations (for agent introspection).
@@ -89,30 +147,33 @@ fn make_context_2d(canvas: &HashMap<String, JsValue>) -> JsValue {
     JsValue::Object(ctx)
 }
 
-pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_context_2d_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     match method {
         // ── Rectangles ──
-        "fillRect" | "strokeRect" | "clearRect" => {
-            JsValue::Object(record_op(map, method, args))
-        }
+        "fillRect" | "strokeRect" | "clearRect" => JsValue::Object(record_op(map, method, args)),
         // ── Path methods ──
-        "beginPath" | "closePath" | "moveTo" | "lineTo" | "bezierCurveTo"
-        | "quadraticCurveTo" | "arc" | "arcTo" | "ellipse" | "rect"
-        | "roundRect" => {
+        "beginPath" | "closePath" | "moveTo" | "lineTo" | "bezierCurveTo" | "quadraticCurveTo"
+        | "arc" | "arcTo" | "ellipse" | "rect" | "roundRect" => {
             JsValue::Object(record_op(map, method, args))
         }
-        "fill" | "stroke" | "clip" => {
-            JsValue::Object(record_op(map, method, args))
-        }
+        "fill" | "stroke" | "clip" => JsValue::Object(record_op(map, method, args)),
         "isPointInPath" | "isPointInStroke" => JsValue::Boolean(false),
         // ── Text ──
-        "fillText" | "strokeText" => {
-            JsValue::Object(record_op(map, method, args))
-        }
+        "fillText" | "strokeText" => JsValue::Object(record_op(map, method, args)),
         "measureText" => {
-            let text = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let text = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             let mut metrics = HashMap::new();
-            metrics.insert("__type__".to_string(), JsValue::String("TextMetrics".to_string()));
+            metrics.insert(
+                "__type__".to_string(),
+                JsValue::String("TextMetrics".to_string()),
+            );
             // Approximate: 7px per character at 10px font.
             let width = text.len() as f64 * 7.0;
             metrics.insert("width".to_string(), JsValue::Number(width));
@@ -125,16 +186,17 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
             JsValue::Object(metrics)
         }
         // ── State ──
-        "save" | "restore" => {
-            JsValue::Object(record_op(map, method, args))
-        }
+        "save" | "restore" => JsValue::Object(record_op(map, method, args)),
         // ── Transforms ──
         "translate" | "rotate" | "scale" | "transform" | "setTransform" | "resetTransform" => {
             JsValue::Object(record_op(map, method, args))
         }
         "getTransform" => {
             let mut dom_matrix = HashMap::new();
-            dom_matrix.insert("__type__".to_string(), JsValue::String("DOMMatrix".to_string()));
+            dom_matrix.insert(
+                "__type__".to_string(),
+                JsValue::String("DOMMatrix".to_string()),
+            );
             dom_matrix.insert("a".to_string(), JsValue::Number(1.0));
             dom_matrix.insert("b".to_string(), JsValue::Number(0.0));
             dom_matrix.insert("c".to_string(), JsValue::Number(0.0));
@@ -147,36 +209,53 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
         }
         // ── Image data ──
         "createImageData" => {
-            let w = args.first().map(crate::js::interpreter::coercion::to_number).unwrap_or(1.0) as u32;
-            let h = args.get(1).map(crate::js::interpreter::coercion::to_number).unwrap_or(1.0) as u32;
+            let w = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_number)
+                .unwrap_or(1.0) as u32;
+            let h = args
+                .get(1)
+                .map(crate::js::interpreter::coercion::to_number)
+                .unwrap_or(1.0) as u32;
             make_image_data(w, h)
         }
         "getImageData" => {
-            let w = args.get(2).map(crate::js::interpreter::coercion::to_number).unwrap_or(1.0) as u32;
-            let h = args.get(3).map(crate::js::interpreter::coercion::to_number).unwrap_or(1.0) as u32;
+            let w = args
+                .get(2)
+                .map(crate::js::interpreter::coercion::to_number)
+                .unwrap_or(1.0) as u32;
+            let h = args
+                .get(3)
+                .map(crate::js::interpreter::coercion::to_number)
+                .unwrap_or(1.0) as u32;
             make_image_data(w, h)
         }
-        "putImageData" => {
-            JsValue::Object(record_op(map, method, args))
-        }
+        "putImageData" => JsValue::Object(record_op(map, method, args)),
         "createConicGradient" | "createLinearGradient" | "createRadialGradient" => {
             let mut gradient = HashMap::new();
-            gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".to_string()));
+            gradient.insert(
+                "__type__".to_string(),
+                JsValue::String("CanvasGradient".to_string()),
+            );
             gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
             JsValue::Object(gradient)
         }
         "createPattern" => {
             let mut pattern = HashMap::new();
-            pattern.insert("__type__".to_string(), JsValue::String("CanvasPattern".to_string()));
+            pattern.insert(
+                "__type__".to_string(),
+                JsValue::String("CanvasPattern".to_string()),
+            );
             JsValue::Object(pattern)
         }
-        "drawImage" | "drawFocusIfNeeded" => {
-            JsValue::Object(record_op(map, method, args))
-        }
+        "drawImage" | "drawFocusIfNeeded" => JsValue::Object(record_op(map, method, args)),
         "getContextAttributes" => {
             let mut attrs = HashMap::new();
             attrs.insert("alpha".to_string(), JsValue::Boolean(true));
-            attrs.insert("colorSpace".to_string(), JsValue::String("srgb".to_string()));
+            attrs.insert(
+                "colorSpace".to_string(),
+                JsValue::String("srgb".to_string()),
+            );
             attrs.insert("desynchronized".to_string(), JsValue::Boolean(false));
             attrs.insert("willReadFrequently".to_string(), JsValue::Boolean(false));
             JsValue::Object(attrs)
@@ -185,28 +264,36 @@ pub(super) fn call_context_2d_method(map: &HashMap<String, JsValue>, method: &st
     }
 }
 
-fn record_op(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> HashMap<String, JsValue> {
+fn record_op(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> HashMap<String, JsValue> {
     // Record the operation in the __ops__ array for agent introspection
     let mut m = map.clone();
     if let Some(JsValue::Array(ops)) = m.get_mut("__ops__") {
         let mut op = HashMap::new();
         op.insert("method".to_string(), JsValue::String(method.to_string()));
         // Serialize arguments as strings for introspection
-        let arg_strs: Vec<JsValue> = args.iter().map(|a| {
-            match a {
+        let arg_strs: Vec<JsValue> = args
+            .iter()
+            .map(|a| match a {
                 JsValue::Number(n) => JsValue::String(format!("{}", n)),
                 JsValue::String(s) => JsValue::String(format!("\"{}\"", s)),
                 JsValue::Boolean(b) => JsValue::String(format!("{}", b)),
                 _ => JsValue::String("[object]".to_string()),
-            }
-        }).collect();
+            })
+            .collect();
         op.insert("args".to_string(), JsValue::Array(arg_strs));
-        op.insert("timestamp".to_string(), JsValue::Number(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs_f64() * 1000.0)
-                .unwrap_or(0.0)
-        ));
+        op.insert(
+            "timestamp".to_string(),
+            JsValue::Number(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0),
+            ),
+        );
         ops.push(JsValue::Object(op));
     }
     m
@@ -214,25 +301,41 @@ fn record_op(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> 
 
 fn make_image_data(w: u32, h: u32) -> JsValue {
     let mut img = HashMap::new();
-    img.insert("__type__".to_string(), JsValue::String("ImageData".to_string()));
+    img.insert(
+        "__type__".to_string(),
+        JsValue::String("ImageData".to_string()),
+    );
     img.insert("width".to_string(), JsValue::Number(w as f64));
     img.insert("height".to_string(), JsValue::Number(h as f64));
     // data is a Uint8ClampedArray-like: represent as Array of zeros.
     let len = (w * h * 4) as usize;
     let data: Vec<JsValue> = vec![JsValue::Number(0.0); len.min(4096)]; // cap for memory
     img.insert("data".to_string(), JsValue::Array(data));
-    img.insert("colorSpace".to_string(), JsValue::String("srgb".to_string()));
+    img.insert(
+        "colorSpace".to_string(),
+        JsValue::String("srgb".to_string()),
+    );
     JsValue::Object(img)
 }
 
 // ── CanvasGradient ───────────────────────────────────────────────────────────
 
-pub(super) fn call_canvas_gradient_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_canvas_gradient_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     match method {
         "addColorStop" => {
             let mut m = map.clone();
-            let offset = args.first().map(crate::js::interpreter::coercion::to_number).unwrap_or(0.0);
-            let color = args.get(1).map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let offset = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_number)
+                .unwrap_or(0.0);
+            let color = args
+                .get(1)
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             if let Some(JsValue::Array(stops)) = m.get_mut("__stops__") {
                 let mut stop = HashMap::new();
                 stop.insert("offset".to_string(), JsValue::Number(offset));
@@ -249,12 +352,19 @@ pub(super) fn call_canvas_gradient_method(map: &HashMap<String, JsValue>, method
 
 pub(super) fn make_path_2d() -> JsValue {
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("Path2D".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("Path2D".to_string()),
+    );
     map.insert("__commands__".to_string(), JsValue::Array(Vec::new()));
     JsValue::Object(map)
 }
 
-pub(super) fn call_path_2d_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_path_2d_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     match method {
         "addPath" => {
             let mut m = map.clone();
@@ -263,8 +373,8 @@ pub(super) fn call_path_2d_method(map: &HashMap<String, JsValue>, method: &str, 
             }
             JsValue::Object(m)
         }
-        "closePath" | "moveTo" | "lineTo" | "bezierCurveTo" | "quadraticCurveTo"
-        | "arc" | "arcTo" | "ellipse" | "rect" | "roundRect" => {
+        "closePath" | "moveTo" | "lineTo" | "bezierCurveTo" | "quadraticCurveTo" | "arc"
+        | "arcTo" | "ellipse" | "rect" | "roundRect" => {
             let mut m = map.clone();
             if let Some(JsValue::Array(cmds)) = m.get_mut("__commands__") {
                 cmds.push(JsValue::String(format!("{}({})", method, args.len())));
@@ -279,16 +389,26 @@ pub(super) fn call_path_2d_method(map: &HashMap<String, JsValue>, method: &str, 
 
 pub(super) fn make_offscreen_canvas(width: u32, height: u32) -> JsValue {
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("OffscreenCanvas".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("OffscreenCanvas".to_string()),
+    );
     map.insert("width".to_string(), JsValue::Number(width as f64));
     map.insert("height".to_string(), JsValue::Number(height as f64));
     JsValue::Object(map)
 }
 
-pub(super) fn call_offscreen_canvas_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> JsValue {
+pub(super) fn call_offscreen_canvas_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> JsValue {
     match method {
         "getContext" => {
-            let ctx_type = args.first().map(crate::js::interpreter::coercion::to_string).unwrap_or_default();
+            let ctx_type = args
+                .first()
+                .map(crate::js::interpreter::coercion::to_string)
+                .unwrap_or_default();
             if ctx_type == "2d" {
                 make_context_2d(map)
             } else {
@@ -301,15 +421,27 @@ pub(super) fn call_offscreen_canvas_method(map: &HashMap<String, JsValue>, metho
             blob.insert("type".to_string(), JsValue::String("image/png".to_string()));
             blob.insert("size".to_string(), JsValue::Number(68.0));
             let mut p = HashMap::new();
-            p.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+            p.insert(
+                "__type__".to_string(),
+                JsValue::String("Promise".to_string()),
+            );
             p.insert("__resolved__".to_string(), JsValue::Object(blob));
             JsValue::Object(p)
         }
         "transferToImageBitmap" => {
             let mut bitmap = HashMap::new();
-            bitmap.insert("__type__".to_string(), JsValue::String("ImageBitmap".to_string()));
-            bitmap.insert("width".to_string(), map.get("width").cloned().unwrap_or(JsValue::Number(300.0)));
-            bitmap.insert("height".to_string(), map.get("height").cloned().unwrap_or(JsValue::Number(150.0)));
+            bitmap.insert(
+                "__type__".to_string(),
+                JsValue::String("ImageBitmap".to_string()),
+            );
+            bitmap.insert(
+                "width".to_string(),
+                map.get("width").cloned().unwrap_or(JsValue::Number(300.0)),
+            );
+            bitmap.insert(
+                "height".to_string(),
+                map.get("height").cloned().unwrap_or(JsValue::Number(150.0)),
+            );
             JsValue::Object(bitmap)
         }
         _ => JsValue::Undefined,
@@ -318,7 +450,11 @@ pub(super) fn call_offscreen_canvas_method(map: &HashMap<String, JsValue>, metho
 
 // ── ImageBitmap ──────────────────────────────────────────────────────────────
 
-pub(super) fn call_image_bitmap_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> JsValue {
+pub(super) fn call_image_bitmap_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> JsValue {
     match method {
         "close" => {
             let mut m = map.clone();
@@ -384,7 +520,10 @@ mod tests {
         let m = get_obj(&c);
         let ctx = call_canvas_method(m, "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        assert_eq!(get_str(ctx_map.get("__type__").unwrap()), "CanvasRenderingContext2D");
+        assert_eq!(
+            get_str(ctx_map.get("__type__").unwrap()),
+            "CanvasRenderingContext2D"
+        );
         assert_eq!(get_str(ctx_map.get("fillStyle").unwrap()), "#000000");
         assert_eq!(get_num(ctx_map.get("lineWidth").unwrap()), 1.0);
     }
@@ -452,10 +591,22 @@ mod tests {
         let c = make_canvas_element(300, 150);
         let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        let result = call_context_2d_method(ctx_map, "fillRect", &[JsValue::Number(10.0), JsValue::Number(20.0), JsValue::Number(100.0), JsValue::Number(50.0)]);
+        let result = call_context_2d_method(
+            ctx_map,
+            "fillRect",
+            &[
+                JsValue::Number(10.0),
+                JsValue::Number(20.0),
+                JsValue::Number(100.0),
+                JsValue::Number(50.0),
+            ],
+        );
         // fillRect now returns an Object with recorded operations
         let result_map = get_obj(&result);
-        assert_eq!(get_str(result_map.get("__type__").unwrap()), "CanvasRenderingContext2D");
+        assert_eq!(
+            get_str(result_map.get("__type__").unwrap()),
+            "CanvasRenderingContext2D"
+        );
         // Verify the operation was recorded
         if let Some(JsValue::Array(ops)) = result_map.get("__ops__") {
             assert!(!ops.is_empty(), "fillRect should be recorded in __ops__");
@@ -467,7 +618,8 @@ mod tests {
         let c = make_canvas_element(300, 150);
         let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        let metrics = call_context_2d_method(ctx_map, "measureText", &[JsValue::String("hello".into())]);
+        let metrics =
+            call_context_2d_method(ctx_map, "measureText", &[JsValue::String("hello".into())]);
         let m = get_obj(&metrics);
         assert_eq!(get_str(m.get("__type__").unwrap()), "TextMetrics");
         assert_eq!(get_num(m.get("width").unwrap()), 35.0); // 5 chars * 7px
@@ -496,7 +648,10 @@ mod tests {
         assert_eq!(get_num(t.get("d").unwrap()), 1.0);
         assert_eq!(get_num(t.get("e").unwrap()), 0.0);
         assert_eq!(get_num(t.get("f").unwrap()), 0.0);
-        assert!(matches!(t.get("isIdentity").unwrap(), JsValue::Boolean(true)));
+        assert!(matches!(
+            t.get("isIdentity").unwrap(),
+            JsValue::Boolean(true)
+        ));
     }
 
     #[test]
@@ -504,7 +659,11 @@ mod tests {
         let c = make_canvas_element(300, 150);
         let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        let img = call_context_2d_method(ctx_map, "createImageData", &[JsValue::Number(10.0), JsValue::Number(5.0)]);
+        let img = call_context_2d_method(
+            ctx_map,
+            "createImageData",
+            &[JsValue::Number(10.0), JsValue::Number(5.0)],
+        );
         let i = get_obj(&img);
         assert_eq!(get_str(i.get("__type__").unwrap()), "ImageData");
         assert_eq!(get_num(i.get("width").unwrap()), 10.0);
@@ -522,7 +681,16 @@ mod tests {
         let c = make_canvas_element(300, 150);
         let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        let gradient = call_context_2d_method(ctx_map, "createLinearGradient", &[JsValue::Number(0.0), JsValue::Number(0.0), JsValue::Number(100.0), JsValue::Number(0.0)]);
+        let gradient = call_context_2d_method(
+            ctx_map,
+            "createLinearGradient",
+            &[
+                JsValue::Number(0.0),
+                JsValue::Number(0.0),
+                JsValue::Number(100.0),
+                JsValue::Number(0.0),
+            ],
+        );
         let g = get_obj(&gradient);
         assert_eq!(get_str(g.get("__type__").unwrap()), "CanvasGradient");
         if let JsValue::Array(stops) = g.get("__stops__").unwrap() {
@@ -537,7 +705,11 @@ mod tests {
         let c = make_canvas_element(300, 150);
         let ctx = call_canvas_method(get_obj(&c), "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        let result = call_context_2d_method(ctx_map, "isPointInPath", &[JsValue::Number(10.0), JsValue::Number(20.0)]);
+        let result = call_context_2d_method(
+            ctx_map,
+            "isPointInPath",
+            &[JsValue::Number(10.0), JsValue::Number(20.0)],
+        );
         assert!(matches!(result, JsValue::Boolean(false)));
     }
 
@@ -566,10 +738,17 @@ mod tests {
     #[test]
     fn gradient_add_color_stop() {
         let mut gradient = HashMap::new();
-        gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".into()));
+        gradient.insert(
+            "__type__".to_string(),
+            JsValue::String("CanvasGradient".into()),
+        );
         gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
-        
-        let result = call_canvas_gradient_method(&gradient, "addColorStop", &[JsValue::Number(0.0), JsValue::String("red".into())]);
+
+        let result = call_canvas_gradient_method(
+            &gradient,
+            "addColorStop",
+            &[JsValue::Number(0.0), JsValue::String("red".into())],
+        );
         let g = get_obj(&result);
         if let JsValue::Array(stops) = g.get("__stops__").unwrap() {
             assert_eq!(stops.len(), 1);
@@ -587,11 +766,22 @@ mod tests {
     #[test]
     fn gradient_add_multiple_color_stops() {
         let mut gradient = HashMap::new();
-        gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".into()));
+        gradient.insert(
+            "__type__".to_string(),
+            JsValue::String("CanvasGradient".into()),
+        );
         gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
-        
-        let g1 = call_canvas_gradient_method(&gradient, "addColorStop", &[JsValue::Number(0.0), JsValue::String("red".into())]);
-        let g2 = call_canvas_gradient_method(get_obj(&g1), "addColorStop", &[JsValue::Number(1.0), JsValue::String("blue".into())]);
+
+        let g1 = call_canvas_gradient_method(
+            &gradient,
+            "addColorStop",
+            &[JsValue::Number(0.0), JsValue::String("red".into())],
+        );
+        let g2 = call_canvas_gradient_method(
+            get_obj(&g1),
+            "addColorStop",
+            &[JsValue::Number(1.0), JsValue::String("blue".into())],
+        );
         let g = get_obj(&g2);
         if let JsValue::Array(stops) = g.get("__stops__").unwrap() {
             assert_eq!(stops.len(), 2);
@@ -603,9 +793,12 @@ mod tests {
     #[test]
     fn gradient_unknown_method() {
         let mut gradient = HashMap::new();
-        gradient.insert("__type__".to_string(), JsValue::String("CanvasGradient".into()));
+        gradient.insert(
+            "__type__".to_string(),
+            JsValue::String("CanvasGradient".into()),
+        );
         gradient.insert("__stops__".to_string(), JsValue::Array(Vec::new()));
-        
+
         let result = call_canvas_gradient_method(&gradient, "unknownMethod", &[]);
         assert!(matches!(result, JsValue::Undefined));
     }
@@ -627,7 +820,11 @@ mod tests {
     #[test]
     fn path_2d_move_to() {
         let p = make_path_2d();
-        let result = call_path_2d_method(get_obj(&p), "moveTo", &[JsValue::Number(10.0), JsValue::Number(20.0)]);
+        let result = call_path_2d_method(
+            get_obj(&p),
+            "moveTo",
+            &[JsValue::Number(10.0), JsValue::Number(20.0)],
+        );
         let m = get_obj(&result);
         if let JsValue::Array(cmds) = m.get("__commands__").unwrap() {
             assert_eq!(cmds.len(), 1);
@@ -640,8 +837,16 @@ mod tests {
     #[test]
     fn path_2d_multiple_commands() {
         let p = make_path_2d();
-        let p1 = call_path_2d_method(get_obj(&p), "moveTo", &[JsValue::Number(10.0), JsValue::Number(20.0)]);
-        let p2 = call_path_2d_method(get_obj(&p1), "lineTo", &[JsValue::Number(100.0), JsValue::Number(100.0)]);
+        let p1 = call_path_2d_method(
+            get_obj(&p),
+            "moveTo",
+            &[JsValue::Number(10.0), JsValue::Number(20.0)],
+        );
+        let p2 = call_path_2d_method(
+            get_obj(&p1),
+            "lineTo",
+            &[JsValue::Number(100.0), JsValue::Number(100.0)],
+        );
         let p3 = call_path_2d_method(get_obj(&p2), "closePath", &[]);
         let m = get_obj(&p3);
         if let JsValue::Array(cmds) = m.get("__commands__").unwrap() {
@@ -678,7 +883,10 @@ mod tests {
         let m = get_obj(&c);
         let ctx = call_offscreen_canvas_method(m, "getContext", &[JsValue::String("2d".into())]);
         let ctx_map = get_obj(&ctx);
-        assert_eq!(get_str(ctx_map.get("__type__").unwrap()), "CanvasRenderingContext2D");
+        assert_eq!(
+            get_str(ctx_map.get("__type__").unwrap()),
+            "CanvasRenderingContext2D"
+        );
     }
 
     #[test]
@@ -728,10 +936,13 @@ mod tests {
     #[test]
     fn image_bitmap_close() {
         let mut bitmap = HashMap::new();
-        bitmap.insert("__type__".to_string(), JsValue::String("ImageBitmap".into()));
+        bitmap.insert(
+            "__type__".to_string(),
+            JsValue::String("ImageBitmap".into()),
+        );
         bitmap.insert("width".to_string(), JsValue::Number(100.0));
         bitmap.insert("height".to_string(), JsValue::Number(50.0));
-        
+
         let result = call_image_bitmap_method(&bitmap, "close", &[]);
         let m = get_obj(&result);
         assert_eq!(get_num(m.get("width").unwrap()), 0.0);
@@ -741,10 +952,13 @@ mod tests {
     #[test]
     fn image_bitmap_unknown_method() {
         let mut bitmap = HashMap::new();
-        bitmap.insert("__type__".to_string(), JsValue::String("ImageBitmap".into()));
+        bitmap.insert(
+            "__type__".to_string(),
+            JsValue::String("ImageBitmap".into()),
+        );
         bitmap.insert("width".to_string(), JsValue::Number(100.0));
         bitmap.insert("height".to_string(), JsValue::Number(50.0));
-        
+
         let result = call_image_bitmap_method(&bitmap, "unknownMethod", &[]);
         assert!(matches!(result, JsValue::Undefined));
     }

@@ -106,7 +106,9 @@ impl ExtensionRegistry {
             return;
         }
 
-        let Ok(entries) = std::fs::read_dir(&ext_dir) else { return };
+        let Ok(entries) = std::fs::read_dir(&ext_dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -117,8 +119,12 @@ impl ExtensionRegistry {
 
     fn load_extension(&mut self, ext_path: &Path) {
         let manifest_path = ext_path.join("extension.json");
-        let Ok(content) = std::fs::read_to_string(&manifest_path) else { return };
-        let Ok(manifest) = serde_json::from_str::<ExtensionManifest>(&content) else { return };
+        let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+            return;
+        };
+        let Ok(manifest) = serde_json::from_str::<ExtensionManifest>(&content) else {
+            return;
+        };
 
         // Register contributed commands
         for cmd in &manifest.contributes.commands {
@@ -135,7 +141,10 @@ impl ExtensionRegistry {
 
     /// Activate an extension by ID.
     pub fn activate(&mut self, id: &str) -> Result<(), String> {
-        let ext = self.extensions.iter_mut().find(|e| e.manifest.id == id)
+        let ext = self
+            .extensions
+            .iter_mut()
+            .find(|e| e.manifest.id == id)
             .ok_or_else(|| format!("Extension '{}' not found", id))?;
         ext.state = ExtensionState::Active;
         Ok(())
@@ -150,14 +159,24 @@ impl ExtensionRegistry {
 
     /// Get active extensions count.
     pub fn active_count(&self) -> usize {
-        self.extensions.iter().filter(|e| e.state == ExtensionState::Active).count()
+        self.extensions
+            .iter()
+            .filter(|e| e.state == ExtensionState::Active)
+            .count()
     }
 
     /// List all registered commands from extensions.
     pub fn extension_commands(&self) -> Vec<(&str, &str)> {
-        self.extensions.iter()
+        self.extensions
+            .iter()
             .filter(|e| e.state == ExtensionState::Active)
-            .flat_map(|e| e.manifest.contributes.commands.iter().map(|c| (c.id.as_str(), c.title.as_str())))
+            .flat_map(|e| {
+                e.manifest
+                    .contributes
+                    .commands
+                    .iter()
+                    .map(|c| (c.id.as_str(), c.title.as_str()))
+            })
             .collect()
     }
 }

@@ -30,7 +30,12 @@ pub struct DomRect {
 
 impl DomRect {
     pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn to_js_value(&self) -> JsValue {
@@ -65,15 +70,33 @@ impl DomRect {
 impl IntersectionEntry {
     pub fn to_js_value(&self) -> JsValue {
         let mut map = HashMap::new();
-        map.insert("target".to_string(), JsValue::Object({
-            let mut t = HashMap::new();
-            t.insert("__node_id__".to_string(), JsValue::Number(self.target_node_id as f64));
-            t
-        }));
-        map.insert("isIntersecting".to_string(), JsValue::Boolean(self.is_intersecting));
-        map.insert("intersectionRatio".to_string(), JsValue::Number(self.intersection_ratio));
-        map.insert("boundingClientRect".to_string(), self.bounding_rect.to_js_value());
-        map.insert("intersectionRect".to_string(), self.intersection_rect.to_js_value());
+        map.insert(
+            "target".to_string(),
+            JsValue::Object({
+                let mut t = HashMap::new();
+                t.insert(
+                    "__node_id__".to_string(),
+                    JsValue::Number(self.target_node_id as f64),
+                );
+                t
+            }),
+        );
+        map.insert(
+            "isIntersecting".to_string(),
+            JsValue::Boolean(self.is_intersecting),
+        );
+        map.insert(
+            "intersectionRatio".to_string(),
+            JsValue::Number(self.intersection_ratio),
+        );
+        map.insert(
+            "boundingClientRect".to_string(),
+            self.bounding_rect.to_js_value(),
+        );
+        map.insert(
+            "intersectionRect".to_string(),
+            self.intersection_rect.to_js_value(),
+        );
         map.insert("rootBounds".to_string(), self.root_bounds.to_js_value());
         JsValue::Object(map)
     }
@@ -152,12 +175,18 @@ impl NativeIntersectionObserver {
 
     /// Compute intersection for a given element bounding box.
     /// Returns the entry if any threshold is crossed.
-    pub fn compute_entry(&self, target_node_id: usize, element_rect: &DomRect) -> IntersectionEntry {
+    pub fn compute_entry(
+        &self,
+        target_node_id: usize,
+        element_rect: &DomRect,
+    ) -> IntersectionEntry {
         let effective_root = DomRect::new(
             self.config.root_bounds.x - self.config.root_margin[3],
             self.config.root_bounds.y - self.config.root_margin[0],
             self.config.root_bounds.width + self.config.root_margin[1] + self.config.root_margin[3],
-            self.config.root_bounds.height + self.config.root_margin[0] + self.config.root_margin[2],
+            self.config.root_bounds.height
+                + self.config.root_margin[0]
+                + self.config.root_margin[2],
         );
 
         let intersection = effective_root.intersect(element_rect);

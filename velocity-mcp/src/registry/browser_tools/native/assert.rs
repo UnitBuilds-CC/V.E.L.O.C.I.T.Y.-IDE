@@ -8,9 +8,7 @@ use serde_json::Value;
 use std::error::Error;
 use std::path::Path;
 
-use crate::editor::browser::native_bridge::{
-    get_or_create_native_bridge, NativeBrowserBridge,
-};
+use crate::editor::browser::native_bridge::{get_or_create_native_bridge, NativeBrowserBridge};
 use velocity_browser::{AgentActionResult, NdaDelta};
 
 use super::render::fact_snippet;
@@ -123,12 +121,16 @@ pub(super) fn assert_on_session(
     // First-touch experience inheritance, matching every other tool: the
     // default bundle is seeded before the first evaluation runs.
     {
-        let mut bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        let mut bridge = arc
+            .lock()
+            .map_err(|_| "native browser bridge lock poisoned")?;
         bridge.seed_default_experience(root);
     }
     let start = std::time::Instant::now();
     let checks = loop {
-        let bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        let bridge = arc
+            .lock()
+            .map_err(|_| "native browser bridge lock poisoned")?;
         let checks = evaluate_assert_checks(&bridge, raw_text, raw_label);
         let all_ok = checks.iter().all(|(_, _, ok, _)| *ok);
         if all_ok || start.elapsed().as_millis() >= u128::from(wait_ms) {
@@ -142,7 +144,9 @@ pub(super) fn assert_on_session(
     // outcome history so browser_native_reflect spots repeated "expected
     // X" misses exactly like repeated dead clicks.
     if checks.iter().any(|(_, _, ok, _)| !*ok) {
-        let mut bridge = arc.lock().map_err(|_| "native browser bridge lock poisoned")?;
+        let mut bridge = arc
+            .lock()
+            .map_err(|_| "native browser bridge lock poisoned")?;
         for (what, value, ok, _) in &checks {
             if *ok {
                 continue;

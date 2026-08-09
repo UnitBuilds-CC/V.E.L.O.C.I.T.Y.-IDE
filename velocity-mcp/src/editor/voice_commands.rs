@@ -129,7 +129,11 @@ impl VoiceCommandRegistry {
                 param_extractor: ParamExtractor::None,
             },
             CommandPattern {
-                triggers: vec!["deploy".into(), "ship it".into(), "push to production".into()],
+                triggers: vec![
+                    "deploy".into(),
+                    "ship it".into(),
+                    "push to production".into(),
+                ],
                 intent: VoiceIntent::Deploy,
                 param_extractor: ParamExtractor::None,
             },
@@ -184,7 +188,11 @@ impl VoiceCommandRegistry {
                 param_extractor: ParamExtractor::RestAsTarget,
             },
             CommandPattern {
-                triggers: vec!["go to line".into(), "navigate to".into(), "go to definition".into()],
+                triggers: vec![
+                    "go to line".into(),
+                    "navigate to".into(),
+                    "go to definition".into(),
+                ],
                 intent: VoiceIntent::Navigate,
                 param_extractor: ParamExtractor::RestAsTarget,
             },
@@ -265,8 +273,7 @@ fn extract_params(rest: &str, extractor: ParamExtractor) -> HashMap<String, Stri
 }
 
 /// Voice input state for the IDE.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct VoiceInputState {
     pub registry: VoiceCommandRegistry,
     pub listening: bool,
@@ -276,7 +283,6 @@ pub struct VoiceInputState {
     pub total_commands: usize,
     pub successful_commands: usize,
 }
-
 
 impl VoiceInputState {
     pub fn new() -> Self {

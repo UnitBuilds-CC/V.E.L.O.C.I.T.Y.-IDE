@@ -183,13 +183,27 @@ impl OutcomeScorer {
         let weights = ScoringWeights::for_action(action_kind);
 
         let mut score = 0.0f64;
-        if signals.dom_changed { score += weights.dom_changed; }
-        if signals.url_changed { score += weights.url_changed; }
-        if signals.error_thrown { score += weights.error_penalty; } // negative
-        if signals.target_removed { score += weights.target_removed; }
-        if signals.content_added { score += weights.content_added; }
-        if signals.network_request_fired { score += weights.network_fired; }
-        if signals.completed_in_time { score += weights.completed_in_time; }
+        if signals.dom_changed {
+            score += weights.dom_changed;
+        }
+        if signals.url_changed {
+            score += weights.url_changed;
+        }
+        if signals.error_thrown {
+            score += weights.error_penalty;
+        } // negative
+        if signals.target_removed {
+            score += weights.target_removed;
+        }
+        if signals.content_added {
+            score += weights.content_added;
+        }
+        if signals.network_request_fired {
+            score += weights.network_fired;
+        }
+        if signals.completed_in_time {
+            score += weights.completed_in_time;
+        }
 
         // Blend with agent's own confidence if provided
         if signals.agent_confidence > 0.0 {
@@ -224,16 +238,26 @@ impl OutcomeScorer {
     pub fn success_rate(&self, domain: &str, role: &str, action: &ActionKind) -> Option<f64> {
         let key = format!("{}::{}::{}", domain, role, action.label());
         self.success_rates.get(&key).map(|(total, count)| {
-            if *count > 0 { *total / *count as f64 } else { 0.0 }
+            if *count > 0 {
+                *total / *count as f64
+            } else {
+                0.0
+            }
         })
     }
 
     /// Get the top N most reliable action targets on a given domain.
     pub fn top_targets(&self, domain: &str, limit: usize) -> Vec<(&str, f64)> {
-        let mut targets: Vec<_> = self.success_rates.iter()
+        let mut targets: Vec<_> = self
+            .success_rates
+            .iter()
             .filter(|(k, _)| k.starts_with(domain))
             .map(|(k, (total, count))| {
-                let rate = if *count > 0 { *total / *count as f64 } else { 0.0 };
+                let rate = if *count > 0 {
+                    *total / *count as f64
+                } else {
+                    0.0
+                };
                 (k.as_str(), rate)
             })
             .collect();
@@ -262,7 +286,11 @@ impl OutcomeScorer {
                 o.target_role,
                 extract_domain(&o.page_url),
                 o.score,
-                if o.signals.error_thrown { " [ERROR]" } else { "" }
+                if o.signals.error_thrown {
+                    " [ERROR]"
+                } else {
+                    ""
+                }
             ));
         }
         out
@@ -317,7 +345,9 @@ impl OutcomeScorer {
         let mut order: Vec<String> = Vec::new();
         let mut partial: HashMap<String, Partial> = HashMap::new();
         for fact in &doc.facts {
-            let Some(subject) = doc.subject_str(fact) else { continue };
+            let Some(subject) = doc.subject_str(fact) else {
+                continue;
+            };
             if !partial.contains_key(subject) {
                 order.push(subject.to_string());
             }
@@ -366,9 +396,18 @@ impl OutcomeScorer {
                 .or_insert(0) += 1;
         }
         for subject in order {
-            let Some(p) = partial.remove(&subject) else { continue };
-            let (Some(action), Some(url)) = (p.action, p.url) else { continue };
-            let key = (p.timestamp_ms, action.clone(), p.selector.clone(), url.clone());
+            let Some(p) = partial.remove(&subject) else {
+                continue;
+            };
+            let (Some(action), Some(url)) = (p.action, p.url) else {
+                continue;
+            };
+            let key = (
+                p.timestamp_ms,
+                action.clone(),
+                p.selector.clone(),
+                url.clone(),
+            );
             if let Some(count) = already.get_mut(&key) {
                 if *count > 0 {
                     *count -= 1;
@@ -446,7 +485,11 @@ mod tests {
             ..Default::default()
         };
         let score = scorer.score(&ActionKind::Click, &signals);
-        assert!(score > 0.5, "Successful click should score > 0.5, got {}", score);
+        assert!(
+            score > 0.5,
+            "Successful click should score > 0.5, got {}",
+            score
+        );
     }
 
     #[test]
@@ -458,7 +501,11 @@ mod tests {
             ..Default::default()
         };
         let score = scorer.score(&ActionKind::Click, &signals);
-        assert!(score < 0.1, "Failed action should score near 0, got {}", score);
+        assert!(
+            score < 0.1,
+            "Failed action should score near 0, got {}",
+            score
+        );
     }
 
     #[test]
@@ -515,7 +562,11 @@ mod tests {
             target_role: "textbox".to_string(),
             page_url: "https://login.example.com/".to_string(),
             score: 0.95,
-            signals: OutcomeSignals { completed_in_time: true, dom_changed: true, ..Default::default() },
+            signals: OutcomeSignals {
+                completed_in_time: true,
+                dom_changed: true,
+                ..Default::default()
+            },
             timestamp_ms: 5000,
         });
         let ctx = scorer.format_for_context(5);
@@ -526,7 +577,10 @@ mod tests {
 
     #[test]
     fn extract_domain_works() {
-        assert_eq!(extract_domain("https://www.example.com/path"), "www.example.com");
+        assert_eq!(
+            extract_domain("https://www.example.com/path"),
+            "www.example.com"
+        );
         assert_eq!(extract_domain("http://localhost:8080/api"), "localhost");
         assert_eq!(extract_domain("about:blank"), "about:blank");
     }
@@ -573,7 +627,10 @@ mod tests {
             target_role: "textbox".to_string(),
             page_url: "https://example.com/checkout".to_string(),
             score: 0.1,
-            signals: OutcomeSignals { error_thrown: true, ..Default::default() },
+            signals: OutcomeSignals {
+                error_thrown: true,
+                ..Default::default()
+            },
             timestamp_ms: 2000,
         });
 
@@ -651,8 +708,12 @@ mod tests {
     #[test]
     fn action_kind_label_roundtrip() {
         let cases = [
-            ("click", "click"), ("fill", "fill"), ("navigate", "navigate"),
-            ("submit", "submit"), ("scroll", "scroll"), ("select", "select"),
+            ("click", "click"),
+            ("fill", "fill"),
+            ("navigate", "navigate"),
+            ("submit", "submit"),
+            ("scroll", "scroll"),
+            ("select", "select"),
             ("extract", "extract"),
         ];
         for (input, expected_label) in cases {
@@ -695,9 +756,13 @@ mod tests {
     #[test]
     fn signals_bits_roundtrip_all_true() {
         let s = OutcomeSignals {
-            dom_changed: true, url_changed: true, error_thrown: true,
-            target_removed: true, content_added: true,
-            network_request_fired: true, completed_in_time: true,
+            dom_changed: true,
+            url_changed: true,
+            error_thrown: true,
+            target_removed: true,
+            content_added: true,
+            network_request_fired: true,
+            completed_in_time: true,
             agent_confidence: 0.0,
         };
         let bits = signals_to_bits(&s);
@@ -710,7 +775,10 @@ mod tests {
 
     #[test]
     fn signals_bits_individual_flags() {
-        for (i, field) in ["dom", "url", "err", "tgt", "cnt", "net", "done"].iter().enumerate() {
+        for (i, field) in ["dom", "url", "err", "tgt", "cnt", "net", "done"]
+            .iter()
+            .enumerate()
+        {
             let mut s = OutcomeSignals::default();
             match i {
                 0 => s.dom_changed = true,
@@ -737,7 +805,10 @@ mod tests {
 
     #[test]
     fn extract_domain_https_with_port() {
-        assert_eq!(extract_domain("https://example.com:443/path"), "example.com");
+        assert_eq!(
+            extract_domain("https://example.com:443/path"),
+            "example.com"
+        );
     }
 
     #[test]
@@ -747,7 +818,10 @@ mod tests {
 
     #[test]
     fn extract_domain_data_url() {
-        assert_eq!(extract_domain("data:text/html,<h1>Hi</h1>"), "data:text/html,<h1>Hi</h1>");
+        assert_eq!(
+            extract_domain("data:text/html,<h1>Hi</h1>"),
+            "data:text/html,<h1>Hi</h1>"
+        );
     }
 
     #[test]
@@ -766,30 +840,49 @@ mod tests {
     fn score_fill_values_dom_change() {
         let scorer = OutcomeScorer::new();
         let s = OutcomeSignals {
-            dom_changed: true, completed_in_time: true, ..Default::default()
+            dom_changed: true,
+            completed_in_time: true,
+            ..Default::default()
         };
         let score = scorer.score(&ActionKind::Fill, &s);
         // Fill weights: dom_changed=0.40, completed_in_time=0.50
-        assert!(score > 0.8, "Fill with dom+time should be high, got {}", score);
+        assert!(
+            score > 0.8,
+            "Fill with dom+time should be high, got {}",
+            score
+        );
     }
 
     #[test]
     fn score_submit_values_network() {
         let scorer = OutcomeScorer::new();
         let s = OutcomeSignals {
-            network_request_fired: true, url_changed: true, completed_in_time: true,
+            network_request_fired: true,
+            url_changed: true,
+            completed_in_time: true,
             ..Default::default()
         };
         let score = scorer.score(&ActionKind::Submit, &s);
         // Submit: url=0.25, network=0.30, time=0.10
-        assert!(score > 0.5, "Submit with net+url should be high, got {}", score);
+        assert!(
+            score > 0.5,
+            "Submit with net+url should be high, got {}",
+            score
+        );
     }
 
     #[test]
     fn score_extract_only_cares_about_time() {
         let scorer = OutcomeScorer::new();
-        let s_time = OutcomeSignals { completed_in_time: true, ..Default::default() };
-        let s_no_time = OutcomeSignals { dom_changed: true, content_added: true, ..Default::default() };
+        let s_time = OutcomeSignals {
+            completed_in_time: true,
+            ..Default::default()
+        };
+        let s_no_time = OutcomeSignals {
+            dom_changed: true,
+            content_added: true,
+            ..Default::default()
+        };
         let with = scorer.score(&ActionKind::Extract, &s_time);
         let without = scorer.score(&ActionKind::Extract, &s_no_time);
         assert!(with > without, "Extract should value time over DOM changes");
@@ -798,9 +891,16 @@ mod tests {
     #[test]
     fn score_agent_confidence_blends() {
         let scorer = OutcomeScorer::new();
-        let s = OutcomeSignals { completed_in_time: true, agent_confidence: 0.9, ..Default::default() };
+        let s = OutcomeSignals {
+            completed_in_time: true,
+            agent_confidence: 0.9,
+            ..Default::default()
+        };
         let blended = scorer.score(&ActionKind::Click, &s);
-        let no_blend = OutcomeSignals { completed_in_time: true, ..Default::default() };
+        let no_blend = OutcomeSignals {
+            completed_in_time: true,
+            ..Default::default()
+        };
         let raw = scorer.score(&ActionKind::Click, &no_blend);
         assert!(blended > raw, "Agent confidence should boost score");
     }
@@ -808,9 +908,16 @@ mod tests {
     #[test]
     fn score_clamped_to_zero_one() {
         let scorer = OutcomeScorer::new();
-        let worst = OutcomeSignals { error_thrown: true, ..Default::default() };
+        let worst = OutcomeSignals {
+            error_thrown: true,
+            ..Default::default()
+        };
         let s = scorer.score(&ActionKind::Navigate, &worst);
-        assert!((0.0..=1.0).contains(&s), "Score must be in [0,1], got {}", s);
+        assert!(
+            (0.0..=1.0).contains(&s),
+            "Score must be in [0,1], got {}",
+            s
+        );
     }
 
     // ── top_targets ───────────────────────────────────────────────────
@@ -884,7 +991,10 @@ mod tests {
             target_role: "button".to_string(),
             page_url: "https://x.com".to_string(),
             score: 0.1,
-            signals: OutcomeSignals { error_thrown: true, ..Default::default() },
+            signals: OutcomeSignals {
+                error_thrown: true,
+                ..Default::default()
+            },
             timestamp_ms: 1,
         });
         let ctx = scorer.format_for_context(5);
@@ -896,6 +1006,8 @@ mod tests {
     #[test]
     fn success_rate_returns_none_for_unknown() {
         let scorer = OutcomeScorer::new();
-        assert!(scorer.success_rate("x.com", "button", &ActionKind::Click).is_none());
+        assert!(scorer
+            .success_rate("x.com", "button", &ActionKind::Click)
+            .is_none());
     }
 }

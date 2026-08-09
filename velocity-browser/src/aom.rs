@@ -30,7 +30,9 @@ impl AomExtractor {
     pub fn extract_triples(nodes: &[SpatialNode]) -> Vec<NdaTriple> {
         let mut triples = Vec::with_capacity(nodes.len() * 4);
         for node in nodes {
-            if node.aria_hidden { continue; }
+            if node.aria_hidden {
+                continue;
+            }
             triples.push(NdaTriple::new(&node.id, 10, &node.role));
             if !node.name.is_empty() {
                 triples.push(NdaTriple::new(&node.id, 11, &node.name));
@@ -42,10 +44,18 @@ impl AomExtractor {
                 triples.push(NdaTriple::new(&node.id, 13, "disabled"));
             }
             if let Some(checked) = node.aria_checked {
-                triples.push(NdaTriple::new(&node.id, 14, if checked { "true" } else { "false" }));
+                triples.push(NdaTriple::new(
+                    &node.id,
+                    14,
+                    if checked { "true" } else { "false" },
+                ));
             }
             if let Some(expanded) = node.aria_expanded {
-                triples.push(NdaTriple::new(&node.id, 15, if expanded { "true" } else { "false" }));
+                triples.push(NdaTriple::new(
+                    &node.id,
+                    15,
+                    if expanded { "true" } else { "false" },
+                ));
             }
             if let Some(level) = node.aria_level {
                 triples.push(NdaTriple::new(&node.id, 16, &level.to_string()));
@@ -54,7 +64,11 @@ impl AomExtractor {
                 triples.push(NdaTriple::new(&node.id, 17, &val.to_string()));
             }
             if let Some((x, y, w, h)) = node.bounds {
-                triples.push(NdaTriple::new(&node.id, 18, &format!("{:.0},{:.0},{:.0},{:.0}", x, y, w, h)));
+                triples.push(NdaTriple::new(
+                    &node.id,
+                    18,
+                    &format!("{:.0},{:.0},{:.0},{:.0}", x, y, w, h),
+                ));
             }
             for child_id in &node.children {
                 triples.push(NdaTriple::new(&node.id, 19, child_id));
@@ -67,9 +81,16 @@ impl AomExtractor {
     pub fn to_accessibility_text(nodes: &[SpatialNode]) -> String {
         let mut text = String::new();
         for node in nodes {
-            if node.aria_hidden { continue; }
-            text.push_str(&format!("[{}] role={} name=\"{}\"", node.id, node.role, node.name));
-            if node.aria_disabled { text.push_str(" disabled"); }
+            if node.aria_hidden {
+                continue;
+            }
+            text.push_str(&format!(
+                "[{}] role={} name=\"{}\"",
+                node.id, node.role, node.name
+            ));
+            if node.aria_disabled {
+                text.push_str(" disabled");
+            }
             if let Some(checked) = node.aria_checked {
                 text.push_str(&format!(" checked={}", checked));
             }
@@ -83,7 +104,10 @@ impl AomExtractor {
 
     /// Find nodes matching a role.
     pub fn find_by_role<'a>(nodes: &'a [SpatialNode], role: &str) -> Vec<&'a SpatialNode> {
-        nodes.iter().filter(|n| n.role == role && !n.aria_hidden).collect()
+        nodes
+            .iter()
+            .filter(|n| n.role == role && !n.aria_hidden)
+            .collect()
     }
 
     /// Find a node by ID.
@@ -98,11 +122,20 @@ mod tests {
 
     fn make_node(id: &str, role: &str, name: &str) -> SpatialNode {
         SpatialNode {
-            id: id.to_string(), role: role.to_string(), name: name.to_string(),
-            aria_label: None, aria_hidden: false, aria_disabled: false,
-            aria_checked: None, aria_expanded: None, aria_level: None,
-            aria_value_now: None, aria_value_min: None, aria_value_max: None,
-            bounds: None, children: Vec::new(),
+            id: id.to_string(),
+            role: role.to_string(),
+            name: name.to_string(),
+            aria_label: None,
+            aria_hidden: false,
+            aria_disabled: false,
+            aria_checked: None,
+            aria_expanded: None,
+            aria_level: None,
+            aria_value_now: None,
+            aria_value_min: None,
+            aria_value_max: None,
+            bounds: None,
+            children: Vec::new(),
         }
     }
 

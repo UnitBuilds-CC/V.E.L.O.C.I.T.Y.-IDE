@@ -287,7 +287,8 @@ pub fn persist_recording(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let script = session.to_script(script_name);
     let steps: Vec<crate::wa::model::WaScriptStep> = script.steps;
-    let report = crate::wa::save_script_report(root, script_name, script.start_url.as_deref(), steps)?;
+    let report =
+        crate::wa::save_script_report(root, script_name, script.start_url.as_deref(), steps)?;
     Ok(report.nda_path)
 }
 
@@ -295,10 +296,7 @@ pub fn persist_recording(
 
 /// Build a PowerShell script that hooks UIA focus-changed and structure-changed
 /// events, outputting JSON lines for each interaction detected.
-pub fn build_recording_hook_script(
-    process_id: Option<u32>,
-    duration_seconds: u32,
-) -> String {
+pub fn build_recording_hook_script(process_id: Option<u32>, duration_seconds: u32) -> String {
     let pid_filter = process_id
         .map(|pid| format!("$targetPid = {}", pid))
         .unwrap_or_else(|| "$targetPid = $null".to_string());

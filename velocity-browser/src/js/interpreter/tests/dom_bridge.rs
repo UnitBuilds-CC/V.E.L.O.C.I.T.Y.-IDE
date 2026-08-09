@@ -98,7 +98,9 @@ fn element_remove_child() {
 #[test]
 fn element_text_content_set_get() {
     reset();
-    let result = eval_full("var el = document.createElement('p'); el.textContent = 'Hello World'; el.textContent");
+    let result = eval_full(
+        "var el = document.createElement('p'); el.textContent = 'Hello World'; el.textContent",
+    );
     assert_eq!(result, JsValue::String("Hello World".to_string()));
 }
 
@@ -153,13 +155,15 @@ fn element_closest() {
 #[test]
 fn element_add_dispatch_event() {
     reset();
-    let result = eval_full("
+    let result = eval_full(
+        "
         var el = document.createElement('button');
         var clicked = false;
         el.addEventListener('click', function() { clicked = true; });
         el.dispatchEvent(new Event('click'));
         clicked
-    ");
+    ",
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -207,71 +211,83 @@ fn document_document_element() {
 #[test]
 fn class_list_add_contains() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.classList.add('foo', 'bar');
         el.classList.contains('foo')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn class_list_remove() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.classList.add('a', 'b');
         el.classList.remove('a');
         el.classList.contains('a')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(false));
 }
 
 #[test]
 fn class_list_toggle() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.classList.toggle('active');
         var first = el.classList.contains('active');
         el.classList.toggle('active');
         var second = el.classList.contains('active');
         [first, second].join(',')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("true,false".to_string()));
 }
 
 #[test]
 fn class_list_length() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.classList.add('x', 'y', 'z');
         el.classList.length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(3.0));
 }
 
 #[test]
 fn class_list_replace() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.classList.add('old');
         el.classList.replace('old', 'new');
         el.classList.contains('new')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn class_list_item() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.classList.add('first', 'second');
         el.classList.item(1)
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("second".to_string()));
 }
 
@@ -280,22 +296,26 @@ fn class_list_item() {
 #[test]
 fn dataset_set_get() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.dataset.userId = '42';
         el.dataset.userId
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("42".to_string()));
 }
 
 #[test]
 fn dataset_camel_to_kebab() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.dataset.myAttr = 'val';
         el.getAttribute('data-my-attr')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("val".to_string()));
 }
 
@@ -304,44 +324,52 @@ fn dataset_camel_to_kebab() {
 #[test]
 fn inner_html_parses_children() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.innerHTML = '<span>hello</span><b>world</b>';
         el.children.length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]
 fn inner_html_child_tag() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.innerHTML = '<p>text</p>';
         el.children[0].tagName
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("P".to_string()));
 }
 
 #[test]
 fn inner_html_nested() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.innerHTML = '<ul><li>one</li><li>two</li></ul>';
         el.children[0].children.length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]
 fn inner_html_query_selector() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.innerHTML = '<span class="x">found</span>';
         el.querySelector('.x').textContent
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("found".to_string()));
 }
 
@@ -350,110 +378,128 @@ fn inner_html_query_selector() {
 #[test]
 fn element_get_bounding_client_rect() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         var rect = el.getBoundingClientRect();
         rect.__type__
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("DOMRect".to_string()));
 }
 
 #[test]
 fn element_scroll_into_view() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.scrollIntoView();
         'ok'
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("ok".to_string()));
 }
 
 #[test]
 fn element_focus_blur_click() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('input');
         el.focus();
         el.blur();
         el.click();
         'done'
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("done".to_string()));
 }
 
 #[test]
 fn element_insert_adjacent_html() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var parent = document.createElement('div');
         var child = document.createElement('p');
         parent.appendChild(child);
         child.insertAdjacentHTML('afterend', '<span>hi</span>');
         parent.children.length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]
 fn element_before_after() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var parent = document.createElement('ul');
         var li = document.createElement('li');
         parent.appendChild(li);
         var li2 = document.createElement('li');
         li.before(li2);
         parent.children.length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]
 fn element_append_prepend() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         var a = document.createElement('span');
         var b = document.createElement('p');
         el.append(a);
         el.prepend(b);
         el.children.length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]
 fn element_toggle_attribute() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('input');
         el.toggleAttribute('disabled');
         el.hasAttribute('disabled')
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
 #[test]
 fn element_get_attribute_names() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.setAttribute('id', 'x');
         el.setAttribute('class', 'y');
         el.getAttributeNames().length
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(2.0));
 }
 
 #[test]
 fn element_animate() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         var anim = el.animate([], {});
         anim.playState
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("running".to_string()));
 }
 
@@ -462,22 +508,26 @@ fn element_animate() {
 #[test]
 fn element_attach_shadow() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         var shadow = el.attachShadow({mode: 'open'});
         shadow.__type__
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("Element".to_string()));
 }
 
 #[test]
 fn element_shadow_root_property() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.attachShadow({mode: 'open'});
         el.shadowRoot !== null
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }
 
@@ -486,10 +536,12 @@ fn element_shadow_root_property() {
 #[test]
 fn document_cookie_set_get() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         document.cookie = 'name=value';
         document.cookie
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("name=value".to_string()));
 }
 
@@ -497,28 +549,34 @@ fn document_cookie_set_get() {
 
 #[test]
 fn window_post_message() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         window.postMessage('hello', '*');
         'ok'
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("ok".to_string()));
 }
 
 #[test]
 fn window_open_close() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var w = window.open('about:blank');
         w.closed
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(false));
 }
 
 #[test]
 fn window_get_selection() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var sel = window.getSelection();
         sel.__type__
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("Selection".to_string()));
 }
 
@@ -526,19 +584,23 @@ fn window_get_selection() {
 
 #[test]
 fn custom_elements_define() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         customElements.define('my-el', function() {});
         'ok'
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("ok".to_string()));
 }
 
 #[test]
 fn custom_elements_when_defined() {
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var p = customElements.whenDefined('my-el');
         p.__type__
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::String("Promise".to_string()));
 }
 
@@ -547,19 +609,23 @@ fn custom_elements_when_defined() {
 #[test]
 fn element_offset_properties() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.offsetWidth
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Number(0.0));
 }
 
 #[test]
 fn element_is_connected() {
     reset();
-    let result = eval_full(r#"
+    let result = eval_full(
+        r#"
         var el = document.createElement('div');
         el.isConnected
-    "#);
+    "#,
+    );
     assert_eq!(result, JsValue::Boolean(true));
 }

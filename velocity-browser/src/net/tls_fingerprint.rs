@@ -26,7 +26,10 @@ impl TlsFingerprintRotator {
     pub fn velocity_native() -> Self {
         let native = Self::chrome_windows_profile();
         let profiles = Self::all_profiles();
-        let idx = profiles.iter().position(|p| p.browser_name == native.browser_name).unwrap_or(0);
+        let idx = profiles
+            .iter()
+            .position(|p| p.browser_name == native.browser_name)
+            .unwrap_or(0);
         Self {
             active_profile: native,
             profiles,
@@ -43,7 +46,11 @@ impl TlsFingerprintRotator {
 
     /// Select a specific browser profile by name.
     pub fn select_profile(&mut self, browser_name: &str) -> Result<&TlsJa3Profile, &'static str> {
-        if let Some(idx) = self.profiles.iter().position(|p| p.browser_name == browser_name) {
+        if let Some(idx) = self
+            .profiles
+            .iter()
+            .position(|p| p.browser_name == browser_name)
+        {
             self.current_index = idx;
             self.active_profile = self.profiles[idx].clone();
             Ok(&self.active_profile)
@@ -54,7 +61,10 @@ impl TlsFingerprintRotator {
 
     /// Get all available profile names.
     pub fn available_profiles(&self) -> Vec<&str> {
-        self.profiles.iter().map(|p| p.browser_name.as_str()).collect()
+        self.profiles
+            .iter()
+            .map(|p| p.browser_name.as_str())
+            .collect()
     }
 
     /// Chrome 120 on Windows 10 — most common desktop fingerprint.

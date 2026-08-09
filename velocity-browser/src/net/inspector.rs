@@ -109,12 +109,32 @@ impl InspectorServer {
     /// Handle agent inspection and return NDA triples.
     pub fn handle_agent_inspection(&self, session_id: &str) -> Vec<NdaTriple> {
         let mut triples = Vec::new();
-        triples.push(NdaTriple::new(session_id, 200, &format!("inspector_port:{}", self.port)));
-        triples.push(NdaTriple::new(session_id, 201, if self.is_listening { "devtools_attached" } else { "devtools_detached" }));
-        triples.push(NdaTriple::new(session_id, 202, &format!("captured_requests:{}", self.captured_requests.len())));
+        triples.push(NdaTriple::new(
+            session_id,
+            200,
+            &format!("inspector_port:{}", self.port),
+        ));
+        triples.push(NdaTriple::new(
+            session_id,
+            201,
+            if self.is_listening {
+                "devtools_attached"
+            } else {
+                "devtools_detached"
+            },
+        ));
+        triples.push(NdaTriple::new(
+            session_id,
+            202,
+            &format!("captured_requests:{}", self.captured_requests.len()),
+        ));
 
         for (id, req) in &self.captured_requests {
-            triples.push(NdaTriple::new(session_id, 203, &format!("{}:{}:{}:{}", id, req.method, req.url, req.status_code)));
+            triples.push(NdaTriple::new(
+                session_id,
+                203,
+                &format!("{}:{}:{}:{}", id, req.method, req.url, req.status_code),
+            ));
         }
 
         triples
@@ -127,7 +147,8 @@ impl InspectorServer {
 
     /// Filter requests by resource type.
     pub fn filter_by_type(&self, resource_type: &ResourceType) -> Vec<&InspectedRequest> {
-        self.captured_requests.values()
+        self.captured_requests
+            .values()
             .filter(|r| &r.resource_type == resource_type)
             .collect()
     }
@@ -151,37 +172,77 @@ impl InspectorServer {
                 req.method, req.url, req.status_code, req.status_text, req.timing.total_ms
             ));
         }
-        format!(r#"{{"log":{{"version":"1.2","entries":[{}]}}}}"#, entries.join(","))
+        format!(
+            r#"{{"log":{{"version":"1.2","entries":[{}]}}}}"#,
+            entries.join(",")
+        )
     }
 
     /// Get standard HTTP status text.
     fn status_text(code: u16) -> String {
         match code {
-            200 => "OK", 201 => "Created", 204 => "No Content",
-            301 => "Moved Permanently", 302 => "Found", 304 => "Not Modified",
-            400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
-            404 => "Not Found", 405 => "Method Not Allowed", 408 => "Request Timeout",
-            500 => "Internal Server Error", 502 => "Bad Gateway", 503 => "Service Unavailable",
+            200 => "OK",
+            201 => "Created",
+            204 => "No Content",
+            301 => "Moved Permanently",
+            302 => "Found",
+            304 => "Not Modified",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            408 => "Request Timeout",
+            500 => "Internal Server Error",
+            502 => "Bad Gateway",
+            503 => "Service Unavailable",
             _ => "Unknown",
-        }.to_string()
+        }
+        .to_string()
     }
 
     /// Detect resource type from URL and content-type.
     pub fn detect_resource_type(url: &str, content_type: Option<&str>) -> ResourceType {
         if let Some(ct) = content_type {
-            if ct.contains("text/html") { return ResourceType::Document; }
-            if ct.contains("text/css") { return ResourceType::Stylesheet; }
-            if ct.contains("image/") { return ResourceType::Image; }
-            if ct.contains("javascript") || ct.contains("application/json") { return ResourceType::Script; }
-            if ct.contains("font/") || ct.contains("application/font") { return ResourceType::Font; }
-            if ct.contains("audio/") || ct.contains("video/") { return ResourceType::Media; }
+            if ct.contains("text/html") {
+                return ResourceType::Document;
+            }
+            if ct.contains("text/css") {
+                return ResourceType::Stylesheet;
+            }
+            if ct.contains("image/") {
+                return ResourceType::Image;
+            }
+            if ct.contains("javascript") || ct.contains("application/json") {
+                return ResourceType::Script;
+            }
+            if ct.contains("font/") || ct.contains("application/font") {
+                return ResourceType::Font;
+            }
+            if ct.contains("audio/") || ct.contains("video/") {
+                return ResourceType::Media;
+            }
         }
         let lower = url.to_lowercase();
-        if lower.ends_with(".html") || lower.ends_with(".htm") { return ResourceType::Document; }
-        if lower.ends_with(".css") { return ResourceType::Stylesheet; }
-        if lower.ends_with(".js") { return ResourceType::Script; }
-        if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".gif") || lower.ends_with(".svg") { return ResourceType::Image; }
-        if lower.ends_with(".woff") || lower.ends_with(".woff2") || lower.ends_with(".ttf") { return ResourceType::Font; }
+        if lower.ends_with(".html") || lower.ends_with(".htm") {
+            return ResourceType::Document;
+        }
+        if lower.ends_with(".css") {
+            return ResourceType::Stylesheet;
+        }
+        if lower.ends_with(".js") {
+            return ResourceType::Script;
+        }
+        if lower.ends_with(".png")
+            || lower.ends_with(".jpg")
+            || lower.ends_with(".gif")
+            || lower.ends_with(".svg")
+        {
+            return ResourceType::Image;
+        }
+        if lower.ends_with(".woff") || lower.ends_with(".woff2") || lower.ends_with(".ttf") {
+            return ResourceType::Font;
+        }
         ResourceType::Other
     }
 }
@@ -201,7 +262,8 @@ mod tests {
     #[test]
     fn test_capture_request() {
         let mut inspector = InspectorServer::new(9222);
-        let id = inspector.capture_request("https://example.com", "GET", 200, ResourceType::Document);
+        let id =
+            inspector.capture_request("https://example.com", "GET", 200, ResourceType::Document);
         assert!(!id.is_empty());
         assert_eq!(inspector.captured_requests.len(), 1);
     }
@@ -209,9 +271,24 @@ mod tests {
     #[test]
     fn test_filter_by_type() {
         let mut inspector = InspectorServer::new(9222);
-        inspector.capture_request("https://example.com/style.css", "GET", 200, ResourceType::Stylesheet);
-        inspector.capture_request("https://example.com/app.js", "GET", 200, ResourceType::Script);
-        inspector.capture_request("https://example.com/logo.png", "GET", 200, ResourceType::Image);
+        inspector.capture_request(
+            "https://example.com/style.css",
+            "GET",
+            200,
+            ResourceType::Stylesheet,
+        );
+        inspector.capture_request(
+            "https://example.com/app.js",
+            "GET",
+            200,
+            ResourceType::Script,
+        );
+        inspector.capture_request(
+            "https://example.com/logo.png",
+            "GET",
+            200,
+            ResourceType::Image,
+        );
 
         let scripts = inspector.filter_by_type(&ResourceType::Script);
         assert_eq!(scripts.len(), 1);
@@ -253,12 +330,30 @@ mod tests {
 
     #[test]
     fn test_detect_resource_type() {
-        assert_eq!(InspectorServer::detect_resource_type("style.css", None), ResourceType::Stylesheet);
-        assert_eq!(InspectorServer::detect_resource_type("app.js", None), ResourceType::Script);
-        assert_eq!(InspectorServer::detect_resource_type("logo.png", None), ResourceType::Image);
-        assert_eq!(InspectorServer::detect_resource_type("page.html", None), ResourceType::Document);
-        assert_eq!(InspectorServer::detect_resource_type("api", Some("text/html")), ResourceType::Document);
-        assert_eq!(InspectorServer::detect_resource_type("api", Some("application/font-woff")), ResourceType::Font);
+        assert_eq!(
+            InspectorServer::detect_resource_type("style.css", None),
+            ResourceType::Stylesheet
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("app.js", None),
+            ResourceType::Script
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("logo.png", None),
+            ResourceType::Image
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("page.html", None),
+            ResourceType::Document
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("api", Some("text/html")),
+            ResourceType::Document
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("api", Some("application/font-woff")),
+            ResourceType::Font
+        );
     }
 
     #[test]
@@ -282,7 +377,12 @@ mod tests {
     fn test_get_all_requests() {
         let mut inspector = InspectorServer::new(9222);
         inspector.capture_request("https://a.com", "GET", 200, ResourceType::Document);
-        inspector.capture_request("https://b.com/style.css", "GET", 200, ResourceType::Stylesheet);
+        inspector.capture_request(
+            "https://b.com/style.css",
+            "GET",
+            200,
+            ResourceType::Stylesheet,
+        );
         let all = inspector.get_all_requests();
         assert_eq!(all.len(), 2);
     }
@@ -319,26 +419,49 @@ mod tests {
 
     #[test]
     fn test_detect_resource_type_font() {
-        assert_eq!(InspectorServer::detect_resource_type("font.woff2", None), ResourceType::Font);
-        assert_eq!(InspectorServer::detect_resource_type("font.ttf", None), ResourceType::Font);
+        assert_eq!(
+            InspectorServer::detect_resource_type("font.woff2", None),
+            ResourceType::Font
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("font.ttf", None),
+            ResourceType::Font
+        );
     }
 
     #[test]
     fn test_detect_resource_type_media() {
-        assert_eq!(InspectorServer::detect_resource_type("song", Some("audio/mpeg")), ResourceType::Media);
-        assert_eq!(InspectorServer::detect_resource_type("clip", Some("video/mp4")), ResourceType::Media);
+        assert_eq!(
+            InspectorServer::detect_resource_type("song", Some("audio/mpeg")),
+            ResourceType::Media
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("clip", Some("video/mp4")),
+            ResourceType::Media
+        );
     }
 
     #[test]
     fn test_detect_resource_type_other() {
-        assert_eq!(InspectorServer::detect_resource_type("data.bin", None), ResourceType::Other);
-        assert_eq!(InspectorServer::detect_resource_type("api", None), ResourceType::Other);
+        assert_eq!(
+            InspectorServer::detect_resource_type("data.bin", None),
+            ResourceType::Other
+        );
+        assert_eq!(
+            InspectorServer::detect_resource_type("api", None),
+            ResourceType::Other
+        );
     }
 
     #[test]
     fn test_export_har_format() {
         let mut inspector = InspectorServer::new(9222);
-        inspector.capture_request("https://example.com/page", "GET", 200, ResourceType::Document);
+        inspector.capture_request(
+            "https://example.com/page",
+            "GET",
+            200,
+            ResourceType::Document,
+        );
         let har = inspector.export_har();
         assert!(har.starts_with("{\"log\""));
         assert!(har.contains("\"version\":\"1.2\""));

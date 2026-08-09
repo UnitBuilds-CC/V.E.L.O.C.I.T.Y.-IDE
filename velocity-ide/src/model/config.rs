@@ -6,30 +6,30 @@
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
     /// Number of transformer layers
-    pub n_layers:    usize,
+    pub n_layers: usize,
     /// Token embedding / hidden dimension
     pub hidden_size: usize,
     /// FFN intermediate dimension (SwiGLU gate and up projections)
-    pub ffn_size:    usize,
+    pub ffn_size: usize,
     /// Number of attention heads
-    pub n_heads:     usize,
+    pub n_heads: usize,
     /// Number of KV heads (= n_heads for MHA, < n_heads for GQA)
-    pub n_kv_heads:  usize,
+    pub n_kv_heads: usize,
     /// Per-head dimension = hidden_size / n_heads
-    pub head_dim:    usize,
+    pub head_dim: usize,
     /// Vocabulary size
-    pub vocab_size:  usize,
+    pub vocab_size: usize,
     /// Maximum sequence length supported by the KV cache
     pub max_seq_len: usize,
     /// RoPE base frequency θ (used by FP32 path; ignored by zero-float ALiBi path)
-    pub rope_theta:  f32,
+    pub rope_theta: f32,
     /// ALiBi right-shift amounts per head (zero-float path only).
     /// bias = (q_pos − k_pos) >> alibi_shifts[head]  (pure bit-shift, no multiply)
     /// Empty = use RoPE instead.
     #[allow(dead_code)]
     pub alibi_shifts: Vec<u8>,
     /// RMSNorm epsilon
-    pub rms_eps:     f32,
+    pub rms_eps: f32,
     /// Token ID representing end-of-sequence
     pub eos_token_id: u32,
     /// Token ID representing beginning-of-sequence
@@ -40,17 +40,17 @@ impl ModelConfig {
     /// `1bitLLM/bitnet_b1_58-3B` — 26 layers, hidden=3200, ffn=8640, heads=32.
     pub fn bitnet_3b() -> Self {
         Self {
-            n_layers:     26,
-            hidden_size:  3200,
-            ffn_size:     8640,
-            n_heads:      32,
-            n_kv_heads:   32,
-            head_dim:     3200 / 32,
-            vocab_size:   32_000,
-            max_seq_len:  2048,
-            rope_theta:   10_000.0,
+            n_layers: 26,
+            hidden_size: 3200,
+            ffn_size: 8640,
+            n_heads: 32,
+            n_kv_heads: 32,
+            head_dim: 3200 / 32,
+            vocab_size: 32_000,
+            max_seq_len: 2048,
+            rope_theta: 10_000.0,
             alibi_shifts: vec![],
-            rms_eps:      1e-5,
+            rms_eps: 1e-5,
             eos_token_id: 2,
             bos_token_id: 1,
         }
@@ -70,17 +70,17 @@ impl ModelConfig {
             })
             .collect();
         Self {
-            n_layers:     24,
-            hidden_size:  896,
-            ffn_size:     4864,
+            n_layers: 24,
+            hidden_size: 896,
+            ffn_size: 4864,
             n_heads,
-            n_kv_heads:   2,
-            head_dim:     896 / 14,
-            vocab_size:   151_936,
-            max_seq_len:  2048,
-            rope_theta:   1_000_000.0,
+            n_kv_heads: 2,
+            head_dim: 896 / 14,
+            vocab_size: 151_936,
+            max_seq_len: 2048,
+            rope_theta: 1_000_000.0,
             alibi_shifts,
-            rms_eps:      1e-6,
+            rms_eps: 1e-6,
             eos_token_id: 151_645,
             bos_token_id: 151_643,
         }
@@ -88,13 +88,12 @@ impl ModelConfig {
 
     /// Total NDA parameter count (excludes embeddings and norms).
     pub fn ternary_param_count(&self) -> usize {
-        let kv_dim         = self.n_kv_heads * self.head_dim;
+        let kv_dim = self.n_kv_heads * self.head_dim;
         let attn_per_layer = self.hidden_size * self.hidden_size
-                           + self.hidden_size * kv_dim
-                           + self.hidden_size * kv_dim
-                           + self.hidden_size * self.hidden_size;
-        let ffn_per_layer  = 2 * self.ffn_size * self.hidden_size
-                           +     self.hidden_size * self.ffn_size;
+            + self.hidden_size * kv_dim
+            + self.hidden_size * kv_dim
+            + self.hidden_size * self.hidden_size;
+        let ffn_per_layer = 2 * self.ffn_size * self.hidden_size + self.hidden_size * self.ffn_size;
         self.n_layers * (attn_per_layer + ffn_per_layer)
     }
 

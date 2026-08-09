@@ -1,6 +1,6 @@
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style,
-    TextStyle, Vec2, Visuals,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Style, TextStyle,
+    Vec2, Visuals,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -407,16 +407,14 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
     // Hover: gentle accent wash.
     visuals.widgets.hovered.bg_fill = palette.accent.gamma_multiply(0.16);
     visuals.widgets.hovered.weak_bg_fill = palette.accent.gamma_multiply(0.12);
-    visuals.widgets.hovered.bg_stroke =
-        egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.35));
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.35));
     visuals.widgets.hovered.fg_stroke.color = palette.text;
     visuals.widgets.hovered.corner_radius = widget_radius;
 
     // Active/pressed: slightly stronger accent.
     visuals.widgets.active.bg_fill = palette.accent.gamma_multiply(0.24);
     visuals.widgets.active.weak_bg_fill = palette.accent.gamma_multiply(0.20);
-    visuals.widgets.active.bg_stroke =
-        egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.5));
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, palette.accent.gamma_multiply(0.5));
     visuals.widgets.active.fg_stroke.color = palette.text;
     visuals.widgets.active.corner_radius = widget_radius;
 
@@ -444,8 +442,12 @@ pub fn apply_theme(ctx: &egui::Context, appearance: AppearanceSettings) {
         TextStyle::Heading,
         FontId::new(18.0 * appearance.ui_scale, FontFamily::Proportional),
     );
-    style.text_styles.insert(TextStyle::Body, appearance.ui_font_id());
-    style.text_styles.insert(TextStyle::Button, appearance.ui_font_id());
+    style
+        .text_styles
+        .insert(TextStyle::Body, appearance.ui_font_id());
+    style
+        .text_styles
+        .insert(TextStyle::Button, appearance.ui_font_id());
     style.text_styles.insert(
         TextStyle::Small,
         FontId::new(11.0 * appearance.ui_scale, FontFamily::Proportional),

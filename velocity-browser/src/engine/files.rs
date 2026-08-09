@@ -25,7 +25,9 @@ pub struct DownloadStreamArtifact {
 impl DownloadStreamArtifact {
     /// Progress as a fraction (0.0..1.0).
     pub fn progress(&self) -> f64 {
-        if self.total_bytes == 0 { return 0.0; }
+        if self.total_bytes == 0 {
+            return 0.0;
+        }
         self.received_bytes as f64 / self.total_bytes as f64
     }
 
@@ -56,13 +58,25 @@ impl FileManager {
         }
     }
 
-    pub fn handle_file_input_click(&mut self, tree: &DomTree, _selector: &str) -> Option<FileChooserEvent> {
+    pub fn handle_file_input_click(
+        &mut self,
+        tree: &DomTree,
+        _selector: &str,
+    ) -> Option<FileChooserEvent> {
         for node in &tree.nodes {
             if node.node_type == NodeType::Element && node.tag_name == "input" {
                 if let Some(type_attr) = node.attributes.get("type") {
                     if type_attr == "file" {
-                        let id = node.attributes.get("id").cloned().unwrap_or_else(|| format!("input_{}", node.id));
-                        let accept = node.attributes.get("accept").map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+                        let id = node
+                            .attributes
+                            .get("id")
+                            .cloned()
+                            .unwrap_or_else(|| format!("input_{}", node.id));
+                        let accept = node
+                            .attributes
+                            .get("accept")
+                            .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                            .unwrap_or_default();
                         let multiple = node.attributes.contains_key("multiple");
 
                         let event = FileChooserEvent {
@@ -79,16 +93,29 @@ impl FileManager {
         None
     }
 
-    pub fn attach_file(&mut self, tree: &mut DomTree, selector: &str, file_path: &str) -> Result<String, String> {
+    pub fn attach_file(
+        &mut self,
+        tree: &mut DomTree,
+        selector: &str,
+        file_path: &str,
+    ) -> Result<String, String> {
         let mut attached_id = None;
         let clean_selector = selector.trim_start_matches('#');
 
         for node in &mut tree.nodes {
             if node.node_type == NodeType::Element && node.tag_name == "input" {
                 let node_id = node.attributes.get("id").cloned().unwrap_or_default();
-                if node_id == clean_selector || selector == "input[type=\"file\"]" || selector == "input" {
-                    node.attributes.insert("value".to_string(), file_path.to_string());
-                    attached_id = Some(if node_id.is_empty() { format!("input_{}", node.id) } else { node_id });
+                if node_id == clean_selector
+                    || selector == "input[type=\"file\"]"
+                    || selector == "input"
+                {
+                    node.attributes
+                        .insert("value".to_string(), file_path.to_string());
+                    attached_id = Some(if node_id.is_empty() {
+                        format!("input_{}", node.id)
+                    } else {
+                        node_id
+                    });
                     break;
                 }
             }
@@ -96,13 +123,26 @@ impl FileManager {
 
         if let Some(id) = attached_id {
             self.attached_files.insert(id, file_path.to_string());
-            Ok(format!("Attached file '{}' to selector '{}'", file_path, selector))
+            Ok(format!(
+                "Attached file '{}' to selector '{}'",
+                file_path, selector
+            ))
         } else {
-            Err(format!("File input matching selector '{}' not found", selector))
+            Err(format!(
+                "File input matching selector '{}' not found",
+                selector
+            ))
         }
     }
 
-    pub fn record_download(&mut self, guid: &str, url: &str, file_name: &str, total_bytes: usize, save_path: &str) {
+    pub fn record_download(
+        &mut self,
+        guid: &str,
+        url: &str,
+        file_name: &str,
+        total_bytes: usize,
+        save_path: &str,
+    ) {
         self.downloads.push(DownloadStreamArtifact {
             guid: guid.to_string(),
             url: url.to_string(),
@@ -119,7 +159,14 @@ impl FileManager {
     }
 
     /// Start tracking a new in-progress download.
-    pub fn start_download(&mut self, guid: &str, url: &str, file_name: &str, total_bytes: usize, save_path: &str) {
+    pub fn start_download(
+        &mut self,
+        guid: &str,
+        url: &str,
+        file_name: &str,
+        total_bytes: usize,
+        save_path: &str,
+    ) {
         self.downloads.push(DownloadStreamArtifact {
             guid: guid.to_string(),
             url: url.to_string(),
@@ -148,7 +195,10 @@ impl FileManager {
 
     /// Get all in-progress downloads.
     pub fn active_downloads(&self) -> Vec<&DownloadStreamArtifact> {
-        self.downloads.iter().filter(|d| d.is_in_progress()).collect()
+        self.downloads
+            .iter()
+            .filter(|d| d.is_in_progress())
+            .collect()
     }
 
     /// Find a download by guid.
@@ -176,9 +226,14 @@ mod tests {
     #[test]
     fn test_download_progress() {
         let d = DownloadStreamArtifact {
-            guid: "d1".into(), url: "http://x.com/f".into(), file_name: "f.zip".into(),
-            total_bytes: 1000, received_bytes: 500, save_path: "/tmp/f.zip".into(),
-            is_complete: false, started_at_ms: 0,
+            guid: "d1".into(),
+            url: "http://x.com/f".into(),
+            file_name: "f.zip".into(),
+            total_bytes: 1000,
+            received_bytes: 500,
+            save_path: "/tmp/f.zip".into(),
+            is_complete: false,
+            started_at_ms: 0,
         };
         assert!((d.progress() - 0.5).abs() < 1e-6);
         assert!(d.is_in_progress());
@@ -187,9 +242,14 @@ mod tests {
     #[test]
     fn test_download_complete() {
         let d = DownloadStreamArtifact {
-            guid: "d2".into(), url: "http://x.com/f".into(), file_name: "f.zip".into(),
-            total_bytes: 100, received_bytes: 100, save_path: "/tmp/f.zip".into(),
-            is_complete: true, started_at_ms: 0,
+            guid: "d2".into(),
+            url: "http://x.com/f".into(),
+            file_name: "f.zip".into(),
+            total_bytes: 100,
+            received_bytes: 100,
+            save_path: "/tmp/f.zip".into(),
+            is_complete: true,
+            started_at_ms: 0,
         };
         assert!(!d.is_in_progress());
         assert!((d.progress() - 1.0).abs() < 1e-6);
@@ -208,7 +268,13 @@ mod tests {
     #[test]
     fn test_record_download() {
         let mut fm = FileManager::new();
-        fm.record_download("r1", "http://x.com/small", "small.txt", 100, "/tmp/small.txt");
+        fm.record_download(
+            "r1",
+            "http://x.com/small",
+            "small.txt",
+            100,
+            "/tmp/small.txt",
+        );
         assert_eq!(fm.downloads.len(), 1);
         assert!(fm.downloads[0].is_complete);
     }
@@ -216,7 +282,8 @@ mod tests {
     #[test]
     fn test_export_files_nda() {
         let mut fm = FileManager::new();
-        fm.attached_files.insert("input1".into(), "/path/to/file.txt".into());
+        fm.attached_files
+            .insert("input1".into(), "/path/to/file.txt".into());
         fm.record_download("dl1", "http://x.com/f", "f.txt", 100, "/tmp/f.txt");
         let triples = fm.export_files_nda();
         assert_eq!(triples.len(), 3); // 1 file + 2 download
@@ -225,9 +292,14 @@ mod tests {
     #[test]
     fn progress_zero_total_returns_zero() {
         let d = DownloadStreamArtifact {
-            guid: "z".into(), url: "u".into(), file_name: "f".into(),
-            total_bytes: 0, received_bytes: 0, save_path: "/f".into(),
-            is_complete: false, started_at_ms: 0,
+            guid: "z".into(),
+            url: "u".into(),
+            file_name: "f".into(),
+            total_bytes: 0,
+            received_bytes: 0,
+            save_path: "/f".into(),
+            is_complete: false,
+            started_at_ms: 0,
         };
         assert!((d.progress() - 0.0).abs() < 1e-9);
         assert!(!d.is_in_progress()); // 0 < 0 is false

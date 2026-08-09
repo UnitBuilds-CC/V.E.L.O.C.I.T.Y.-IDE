@@ -95,7 +95,12 @@ impl TemporalMonitor {
             }
         }
 
-        self.push(FrameSnapshot { timestamp_ms, cell_means, rows, cols });
+        self.push(FrameSnapshot {
+            timestamp_ms,
+            cell_means,
+            rows,
+            cols,
+        });
     }
 
     /// Push a pre-reduced frame directly (low-level / testing).
@@ -194,7 +199,12 @@ mod tests {
     use super::*;
 
     fn frame(ts: u64, means: &[u8], rows: usize, cols: usize) -> FrameSnapshot {
-        FrameSnapshot { timestamp_ms: ts, cell_means: means.to_vec(), rows, cols }
+        FrameSnapshot {
+            timestamp_ms: ts,
+            cell_means: means.to_vec(),
+            rows,
+            cols,
+        }
     }
 
     #[test]

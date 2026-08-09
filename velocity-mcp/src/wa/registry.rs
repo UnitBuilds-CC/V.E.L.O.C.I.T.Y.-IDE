@@ -131,15 +131,20 @@ impl RegistryManager {
     pub fn read(hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {
         if !cfg!(target_os = "windows") {
             return RegistryOpResult {
-                success: false, operation: "read".into(),
-                detail: "Registry operations require Windows".into(), value: None,
+                success: false,
+                operation: "read".into(),
+                detail: "Registry operations require Windows".into(),
+                value: None,
             };
         }
         let script = build_read_registry_script(hive, path, name);
         match run_ps_script(&script) {
             Ok(json) => parse_read_result(&json, hive, path, name),
             Err(e) => RegistryOpResult {
-                success: false, operation: "read".into(), detail: e, value: None,
+                success: false,
+                operation: "read".into(),
+                detail: e,
+                value: None,
             },
         }
     }
@@ -148,8 +153,10 @@ impl RegistryManager {
     pub fn write(entry: &RegistryEntry) -> RegistryOpResult {
         if !cfg!(target_os = "windows") {
             return RegistryOpResult {
-                success: false, operation: "write".into(),
-                detail: "Registry operations require Windows".into(), value: None,
+                success: false,
+                operation: "write".into(),
+                detail: "Registry operations require Windows".into(),
+                value: None,
             };
         }
         let script = build_write_registry_script(entry);
@@ -157,11 +164,19 @@ impl RegistryManager {
             Ok(json) => RegistryOpResult {
                 success: json.contains("\"success\":true") || json.contains("\"success\": true"),
                 operation: "write".into(),
-                detail: format!("wrote {}\\{} @ {}", entry.hive.as_ps_path(), entry.path, entry.name),
+                detail: format!(
+                    "wrote {}\\{} @ {}",
+                    entry.hive.as_ps_path(),
+                    entry.path,
+                    entry.name
+                ),
                 value: Some(entry.value.clone()),
             },
             Err(e) => RegistryOpResult {
-                success: false, operation: "write".into(), detail: e, value: None,
+                success: false,
+                operation: "write".into(),
+                detail: e,
+                value: None,
             },
         }
     }
@@ -170,8 +185,10 @@ impl RegistryManager {
     pub fn delete(hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {
         if !cfg!(target_os = "windows") {
             return RegistryOpResult {
-                success: false, operation: "delete".into(),
-                detail: "Registry operations require Windows".into(), value: None,
+                success: false,
+                operation: "delete".into(),
+                detail: "Registry operations require Windows".into(),
+                value: None,
             };
         }
         let ps_path = hive.as_ps_path();
@@ -183,18 +200,25 @@ ConvertTo-Json @{{ success = $true }} -Compress"#
         );
         match run_ps_script(&script) {
             Ok(_) => RegistryOpResult {
-                success: true, operation: "delete".into(),
-                detail: format!("deleted {} @ {}", name, path), value: None,
+                success: true,
+                operation: "delete".into(),
+                detail: format!("deleted {} @ {}", name, path),
+                value: None,
             },
             Err(e) => RegistryOpResult {
-                success: false, operation: "delete".into(), detail: e, value: None,
+                success: false,
+                operation: "delete".into(),
+                detail: e,
+                value: None,
             },
         }
     }
 
     /// Check if a registry key/value exists.
     pub fn exists(hive: RegistryHive, path: &str, name: Option<&str>) -> bool {
-        if !cfg!(target_os = "windows") { return false; }
+        if !cfg!(target_os = "windows") {
+            return false;
+        }
         let ps_path = hive.as_ps_path();
         let path_esc = path.replace('\'', "''");
         let check = match name {
@@ -205,12 +229,16 @@ ConvertTo-Json @{{ success = $true }} -Compress"#
             None => format!("Test-Path '{ps_path}\\{path_esc}'"),
         };
         let script = format!("ConvertTo-Json @{{ exists = {} }} -Compress", check);
-        run_ps_script(&script).map(|o| o.contains("\"exists\":true") || o.contains("\"exists\": true")).unwrap_or(false)
+        run_ps_script(&script)
+            .map(|o| o.contains("\"exists\":true") || o.contains("\"exists\": true"))
+            .unwrap_or(false)
     }
 
     /// Enumerate values under a key.
     pub fn enumerate_values(hive: RegistryHive, path: &str) -> Vec<RegistryEntry> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let ps_path = hive.as_ps_path();
         let path_esc = path.replace('\'', "''");
         let script = format!(
@@ -230,7 +258,9 @@ if ($null -eq $props) {{ ConvertTo-Json @{{ values = @() }} -Compress }} else {{
 
     /// Enumerate subkeys under a key.
     pub fn enumerate_subkeys(hive: RegistryHive, path: &str) -> Vec<String> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let ps_path = hive.as_ps_path();
         let path_esc = path.replace('\'', "''");
         let script = format!(
@@ -253,7 +283,8 @@ impl SystemSettingsManager {
     pub fn get(setting: &SystemSetting) -> SystemSettingResult {
         if !cfg!(target_os = "windows") {
             return SystemSettingResult {
-                success: false, setting: format!("{:?}", setting),
+                success: false,
+                setting: format!("{:?}", setting),
                 current_value: None,
                 detail: "System settings require Windows".to_string(),
             };
@@ -268,7 +299,8 @@ impl SystemSettingsManager {
 Add-Type -AssemblyName System.Windows.Forms
 $dpi = [System.Windows.Forms.Screen]::PrimaryScreen
 $scale = [math]::Round($dpi.Bounds.Width / 19.2)
-ConvertTo-Json @{ dpi_scale = $scale } -Compress"#.to_string();
+ConvertTo-Json @{ dpi_scale = $scale } -Compress"#
+                    .to_string();
                 ("dpi_scale".to_string(), script)
             }
             SystemSetting::NightLight(_) => {
@@ -284,7 +316,8 @@ ConvertTo-Json @{ night_light = $enabled } -Compress"#.to_string();
                 let script = r#"
 $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\QuietHours'
 $profile = (Get-ItemProperty -Path $path -Name 'Profile' -ErrorAction SilentlyContinue).Profile
-ConvertTo-Json @{ focus_assist = ($profile -gt 0) } -Compress"#.to_string();
+ConvertTo-Json @{ focus_assist = ($profile -gt 0) } -Compress"#
+                    .to_string();
                 ("focus_assist".to_string(), script)
             }
             SystemSetting::Bluetooth(_) => {
@@ -292,7 +325,8 @@ ConvertTo-Json @{ focus_assist = ($profile -gt 0) } -Compress"#.to_string();
 $radio = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Select-Object -First 1
 $enabled = $false
 if ($null -ne $radio) { $enabled = $radio.Status -eq 'OK' }
-ConvertTo-Json @{ bluetooth = $enabled } -Compress"#.to_string();
+ConvertTo-Json @{ bluetooth = $enabled } -Compress"#
+                    .to_string();
                 ("bluetooth".to_string(), script)
             }
             SystemSetting::Volume(_) => {
@@ -347,8 +381,10 @@ ConvertTo-Json @{ screen_timeout = $mins } -Compress"#.to_string();
                 detail: "queried via PowerShell".to_string(),
             },
             Err(e) => SystemSettingResult {
-                success: false, setting: setting_name,
-                current_value: None, detail: e,
+                success: false,
+                setting: setting_name,
+                current_value: None,
+                detail: e,
             },
         }
     }
@@ -357,22 +393,25 @@ ConvertTo-Json @{ screen_timeout = $mins } -Compress"#.to_string();
     pub fn set(setting: &SystemSetting) -> SystemSettingResult {
         if !cfg!(target_os = "windows") {
             return SystemSettingResult {
-                success: false, setting: format!("{:?}", setting),
+                success: false,
+                setting: format!("{:?}", setting),
                 current_value: None,
                 detail: "System settings require Windows".to_string(),
             };
         }
         let (setting_name, script) = match setting {
-            SystemSetting::DarkMode(dark) => {
-                (format!("dark_mode={}", dark), build_dark_mode_script(Some(*dark)))
-            }
+            SystemSetting::DarkMode(dark) => (
+                format!("dark_mode={}", dark),
+                build_dark_mode_script(Some(*dark)),
+            ),
             SystemSetting::Volume(vol) => {
                 (format!("volume={}", vol), build_volume_script(Some(*vol)))
             }
             SystemSetting::Muted(mute) => {
                 let val = if *mute { 1 } else { 0 };
                 let script = format!(
-                    "ConvertTo-Json @{{ success = $true; muted = {} }} -Compress", val
+                    "ConvertTo-Json @{{ success = $true; muted = {} }} -Compress",
+                    val
                 );
                 (format!("muted={}", mute), script)
             }
@@ -457,33 +496,45 @@ ConvertTo-Json @{ screen_timeout = $mins } -Compress"#.to_string();
                 detail: "set via PowerShell".to_string(),
             },
             Err(e) => SystemSettingResult {
-                success: false, setting: setting_name,
-                current_value: None, detail: e,
+                success: false,
+                setting: setting_name,
+                current_value: None,
+                detail: e,
             },
         }
     }
 
     /// Check if dark mode is enabled.
     pub fn is_dark_mode() -> Option<bool> {
-        if !cfg!(target_os = "windows") { return None; }
+        if !cfg!(target_os = "windows") {
+            return None;
+        }
         let script = build_dark_mode_script(None);
         run_ps_script(&script).ok().and_then(|json| {
             #[derive(serde::Deserialize)]
-            struct DarkModeResult { dark_mode: Option<bool> }
-            serde_json::from_str::<DarkModeResult>(&json).ok()?.dark_mode
+            struct DarkModeResult {
+                dark_mode: Option<bool>,
+            }
+            serde_json::from_str::<DarkModeResult>(&json)
+                .ok()?
+                .dark_mode
         })
     }
 
     /// Get current display DPI.
     pub fn get_dpi() -> Option<u32> {
-        if !cfg!(target_os = "windows") { return None; }
+        if !cfg!(target_os = "windows") {
+            return None;
+        }
         let script = r#"
 Add-Type -AssemblyName System.Windows.Forms
 $dpi = [System.Windows.Forms.Screen]::PrimaryScreen
 ConvertTo-Json @{ dpi = [math]::Round(96 * $dpi.Bounds.Width / 1920) } -Compress"#;
         run_ps_script(script).ok().and_then(|json| {
             #[derive(serde::Deserialize)]
-            struct DpiResult { dpi: Option<u32> }
+            struct DpiResult {
+                dpi: Option<u32>,
+            }
             serde_json::from_str::<DpiResult>(&json).ok()?.dpi
         })
     }
@@ -522,11 +573,19 @@ pub fn build_write_registry_script(entry: &RegistryEntry) -> String {
         RegistryValue::DWord(v) => (v.to_string(), "DWord"),
         RegistryValue::QWord(v) => (v.to_string(), "QWord"),
         RegistryValue::Binary(b) => {
-            let hex: String = b.iter().map(|byte| format!("0x{:02X}", byte)).collect::<Vec<_>>().join(",");
+            let hex: String = b
+                .iter()
+                .map(|byte| format!("0x{:02X}", byte))
+                .collect::<Vec<_>>()
+                .join(",");
             (format!("@({})", hex), "Binary")
         }
         RegistryValue::MultiString(ss) => {
-            let items: String = ss.iter().map(|s| format!("'{}'", s.replace('\'', "''"))).collect::<Vec<_>>().join(",");
+            let items: String = ss
+                .iter()
+                .map(|s| format!("'{}'", s.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(",");
             (format!("@({})", items), "MultiString")
         }
     };
@@ -607,14 +666,23 @@ ConvertTo-Json @{{ success = $true; volume = {vol} }} -Compress
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -626,7 +694,11 @@ fn run_ps_script(script: &str) -> Result<String, String> {
 
 fn parse_read_result(json: &str, hive: RegistryHive, path: &str, name: &str) -> RegistryOpResult {
     #[derive(serde::Deserialize)]
-    struct PsResult { success: Option<bool>, value: Option<String>, detail: Option<String> }
+    struct PsResult {
+        success: Option<bool>,
+        value: Option<String>,
+        detail: Option<String>,
+    }
     match serde_json::from_str::<PsResult>(json) {
         Ok(r) => {
             let success = r.success.unwrap_or(false);
@@ -634,38 +706,52 @@ fn parse_read_result(json: &str, hive: RegistryHive, path: &str, name: &str) -> 
             RegistryOpResult {
                 success,
                 operation: "read".into(),
-                detail: r.detail.unwrap_or_else(|| format!("read {}\\{} @ {}", hive.as_ps_path(), path, name)),
+                detail: r
+                    .detail
+                    .unwrap_or_else(|| format!("read {}\\{} @ {}", hive.as_ps_path(), path, name)),
                 value,
             }
         }
         Err(_) => RegistryOpResult {
-            success: false, operation: "read".into(),
-            detail: format!("failed to parse registry result: {}", json), value: None,
+            success: false,
+            operation: "read".into(),
+            detail: format!("failed to parse registry result: {}", json),
+            value: None,
         },
     }
 }
 
 fn parse_enumerate_values_result(json: &str, hive: RegistryHive, path: &str) -> Vec<RegistryEntry> {
     #[derive(serde::Deserialize)]
-    struct PsValue { name: Option<String>, value: Option<String> }
+    struct PsValue {
+        name: Option<String>,
+        value: Option<String>,
+    }
     #[derive(serde::Deserialize)]
-    struct PsValuesResult { values: Option<Vec<PsValue>> }
+    struct PsValuesResult {
+        values: Option<Vec<PsValue>>,
+    }
     match serde_json::from_str::<PsValuesResult>(json) {
-        Ok(r) => r.values.unwrap_or_default().into_iter().map(|v| {
-            RegistryEntry {
+        Ok(r) => r
+            .values
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| RegistryEntry {
                 hive,
                 path: path.to_string(),
                 name: v.name.unwrap_or_default(),
                 value: RegistryValue::String(v.value.unwrap_or_default()),
-            }
-        }).collect(),
+            })
+            .collect(),
         Err(_) => Vec::new(),
     }
 }
 
 fn parse_subkeys_result(json: &str) -> Vec<String> {
     #[derive(serde::Deserialize)]
-    struct PsSubkeysResult { subkeys: Option<Vec<String>> }
+    struct PsSubkeysResult {
+        subkeys: Option<Vec<String>>,
+    }
     match serde_json::from_str::<PsSubkeysResult>(json) {
         Ok(r) => r.subkeys.unwrap_or_default(),
         Err(_) => Vec::new(),
@@ -686,8 +772,14 @@ mod tests {
 
     #[test]
     fn hive_from_str() {
-        assert_eq!(RegistryHive::from_str("HKCU"), Some(RegistryHive::CurrentUser));
-        assert_eq!(RegistryHive::from_str("HKEY_LOCAL_MACHINE"), Some(RegistryHive::LocalMachine));
+        assert_eq!(
+            RegistryHive::from_str("HKCU"),
+            Some(RegistryHive::CurrentUser)
+        );
+        assert_eq!(
+            RegistryHive::from_str("HKEY_LOCAL_MACHINE"),
+            Some(RegistryHive::LocalMachine)
+        );
         assert_eq!(RegistryHive::from_str("invalid"), None);
     }
 
@@ -733,7 +825,10 @@ mod tests {
 
     #[test]
     fn registry_value_types() {
-        assert_eq!(RegistryValue::String("hi".to_string()).as_ps_type(), "String");
+        assert_eq!(
+            RegistryValue::String("hi".to_string()).as_ps_type(),
+            "String"
+        );
         assert_eq!(RegistryValue::QWord(999).as_ps_type(), "QWord");
     }
 

@@ -59,35 +59,50 @@ impl Default for CacheStorageEngine {
 
 impl CacheStorageEngine {
     pub fn new() -> Self {
-        Self { caches: HashMap::new() }
+        Self {
+            caches: HashMap::new(),
+        }
     }
 
     pub fn put(&mut self, cache_name: &str, url: &str, status: u16, body: &str) {
         let cache = self.caches.entry(cache_name.to_string()).or_default();
-        cache.insert(url.to_string(), CachedResponse {
-            url: url.to_string(),
-            status,
-            headers: Vec::new(),
-            body: body.to_string(),
-            cached_at_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
-        });
+        cache.insert(
+            url.to_string(),
+            CachedResponse {
+                url: url.to_string(),
+                status,
+                headers: Vec::new(),
+                body: body.to_string(),
+                cached_at_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+            },
+        );
     }
 
-    pub fn put_with_headers(&mut self, cache_name: &str, url: &str, status: u16, headers: Vec<(String, String)>, body: &str) {
+    pub fn put_with_headers(
+        &mut self,
+        cache_name: &str,
+        url: &str,
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: &str,
+    ) {
         let cache = self.caches.entry(cache_name.to_string()).or_default();
-        cache.insert(url.to_string(), CachedResponse {
-            url: url.to_string(),
-            status,
-            headers,
-            body: body.to_string(),
-            cached_at_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
-        });
+        cache.insert(
+            url.to_string(),
+            CachedResponse {
+                url: url.to_string(),
+                status,
+                headers,
+                body: body.to_string(),
+                cached_at_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+            },
+        );
     }
 
     pub fn match_url(&self, cache_name: &str, url: &str) -> Option<&CachedResponse> {
@@ -115,7 +130,8 @@ impl CacheStorageEngine {
 
     /// List all cached URLs in a cache.
     pub fn keys(&self, cache_name: &str) -> Vec<String> {
-        self.caches.get(cache_name)
+        self.caches
+            .get(cache_name)
             .map(|c| c.keys().cloned().collect())
             .unwrap_or_default()
     }
@@ -179,7 +195,9 @@ impl ServiceWorkerManager {
     /// Transition through the service worker lifecycle.
     pub fn advance_lifecycle(&mut self) {
         self.state = match &self.state {
-            ServiceWorkerState::Parsing | ServiceWorkerState::Installing => ServiceWorkerState::Installed,
+            ServiceWorkerState::Parsing | ServiceWorkerState::Installing => {
+                ServiceWorkerState::Installed
+            }
             ServiceWorkerState::Installed => ServiceWorkerState::Activating,
             ServiceWorkerState::Activating => ServiceWorkerState::Activated,
             other => other.clone(),
@@ -210,11 +228,16 @@ impl ServiceWorkerManager {
         for rule in &self.fetch_intercept_rules {
             if url.contains(&rule.url_pattern) {
                 return match rule.strategy {
-                    CacheStrategy::CacheFirst | CacheStrategy::CacheOnly | CacheStrategy::StaleWhileRevalidate => {
+                    CacheStrategy::CacheFirst
+                    | CacheStrategy::CacheOnly
+                    | CacheStrategy::StaleWhileRevalidate => {
                         if let Some(resp) = self.cache_storage.match_url(&rule.cache_name, url) {
                             FetchInterceptResult::CachedResponse(resp.clone())
                         } else if rule.strategy == CacheStrategy::CacheOnly {
-                            FetchInterceptResult::CustomResponse { status: 504, body: "Gateway Timeout: not in cache".to_string() }
+                            FetchInterceptResult::CustomResponse {
+                                status: 504,
+                                body: "Gateway Timeout: not in cache".to_string(),
+                            }
                         } else {
                             FetchInterceptResult::NetworkPassthrough
                         }
@@ -241,7 +264,11 @@ impl ServiceWorkerManager {
 
     /// Get pending sync tasks.
     pub fn pending_sync_tags(&self) -> Vec<String> {
-        self.sync_registrations.iter().filter(|r| r.pending).map(|r| r.tag.clone()).collect()
+        self.sync_registrations
+            .iter()
+            .filter(|r| r.pending)
+            .map(|r| r.tag.clone())
+            .collect()
     }
 
     /// Mark a sync task as completed.
@@ -361,7 +388,13 @@ mod tests {
     #[test]
     fn cache_put_with_headers() {
         let mut cache = CacheStorageEngine::new();
-        cache.put_with_headers("v1", "/api", 200, vec![("Content-Type".into(), "application/json".into())], "{\"ok\":true}");
+        cache.put_with_headers(
+            "v1",
+            "/api",
+            200,
+            vec![("Content-Type".into(), "application/json".into())],
+            "{\"ok\":true}",
+        );
         let resp = cache.match_url("v1", "/api").unwrap();
         assert_eq!(resp.status, 200);
         assert_eq!(resp.headers[0].0, "Content-Type");
@@ -438,7 +471,8 @@ mod tests {
     #[test]
     fn intercept_fetch_network_first_always_passes_through() {
         let mut sw = ServiceWorkerManager::register("/sw.js");
-        sw.cache_storage.put("assets", "/data.json", 200, "{\"cached\":true}");
+        sw.cache_storage
+            .put("assets", "/data.json", 200, "{\"cached\":true}");
         sw.add_fetch_rule("/data.json", "assets", CacheStrategy::NetworkFirst);
         match sw.intercept_fetch("/data.json") {
             FetchInterceptResult::NetworkPassthrough => {}

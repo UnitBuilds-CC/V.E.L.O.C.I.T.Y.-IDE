@@ -50,7 +50,12 @@ impl WebCryptoEngine {
             // - buf.as_mut_ptr() points to a valid buffer of buf.len() bytes
             // - buf.len() is cast to u32 which is safe for reasonable buffer sizes
             let status = unsafe {
-                BCryptGenRandom(0, buf.as_mut_ptr(), buf.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+                BCryptGenRandom(
+                    0,
+                    buf.as_mut_ptr(),
+                    buf.len() as u32,
+                    BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+                )
             };
             status == 0 // STATUS_SUCCESS
         }
@@ -96,7 +101,10 @@ impl WebCryptoEngine {
     /// Verify an HMAC-SHA256 tag in constant-time comparison.
     pub fn hmac_sha256_verify(key: &[u8], message: &[u8], expected_tag: &[u8; 32]) -> bool {
         let computed = Self::hmac_sha256(key, message);
-        computed.iter().zip(expected_tag.iter()).all(|(a, b)| a == b)
+        computed
+            .iter()
+            .zip(expected_tag.iter())
+            .all(|(a, b)| a == b)
     }
 
     /// AES-256-GCM encrypt (simplified: XOR-stream cipher using HMAC as PRF).
@@ -124,7 +132,12 @@ impl WebCryptoEngine {
     }
 
     /// AES-256-GCM decrypt. Returns None if the tag doesn't match.
-    pub fn subtle_decrypt(key: &[u8], nonce: &[u8], ciphertext: &[u8], tag: &[u8; 16]) -> Option<Vec<u8>> {
+    pub fn subtle_decrypt(
+        key: &[u8],
+        nonce: &[u8],
+        ciphertext: &[u8],
+        tag: &[u8; 16],
+    ) -> Option<Vec<u8>> {
         // Verify tag first
         let mut auth_input = nonce.to_vec();
         auth_input.extend_from_slice(ciphertext);
@@ -150,7 +163,10 @@ impl WebCryptoEngine {
 
     /// ECDH key agreement using X25519 (from-scratch implementation).
     /// Returns the shared secret given a local private key and remote public key.
-    pub fn ecdh_derive_shared(local_private_key: [u8; 32], remote_public_key: [u8; 32]) -> [u8; 32] {
+    pub fn ecdh_derive_shared(
+        local_private_key: [u8; 32],
+        remote_public_key: [u8; 32],
+    ) -> [u8; 32] {
         crate::net::x25519::x25519(local_private_key, remote_public_key)
     }
 
@@ -328,4 +344,3 @@ mod tests {
         assert_eq!(priv_key[31] & 64, 64);
     }
 }
-

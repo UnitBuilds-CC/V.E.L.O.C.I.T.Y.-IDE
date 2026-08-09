@@ -47,7 +47,11 @@ pub fn record_and_execute_token(
         cmd_transfer_to_compute_barrier(device, cmd);
 
         unsafe {
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_rms_norm);
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline.pipeline_rms_norm,
+            );
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -83,7 +87,11 @@ pub fn record_and_execute_token(
 
         if let Some(ref bias_q_set) = pipeline.desc_sets_bias_q[i] {
             unsafe {
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_bias_add);
+                device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipeline.pipeline_bias_add,
+                );
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
@@ -106,7 +114,11 @@ pub fn record_and_execute_token(
         }
         if let Some(ref bias_k_set) = pipeline.desc_sets_bias_k[i] {
             unsafe {
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_bias_add);
+                device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipeline.pipeline_bias_add,
+                );
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
@@ -129,7 +141,11 @@ pub fn record_and_execute_token(
         }
         if let Some(ref bias_v_set) = pipeline.desc_sets_bias_v[i] {
             unsafe {
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_bias_add);
+                device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipeline.pipeline_bias_add,
+                );
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
@@ -190,7 +206,11 @@ pub fn record_and_execute_token(
         cmd_compute_barrier(device, cmd);
 
         unsafe {
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_kv_write);
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline.pipeline_kv_write,
+            );
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -307,7 +327,11 @@ pub fn record_and_execute_token(
         cmd_transfer_to_compute_barrier(device, cmd);
 
         unsafe {
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_rms_norm);
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline.pipeline_rms_norm,
+            );
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -338,7 +362,11 @@ pub fn record_and_execute_token(
         cmd_compute_barrier(device, cmd);
 
         unsafe {
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_swiglu);
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                pipeline.pipeline_swiglu,
+            );
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -407,7 +435,11 @@ pub fn record_and_execute_token(
     }
 
     unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline.pipeline_rms_norm);
+        device.cmd_bind_pipeline(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            pipeline.pipeline_rms_norm,
+        );
         device.cmd_bind_descriptor_sets(
             cmd,
             vk::PipelineBindPoint::COMPUTE,

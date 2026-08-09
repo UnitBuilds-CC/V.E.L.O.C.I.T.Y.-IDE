@@ -141,7 +141,11 @@ fn compose_persona(team: &ExpertTeam, member_idx: usize, workspace_root: &PathBu
         }
         if let Some(skill) = load_skill_file(workspace_root, skill_id) {
             if !skill.body.trim().is_empty() {
-                persona.push_str(&format!("\n\n## Skill: {}\n{}", skill.name, skill.body.trim()));
+                persona.push_str(&format!(
+                    "\n\n## Skill: {}\n{}",
+                    skill.name,
+                    skill.body.trim()
+                ));
             }
         }
     }

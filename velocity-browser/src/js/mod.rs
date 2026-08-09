@@ -18,5 +18,5 @@ pub use synthetic_events::{PointerEvent, SyntheticEventDispatcher};
 pub use vm::{JsEventListener, JsValue, JsVirtualMachine};
 pub use wasm::{WasmInterpreter, WasmValue};
 pub use wasm_simd::{WasmSimdPipeline, WasmV128Vector};
-pub use web_apis::{WebApiResult, StorageType, StorageOp};
+pub use web_apis::{StorageOp, StorageType, WebApiResult};
 pub use worker_thread::{WebWorkerPool, WorkerMessage, WorkerThread};

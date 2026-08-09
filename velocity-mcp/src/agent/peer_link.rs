@@ -378,8 +378,15 @@ impl PeerManager {
     // ── Messaging ──
 
     /// Queue a message for sending to a peer.
-    pub fn send_message(&mut self, to_peer: &str, kind: PeerMessageKind, payload: serde_json::Value) -> String {
-        let local_id = self.local_identity.as_ref()
+    pub fn send_message(
+        &mut self,
+        to_peer: &str,
+        kind: PeerMessageKind,
+        payload: serde_json::Value,
+    ) -> String {
+        let local_id = self
+            .local_identity
+            .as_ref()
             .map(|id| id.id.clone())
             .unwrap_or_default();
 
@@ -434,9 +441,13 @@ impl PeerManager {
 
     /// Send a chat message to a peer.
     pub fn chat(&mut self, to_peer: &str, message: &str) -> String {
-        self.send_message(to_peer, PeerMessageKind::Chat, serde_json::json!({
-            "message": message
-        }))
+        self.send_message(
+            to_peer,
+            PeerMessageKind::Chat,
+            serde_json::json!({
+                "message": message
+            }),
+        )
     }
 
     // ── Task Delegation ──
@@ -463,7 +474,9 @@ impl PeerManager {
             progress: 0.0,
             result: None,
             error: None,
-            delegated_by: self.local_identity.as_ref()
+            delegated_by: self
+                .local_identity
+                .as_ref()
                 .map(|id| id.id.clone())
                 .unwrap_or_default(),
             peer_id: peer_id.to_string(),
@@ -472,12 +485,16 @@ impl PeerManager {
         };
 
         // Send task request to peer.
-        self.send_message(peer_id, PeerMessageKind::TaskRequest, serde_json::json!({
-            "task_id": task_id,
-            "prompt": prompt,
-            "instructions": instructions,
-            "attached_files": &task.attached_files,
-        }));
+        self.send_message(
+            peer_id,
+            PeerMessageKind::TaskRequest,
+            serde_json::json!({
+                "task_id": task_id,
+                "prompt": prompt,
+                "instructions": instructions,
+                "attached_files": &task.attached_files,
+            }),
+        );
 
         self.tasks.insert(task_id.clone(), task);
         Ok(task_id)
@@ -512,14 +529,16 @@ impl PeerManager {
 
     /// Get tasks for a specific peer.
     pub fn tasks_for_peer(&self, peer_id: &str) -> Vec<&DelegatedTask> {
-        self.tasks.values()
+        self.tasks
+            .values()
             .filter(|t| t.peer_id == peer_id)
             .collect()
     }
 
     /// Get all active (non-completed) tasks.
     pub fn active_tasks(&self) -> Vec<&DelegatedTask> {
-        self.tasks.values()
+        self.tasks
+            .values()
             .filter(|t| t.status == TaskStatus::Pending || t.status == TaskStatus::Running)
             .collect()
     }
@@ -560,14 +579,18 @@ impl PeerManager {
         };
 
         // Send transfer start message.
-        self.send_message(peer_id, PeerMessageKind::FileTransferStart, serde_json::json!({
-            "transfer_id": transfer_id,
-            "filename": filename,
-            "total_size": file_data.len(),
-            "sha256": transfer.sha256,
-            "total_chunks": total_chunks,
-            "instructions": instructions,
-        }));
+        self.send_message(
+            peer_id,
+            PeerMessageKind::FileTransferStart,
+            serde_json::json!({
+                "transfer_id": transfer_id,
+                "filename": filename,
+                "total_size": file_data.len(),
+                "sha256": transfer.sha256,
+                "total_chunks": total_chunks,
+                "instructions": instructions,
+            }),
+        );
 
         // Chunk and queue the data.
         for i in 0..total_chunks {
@@ -575,17 +598,25 @@ impl PeerManager {
             let end = std::cmp::min(start + self.chunk_size, file_data.len());
             let chunk_data = &file_data[start..end];
 
-            self.send_message(peer_id, PeerMessageKind::FileTransferChunk, serde_json::json!({
-                "transfer_id": transfer_id,
-                "index": i,
-                "data": base64_encode(chunk_data),
-            }));
+            self.send_message(
+                peer_id,
+                PeerMessageKind::FileTransferChunk,
+                serde_json::json!({
+                    "transfer_id": transfer_id,
+                    "index": i,
+                    "data": base64_encode(chunk_data),
+                }),
+            );
         }
 
         // Send transfer complete.
-        self.send_message(peer_id, PeerMessageKind::FileTransferComplete, serde_json::json!({
-            "transfer_id": transfer_id,
-        }));
+        self.send_message(
+            peer_id,
+            PeerMessageKind::FileTransferComplete,
+            serde_json::json!({
+                "transfer_id": transfer_id,
+            }),
+        );
 
         self.transfers.insert(transfer_id.clone(), transfer);
         Ok(transfer_id)
@@ -602,7 +633,9 @@ impl PeerManager {
         total_chunks: u32,
         instructions: Option<&str>,
     ) {
-        let workspace = self.workspace_root.as_ref()
+        let workspace = self
+            .workspace_root
+            .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| ".".to_string());
 
@@ -681,17 +714,14 @@ impl PeerManager {
             .workspace_root
             .clone()
             .unwrap_or_else(|| PathBuf::from("."));
-        let dest = transfer
-            .dest_path
-            .clone()
-            .unwrap_or_else(|| {
-                workspace
-                    .join(".velocity")
-                    .join("peer_drops")
-                    .join(&transfer.filename)
-                    .to_string_lossy()
-                    .to_string()
-            });
+        let dest = transfer.dest_path.clone().unwrap_or_else(|| {
+            workspace
+                .join(".velocity")
+                .join("peer_drops")
+                .join(&transfer.filename)
+                .to_string_lossy()
+                .to_string()
+        });
 
         // Ensure parent directory exists.
         if let Some(parent) = Path::new(&dest).parent() {
@@ -753,12 +783,16 @@ impl PeerManager {
             environment: None,
         };
 
-        self.send_message(&peer_id, PeerMessageKind::PairRequest, serde_json::json!({
-            "peer_id": peer_id,
-            "name": name,
-            "host": host,
-            "port": port,
-        }));
+        self.send_message(
+            &peer_id,
+            PeerMessageKind::PairRequest,
+            serde_json::json!({
+                "peer_id": peer_id,
+                "name": name,
+                "host": host,
+                "port": port,
+            }),
+        );
 
         self.peers.insert(peer_id.clone(), peer);
         peer_id
@@ -766,9 +800,13 @@ impl PeerManager {
 
     /// Accept a pairing request from a peer.
     pub fn accept_pairing(&mut self, peer_id: &str) {
-        self.send_message(peer_id, PeerMessageKind::PairAccepted, serde_json::json!({
-            "accepted": true,
-        }));
+        self.send_message(
+            peer_id,
+            PeerMessageKind::PairAccepted,
+            serde_json::json!({
+                "accepted": true,
+            }),
+        );
         if let Some(peer) = self.peers.get_mut(peer_id) {
             peer.online = true;
             peer.last_seen = now_secs();
@@ -777,16 +815,22 @@ impl PeerManager {
 
     /// Reject a pairing request.
     pub fn reject_pairing(&mut self, peer_id: &str) {
-        self.send_message(peer_id, PeerMessageKind::PairRejected, serde_json::json!({
-            "reason": "rejected by user"
-        }));
+        self.send_message(
+            peer_id,
+            PeerMessageKind::PairRejected,
+            serde_json::json!({
+                "reason": "rejected by user"
+            }),
+        );
     }
 
     // ── Persistence ──
 
     /// Save peer manager state to disk.
     pub fn save(&self) -> Result<(), String> {
-        let root = self.workspace_root.as_ref()
+        let root = self
+            .workspace_root
+            .as_ref()
             .ok_or_else(|| "No workspace root".to_string())?;
         let dir = root.join(".velocity");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -796,10 +840,8 @@ impl PeerManager {
             peers: self.peers.values().cloned().collect(),
             listen_port: self.listen_port,
         };
-        let json = serde_json::to_vec_pretty(&state)
-            .map_err(|e| format!("Serialize: {e}"))?;
-        std::fs::write(dir.join("peers.json"), json)
-            .map_err(|e| format!("Write: {e}"))?;
+        let json = serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize: {e}"))?;
+        std::fs::write(dir.join("peers.json"), json).map_err(|e| format!("Write: {e}"))?;
         Ok(())
     }
 
@@ -891,10 +933,7 @@ fn execute_deploy_instructions(instructions: &str, file_path: &str, workspace: &
                     if !stderr.is_empty() {
                         output.push_str(&format!("  stderr: {}\n", stderr.trim()));
                     }
-                    output.push_str(&format!(
-                        "  exit: {}\n",
-                        out.status.code().unwrap_or(-1)
-                    ));
+                    output.push_str(&format!("  exit: {}\n", out.status.code().unwrap_or(-1)));
                 }
                 Err(e) => {
                     output.push_str(&format!("  error: {}\n", e));
@@ -1094,12 +1133,14 @@ mod tests {
         let mut mgr = init_manager();
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
 
-        let task_id = mgr.delegate_task(
-            "p1",
-            "Run the test suite",
-            "Execute cargo test and report results",
-            vec![],
-        ).unwrap();
+        let task_id = mgr
+            .delegate_task(
+                "p1",
+                "Run the test suite",
+                "Execute cargo test and report results",
+                vec![],
+            )
+            .unwrap();
 
         assert!(mgr.tasks.contains_key(&task_id));
         assert_eq!(mgr.tasks[&task_id].status, TaskStatus::Pending);
@@ -1110,7 +1151,9 @@ mod tests {
     fn task_progress_and_completion() {
         let mut mgr = init_manager();
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
-        let task_id = mgr.delegate_task("p1", "Test", "Run tests", vec![]).unwrap();
+        let task_id = mgr
+            .delegate_task("p1", "Test", "Run tests", vec![])
+            .unwrap();
 
         mgr.update_task_progress(&task_id, 50.0);
         assert_eq!(mgr.tasks[&task_id].progress, 50.0);
@@ -1125,7 +1168,9 @@ mod tests {
     fn fail_task() {
         let mut mgr = init_manager();
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
-        let task_id = mgr.delegate_task("p1", "Build", "Build project", vec![]).unwrap();
+        let task_id = mgr
+            .delegate_task("p1", "Build", "Build project", vec![])
+            .unwrap();
 
         mgr.fail_task(&task_id, "Compilation error");
         assert_eq!(mgr.tasks[&task_id].status, TaskStatus::Failed);
@@ -1138,7 +1183,9 @@ mod tests {
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
 
         let data = b"Hello, this is a test file content for transfer!";
-        let xfer_id = mgr.initiate_transfer("p1", "test.txt", data, Some("Run this file")).unwrap();
+        let xfer_id = mgr
+            .initiate_transfer("p1", "test.txt", data, Some("Run this file"))
+            .unwrap();
 
         assert!(mgr.transfers.contains_key(&xfer_id));
         let transfer = &mgr.transfers[&xfer_id];
@@ -1153,7 +1200,15 @@ mod tests {
         let mut mgr = init_manager();
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
 
-        mgr.begin_receive_transfer("xfer_1", "p1", "app.exe", 1000, "abc123", 3, Some("Deploy this"));
+        mgr.begin_receive_transfer(
+            "xfer_1",
+            "p1",
+            "app.exe",
+            1000,
+            "abc123",
+            3,
+            Some("Deploy this"),
+        );
         assert!(mgr.receive_chunk("xfer_1", 0));
         assert!(mgr.receive_chunk("xfer_1", 1));
         assert!(!mgr.transfers["xfer_1"].complete);
@@ -1237,7 +1292,15 @@ mod tests {
     fn finalize_transfer_not_complete() {
         let mut mgr = init_manager();
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
-        mgr.begin_receive_transfer("xfer_1", "p1", "app.exe", 1000, "abc123", 3, Some("Deploy this"));
+        mgr.begin_receive_transfer(
+            "xfer_1",
+            "p1",
+            "app.exe",
+            1000,
+            "abc123",
+            3,
+            Some("Deploy this"),
+        );
         // Only receive 1 of 3 chunks — not complete yet.
         mgr.receive_chunk("xfer_1", 0);
         let result = mgr.finalize_transfer("xfer_1");
@@ -1249,14 +1312,25 @@ mod tests {
     fn finalize_transfer_complete_no_temp_file() {
         let mut mgr = init_manager();
         mgr.add_peer(test_peer("p1", "10.0.0.1"));
-        mgr.begin_receive_transfer("xfer_2", "p1", "data.txt", 100, "hash", 2, Some("notify File received"));
+        mgr.begin_receive_transfer(
+            "xfer_2",
+            "p1",
+            "data.txt",
+            100,
+            "hash",
+            2,
+            Some("notify File received"),
+        );
         mgr.receive_chunk("xfer_2", 0);
         mgr.receive_chunk("xfer_2", 1);
         assert!(mgr.transfers["xfer_2"].complete);
         let result = mgr.finalize_transfer("xfer_2");
         assert!(result.deployed);
         assert!(result.execution_output.is_some());
-        assert!(result.execution_output.unwrap().contains("[notify] File received"));
+        assert!(result
+            .execution_output
+            .unwrap()
+            .contains("[notify] File received"));
     }
 
     #[test]

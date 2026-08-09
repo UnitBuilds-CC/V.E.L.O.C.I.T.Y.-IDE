@@ -45,9 +45,10 @@ pub fn resolve_team(teams: &[ExpertTeam], query: &str) -> Option<usize> {
     }
     let q_slug = slugify(query);
 
-    if let Some(idx) = teams.iter().position(|t| {
-        t.id.to_lowercase() == q || t.slug() == q_slug || t.name.to_lowercase() == q
-    }) {
+    if let Some(idx) = teams
+        .iter()
+        .position(|t| t.id.to_lowercase() == q || t.slug() == q_slug || t.name.to_lowercase() == q)
+    {
         return Some(idx);
     }
 
@@ -77,7 +78,10 @@ pub fn parse_team_directive(input: &str) -> Option<TeamDirective> {
         let query = split.next().unwrap_or("").trim().to_string();
         let task = split.next().unwrap_or("").trim().to_string();
         if !query.is_empty() {
-            return Some(TeamDirective { team_query: query, task });
+            return Some(TeamDirective {
+                team_query: query,
+                task,
+            });
         }
     }
 
@@ -98,7 +102,10 @@ pub fn parse_team_directive(input: &str) -> Option<TeamDirective> {
         let query = split.next().unwrap_or("").trim().to_string();
         let task = split.next().unwrap_or("").trim().to_string();
         if !query.is_empty() {
-            return Some(TeamDirective { team_query: query, task });
+            return Some(TeamDirective {
+                team_query: query,
+                task,
+            });
         }
     }
 

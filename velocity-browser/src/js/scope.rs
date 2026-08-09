@@ -215,10 +215,7 @@ mod tests {
         Scope::declare(&global, "count", JsValue::Number(0.0));
         let child = Scope::new_child(&global);
         Scope::assign(&child, "count", JsValue::Number(5.0));
-        assert_eq!(
-            Scope::resolve(&global, "count"),
-            Some(JsValue::Number(5.0))
-        );
+        assert_eq!(Scope::resolve(&global, "count"), Some(JsValue::Number(5.0)));
     }
 
     #[test]
@@ -244,7 +241,10 @@ mod tests {
         let block = Scope::new_child(&fn_scope);
         Scope::declare_var(&block, "y", JsValue::String("hi".into()));
         // y should be in fn_scope, not global
-        assert_eq!(Scope::resolve(&fn_scope, "y"), Some(JsValue::String("hi".into())));
+        assert_eq!(
+            Scope::resolve(&fn_scope, "y"),
+            Some(JsValue::String("hi".into()))
+        );
         assert_eq!(Scope::resolve(&global, "y"), None);
     }
 

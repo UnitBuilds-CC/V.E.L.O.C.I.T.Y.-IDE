@@ -74,7 +74,12 @@ impl WikiView {
 
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Wiki").size(13.0).strong().color(palette.accent));
+                ui.label(
+                    egui::RichText::new("Wiki")
+                        .size(13.0)
+                        .strong()
+                        .color(palette.accent),
+                );
                 ui.add_space(8.0);
                 if let Some(model) = &self.model {
                     ui.label(
@@ -113,7 +118,9 @@ impl WikiView {
                     );
                     if ui
                         .add_enabled(enabled, button)
-                        .on_hover_text("Ask the agent to write a detailed narrative for the selected page")
+                        .on_hover_text(
+                            "Ask the agent to write a detailed narrative for the selected page",
+                        )
                         .clicked()
                     {
                         if let Some(prompt) = self.detail_prompt() {
@@ -316,8 +323,10 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 if model.is_empty() {
                     ui.add_space(12.0);
                     ui.label(
-                        egui::RichText::new("No indexed pages yet — index the workspace to build the wiki.")
-                            .color(palette.text_muted),
+                        egui::RichText::new(
+                            "No indexed pages yet — index the workspace to build the wiki.",
+                        )
+                        .color(palette.text_muted),
                     );
                 }
             });
@@ -352,16 +361,16 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
             .inner_margin(egui::Margin::symmetric(6, 2))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(glyph)
-                            .size(11.0)
-                            .color(if selected { palette.accent } else { palette.text_muted }),
-                    );
-                    ui.label(
-                        egui::RichText::new(title)
-                            .size(12.0)
-                            .color(if selected { palette.accent } else { palette.text }),
-                    );
+                    ui.label(egui::RichText::new(glyph).size(11.0).color(if selected {
+                        palette.accent
+                    } else {
+                        palette.text_muted
+                    }));
+                    ui.label(egui::RichText::new(title).size(12.0).color(if selected {
+                        palette.accent
+                    } else {
+                        palette.text
+                    }));
                 })
                 .response
             })
@@ -383,7 +392,10 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                         .color(palette.accent.gamma_multiply(0.7)),
                 );
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Select a page to read its wiki entry").color(palette.text_muted));
+                ui.label(
+                    egui::RichText::new("Select a page to read its wiki entry")
+                        .color(palette.text_muted),
+                );
             });
             return None;
         };
@@ -392,7 +404,12 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
             .id_salt("wiki_detail_scroll")
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&page.title).size(18.0).strong().color(palette.text));
+                    ui.label(
+                        egui::RichText::new(&page.title)
+                            .size(18.0)
+                            .strong()
+                            .color(palette.text),
+                    );
                     ui.add_space(8.0);
                     ui.label(
                         egui::RichText::new(page.kind.label())
@@ -405,7 +422,12 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                 ui.separator();
 
                 if let Some(detail) = page.detail.as_deref() {
-                    ui.label(egui::RichText::new("Details").size(13.0).strong().color(palette.accent));
+                    ui.label(
+                        egui::RichText::new("Details")
+                            .size(13.0)
+                            .strong()
+                            .color(palette.accent),
+                    );
                     ui.add_space(2.0);
                     ui.label(egui::RichText::new(detail).color(palette.text));
                     ui.separator();
@@ -424,7 +446,10 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                     ui.add_space(2.0);
                     for target in targets {
                         if ui
-                            .selectable_label(false, egui::RichText::new(format!("›  {}", target)).color(palette.text))
+                            .selectable_label(
+                                false,
+                                egui::RichText::new(format!("›  {}", target)).color(palette.text),
+                            )
                             .clicked()
                         {
                             navigate = Some(target.clone());
@@ -443,7 +468,10 @@ and any notable relationships. Use Markdown. Do not repeat the raw lists verbati
                     ui.add_space(2.0);
                     for caller in &page.called_by {
                         if ui
-                            .selectable_label(false, egui::RichText::new(format!("‹  {}", caller)).color(palette.text))
+                            .selectable_label(
+                                false,
+                                egui::RichText::new(format!("‹  {}", caller)).color(palette.text),
+                            )
                             .clicked()
                         {
                             navigate = Some(caller.clone());

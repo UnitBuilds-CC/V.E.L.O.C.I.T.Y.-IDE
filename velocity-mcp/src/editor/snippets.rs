@@ -56,9 +56,10 @@ impl Snippet {
                 if parts.len() >= 3 {
                     let _regex_pattern = parts[0];
                     let format_str = parts[1];
-                    let full_end = prefix.len() + parts[0].len() + 1 + parts[1].len() + 1 + parts[2].len();
+                    let full_end =
+                        prefix.len() + parts[0].len() + 1 + parts[1].len() + 1 + parts[2].len();
                     let full = &result[start..start + full_end + 1]; // +1 for closing }
-                    // Simple transform: just use the format string as replacement
+                                                                     // Simple transform: just use the format string as replacement
                     result = result.replacen(full, format_str, 1);
                 } else {
                     break;
@@ -99,7 +100,11 @@ impl Snippet {
                 if let Some(digit) = rest.chars().next() {
                     if digit.is_ascii_digit() {
                         let idx = digit as u32 - '0' as u32;
-                        stops.push(TabStop { index: idx as usize, offset: i - offset, length: 0 });
+                        stops.push(TabStop {
+                            index: idx as usize,
+                            offset: i - offset,
+                            length: 0,
+                        });
                         offset += 2; // remove $N from final length accounting
                     }
                 }
@@ -161,7 +166,8 @@ impl SnippetCollection {
     /// Get snippets matching a prefix.
     pub fn matching(&self, prefix: &str) -> Vec<&Snippet> {
         let lower = prefix.to_lowercase();
-        self.snippets.iter()
+        self.snippets
+            .iter()
             .filter(|s| s.prefix.to_lowercase().starts_with(&lower))
             .collect()
     }
@@ -173,56 +179,90 @@ impl SnippetCollection {
                 Snippet {
                     prefix: "fn".to_string(),
                     name: "Function".to_string(),
-                    body: vec!["fn ${1:name}(${2:params}) ${3:-> ReturnType }{".to_string(), "    $0".to_string(), "}".to_string()],
+                    body: vec![
+                        "fn ${1:name}(${2:params}) ${3:-> ReturnType }{".to_string(),
+                        "    $0".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("Function definition".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "impl".to_string(),
                     name: "Impl block".to_string(),
-                    body: vec!["impl ${1:Type} {".to_string(), "    $0".to_string(), "}".to_string()],
+                    body: vec![
+                        "impl ${1:Type} {".to_string(),
+                        "    $0".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("Impl block".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "test".to_string(),
                     name: "Test function".to_string(),
-                    body: vec!["#[test]".to_string(), "fn ${1:test_name}() {".to_string(), "    $0".to_string(), "}".to_string()],
+                    body: vec![
+                        "#[test]".to_string(),
+                        "fn ${1:test_name}() {".to_string(),
+                        "    $0".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("Test function".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "match".to_string(),
                     name: "Match expression".to_string(),
-                    body: vec!["match ${1:expr} {".to_string(), "    ${2:pattern} => ${3:result},".to_string(), "    $0".to_string(), "}".to_string()],
+                    body: vec![
+                        "match ${1:expr} {".to_string(),
+                        "    ${2:pattern} => ${3:result},".to_string(),
+                        "    $0".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("Match expression".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "struct".to_string(),
                     name: "Struct definition".to_string(),
-                    body: vec!["struct ${1:Name} {".to_string(), "    pub ${2:field}: ${3:Type},".to_string(), "}".to_string()],
+                    body: vec![
+                        "struct ${1:Name} {".to_string(),
+                        "    pub ${2:field}: ${3:Type},".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("Struct definition".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "enum".to_string(),
                     name: "Enum definition".to_string(),
-                    body: vec!["enum ${1:Name} {".to_string(), "    ${2:Variant},".to_string(), "}".to_string()],
+                    body: vec![
+                        "enum ${1:Name} {".to_string(),
+                        "    ${2:Variant},".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("Enum definition".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "for".to_string(),
                     name: "For loop".to_string(),
-                    body: vec!["for ${1:item} in ${2:iter} {".to_string(), "    $0".to_string(), "}".to_string()],
+                    body: vec![
+                        "for ${1:item} in ${2:iter} {".to_string(),
+                        "    $0".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("For loop".to_string()),
                     scope: Some("rust".to_string()),
                 },
                 Snippet {
                     prefix: "if".to_string(),
                     name: "If statement".to_string(),
-                    body: vec!["if ${1:condition} {".to_string(), "    $0".to_string(), "}".to_string()],
+                    body: vec![
+                        "if ${1:condition} {".to_string(),
+                        "    $0".to_string(),
+                        "}".to_string(),
+                    ],
                     description: Some("If statement".to_string()),
                     scope: Some("rust".to_string()),
                 },
@@ -281,7 +321,11 @@ mod tests {
         let snippet = Snippet {
             prefix: "fn".to_string(),
             name: "Function".to_string(),
-            body: vec!["fn ${1:name}() {".to_string(), "    $0".to_string(), "}".to_string()],
+            body: vec![
+                "fn ${1:name}() {".to_string(),
+                "    $0".to_string(),
+                "}".to_string(),
+            ],
             description: None,
             scope: None,
         };
@@ -301,8 +345,16 @@ mod tests {
     #[test]
     fn snippet_session() {
         let stops = vec![
-            TabStop { index: 1, offset: 3, length: 4 },
-            TabStop { index: 2, offset: 10, length: 0 },
+            TabStop {
+                index: 1,
+                offset: 3,
+                length: 4,
+            },
+            TabStop {
+                index: 2,
+                offset: 10,
+                length: 0,
+            },
         ];
         let mut session = SnippetSession::start(stops, 100);
         assert!(session.active);

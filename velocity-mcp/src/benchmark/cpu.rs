@@ -380,12 +380,18 @@ impl BitNet3BLayerData {
             velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_v), 3200, 3200);
         let (wo_a, wo_p) =
             velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_o), 3200, 3200);
-        let (wgate_a, wgate_p) =
-            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_gate), 3200, 8640);
+        let (wgate_a, wgate_p) = velocity_ide::compiler::driver::pack_weights_nda(
+            to_bytes_u32(&weight_gate),
+            3200,
+            8640,
+        );
         let (wup_a, wup_p) =
             velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_up), 3200, 8640);
-        let (wdown_a, wdown_p) =
-            velocity_ide::compiler::driver::pack_weights_nda(to_bytes_u32(&weight_down), 8640, 3200);
+        let (wdown_a, wdown_p) = velocity_ide::compiler::driver::pack_weights_nda(
+            to_bytes_u32(&weight_down),
+            8640,
+            3200,
+        );
 
         Self {
             inputs_3200,

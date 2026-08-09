@@ -94,13 +94,15 @@ impl AdaptiveConfidence {
     pub fn record(&mut self, role: &str, action: &str, domain: &str, score: f64) {
         // Update site-specific entry
         let key = ConfidenceKey::new(role, action, domain);
-        self.entries.entry(key)
+        self.entries
+            .entry(key)
             .and_modify(|e| e.update(score))
             .or_insert_with(|| ConfidenceEntry::new(score));
 
         // Update generic cross-site entry
         let generic_key = ConfidenceKey::generic(role, action);
-        self.generic_entries.entry(generic_key)
+        self.generic_entries
+            .entry(generic_key)
             .and_modify(|e| e.update(score))
             .or_insert_with(|| ConfidenceEntry::new(score));
     }
@@ -131,7 +133,13 @@ impl AdaptiveConfidence {
 
     /// Get confidence with a bonus for elements that have text content matching
     /// common action patterns (e.g., "Submit", "Login", "Accept").
-    pub fn predict_with_text_hint(&self, role: &str, action: &str, domain: &str, text: &str) -> f64 {
+    pub fn predict_with_text_hint(
+        &self,
+        role: &str,
+        action: &str,
+        domain: &str,
+        text: &str,
+    ) -> f64 {
         let base = self.predict(role, action, domain);
 
         // Boost confidence for well-known action text
@@ -149,9 +157,18 @@ impl AdaptiveConfidence {
 
     /// Get all entries for a domain, sorted by confidence descending.
     pub fn domain_report(&self, domain: &str) -> Vec<(String, String, f64, u32)> {
-        let mut report: Vec<_> = self.entries.iter()
+        let mut report: Vec<_> = self
+            .entries
+            .iter()
             .filter(|(k, _)| k.domain == domain)
-            .map(|(k, e)| (k.role.clone(), k.action.clone(), e.ema_score, e.observations))
+            .map(|(k, e)| {
+                (
+                    k.role.clone(),
+                    k.action.clone(),
+                    e.ema_score,
+                    e.observations,
+                )
+            })
             .collect();
         report.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
         report
@@ -169,15 +186,22 @@ impl AdaptiveConfidence {
     pub fn export_nda(&self) -> crate::nda::NdaDocument {
         use crate::predicates::{LEARNED_CONFIDENCE, LEARNED_OBSERVATIONS};
         let mut doc = crate::nda::NdaDocument::new();
-        let mut all: Vec<(&ConfidenceKey, &ConfidenceEntry)> =
-            self.entries.iter().chain(self.generic_entries.iter()).collect();
+        let mut all: Vec<(&ConfidenceKey, &ConfidenceEntry)> = self
+            .entries
+            .iter()
+            .chain(self.generic_entries.iter())
+            .collect();
         // Deterministic fact order so exports of equal state are identical.
         all.sort_by(|a, b| {
             (&a.0.domain, &a.0.role, &a.0.action).cmp(&(&b.0.domain, &b.0.role, &b.0.action))
         });
         for (key, entry) in all {
             let subject = format!("{}|{}|{}", key.role, key.action, key.domain);
-            doc.push_int(&subject, LEARNED_CONFIDENCE, (entry.ema_score * 10_000.0).round() as i64);
+            doc.push_int(
+                &subject,
+                LEARNED_CONFIDENCE,
+                (entry.ema_score * 10_000.0).round() as i64,
+            );
             doc.push_int(&subject, LEARNED_OBSERVATIONS, entry.observations as i64);
         }
         doc
@@ -192,8 +216,12 @@ impl AdaptiveConfidence {
         // Collect both halves of each pattern before constructing entries.
         let mut partial: HashMap<String, (Option<f64>, Option<u32>)> = HashMap::new();
         for fact in &doc.facts {
-            let Some(subject) = doc.subject_str(fact) else { continue };
-            let NdaObject::Int(n) = fact.object else { continue };
+            let Some(subject) = doc.subject_str(fact) else {
+                continue;
+            };
+            let NdaObject::Int(n) = fact.object else {
+                continue;
+            };
             let slot = partial.entry(subject.to_string()).or_default();
             match fact.predicate {
                 LEARNED_CONFIDENCE => slot.0 = Some(n as f64 / 10_000.0),
@@ -203,7 +231,9 @@ impl AdaptiveConfidence {
         }
         let mut restored = 0usize;
         for (subject, (ema, observations)) in partial {
-            let (Some(ema_score), Some(observations)) = (ema, observations) else { continue };
+            let (Some(ema_score), Some(observations)) = (ema, observations) else {
+                continue;
+            };
             let mut parts = subject.splitn(3, '|');
             let (Some(role), Some(action), Some(domain)) =
                 (parts.next(), parts.next(), parts.next())
@@ -211,7 +241,11 @@ impl AdaptiveConfidence {
                 continue;
             };
             let key = ConfidenceKey::new(role, action, domain);
-            let entry = ConfidenceEntry { ema_score, observations, alpha: 0.3 };
+            let entry = ConfidenceEntry {
+                ema_score,
+                observations,
+                alpha: 0.3,
+            };
             if domain == "*" {
                 self.generic_entries.insert(key, entry);
             } else {
@@ -225,18 +259,36 @@ impl AdaptiveConfidence {
 
 /// High-confidence button/link text patterns.
 fn is_high_confidence_text(text: &str) -> bool {
-    matches!(text,
-        "submit" | "login" | "sign in" | "log in" | "continue" |
-        "accept" | "ok" | "confirm" | "save" | "next" | "send" |
-        "add to cart" | "buy now" | "checkout" | "subscribe"
+    matches!(
+        text,
+        "submit"
+            | "login"
+            | "sign in"
+            | "log in"
+            | "continue"
+            | "accept"
+            | "ok"
+            | "confirm"
+            | "save"
+            | "next"
+            | "send"
+            | "add to cart"
+            | "buy now"
+            | "checkout"
+            | "subscribe"
     )
 }
 
 /// Medium-confidence text patterns.
 fn is_medium_confidence_text(text: &str) -> bool {
-    text.contains("submit") || text.contains("login") || text.contains("sign")
-        || text.contains("accept") || text.contains("continue") || text.contains("confirm")
-        || text.contains("save") || text.contains("next")
+    text.contains("submit")
+        || text.contains("login")
+        || text.contains("sign")
+        || text.contains("accept")
+        || text.contains("continue")
+        || text.contains("confirm")
+        || text.contains("save")
+        || text.contains("next")
 }
 
 #[cfg(test)]
@@ -258,7 +310,11 @@ mod tests {
             ac.record("button", "click", "example.com", 0.95);
         }
         let conf = ac.predict("button", "click", "example.com");
-        assert!(conf > 0.85, "Should have learned high confidence, got {}", conf);
+        assert!(
+            conf > 0.85,
+            "Should have learned high confidence, got {}",
+            conf
+        );
     }
 
     #[test]
@@ -269,7 +325,11 @@ mod tests {
             ac.record("link", "click", "broken.com", 0.1);
         }
         let conf = ac.predict("link", "click", "broken.com");
-        assert!(conf < 0.3, "Should have learned low confidence, got {}", conf);
+        assert!(
+            conf < 0.3,
+            "Should have learned low confidence, got {}",
+            conf
+        );
     }
 
     #[test]
@@ -307,7 +367,11 @@ mod tests {
         }
         let conf = ac.predict("button", "click", "example.com");
         // EMA should have moved toward 0.1 significantly
-        assert!(conf < 0.5, "EMA should reflect recent failures, got {}", conf);
+        assert!(
+            conf < 0.5,
+            "EMA should reflect recent failures, got {}",
+            conf
+        );
     }
 
     #[test]
@@ -350,9 +414,17 @@ mod tests {
     fn import_skips_malformed_facts() {
         let mut doc = crate::nda::NdaDocument::new();
         // Missing observations half; wrong subject shape; string object.
-        doc.push_int("textbox|fill|example.com", crate::predicates::LEARNED_CONFIDENCE, 9000);
+        doc.push_int(
+            "textbox|fill|example.com",
+            crate::predicates::LEARNED_CONFIDENCE,
+            9000,
+        );
         doc.push_int("not-a-key", crate::predicates::LEARNED_CONFIDENCE, 9000);
-        doc.push_str("textbox|fill|x.com", crate::predicates::LEARNED_CONFIDENCE, "0.9");
+        doc.push_str(
+            "textbox|fill|x.com",
+            crate::predicates::LEARNED_CONFIDENCE,
+            "0.9",
+        );
         let mut ac = AdaptiveConfidence::new();
         assert_eq!(ac.import_nda(&doc), 0);
         assert_eq!(ac.pattern_count(), 0);
@@ -447,7 +519,10 @@ mod tests {
         let base = ac.predict("button", "click", "site.com");
         let hinted = ac.predict_with_text_hint("button", "click", "site.com", "please submit now");
         assert!(hinted > base, "Medium text should give small boost");
-        assert!((hinted - base - 0.05).abs() < 1e-9, "Medium boost should be 0.05");
+        assert!(
+            (hinted - base - 0.05).abs() < 1e-9,
+            "Medium boost should be 0.05"
+        );
     }
 
     #[test]
@@ -457,7 +532,11 @@ mod tests {
             ac.record("button", "click", "site.com", 0.98);
         }
         let hinted = ac.predict_with_text_hint("button", "click", "site.com", "Submit");
-        assert!(hinted <= 1.0, "Confidence must not exceed 1.0, got {}", hinted);
+        assert!(
+            hinted <= 1.0,
+            "Confidence must not exceed 1.0, got {}",
+            hinted
+        );
     }
 
     // ── domain_report ─────────────────────────────────────────────────

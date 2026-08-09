@@ -25,7 +25,7 @@ pub struct HtmlParser;
 impl HtmlParser {
     pub fn parse(html: &str) -> Vec<DomNode> {
         let mut nodes = Vec::new();
-        
+
         // Root document node
         let root = DomNode {
             id: 0,
@@ -59,11 +59,15 @@ impl HtmlParser {
                     // Opening tag
                     idx += 1;
                     let mut tag = String::new();
-                    while idx < len && !chars[idx].is_whitespace() && chars[idx] != '>' && chars[idx] != '/' {
+                    while idx < len
+                        && !chars[idx].is_whitespace()
+                        && chars[idx] != '>'
+                        && chars[idx] != '/'
+                    {
                         tag.push(chars[idx]);
                         idx += 1;
                     }
-                    
+
                     let mut attrs = HashMap::new();
                     while idx < len && chars[idx] != '>' && chars[idx] != '/' {
                         if chars[idx].is_whitespace() {
@@ -71,7 +75,11 @@ impl HtmlParser {
                             continue;
                         }
                         let mut key = String::new();
-                        while idx < len && chars[idx] != '=' && !chars[idx].is_whitespace() && chars[idx] != '>' {
+                        while idx < len
+                            && chars[idx] != '='
+                            && !chars[idx].is_whitespace()
+                            && chars[idx] != '>'
+                        {
                             key.push(chars[idx]);
                             idx += 1;
                         }
@@ -85,9 +93,12 @@ impl HtmlParser {
                                     val.push(chars[idx]);
                                     idx += 1;
                                 }
-                                if idx < len { idx += 1; }
+                                if idx < len {
+                                    idx += 1;
+                                }
                             } else {
-                                while idx < len && !chars[idx].is_whitespace() && chars[idx] != '>' {
+                                while idx < len && !chars[idx].is_whitespace() && chars[idx] != '>'
+                                {
                                     val.push(chars[idx]);
                                     idx += 1;
                                 }
@@ -102,7 +113,9 @@ impl HtmlParser {
                     while idx < len && chars[idx] != '>' {
                         idx += 1;
                     }
-                    if idx < len { idx += 1; }
+                    if idx < len {
+                        idx += 1;
+                    }
 
                     if !tag.is_empty() {
                         let node_id = nodes.len();
@@ -118,7 +131,13 @@ impl HtmlParser {
                         nodes.push(node);
                         nodes[current_id].children.push(node_id);
 
-                        if !self_closing && tag != "img" && tag != "input" && tag != "br" && tag != "meta" && tag != "link" {
+                        if !self_closing
+                            && tag != "img"
+                            && tag != "input"
+                            && tag != "br"
+                            && tag != "meta"
+                            && tag != "link"
+                        {
                             current_id = node_id;
                         }
                     }
@@ -159,8 +178,20 @@ impl HtmlParser {
     fn is_void_element(tag: &str) -> bool {
         matches!(
             tag,
-            "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link"
-                | "meta" | "param" | "source" | "track" | "wbr"
+            "area"
+                | "base"
+                | "br"
+                | "col"
+                | "embed"
+                | "hr"
+                | "img"
+                | "input"
+                | "link"
+                | "meta"
+                | "param"
+                | "source"
+                | "track"
+                | "wbr"
         )
     }
 
@@ -209,7 +240,8 @@ impl HtmlParser {
                 }
                 TokenKind::EndTag => {
                     // Close the nearest matching open element; ignore strays.
-                    if let Some(pos) = stack.iter().rposition(|&id| nodes[id].tag_name == tok.name) {
+                    if let Some(pos) = stack.iter().rposition(|&id| nodes[id].tag_name == tok.name)
+                    {
                         if pos != 0 {
                             stack.truncate(pos);
                         }
@@ -248,7 +280,10 @@ mod tests {
         let div = nodes.iter().find(|n| n.tag_name == "div").unwrap();
         let p = nodes.iter().find(|n| n.tag_name == "p").unwrap();
         assert_eq!(p.parent, Some(div.id));
-        let text = nodes.iter().find(|n| n.node_type == NodeType::Text).unwrap();
+        let text = nodes
+            .iter()
+            .find(|n| n.node_type == NodeType::Text)
+            .unwrap();
         assert_eq!(text.text_content, "hi");
         assert_eq!(text.parent, Some(p.id));
     }
@@ -302,15 +337,24 @@ mod tests {
     #[test]
     fn parse_text_node_content() {
         let nodes = HtmlParser::parse("<p>hello world</p>");
-        let text = nodes.iter().find(|n| n.node_type == NodeType::Text).unwrap();
+        let text = nodes
+            .iter()
+            .find(|n| n.node_type == NodeType::Text)
+            .unwrap();
         assert_eq!(text.text_content, "hello world");
     }
 
     #[test]
     fn parse_whitespace_only_text_is_skipped() {
         let nodes = HtmlParser::parse("<div>   </div>");
-        let text_nodes: Vec<_> = nodes.iter().filter(|n| n.node_type == NodeType::Text).collect();
-        assert!(text_nodes.is_empty(), "whitespace-only text should be skipped");
+        let text_nodes: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::Text)
+            .collect();
+        assert!(
+            text_nodes.is_empty(),
+            "whitespace-only text should be skipped"
+        );
     }
 
     #[test]
@@ -355,7 +399,10 @@ mod tests {
     fn parse_self_closing_tag() {
         let nodes = HtmlParser::parse("<div><span/></div>");
         let span = nodes.iter().find(|n| n.tag_name == "span").unwrap();
-        assert!(span.children.is_empty(), "self-closing span should have no children");
+        assert!(
+            span.children.is_empty(),
+            "self-closing span should have no children"
+        );
     }
 
     // ── parse_html5() additional tests ─────────────────────────────────────
@@ -389,7 +436,9 @@ mod tests {
 
     #[test]
     fn html5_deeply_nested() {
-        let nodes = HtmlParser::parse_html5("<div><div><div><div><span>deep</span></div></div></div></div>");
+        let nodes = HtmlParser::parse_html5(
+            "<div><div><div><div><span>deep</span></div></div></div></div>",
+        );
         let span = nodes.iter().find(|n| n.tag_name == "span").unwrap();
         // Walk up parent chain to verify depth
         let mut depth = 0;
@@ -398,13 +447,20 @@ mod tests {
             depth += 1;
             current = nodes[pid].parent;
         }
-        assert!(depth >= 4, "span should be nested at least 4 deep, got {}", depth);
+        assert!(
+            depth >= 4,
+            "span should be nested at least 4 deep, got {}",
+            depth
+        );
     }
 
     #[test]
     fn html5_text_content_preserved() {
         let nodes = HtmlParser::parse_html5("<p>  hello  </p>");
-        let text = nodes.iter().find(|n| n.node_type == NodeType::Text).unwrap();
+        let text = nodes
+            .iter()
+            .find(|n| n.node_type == NodeType::Text)
+            .unwrap();
         // HTML5 tokenizer preserves data as-is
         assert!(text.text_content.contains("hello"));
     }
@@ -426,8 +482,10 @@ mod tests {
 
     #[test]
     fn is_void_element_covers_all_void_tags() {
-        let voids = ["area", "base", "br", "col", "embed", "hr", "img", "input",
-                     "link", "meta", "param", "source", "track", "wbr"];
+        let voids = [
+            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+            "source", "track", "wbr",
+        ];
         for tag in &voids {
             assert!(HtmlParser::is_void_element(tag), "{} should be void", tag);
         }

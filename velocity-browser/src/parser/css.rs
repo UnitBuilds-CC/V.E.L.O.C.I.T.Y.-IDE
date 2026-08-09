@@ -27,7 +27,9 @@ impl CssMatcher {
     fn matches_node(node: &DomNode, selector: &str) -> bool {
         // Multi-selector split by comma
         if selector.contains(',') {
-            return selector.split(',').any(|s| Self::matches_node(node, s.trim()));
+            return selector
+                .split(',')
+                .any(|s| Self::matches_node(node, s.trim()));
         }
 
         // Space-separated descendant selector (match last element)
@@ -60,7 +62,11 @@ impl CssMatcher {
         }
 
         // Tag name selector e.g. button, input, div
-        if !target_part.is_empty() && !target_part.contains('[') && !target_part.contains('#') && !target_part.contains('.') {
+        if !target_part.is_empty()
+            && !target_part.contains('[')
+            && !target_part.contains('#')
+            && !target_part.contains('.')
+        {
             return node.tag_name.eq_ignore_ascii_case(target_part);
         }
 
@@ -106,11 +112,16 @@ impl CssMatcher {
             }
         }
 
-        let tag_part = current.split('#').next().unwrap_or(current).split('.').next().unwrap_or(current);
-        if matched && !tag_part.is_empty()
-            && !node.tag_name.eq_ignore_ascii_case(tag_part) {
-                matched = false;
-            }
+        let tag_part = current
+            .split('#')
+            .next()
+            .unwrap_or(current)
+            .split('.')
+            .next()
+            .unwrap_or(current);
+        if matched && !tag_part.is_empty() && !node.tag_name.eq_ignore_ascii_case(tag_part) {
+            matched = false;
+        }
 
         matched
     }
@@ -126,9 +137,7 @@ pub fn matches_pseudo(node: &DomNode, pseudo: &str) -> bool {
                 true // Caller must verify with tree context
             })
         }
-        ":last-child" => {
-            node.parent.is_some_and(|_| true)
-        }
+        ":last-child" => node.parent.is_some_and(|_| true),
         ":root" => node.tag_name.eq_ignore_ascii_case("html") && node.parent.is_none(),
         ":empty" => node.children.is_empty() && node.text_content.trim().is_empty(),
         _ => false,

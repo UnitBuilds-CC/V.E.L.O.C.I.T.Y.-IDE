@@ -152,9 +152,10 @@ impl ChallengeStateMachine {
     /// Execute a transition by index into available_actions().
     /// Returns true if the transition was valid and applied.
     pub fn execute_transition(&mut self, action: &ChallengeAction) -> bool {
-        let transition = self.transitions.iter().find(|t| {
-            t.from == self.current_state_id && t.action.kind == action.kind
-        });
+        let transition = self
+            .transitions
+            .iter()
+            .find(|t| t.from == self.current_state_id && t.action.kind == action.kind);
 
         if let Some(t) = transition {
             let t = t.clone();
@@ -198,27 +199,46 @@ impl ChallengeStateMachine {
 
     fn checkbox_graph() -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
         let states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "checkbox_visible".into() },
-            ChallengeState { id: "solved".into(), observable_signature: "token_received".into() },
-        ];
-        let transitions = vec![
-            StateTransition {
-                from: "shown".into(),
-                action: ChallengeAction::click("checkbox"),
-                to: "solved".into(),
-                confidence: 0.95,
+            ChallengeState {
+                id: "shown".into(),
+                observable_signature: "checkbox_visible".into(),
+            },
+            ChallengeState {
+                id: "solved".into(),
+                observable_signature: "token_received".into(),
             },
         ];
+        let transitions = vec![StateTransition {
+            from: "shown".into(),
+            action: ChallengeAction::click("checkbox"),
+            to: "solved".into(),
+            confidence: 0.95,
+        }];
         (states, transitions, "shown".into())
     }
 
     fn image_grid_select_graph() -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
         let states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "grid_visible".into() },
-            ChallengeState { id: "selecting".into(), observable_signature: "tiles_highlighted".into() },
-            ChallengeState { id: "verifying".into(), observable_signature: "spinner_active".into() },
-            ChallengeState { id: "solved".into(), observable_signature: "token_received".into() },
-            ChallengeState { id: "retry".into(), observable_signature: "new_grid_shown".into() },
+            ChallengeState {
+                id: "shown".into(),
+                observable_signature: "grid_visible".into(),
+            },
+            ChallengeState {
+                id: "selecting".into(),
+                observable_signature: "tiles_highlighted".into(),
+            },
+            ChallengeState {
+                id: "verifying".into(),
+                observable_signature: "spinner_active".into(),
+            },
+            ChallengeState {
+                id: "solved".into(),
+                observable_signature: "token_received".into(),
+            },
+            ChallengeState {
+                id: "retry".into(),
+                observable_signature: "new_grid_shown".into(),
+            },
         ];
         let transitions = vec![
             StateTransition {
@@ -257,11 +277,26 @@ impl ChallengeStateMachine {
 
     fn tile_flip_graph() -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
         let states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "tiles_visible".into() },
-            ChallengeState { id: "flipping".into(), observable_signature: "tile_animating".into() },
-            ChallengeState { id: "verifying".into(), observable_signature: "checking_alignment".into() },
-            ChallengeState { id: "solved".into(), observable_signature: "all_aligned".into() },
-            ChallengeState { id: "rotate_again".into(), observable_signature: "partial_alignment".into() },
+            ChallengeState {
+                id: "shown".into(),
+                observable_signature: "tiles_visible".into(),
+            },
+            ChallengeState {
+                id: "flipping".into(),
+                observable_signature: "tile_animating".into(),
+            },
+            ChallengeState {
+                id: "verifying".into(),
+                observable_signature: "checking_alignment".into(),
+            },
+            ChallengeState {
+                id: "solved".into(),
+                observable_signature: "all_aligned".into(),
+            },
+            ChallengeState {
+                id: "rotate_again".into(),
+                observable_signature: "partial_alignment".into(),
+            },
         ];
         let transitions = vec![
             StateTransition {
@@ -300,10 +335,22 @@ impl ChallengeStateMachine {
 
     fn slider_graph() -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
         let states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "slider_track_visible".into() },
-            ChallengeState { id: "dragging".into(), observable_signature: "handle_moving".into() },
-            ChallengeState { id: "verifying".into(), observable_signature: "checking_position".into() },
-            ChallengeState { id: "solved".into(), observable_signature: "puzzle_complete".into() },
+            ChallengeState {
+                id: "shown".into(),
+                observable_signature: "slider_track_visible".into(),
+            },
+            ChallengeState {
+                id: "dragging".into(),
+                observable_signature: "handle_moving".into(),
+            },
+            ChallengeState {
+                id: "verifying".into(),
+                observable_signature: "checking_position".into(),
+            },
+            ChallengeState {
+                id: "solved".into(),
+                observable_signature: "puzzle_complete".into(),
+            },
         ];
         let transitions = vec![
             StateTransition {
@@ -330,9 +377,18 @@ impl ChallengeStateMachine {
 
     fn text_entry_graph() -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
         let states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "text_image_visible".into() },
-            ChallengeState { id: "typing".into(), observable_signature: "input_focused".into() },
-            ChallengeState { id: "solved".into(), observable_signature: "verified".into() },
+            ChallengeState {
+                id: "shown".into(),
+                observable_signature: "text_image_visible".into(),
+            },
+            ChallengeState {
+                id: "typing".into(),
+                observable_signature: "input_focused".into(),
+            },
+            ChallengeState {
+                id: "solved".into(),
+                observable_signature: "verified".into(),
+            },
         ];
         let transitions = vec![
             StateTransition {
@@ -352,9 +408,10 @@ impl ChallengeStateMachine {
     }
 
     fn multi_round_graph(rounds: u8) -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
-        let mut states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "round_1_visible".into() },
-        ];
+        let mut states = vec![ChallengeState {
+            id: "shown".into(),
+            observable_signature: "round_1_visible".into(),
+        }];
         let mut transitions = Vec::new();
 
         for r in 1..=rounds {
@@ -373,23 +430,42 @@ impl ChallengeStateMachine {
             }
 
             transitions.push(StateTransition {
-                from: if r == 1 { "shown".into() } else { round_state.clone() },
+                from: if r == 1 {
+                    "shown".into()
+                } else {
+                    round_state.clone()
+                },
                 action: ChallengeAction::select_tiles(vec![r - 1]),
                 to: next_state.clone(),
                 confidence: 0.7,
             });
         }
 
-        states.push(ChallengeState { id: "solved".into(), observable_signature: "all_rounds_complete".into() });
+        states.push(ChallengeState {
+            id: "solved".into(),
+            observable_signature: "all_rounds_complete".into(),
+        });
         (states, transitions, "shown".into())
     }
 
     fn generic_graph() -> (Vec<ChallengeState>, Vec<StateTransition>, String) {
         let states = vec![
-            ChallengeState { id: "shown".into(), observable_signature: "challenge_visible".into() },
-            ChallengeState { id: "interacting".into(), observable_signature: "user_action".into() },
-            ChallengeState { id: "solved".into(), observable_signature: "complete".into() },
-            ChallengeState { id: "failed".into(), observable_signature: "error".into() },
+            ChallengeState {
+                id: "shown".into(),
+                observable_signature: "challenge_visible".into(),
+            },
+            ChallengeState {
+                id: "interacting".into(),
+                observable_signature: "user_action".into(),
+            },
+            ChallengeState {
+                id: "solved".into(),
+                observable_signature: "complete".into(),
+            },
+            ChallengeState {
+                id: "failed".into(),
+                observable_signature: "error".into(),
+            },
         ];
         let transitions = vec![
             StateTransition {
@@ -426,10 +502,8 @@ mod tests {
 
     #[test]
     fn checkbox_flow_reaches_solved() {
-        let mut sm = ChallengeStateMachine::from_archetype(
-            test_descriptor(),
-            &ChallengeArchetype::Checkbox,
-        );
+        let mut sm =
+            ChallengeStateMachine::from_archetype(test_descriptor(), &ChallengeArchetype::Checkbox);
         assert_eq!(sm.current_state_id, "shown");
         assert!(!sm.is_terminal());
 
@@ -463,10 +537,8 @@ mod tests {
 
     #[test]
     fn tile_flip_flow() {
-        let mut sm = ChallengeStateMachine::from_archetype(
-            test_descriptor(),
-            &ChallengeArchetype::TileFlip,
-        );
+        let mut sm =
+            ChallengeStateMachine::from_archetype(test_descriptor(), &ChallengeArchetype::TileFlip);
         assert_eq!(sm.current_state_id, "shown");
 
         sm.execute_transition(&ChallengeAction::rotate_tile(0, 90.0));
@@ -478,10 +550,8 @@ mod tests {
 
     #[test]
     fn invalid_transition_rejected() {
-        let mut sm = ChallengeStateMachine::from_archetype(
-            test_descriptor(),
-            &ChallengeArchetype::Checkbox,
-        );
+        let mut sm =
+            ChallengeStateMachine::from_archetype(test_descriptor(), &ChallengeArchetype::Checkbox);
         // Try an action that's not available from "shown"
         let result = sm.execute_transition(&ChallengeAction::submit());
         assert!(!result);
@@ -491,10 +561,8 @@ mod tests {
 
     #[test]
     fn reset_returns_to_initial() {
-        let mut sm = ChallengeStateMachine::from_archetype(
-            test_descriptor(),
-            &ChallengeArchetype::Slider,
-        );
+        let mut sm =
+            ChallengeStateMachine::from_archetype(test_descriptor(), &ChallengeArchetype::Slider);
         sm.execute_transition(&ChallengeAction::drag_slider(250.0));
         assert_eq!(sm.current_state_id, "dragging");
         assert_eq!(sm.step_count, 1);
@@ -507,10 +575,8 @@ mod tests {
 
     #[test]
     fn terminal_state_detection() {
-        let mut sm = ChallengeStateMachine::from_archetype(
-            test_descriptor(),
-            &ChallengeArchetype::Checkbox,
-        );
+        let mut sm =
+            ChallengeStateMachine::from_archetype(test_descriptor(), &ChallengeArchetype::Checkbox);
         assert!(!sm.is_terminal());
 
         sm.execute_transition(&ChallengeAction::click("checkbox"));
@@ -520,10 +586,8 @@ mod tests {
 
     #[test]
     fn solve_sequence_recorded() {
-        let mut sm = ChallengeStateMachine::from_archetype(
-            test_descriptor(),
-            &ChallengeArchetype::Slider,
-        );
+        let mut sm =
+            ChallengeStateMachine::from_archetype(test_descriptor(), &ChallengeArchetype::Slider);
         sm.execute_transition(&ChallengeAction::drag_slider(250.0));
         sm.execute_transition(&ChallengeAction::submit());
 

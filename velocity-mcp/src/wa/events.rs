@@ -74,10 +74,7 @@ pub struct EventSubscription {
 impl Default for EventSubscription {
     fn default() -> Self {
         Self {
-            event_kinds: vec![
-                UiaEventKind::FocusChanged,
-                UiaEventKind::StructureChanged,
-            ],
+            event_kinds: vec![UiaEventKind::FocusChanged, UiaEventKind::StructureChanged],
             process_filter: None,
             window_filter: None,
             duration: Duration::from_secs(30),
@@ -322,14 +319,23 @@ ConvertTo-Json @($events) -Compress -Depth 3
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -358,23 +364,28 @@ fn parse_event_listen_result(json: &str, elapsed: Duration) -> EventListenResult
     }
     match serde_json::from_str::<PsEventResult>(json) {
         Ok(r) => {
-            let events = r.events.unwrap_or_default().into_iter().map(|e| {
-                let kind = match e.kind.as_deref() {
-                    Some("focus_changed") => UiaEventKind::FocusChanged,
-                    Some("structure_changed") => UiaEventKind::StructureChanged,
-                    _ => UiaEventKind::FocusChanged,
-                };
-                UiaEvent {
-                    kind,
-                    timestamp_ms: e.timestamp_ms.unwrap_or(0),
-                    source_automation_id: e.source_automation_id,
-                    source_name: e.source_name,
-                    source_control_type: e.source_control_type,
-                    process_id: e.process_id,
-                    old_value: None,
-                    new_value: None,
-                }
-            }).collect();
+            let events = r
+                .events
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| {
+                    let kind = match e.kind.as_deref() {
+                        Some("focus_changed") => UiaEventKind::FocusChanged,
+                        Some("structure_changed") => UiaEventKind::StructureChanged,
+                        _ => UiaEventKind::FocusChanged,
+                    };
+                    UiaEvent {
+                        kind,
+                        timestamp_ms: e.timestamp_ms.unwrap_or(0),
+                        source_automation_id: e.source_automation_id,
+                        source_name: e.source_name,
+                        source_control_type: e.source_control_type,
+                        process_id: e.process_id,
+                        old_value: None,
+                        new_value: None,
+                    }
+                })
+                .collect();
             EventListenResult {
                 events,
                 listen_duration: elapsed,

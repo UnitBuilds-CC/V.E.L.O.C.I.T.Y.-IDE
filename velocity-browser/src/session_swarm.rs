@@ -1,5 +1,5 @@
-use crate::session::BrowserSession;
 use crate::net::tls::{ProxyResolver, ProxyType};
+use crate::session::BrowserSession;
 
 /// Health status of a swarm session.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,7 +27,9 @@ pub struct SwarmSessionOrchestrator {
 }
 
 impl Default for SwarmSessionOrchestrator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SwarmSessionOrchestrator {
@@ -54,7 +56,11 @@ impl SwarmSessionOrchestrator {
     }
 
     /// Spawn a swarm tab with task metadata.
-    pub fn spawn_with_task(&mut self, session_id: &str, task_label: &str) -> Result<usize, &'static str> {
+    pub fn spawn_with_task(
+        &mut self,
+        session_id: &str,
+        task_label: &str,
+    ) -> Result<usize, &'static str> {
         if self.active_swarm_count() >= self.max_concurrent {
             return Err("Max concurrent swarm sessions reached");
         }
@@ -104,9 +110,12 @@ impl SwarmSessionOrchestrator {
 
     /// Find the least-loaded session for task distribution.
     pub fn least_loaded(&self) -> Option<usize> {
-        if self.swarm_sessions.is_empty() { return None; }
+        if self.swarm_sessions.is_empty() {
+            return None;
+        }
         // Simple heuristic: session with shortest URL (least activity)
-        self.swarm_sessions.iter()
+        self.swarm_sessions
+            .iter()
             .enumerate()
             .min_by_key(|(_, s)| s.current_url.len())
             .map(|(i, _)| i)
@@ -114,22 +123,33 @@ impl SwarmSessionOrchestrator {
 
     /// Get all session IDs.
     pub fn session_ids(&self) -> Vec<&str> {
-        self.swarm_sessions.iter().map(|s| s.session_id.as_str()).collect()
+        self.swarm_sessions
+            .iter()
+            .map(|s| s.session_id.as_str())
+            .collect()
     }
 
     /// Look up a swarm session by its session id.
     pub fn get_session(&self, session_id: &str) -> Option<&BrowserSession> {
-        self.swarm_sessions.iter().find(|s| s.session_id == session_id)
+        self.swarm_sessions
+            .iter()
+            .find(|s| s.session_id == session_id)
     }
 
     /// Mutable lookup of a swarm session by its session id.
     pub fn get_session_mut(&mut self, session_id: &str) -> Option<&mut BrowserSession> {
-        self.swarm_sessions.iter_mut().find(|s| s.session_id == session_id)
+        self.swarm_sessions
+            .iter_mut()
+            .find(|s| s.session_id == session_id)
     }
 
     /// Remove a swarm session by id, dropping its metadata entry with it.
     pub fn remove_session(&mut self, session_id: &str) -> bool {
-        match self.swarm_sessions.iter().position(|s| s.session_id == session_id) {
+        match self
+            .swarm_sessions
+            .iter()
+            .position(|s| s.session_id == session_id)
+        {
             Some(idx) => self.terminate(idx),
             None => false,
         }
@@ -145,13 +165,19 @@ impl SwarmSessionOrchestrator {
     /// Set a shared proxy for all current and future swarm sessions.
     pub fn set_proxy_for_all(&mut self, proxy_type: ProxyType) {
         for session in &mut self.swarm_sessions {
-            let resolver = ProxyResolver { proxy_type: proxy_type.clone() };
+            let resolver = ProxyResolver {
+                proxy_type: proxy_type.clone(),
+            };
             session.set_proxy(resolver);
         }
     }
 
     /// Spawn a swarm tab with a preconfigured proxy.
-    pub fn spawn_with_proxy(&mut self, session_id: &str, proxy_type: ProxyType) -> &mut BrowserSession {
+    pub fn spawn_with_proxy(
+        &mut self,
+        session_id: &str,
+        proxy_type: ProxyType,
+    ) -> &mut BrowserSession {
         let mut session = BrowserSession::new(session_id.to_string());
         let resolver = ProxyResolver { proxy_type };
         session.set_proxy(resolver);
@@ -248,8 +274,12 @@ mod tests {
     #[test]
     fn test_spawn_with_proxy() {
         let mut swarm = SwarmSessionOrchestrator::new();
-        let session = swarm.spawn_with_proxy("proxy_tab", ProxyType::Http("proxy.local:8080".to_string()));
-        assert!(matches!(session.proxy_resolver.proxy_type, ProxyType::Http(_)));
+        let session =
+            swarm.spawn_with_proxy("proxy_tab", ProxyType::Http("proxy.local:8080".to_string()));
+        assert!(matches!(
+            session.proxy_resolver.proxy_type,
+            ProxyType::Http(_)
+        ));
     }
 
     #[test]
@@ -261,7 +291,10 @@ mod tests {
         assert!(swarm.get_session("missing").is_none());
         let tab = swarm.get_session_mut("tab-a").unwrap();
         tab.current_url = "https://a.test".to_string();
-        assert_eq!(swarm.get_session("tab-a").unwrap().current_url, "https://a.test");
+        assert_eq!(
+            swarm.get_session("tab-a").unwrap().current_url,
+            "https://a.test"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use super::coercion::*;
+use super::eval::{eval_stmt, MAX_PROXY_TRAP_DEPTH, PROXY_TRAP_DEPTH};
 use super::function::{call_function, call_function_with_this};
-use super::eval::{eval_stmt, PROXY_TRAP_DEPTH, MAX_PROXY_TRAP_DEPTH};
 use crate::js::scope::{Scope, ScopeRef};
 use crate::js::vm::JsValue;
 use std::collections::HashMap;
@@ -16,7 +16,8 @@ pub(super) fn iterate_values(val: &JsValue, scope: &ScopeRef) -> Vec<JsValue> {
                 Some(JsValue::Array(values)) => values.clone(),
                 _ => Vec::new(),
             },
-            Some("Map") | Some("WeakMap") | Some("URLSearchParams") => match map.get("__entries__") {
+            Some("Map") | Some("WeakMap") | Some("URLSearchParams") => match map.get("__entries__")
+            {
                 Some(JsValue::Array(entries)) => entries.clone(),
                 _ => Vec::new(),
             },
@@ -80,7 +81,9 @@ pub fn has_property(obj: &JsValue, prop: &str) -> bool {
                     if !matches!(has_trap, JsValue::NativeFunction(_)) {
                         let depth = PROXY_TRAP_DEPTH.with(|d| {
                             let cur = d.get();
-                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            if cur >= MAX_PROXY_TRAP_DEPTH {
+                                return cur;
+                            }
                             d.set(cur + 1);
                             cur
                         });
@@ -111,7 +114,9 @@ pub fn has_property(obj: &JsValue, prop: &str) -> bool {
                         if !matches!(has_trap, JsValue::NativeFunction(_)) {
                             let depth = PROXY_TRAP_DEPTH.with(|d| {
                                 let cur = d.get();
-                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                if cur >= MAX_PROXY_TRAP_DEPTH {
+                                    return cur;
+                                }
                                 d.set(cur + 1);
                                 cur
                             });
@@ -139,7 +144,9 @@ pub fn has_property(obj: &JsValue, prop: &str) -> bool {
             let mut proto = map.get("__proto__");
             let mut depth = 0;
             while let Some(JsValue::Object(proto_map)) = proto {
-                if depth >= 64 { break; }
+                if depth >= 64 {
+                    break;
+                }
                 if proto_map.contains_key(prop) {
                     return true;
                 }
@@ -152,7 +159,9 @@ pub fn has_property(obj: &JsValue, prop: &str) -> bool {
             if prop == "length" {
                 return true;
             }
-            prop.parse::<usize>().map(|i| i < arr.len()).unwrap_or(false)
+            prop.parse::<usize>()
+                .map(|i| i < arr.len())
+                .unwrap_or(false)
         }
         JsValue::String(s) => {
             if prop == "length" {
@@ -177,7 +186,9 @@ pub fn delete_property(obj: &mut JsValue, prop: &str) -> bool {
                     if !matches!(trap, JsValue::NativeFunction(_)) {
                         let depth = PROXY_TRAP_DEPTH.with(|d| {
                             let cur = d.get();
-                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            if cur >= MAX_PROXY_TRAP_DEPTH {
+                                return cur;
+                            }
                             d.set(cur + 1);
                             cur
                         });
@@ -208,7 +219,9 @@ pub fn delete_property(obj: &mut JsValue, prop: &str) -> bool {
                         if !matches!(trap, JsValue::NativeFunction(_)) {
                             let depth = PROXY_TRAP_DEPTH.with(|d| {
                                 let cur = d.get();
-                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                if cur >= MAX_PROXY_TRAP_DEPTH {
+                                    return cur;
+                                }
                                 d.set(cur + 1);
                                 cur
                             });
@@ -257,12 +270,15 @@ pub fn own_keys_of(obj: &JsValue) -> Vec<String> {
                     if !matches!(trap, JsValue::NativeFunction(_)) {
                         let depth = PROXY_TRAP_DEPTH.with(|d| {
                             let cur = d.get();
-                            if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                            if cur >= MAX_PROXY_TRAP_DEPTH {
+                                return cur;
+                            }
                             d.set(cur + 1);
                             cur
                         });
                         if depth < MAX_PROXY_TRAP_DEPTH {
-                            let result = call_function(trap, &[(**target).clone()], &Scope::new_global());
+                            let result =
+                                call_function(trap, &[(**target).clone()], &Scope::new_global());
                             PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                             if let Ok(JsValue::Array(arr)) = result {
                                 return arr.iter().map(to_string).collect();
@@ -282,12 +298,15 @@ pub fn own_keys_of(obj: &JsValue) -> Vec<String> {
                         if !matches!(trap, JsValue::NativeFunction(_)) {
                             let depth = PROXY_TRAP_DEPTH.with(|d| {
                                 let cur = d.get();
-                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                if cur >= MAX_PROXY_TRAP_DEPTH {
+                                    return cur;
+                                }
                                 d.set(cur + 1);
                                 cur
                             });
                             if depth < MAX_PROXY_TRAP_DEPTH {
-                                let result = call_function(trap, &[t.clone()], &Scope::new_global());
+                                let result =
+                                    call_function(trap, &[t.clone()], &Scope::new_global());
                                 PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                                 if let Ok(JsValue::Array(arr)) = result {
                                     return arr.iter().map(to_string).collect();
@@ -317,7 +336,11 @@ pub fn own_property_names(obj: &JsValue) -> Vec<String> {
         JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Proxy") => {
             own_keys_of(obj)
         }
-        JsValue::Object(map) => map.keys().filter(|k| !is_internal_key(k)).cloned().collect(),
+        JsValue::Object(map) => map
+            .keys()
+            .filter(|k| !is_internal_key(k))
+            .cloned()
+            .collect(),
         JsValue::Array(arr) => {
             let mut keys: Vec<String> = (0..arr.len()).map(|i| i.to_string()).collect();
             keys.push("length".to_string());
@@ -341,7 +364,9 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                             // Guard against infinite recursion
                             let depth = PROXY_TRAP_DEPTH.with(|d| {
                                 let cur = d.get();
-                                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                                if cur >= MAX_PROXY_TRAP_DEPTH {
+                                    return cur;
+                                }
                                 d.set(cur + 1);
                                 cur
                             });
@@ -356,7 +381,11 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                                 PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                                 return get_property(t, prop);
                             }
-                            let result = call_function(get_trap, &[t.clone(), prop_val], &Scope::new_global());
+                            let result = call_function(
+                                get_trap,
+                                &[t.clone(), prop_val],
+                                &Scope::new_global(),
+                            );
                             PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                             if let Ok(val) = result {
                                 return val;
@@ -375,21 +404,28 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                     return get_property(t, prop);
                 }
             }
-            if let Some(val) = map.get(prop) { return resolve_accessor(val, obj); }
+            if let Some(val) = map.get(prop) {
+                return resolve_accessor(val, obj);
+            }
             // Computed properties for typed objects (Set.size, Map.size, etc.)
             if prop == "size" {
                 match map.get("__type__").map(to_string).as_deref() {
                     Some("Set") | Some("WeakSet") => {
-                        if let Some(JsValue::Array(items)) = map.get("__items__") { return JsValue::Number(items.len() as f64); }
+                        if let Some(JsValue::Array(items)) = map.get("__items__") {
+                            return JsValue::Number(items.len() as f64);
+                        }
                     }
                     Some("Map") | Some("WeakMap") => {
-                        if let Some(JsValue::Array(entries)) = map.get("__entries__") { return JsValue::Number(entries.len() as f64); }
+                        if let Some(JsValue::Array(entries)) = map.get("__entries__") {
+                            return JsValue::Number(entries.len() as f64);
+                        }
                     }
                     _ => {}
                 }
             }
             // Storage.length computed property.
-            if prop == "length" && map.get("__type__").map(to_string).as_deref() == Some("Storage") {
+            if prop == "length" && map.get("__type__").map(to_string).as_deref() == Some("Storage")
+            {
                 return super::browser_env::storage_length(map);
             }
             // History computed properties (length, state).
@@ -401,18 +437,24 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                 }
             }
             // DOMTokenList.length computed property.
-            if prop == "length" && map.get("__type__").map(to_string).as_deref() == Some("DOMTokenList") {
+            if prop == "length"
+                && map.get("__type__").map(to_string).as_deref() == Some("DOMTokenList")
+            {
                 return super::dom_bridge::dom_token_list_length(map);
             }
             // DOMStringMap (dataset) property access.
             if map.get("__type__").map(to_string).as_deref() == Some("DOMStringMap") {
                 let val = super::dom_bridge::get_dataset_property(map, prop);
-                if !matches!(val, JsValue::Undefined) { return val; }
+                if !matches!(val, JsValue::Undefined) {
+                    return val;
+                }
             }
             // Document computed properties (body, head, documentElement).
             if map.get("__type__").map(to_string).as_deref() == Some("Document") {
                 let doc_prop = super::dom_bridge::get_document_property(prop);
-                if !matches!(doc_prop, JsValue::Undefined) { return doc_prop; }
+                if !matches!(doc_prop, JsValue::Undefined) {
+                    return doc_prop;
+                }
             }
             // Element computed properties (textContent, innerHTML, children, etc.)
             if map.get("__type__").map(to_string).as_deref() == Some("Element") {
@@ -422,24 +464,36 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
             let mut proto = map.get("__proto__");
             while let Some(p) = proto {
                 if let JsValue::Object(proto_map) = p {
-                    if let Some(val) = proto_map.get(prop) { return resolve_accessor(val, obj); }
+                    if let Some(val) = proto_map.get(prop) {
+                        return resolve_accessor(val, obj);
+                    }
                     proto = proto_map.get("__proto__");
-                } else { break; }
+                } else {
+                    break;
+                }
             }
             JsValue::Undefined
         }
         JsValue::Array(arr) => {
-            if prop == "length" { return JsValue::Number(arr.len() as f64); }
-            if let Ok(i) = prop.parse::<usize>() { return arr.get(i).cloned().unwrap_or(JsValue::Undefined); }
+            if prop == "length" {
+                return JsValue::Number(arr.len() as f64);
+            }
+            if let Ok(i) = prop.parse::<usize>() {
+                return arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+            }
             JsValue::Undefined
         }
         JsValue::Proxy { target, handler } => {
             // Check if this proxy has been revoked (Proxy.revocable).
-            if super::web_apis2::check_revoked(obj).is_err() { return JsValue::Undefined; }
+            if super::web_apis2::check_revoked(obj).is_err() {
+                return JsValue::Undefined;
+            }
             // Phase 7: Native Proxy variant — intercept property access via handler.get trap
             let depth = PROXY_TRAP_DEPTH.with(|d| {
                 let cur = d.get();
-                if cur >= MAX_PROXY_TRAP_DEPTH { return cur; }
+                if cur >= MAX_PROXY_TRAP_DEPTH {
+                    return cur;
+                }
                 d.set(cur + 1);
                 cur
             });
@@ -450,7 +504,11 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
                 if let Some(get_trap) = h_map.get("get") {
                     if !matches!(get_trap, JsValue::NativeFunction(_)) {
                         let prop_val = JsValue::String(prop.to_string());
-                        let result = call_function(get_trap, &[(**target).clone(), prop_val], &Scope::new_global());
+                        let result = call_function(
+                            get_trap,
+                            &[(**target).clone(), prop_val],
+                            &Scope::new_global(),
+                        );
                         PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                         if let Ok(val) = result {
                             return val;
@@ -463,8 +521,16 @@ pub fn get_property(obj: &JsValue, prop: &str) -> JsValue {
         }
         JsValue::String(s) => {
             // Length counts Unicode scalar values, matching char-based indexing below.
-            if prop == "length" { return JsValue::Number(s.chars().count() as f64); }
-            if let Ok(i) = prop.parse::<usize>() { return s.chars().nth(i).map(|c| JsValue::String(c.to_string())).unwrap_or(JsValue::Undefined); }
+            if prop == "length" {
+                return JsValue::Number(s.chars().count() as f64);
+            }
+            if let Ok(i) = prop.parse::<usize>() {
+                return s
+                    .chars()
+                    .nth(i)
+                    .map(|c| JsValue::String(c.to_string()))
+                    .unwrap_or(JsValue::Undefined);
+            }
             JsValue::Undefined
         }
         _ => JsValue::Undefined,
@@ -482,15 +548,24 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
                         // Guard against infinite recursion
                         let depth_ok = PROXY_TRAP_DEPTH.with(|d| {
                             let cur = d.get();
-                            if cur >= MAX_PROXY_TRAP_DEPTH { return false; }
+                            if cur >= MAX_PROXY_TRAP_DEPTH {
+                                return false;
+                            }
                             d.set(cur + 1);
                             true
                         });
                         if depth_ok {
                             let prop_val = JsValue::String(prop.to_string());
-                            let ok = call_function(set_trap, &[target, prop_val, value.clone()], &Scope::new_global()).is_ok();
+                            let ok = call_function(
+                                set_trap,
+                                &[target, prop_val, value.clone()],
+                                &Scope::new_global(),
+                            )
+                            .is_ok();
                             PROXY_TRAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                            if ok { return true; }
+                            if ok {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -505,7 +580,9 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
         // merge any mutations the setter made to `this` back into the real object so that
         // `set x(v) { this._v = v; }` actually persists.
         let accessor_info = match map.get(prop) {
-            Some(JsValue::Object(desc)) if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) => {
+            Some(JsValue::Object(desc))
+                if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) =>
+            {
                 Some((desc.get("set").cloned(), desc.clone(), map.clone()))
             }
             _ => None,
@@ -540,7 +617,9 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
             return true;
         }
         // MessagePort.onmessage assignment: register in the shared handler registry.
-        if prop == "onmessage" && map.get("__type__").map(to_string).as_deref() == Some("MessagePort") {
+        if prop == "onmessage"
+            && map.get("__type__").map(to_string).as_deref() == Some("MessagePort")
+        {
             super::web_apis2::register_port_handler(map, &value);
         }
         map.insert(prop.to_string(), value);
@@ -554,15 +633,33 @@ pub fn set_property(obj: &mut JsValue, prop: &str, value: JsValue) -> bool {
 /// read back the (possibly mutated) `this` so the caller can merge the changes into the
 /// real object. Returns the updated object map (or the snapshot unchanged if the setter
 /// did not mutate `this`).
-fn invoke_setter_readback(setter: &JsValue, value: &JsValue, this_map: &HashMap<String, JsValue>) -> HashMap<String, JsValue> {
-    if let JsValue::Function { params, body, closure, .. } = setter {
+fn invoke_setter_readback(
+    setter: &JsValue,
+    value: &JsValue,
+    this_map: &HashMap<String, JsValue>,
+) -> HashMap<String, JsValue> {
+    if let JsValue::Function {
+        params,
+        body,
+        closure,
+        ..
+    } = setter
+    {
         let call_scope = Scope::new_child(closure);
         Scope::declare(&call_scope, "this", JsValue::Object(this_map.clone()));
         for (i, p) in params.iter().enumerate() {
-            let val = if i == 0 { value.clone() } else { JsValue::Undefined };
+            let val = if i == 0 {
+                value.clone()
+            } else {
+                JsValue::Undefined
+            };
             Scope::declare(&call_scope, p, val);
         }
-        Scope::declare(&call_scope, "arguments", JsValue::Array(vec![value.clone()]));
+        Scope::declare(
+            &call_scope,
+            "arguments",
+            JsValue::Array(vec![value.clone()]),
+        );
         let _ = eval_stmt(body, &call_scope);
         if let Some(JsValue::Object(updated)) = Scope::resolve(&call_scope, "this") {
             return updated;
@@ -572,17 +669,38 @@ fn invoke_setter_readback(setter: &JsValue, value: &JsValue, this_map: &HashMap<
 }
 
 /// Apply a single property descriptor (data or accessor) to `target` under `prop`.
-pub(super) fn apply_descriptor(target: &mut HashMap<String, JsValue>, prop: &str, desc: &HashMap<String, JsValue>) {
+pub(super) fn apply_descriptor(
+    target: &mut HashMap<String, JsValue>,
+    prop: &str,
+    desc: &HashMap<String, JsValue>,
+) {
     if desc.contains_key("get") || desc.contains_key("set") {
         let mut accessor = HashMap::new();
         accessor.insert("__accessor__".to_string(), JsValue::Boolean(true));
-        if let Some(g) = desc.get("get") { accessor.insert("get".to_string(), g.clone()); }
-        if let Some(s) = desc.get("set") { accessor.insert("set".to_string(), s.clone()); }
-        accessor.insert("enumerable".to_string(), desc.get("enumerable").cloned().unwrap_or(JsValue::Boolean(false)));
-        accessor.insert("configurable".to_string(), desc.get("configurable").cloned().unwrap_or(JsValue::Boolean(false)));
+        if let Some(g) = desc.get("get") {
+            accessor.insert("get".to_string(), g.clone());
+        }
+        if let Some(s) = desc.get("set") {
+            accessor.insert("set".to_string(), s.clone());
+        }
+        accessor.insert(
+            "enumerable".to_string(),
+            desc.get("enumerable")
+                .cloned()
+                .unwrap_or(JsValue::Boolean(false)),
+        );
+        accessor.insert(
+            "configurable".to_string(),
+            desc.get("configurable")
+                .cloned()
+                .unwrap_or(JsValue::Boolean(false)),
+        );
         target.insert(prop.to_string(), JsValue::Object(accessor));
     } else {
-        target.insert(prop.to_string(), desc.get("value").cloned().unwrap_or(JsValue::Undefined));
+        target.insert(
+            prop.to_string(),
+            desc.get("value").cloned().unwrap_or(JsValue::Undefined),
+        );
     }
 }
 
@@ -590,9 +708,18 @@ pub(super) fn apply_descriptor(target: &mut HashMap<String, JsValue>, prop: &str
 /// A getter and setter for the same key arrive as separate props, so we merge them into a
 /// single `__accessor__` descriptor. Object-literal accessors are enumerable+configurable
 /// by default (unlike Object.defineProperty, which defaults to false).
-pub(super) fn install_literal_accessor(target: &mut HashMap<String, JsValue>, prop: &str, kind: &str, func: JsValue) {
+pub(super) fn install_literal_accessor(
+    target: &mut HashMap<String, JsValue>,
+    prop: &str,
+    kind: &str,
+    func: JsValue,
+) {
     let mut accessor = match target.get(prop) {
-        Some(JsValue::Object(existing)) if existing.get("__accessor__") == Some(&JsValue::Boolean(true)) => existing.clone(),
+        Some(JsValue::Object(existing))
+            if existing.get("__accessor__") == Some(&JsValue::Boolean(true)) =>
+        {
+            existing.clone()
+        }
         _ => {
             let mut a = HashMap::new();
             a.insert("__accessor__".to_string(), JsValue::Boolean(true));
@@ -613,7 +740,12 @@ fn resolve_accessor(val: &JsValue, this_obj: &JsValue) -> JsValue {
         if desc.get("__accessor__") == Some(&JsValue::Boolean(true)) {
             if let Some(getter) = desc.get("get") {
                 if !matches!(getter, JsValue::NativeFunction(_)) {
-                    if let Ok(result) = call_function_with_this(getter, &[], &Scope::new_global(), Some(this_obj.clone())) {
+                    if let Ok(result) = call_function_with_this(
+                        getter,
+                        &[],
+                        &Scope::new_global(),
+                        Some(this_obj.clone()),
+                    ) {
                         return result;
                     }
                 }
@@ -795,13 +927,20 @@ mod tests {
 
     #[test]
     fn get_property_array_length() {
-        let arr = JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        let arr = JsValue::Array(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]);
         assert_eq!(get_property(&arr, "length"), JsValue::Number(3.0));
     }
 
     #[test]
     fn get_property_array_index() {
-        let arr = JsValue::Array(vec![JsValue::String("a".into()), JsValue::String("b".into())]);
+        let arr = JsValue::Array(vec![
+            JsValue::String("a".into()),
+            JsValue::String("b".into()),
+        ]);
         assert_eq!(get_property(&arr, "0"), JsValue::String("a".into()));
         assert_eq!(get_property(&arr, "1"), JsValue::String("b".into()));
         assert_eq!(get_property(&arr, "5"), JsValue::Undefined);
@@ -833,7 +972,10 @@ mod tests {
 
     #[test]
     fn get_property_non_object() {
-        assert_eq!(get_property(&JsValue::Number(42.0), "x"), JsValue::Undefined);
+        assert_eq!(
+            get_property(&JsValue::Number(42.0), "x"),
+            JsValue::Undefined
+        );
         assert_eq!(get_property(&JsValue::Null, "x"), JsValue::Undefined);
     }
 
@@ -964,8 +1106,13 @@ mod tests {
         desc.insert("enumerable".to_string(), JsValue::Boolean(true));
         apply_descriptor(&mut target, "x", &desc);
         if let Some(JsValue::Object(accessor)) = target.get("x") {
-            assert_eq!(accessor.get("__accessor__").unwrap(), &JsValue::Boolean(true));
+            assert_eq!(
+                accessor.get("__accessor__").unwrap(),
+                &JsValue::Boolean(true)
+            );
             assert!(accessor.contains_key("get"));
-        } else { panic!("expected accessor Object"); }
+        } else {
+            panic!("expected accessor Object");
+        }
     }
 }

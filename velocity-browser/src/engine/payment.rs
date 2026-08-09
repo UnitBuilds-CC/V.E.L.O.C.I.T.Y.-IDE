@@ -137,7 +137,8 @@ impl PaymentRequestEngine {
 
     /// Get the selected shipping cost.
     pub fn shipping_cost(&self) -> f64 {
-        self.shipping_options.iter()
+        self.shipping_options
+            .iter()
             .find(|o| o.selected)
             .map(|o| o.amount_value)
             .unwrap_or(0.0)
@@ -152,7 +153,10 @@ impl PaymentRequestEngine {
     pub fn validate(&self) -> PaymentValidationErrors {
         let mut errors = Vec::new();
         if self.items.is_empty() {
-            errors.push(("items".to_string(), "At least one item is required".to_string()));
+            errors.push((
+                "items".to_string(),
+                "At least one item is required".to_string(),
+            ));
         }
         for item in &self.items {
             if item.amount_value < 0.0 {
@@ -163,14 +167,23 @@ impl PaymentRequestEngine {
             }
         }
         if self.require_shipping && self.shipping_address.is_none() {
-            errors.push(("shipping".to_string(), "Shipping address is required".to_string()));
+            errors.push((
+                "shipping".to_string(),
+                "Shipping address is required".to_string(),
+            ));
         }
         if self.require_shipping && self.shipping_options.is_empty() {
-            errors.push(("shipping_options".to_string(), "At least one shipping option is required".to_string()));
+            errors.push((
+                "shipping_options".to_string(),
+                "At least one shipping option is required".to_string(),
+            ));
         }
         for opt in &self.shipping_options {
             if opt.amount_value < 0.0 {
-                errors.push((opt.id.clone(), "Shipping cost cannot be negative".to_string()));
+                errors.push((
+                    opt.id.clone(),
+                    "Shipping cost cannot be negative".to_string(),
+                ));
             }
         }
         PaymentValidationErrors { errors }
@@ -183,7 +196,11 @@ impl PaymentRequestEngine {
     pub fn show(&mut self) -> Result<String, String> {
         let validation = self.validate();
         if !validation.errors.is_empty() {
-            let msgs: Vec<String> = validation.errors.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+            let msgs: Vec<String> = validation
+                .errors
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect();
             return Err(format!("Payment validation failed: {}", msgs.join("; ")));
         }
         self.is_resolved = true;
@@ -201,7 +218,11 @@ impl PaymentRequestEngine {
         let mut triples = Vec::new();
         if self.is_resolved {
             triples.push(NdaTriple::new(session_id, 240, &self.merchant_name));
-            triples.push(NdaTriple::new(session_id, 241, &format!("{:.2}", self.total())));
+            triples.push(NdaTriple::new(
+                session_id,
+                241,
+                &format!("{:.2}", self.total()),
+            ));
         }
         triples
     }

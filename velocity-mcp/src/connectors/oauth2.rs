@@ -133,7 +133,9 @@ impl OAuth2Manager {
         provider_id: &str,
         connector_id: &str,
     ) -> Result<(String, String), String> {
-        let provider = self.providers.get(provider_id)
+        let provider = self
+            .providers
+            .get(provider_id)
             .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
 
         let state = generate_state(provider_id, connector_id);
@@ -149,12 +151,15 @@ impl OAuth2Manager {
         );
 
         // Store pending flow.
-        self.pending_flows.insert(state.clone(), OAuth2FlowState {
-            provider_id: provider_id.to_string(),
-            state: state.clone(),
-            initiated_at: now_secs(),
-            connector_id: connector_id.to_string(),
-        });
+        self.pending_flows.insert(
+            state.clone(),
+            OAuth2FlowState {
+                provider_id: provider_id.to_string(),
+                state: state.clone(),
+                initiated_at: now_secs(),
+                connector_id: connector_id.to_string(),
+            },
+        );
 
         Ok((url, state))
     }
@@ -168,7 +173,9 @@ impl OAuth2Manager {
         _code: &str,
         token: OAuth2Token,
     ) -> Result<String, String> {
-        let flow = self.pending_flows.remove(state)
+        let flow = self
+            .pending_flows
+            .remove(state)
             .ok_or_else(|| format!("Unknown or expired state: {}", state))?;
 
         // Check flow isn't too old (10 minute timeout).
@@ -203,15 +210,18 @@ impl OAuth2Manager {
     }
 
     /// Build a refresh token request body.
-    pub fn build_refresh_request(
-        &self,
-        provider_id: &str,
-    ) -> Result<(String, String), String> {
-        let provider = self.providers.get(provider_id)
+    pub fn build_refresh_request(&self, provider_id: &str) -> Result<(String, String), String> {
+        let provider = self
+            .providers
+            .get(provider_id)
             .ok_or_else(|| format!("Provider '{}' not found", provider_id))?;
-        let token = self.tokens.get(provider_id)
+        let token = self
+            .tokens
+            .get(provider_id)
             .ok_or_else(|| format!("No token for provider '{}'", provider_id))?;
-        let refresh = token.refresh_token.as_deref()
+        let refresh = token
+            .refresh_token
+            .as_deref()
             .ok_or_else(|| format!("No refresh token for provider '{}'", provider_id))?;
 
         let body = format!(
@@ -231,9 +241,8 @@ impl OAuth2Manager {
     /// Clean up expired pending flows older than 10 minutes.
     pub fn cleanup_expired_flows(&mut self) {
         let now = now_secs();
-        self.pending_flows.retain(|_, flow| {
-            now - flow.initiated_at < 600
-        });
+        self.pending_flows
+            .retain(|_, flow| now - flow.initiated_at < 600);
     }
 
     /// List all configured providers.
@@ -248,7 +257,9 @@ impl OAuth2Manager {
 
     /// Save manager state to disk.
     pub fn save(&self) -> Result<(), String> {
-        let root = self.workspace_root.as_ref()
+        let root = self
+            .workspace_root
+            .as_ref()
             .ok_or_else(|| "No workspace root configured".to_string())?;
         let dir = root.join(".velocity");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -257,8 +268,8 @@ impl OAuth2Manager {
             providers: self.providers.values().cloned().collect(),
             tokens: self.tokens.clone(),
         };
-        let json = serde_json::to_vec_pretty(&state)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&state).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("oauth2_state.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -325,7 +336,8 @@ pub fn create_default_providers() -> Vec<OAuth2Provider> {
 
 fn generate_state(provider_id: &str, connector_id: &str) -> String {
     let ts = now_secs();
-    let hash = ts.wrapping_mul(6364136223846793005)
+    let hash = ts
+        .wrapping_mul(6364136223846793005)
         .wrapping_add((provider_id.len() as u64).wrapping_mul(1442695040888963407))
         .wrapping_add((connector_id.len() as u64).wrapping_mul(7046029254386353131));
     format!("{:016x}{:08x}", hash, ts % 0xFFFFFFFF)
@@ -412,7 +424,9 @@ mod tests {
             scope: Some("read write".to_string()),
         };
 
-        let connector_id = mgr.complete_authorization(&state, "code123", token).unwrap();
+        let connector_id = mgr
+            .complete_authorization(&state, "code123", token)
+            .unwrap();
         assert_eq!(connector_id, "conn1");
         assert!(mgr.is_authorized("test"));
     }
@@ -470,12 +484,15 @@ mod tests {
 
         // Add a flow that's "old".
         let state = "old_state".to_string();
-        mgr.pending_flows.insert(state.clone(), OAuth2FlowState {
-            provider_id: "test".to_string(),
-            state: state.clone(),
-            initiated_at: now_secs() - 700, // 700 seconds ago (> 600).
-            connector_id: "c".to_string(),
-        });
+        mgr.pending_flows.insert(
+            state.clone(),
+            OAuth2FlowState {
+                provider_id: "test".to_string(),
+                state: state.clone(),
+                initiated_at: now_secs() - 700, // 700 seconds ago (> 600).
+                connector_id: "c".to_string(),
+            },
+        );
 
         mgr.cleanup_expired_flows();
         assert!(mgr.pending_flows.is_empty());
@@ -485,14 +502,17 @@ mod tests {
     fn remove_provider_clears_tokens() {
         let mut mgr = OAuth2Manager::new();
         mgr.register_provider(test_provider());
-        mgr.tokens.insert("test".to_string(), OAuth2Token {
-            access_token: "a".to_string(),
-            token_type: "Bearer".to_string(),
-            expires_in: None,
-            refresh_token: None,
-            issued_at: now_secs(),
-            scope: None,
-        });
+        mgr.tokens.insert(
+            "test".to_string(),
+            OAuth2Token {
+                access_token: "a".to_string(),
+                token_type: "Bearer".to_string(),
+                expires_in: None,
+                refresh_token: None,
+                issued_at: now_secs(),
+                scope: None,
+            },
+        );
         assert!(mgr.remove_provider("test"));
         assert!(mgr.tokens.is_empty());
     }

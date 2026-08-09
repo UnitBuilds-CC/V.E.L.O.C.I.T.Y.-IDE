@@ -193,7 +193,11 @@ impl InlineSuggestionEngine {
 
     /// Check if a suggestion text was recently shown (to avoid repeats).
     pub fn is_duplicate(&self, text: &str) -> bool {
-        self.recent_suggestions.iter().rev().take(10).any(|s| s == text)
+        self.recent_suggestions
+            .iter()
+            .rev()
+            .take(10)
+            .any(|s| s == text)
     }
 
     /// Record a suggestion in the recent cache.
@@ -498,7 +502,10 @@ pub fn build_completion_context(
 
 impl SuggestionHistory {
     pub fn new(max_entries: usize) -> Self {
-        Self { entries: Vec::new(), max_entries }
+        Self {
+            entries: Vec::new(),
+            max_entries,
+        }
     }
 
     pub fn record(&mut self, entry: HistoryEntry) {
@@ -509,13 +516,17 @@ impl SuggestionHistory {
     }
 
     pub fn acceptance_rate(&self) -> f32 {
-        if self.entries.is_empty() { return 0.0; }
+        if self.entries.is_empty() {
+            return 0.0;
+        }
         let accepted = self.entries.iter().filter(|e| e.was_accepted).count();
         (accepted as f32 / self.entries.len() as f32) * 100.0
     }
 
     pub fn avg_latency_ms(&self) -> f64 {
-        if self.entries.is_empty() { return 0.0; }
+        if self.entries.is_empty() {
+            return 0.0;
+        }
         let sum: u64 = self.entries.iter().map(|e| e.latency_ms).sum();
         sum as f64 / self.entries.len() as f64
     }

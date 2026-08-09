@@ -117,7 +117,10 @@ impl SiteMap {
         let metadata_path = base_dir.join("metadata.nda");
         let raw = fs::read_to_string(metadata_path).ok()?;
         let mut lines = raw.lines();
-        let header = lines.find(|line| !line.trim().is_empty()).map(str::trim).unwrap_or("");
+        let header = lines
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)
+            .unwrap_or("");
 
         if header == "metadata version 2" {
             for line in lines {
@@ -411,7 +414,12 @@ impl SiteMap {
         predicate: Option<u16>,
         object: Option<u64>,
     ) -> Vec<VcTriple> {
-        self.filter_triples(self.collect_historical_triples(), subject, predicate, object)
+        self.filter_triples(
+            self.collect_historical_triples(),
+            subject,
+            predicate,
+            object,
+        )
     }
 
     pub fn find_live_triples(
@@ -420,7 +428,12 @@ impl SiteMap {
         predicate: Option<u16>,
         object: Option<u64>,
     ) -> Vec<VcTriple> {
-        self.filter_triples(self.collect_live_snapshot_triples(), subject, predicate, object)
+        self.filter_triples(
+            self.collect_live_snapshot_triples(),
+            subject,
+            predicate,
+            object,
+        )
     }
 
     pub fn get_callers(&self, method_hash: u64) -> Vec<u64> {
@@ -570,12 +583,15 @@ impl SiteMap {
         let (kv, nodes, programs, snapshots) =
             self.index
                 .values()
-                .fold((0usize, 0usize, 0usize, 0usize), |(k, n, p, s), e| match e.kind {
-                    EntryKind::Kv => (k + 1, n, p, s),
-                    EntryKind::Node => (k, n + 1, p, s),
-                    EntryKind::Program => (k, n, p + 1, s),
-                    EntryKind::Snapshot => (k, n, p, s + 1),
-                });
+                .fold(
+                    (0usize, 0usize, 0usize, 0usize),
+                    |(k, n, p, s), e| match e.kind {
+                        EntryKind::Kv => (k + 1, n, p, s),
+                        EntryKind::Node => (k, n + 1, p, s),
+                        EntryKind::Program => (k, n, p + 1, s),
+                        EntryKind::Snapshot => (k, n, p, s + 1),
+                    },
+                );
         let total_bytes: u64 = self.index.values().map(|e| e.size).sum();
         SiteMapStats {
             kv,
@@ -746,13 +762,19 @@ impl SiteMap {
             .into_iter()
             .filter(|t| {
                 if let Some(s) = subject {
-                    if t.subject_hash != s { return false; }
+                    if t.subject_hash != s {
+                        return false;
+                    }
                 }
                 if let Some(p) = predicate {
-                    if t.predicate_id != p { return false; }
+                    if t.predicate_id != p {
+                        return false;
+                    }
                 }
                 if let Some(o) = object {
-                    if t.object_hash != o { return false; }
+                    if t.object_hash != o {
+                        return false;
+                    }
                 }
                 true
             })
@@ -776,7 +798,10 @@ impl SiteMap {
         let all = self.collect_live_snapshot_triples();
         let mut index: HashMap<u16, Vec<VcTriple>> = HashMap::new();
         for triple in &all {
-            index.entry(triple.predicate_id).or_default().push(triple.clone());
+            index
+                .entry(triple.predicate_id)
+                .or_default()
+                .push(triple.clone());
         }
         let result = index.get(&predicate_id).cloned().unwrap_or_default();
         *self.predicate_index.lock_safe() = Some(index);

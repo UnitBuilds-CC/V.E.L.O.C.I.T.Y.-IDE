@@ -41,7 +41,10 @@ pub enum MonitorType {
     /// Check for dependency updates.
     DependencyUpdates { check_command: String },
     /// Monitor log files for errors.
-    LogErrors { log_path: String, error_patterns: Vec<String> },
+    LogErrors {
+        log_path: String,
+        error_patterns: Vec<String>,
+    },
     /// Git status monitoring (uncommitted changes, behind remote).
     GitStatus { repo_path: String },
     /// Custom periodic check.
@@ -142,12 +145,14 @@ impl BackgroundAgentRegistry {
 
     /// Get all enabled agents that are due for a check.
     pub fn due_agents(&self, now: u64) -> Vec<&BackgroundAgent> {
-        self.agents.values()
+        self.agents
+            .values()
             .filter(|a| {
-                a.enabled && match a.last_run {
-                    Some(last) => now - last >= a.interval_secs,
-                    None => true,
-                }
+                a.enabled
+                    && match a.last_run {
+                        Some(last) => now - last >= a.interval_secs,
+                        None => true,
+                    }
             })
             .collect()
     }
@@ -172,7 +177,10 @@ impl BackgroundAgentRegistry {
 
     /// Get unacknowledged actions.
     pub fn pending_actions(&self) -> Vec<&AgentAction> {
-        self.action_feed.iter().filter(|a| !a.acknowledged).collect()
+        self.action_feed
+            .iter()
+            .filter(|a| !a.acknowledged)
+            .collect()
     }
 
     /// Acknowledge an action by ID.
@@ -198,7 +206,8 @@ impl BackgroundAgentRegistry {
 
     /// Count of critical pending actions.
     pub fn critical_count(&self) -> usize {
-        self.action_feed.iter()
+        self.action_feed
+            .iter()
             .filter(|a| !a.acknowledged && a.severity == ActionSeverity::Critical)
             .count()
     }
@@ -255,11 +264,12 @@ impl BackgroundAgentRegistry {
     /// Save registry state to disk.
     pub fn save(&self, workspace_root: &Path) -> Result<(), String> {
         let dir = workspace_root.join(".velocity");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Cannot create dir: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create dir: {e}"))?;
 
         // Save agent configs (without actions, which are transient).
-        let configs: Vec<BackgroundAgentConfig> = self.agents.values()
+        let configs: Vec<BackgroundAgentConfig> = self
+            .agents
+            .values()
             .map(|a| BackgroundAgentConfig {
                 id: a.id.clone(),
                 name: a.name.clone(),
@@ -269,8 +279,8 @@ impl BackgroundAgentRegistry {
             })
             .collect();
 
-        let json = serde_json::to_vec_pretty(&configs)
-            .map_err(|e| format!("Serialize failed: {e}"))?;
+        let json =
+            serde_json::to_vec_pretty(&configs).map_err(|e| format!("Serialize failed: {e}"))?;
         std::fs::write(dir.join("background_agents.json"), json)
             .map_err(|e| format!("Write failed: {e}"))?;
         Ok(())
@@ -278,7 +288,9 @@ impl BackgroundAgentRegistry {
 
     /// Load registry state from disk.
     pub fn load(workspace_root: &Path) -> Self {
-        let path = workspace_root.join(".velocity").join("background_agents.json");
+        let path = workspace_root
+            .join(".velocity")
+            .join("background_agents.json");
         let mut registry = Self::new();
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(configs) = serde_json::from_slice::<Vec<BackgroundAgentConfig>>(&bytes) {
@@ -349,7 +361,9 @@ mod tests {
         BackgroundAgent {
             id: id.to_string(),
             name: format!("{id} Agent"),
-            monitor: MonitorType::GitStatus { repo_path: ".".to_string() },
+            monitor: MonitorType::GitStatus {
+                repo_path: ".".to_string(),
+            },
             interval_secs: 60,
             enabled: true,
             last_run: None,
@@ -416,9 +430,18 @@ mod tests {
         let mut registry = BackgroundAgentRegistry::new();
         registry.register(test_agent("crit"));
 
-        registry.record_action("crit", create_action(ActionSeverity::Info, "Info", "", None));
-        registry.record_action("crit", create_action(ActionSeverity::Critical, "Critical 1", "", None));
-        registry.record_action("crit", create_action(ActionSeverity::Critical, "Critical 2", "", None));
+        registry.record_action(
+            "crit",
+            create_action(ActionSeverity::Info, "Info", "", None),
+        );
+        registry.record_action(
+            "crit",
+            create_action(ActionSeverity::Critical, "Critical 1", "", None),
+        );
+        registry.record_action(
+            "crit",
+            create_action(ActionSeverity::Critical, "Critical 2", "", None),
+        );
 
         assert_eq!(registry.critical_count(), 2);
     }
@@ -448,12 +471,10 @@ mod tests {
         registry.register(test_agent("feeder"));
 
         for i in 0..10 {
-            registry.record_action("feeder", create_action(
-                ActionSeverity::Info,
-                &format!("Action {i}"),
-                "desc",
-                None,
-            ));
+            registry.record_action(
+                "feeder",
+                create_action(ActionSeverity::Info, &format!("Action {i}"), "desc", None),
+            );
         }
         assert_eq!(registry.action_feed.len(), 5);
     }

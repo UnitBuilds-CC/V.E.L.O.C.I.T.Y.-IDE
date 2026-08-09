@@ -202,7 +202,10 @@ impl PolicyEngine {
     /// Evaluate an action: budget first (exhaustion denies), then the first
     /// matching rule, else the default verdict.
     pub fn evaluate(&self, action: &ActionContext) -> Decision {
-        if self.budget.exhausted(action.used_tokens, action.used_cost_cents) {
+        if self
+            .budget
+            .exhausted(action.used_tokens, action.used_cost_cents)
+        {
             return Decision::Deny;
         }
         for rule in &self.rules {
@@ -468,8 +471,7 @@ mod tests {
         });
         assert_eq!(
             engine.evaluate(
-                &ActionContext::tool("connector_call")
-                    .with_domain("https://internal.example/api")
+                &ActionContext::tool("connector_call").with_domain("https://internal.example/api")
             ),
             Decision::Deny
         );

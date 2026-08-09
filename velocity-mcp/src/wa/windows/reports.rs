@@ -67,7 +67,11 @@ pub fn build_wait_report_from_payload(
         node_id,
         role,
         name,
-        if probe_action == "inspect" { None } else { Some(probe_action) },
+        if probe_action == "inspect" {
+            None
+        } else {
+            Some(probe_action)
+        },
     )?;
     Ok(WaWindowsWaitReport {
         source: "windows-uia".to_string(),

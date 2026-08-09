@@ -129,8 +129,12 @@ impl TextureUsage {
     pub const STORAGE_BINDING: u32 = 0x08;
     pub const RENDER_ATTACHMENT: u32 = 0x10;
 
-    pub fn new(flags: u32) -> Self { Self(flags) }
-    pub fn contains(&self, flag: u32) -> bool { self.0 & flag != 0 }
+    pub fn new(flags: u32) -> Self {
+        Self(flags)
+    }
+    pub fn contains(&self, flag: u32) -> bool {
+        self.0 & flag != 0
+    }
 }
 
 /// Bind group for connecting resources to shaders.
@@ -149,9 +153,17 @@ pub struct BindGroupEntry {
 
 #[derive(Debug, Clone)]
 pub enum BindResource {
-    Buffer { buffer_id: usize, offset: usize, size: usize },
-    TextureView { texture_id: usize },
-    Sampler { sampler_id: usize },
+    Buffer {
+        buffer_id: usize,
+        offset: usize,
+        size: usize,
+    },
+    TextureView {
+        texture_id: usize,
+    },
+    Sampler {
+        sampler_id: usize,
+    },
 }
 
 /// Command encoder for batching GPU operations.
@@ -248,7 +260,11 @@ impl WebGpuComputeEngine {
     }
 
     pub fn write_buffer(&mut self, buffer_id: usize, data: &[u8]) -> bool {
-        if let Some(buf) = self.active_buffers.iter_mut().find(|b| b.buffer_id == buffer_id) {
+        if let Some(buf) = self
+            .active_buffers
+            .iter_mut()
+            .find(|b| b.buffer_id == buffer_id)
+        {
             let len = data.len().min(buf.size_bytes);
             buf.data[..len].copy_from_slice(&data[..len]);
             true
@@ -258,13 +274,18 @@ impl WebGpuComputeEngine {
     }
 
     pub fn read_buffer(&self, buffer_id: usize) -> Option<&[u8]> {
-        self.active_buffers.iter()
+        self.active_buffers
+            .iter()
             .find(|b| b.buffer_id == buffer_id)
             .map(|b| b.data.as_slice())
     }
 
     pub fn remove_buffer(&mut self, buffer_id: usize) -> bool {
-        if let Some(pos) = self.active_buffers.iter().position(|b| b.buffer_id == buffer_id) {
+        if let Some(pos) = self
+            .active_buffers
+            .iter()
+            .position(|b| b.buffer_id == buffer_id)
+        {
             self.active_buffers.remove(pos);
             for pipeline in &mut self.pipelines {
                 pipeline.buffer_bindings.retain(|&id| id != buffer_id);
@@ -298,7 +319,11 @@ impl WebGpuComputeEngine {
     }
 
     pub fn bind_buffer(&mut self, pipeline_id: usize, buffer_id: usize) -> bool {
-        if let Some(pipeline) = self.pipelines.iter_mut().find(|p| p.pipeline_id == pipeline_id) {
+        if let Some(pipeline) = self
+            .pipelines
+            .iter_mut()
+            .find(|p| p.pipeline_id == pipeline_id)
+        {
             if !pipeline.buffer_bindings.contains(&buffer_id) {
                 pipeline.buffer_bindings.push(buffer_id);
             }
@@ -314,21 +339,40 @@ impl WebGpuComputeEngine {
 
     pub fn dispatch_pipeline(&self, pipeline_id: usize, workgroup_count: (u32, u32, u32)) -> bool {
         if let Some(pipeline) = self.pipelines.iter().find(|p| p.pipeline_id == pipeline_id) {
-            let all_buffers_valid = pipeline.buffer_bindings.iter().all(|&bid| {
-                self.active_buffers.iter().any(|b| b.buffer_id == bid)
-            });
-            all_buffers_valid && workgroup_count.0 > 0 && workgroup_count.1 > 0 && workgroup_count.2 > 0
+            let all_buffers_valid = pipeline
+                .buffer_bindings
+                .iter()
+                .all(|&bid| self.active_buffers.iter().any(|b| b.buffer_id == bid));
+            all_buffers_valid
+                && workgroup_count.0 > 0
+                && workgroup_count.1 > 0
+                && workgroup_count.2 > 0
         } else {
             false
         }
     }
 
     /// Simulate a simple compute operation: copy input buffer to output buffer.
-    pub fn run_copy_compute(&mut self, pipeline_id: usize, input_buffer: usize, output_buffer: usize) -> bool {
-        if !self.dispatch_pipeline(pipeline_id, (1, 1, 1)) { return false; }
-        let input_data = self.active_buffers.iter().find(|b| b.buffer_id == input_buffer).map(|b| b.data.clone());
+    pub fn run_copy_compute(
+        &mut self,
+        pipeline_id: usize,
+        input_buffer: usize,
+        output_buffer: usize,
+    ) -> bool {
+        if !self.dispatch_pipeline(pipeline_id, (1, 1, 1)) {
+            return false;
+        }
+        let input_data = self
+            .active_buffers
+            .iter()
+            .find(|b| b.buffer_id == input_buffer)
+            .map(|b| b.data.clone());
         if let Some(data) = input_data {
-            if let Some(out) = self.active_buffers.iter_mut().find(|b| b.buffer_id == output_buffer) {
+            if let Some(out) = self
+                .active_buffers
+                .iter_mut()
+                .find(|b| b.buffer_id == output_buffer)
+            {
                 let len = data.len().min(out.size_bytes);
                 out.data[..len].copy_from_slice(&data[..len]);
                 return true;
@@ -339,7 +383,12 @@ impl WebGpuComputeEngine {
 
     // ── Render Pipelines ──
 
-    pub fn create_render_pipeline(&mut self, vertex_shader: &str, fragment_shader: &str, color_format: TextureFormat) -> usize {
+    pub fn create_render_pipeline(
+        &mut self,
+        vertex_shader: &str,
+        fragment_shader: &str,
+        color_format: TextureFormat,
+    ) -> usize {
         let pid = self.next_pipeline_id;
         self.next_pipeline_id += 1;
         self.render_pipelines.push(RenderPipeline {
@@ -355,29 +404,52 @@ impl WebGpuComputeEngine {
         pid
     }
 
-    pub fn set_render_pipeline_topology(&mut self, pipeline_id: usize, topology: PrimitiveTopology) -> bool {
-        if let Some(p) = self.render_pipelines.iter_mut().find(|p| p.pipeline_id == pipeline_id) {
+    pub fn set_render_pipeline_topology(
+        &mut self,
+        pipeline_id: usize,
+        topology: PrimitiveTopology,
+    ) -> bool {
+        if let Some(p) = self
+            .render_pipelines
+            .iter_mut()
+            .find(|p| p.pipeline_id == pipeline_id)
+        {
             p.primitive_topology = topology;
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     pub fn set_render_pipeline_blend(&mut self, pipeline_id: usize, enabled: bool) -> bool {
-        if let Some(p) = self.render_pipelines.iter_mut().find(|p| p.pipeline_id == pipeline_id) {
+        if let Some(p) = self
+            .render_pipelines
+            .iter_mut()
+            .find(|p| p.pipeline_id == pipeline_id)
+        {
             p.blend_enabled = enabled;
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     // ── Textures ──
 
-    pub fn create_texture(&mut self, width: u32, height: u32, format: TextureFormat, usage: TextureUsage) -> usize {
+    pub fn create_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        usage: TextureUsage,
+    ) -> usize {
         let tid = self.next_texture_id;
         self.next_texture_id += 1;
         let size = (width * height) as usize * format.bytes_per_pixel();
         self.textures.push(GpuTexture {
             texture_id: tid,
-            width, height,
+            width,
+            height,
             depth_or_array_layers: 1,
             format,
             usage,
@@ -387,15 +459,24 @@ impl WebGpuComputeEngine {
     }
 
     pub fn write_texture(&mut self, texture_id: usize, data: &[u8]) -> bool {
-        if let Some(tex) = self.textures.iter_mut().find(|t| t.texture_id == texture_id) {
+        if let Some(tex) = self
+            .textures
+            .iter_mut()
+            .find(|t| t.texture_id == texture_id)
+        {
             let len = data.len().min(tex.data.len());
             tex.data[..len].copy_from_slice(&data[..len]);
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     pub fn read_texture(&self, texture_id: usize) -> Option<&[u8]> {
-        self.textures.iter().find(|t| t.texture_id == texture_id).map(|t| t.data.as_slice())
+        self.textures
+            .iter()
+            .find(|t| t.texture_id == texture_id)
+            .map(|t| t.data.as_slice())
     }
 
     // ── Bind Groups ──
@@ -425,33 +506,84 @@ impl WebGpuComputeEngine {
         eid
     }
 
-    pub fn add_compute_pass(&mut self, encoder_id: usize, pipeline_id: usize, bind_groups: Vec<usize>, workgroup_count: (u32, u32, u32)) -> bool {
-        if let Some(enc) = self.command_encoders.iter_mut().find(|e| e.encoder_id == encoder_id) {
-            enc.compute_passes.push(ComputePass { pipeline_id, bind_groups, workgroup_count });
+    pub fn add_compute_pass(
+        &mut self,
+        encoder_id: usize,
+        pipeline_id: usize,
+        bind_groups: Vec<usize>,
+        workgroup_count: (u32, u32, u32),
+    ) -> bool {
+        if let Some(enc) = self
+            .command_encoders
+            .iter_mut()
+            .find(|e| e.encoder_id == encoder_id)
+        {
+            enc.compute_passes.push(ComputePass {
+                pipeline_id,
+                bind_groups,
+                workgroup_count,
+            });
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
-    pub fn add_copy_command(&mut self, encoder_id: usize, src: usize, dst: usize, src_offset: usize, dst_offset: usize, size: usize) -> bool {
-        if let Some(enc) = self.command_encoders.iter_mut().find(|e| e.encoder_id == encoder_id) {
-            enc.copy_commands.push(CopyCommand { src_buffer: src, dst_buffer: dst, src_offset, dst_offset, size });
+    pub fn add_copy_command(
+        &mut self,
+        encoder_id: usize,
+        src: usize,
+        dst: usize,
+        src_offset: usize,
+        dst_offset: usize,
+        size: usize,
+    ) -> bool {
+        if let Some(enc) = self
+            .command_encoders
+            .iter_mut()
+            .find(|e| e.encoder_id == encoder_id)
+        {
+            enc.copy_commands.push(CopyCommand {
+                src_buffer: src,
+                dst_buffer: dst,
+                src_offset,
+                dst_offset,
+                size,
+            });
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     /// Submit a command encoder: execute all copy commands.
     pub fn submit_encoder(&mut self, encoder_id: usize) -> bool {
-        let encoder = self.command_encoders.iter().find(|e| e.encoder_id == encoder_id);
+        let encoder = self
+            .command_encoders
+            .iter()
+            .find(|e| e.encoder_id == encoder_id);
         let copies = match encoder {
             Some(e) => e.copy_commands.clone(),
             None => return false,
         };
         for copy in &copies {
-            let src_data = self.active_buffers.iter().find(|b| b.buffer_id == copy.src_buffer).map(|b| b.data.clone());
+            let src_data = self
+                .active_buffers
+                .iter()
+                .find(|b| b.buffer_id == copy.src_buffer)
+                .map(|b| b.data.clone());
             if let Some(data) = src_data {
-                if let Some(dst) = self.active_buffers.iter_mut().find(|b| b.buffer_id == copy.dst_buffer) {
-                    let len = copy.size.min(data.len().saturating_sub(copy.src_offset)).min(dst.size_bytes.saturating_sub(copy.dst_offset));
-                    dst.data[copy.dst_offset..copy.dst_offset + len].copy_from_slice(&data[copy.src_offset..copy.src_offset + len]);
+                if let Some(dst) = self
+                    .active_buffers
+                    .iter_mut()
+                    .find(|b| b.buffer_id == copy.dst_buffer)
+                {
+                    let len = copy
+                        .size
+                        .min(data.len().saturating_sub(copy.src_offset))
+                        .min(dst.size_bytes.saturating_sub(copy.dst_offset));
+                    dst.data[copy.dst_offset..copy.dst_offset + len]
+                        .copy_from_slice(&data[copy.src_offset..copy.src_offset + len]);
                 }
             }
         }
@@ -459,16 +591,26 @@ impl WebGpuComputeEngine {
     }
 
     pub fn remove_encoder(&mut self, encoder_id: usize) -> bool {
-        if let Some(pos) = self.command_encoders.iter().position(|e| e.encoder_id == encoder_id) {
+        if let Some(pos) = self
+            .command_encoders
+            .iter()
+            .position(|e| e.encoder_id == encoder_id)
+        {
             self.command_encoders.remove(pos);
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     // ── Compute Execution ──
 
     /// Execute a compute pipeline on bound buffers, simulating shader operations.
-    pub fn execute_compute(&mut self, pipeline_id: usize, workgroup_count: (u32, u32, u32)) -> bool {
+    pub fn execute_compute(
+        &mut self,
+        pipeline_id: usize,
+        workgroup_count: (u32, u32, u32),
+    ) -> bool {
         if !self.dispatch_pipeline(pipeline_id, workgroup_count) {
             return false;
         }
@@ -491,10 +633,16 @@ impl WebGpuComputeEngine {
             ShaderKind::Copy => {
                 // Copy first buffer to all others
                 if let Some(first_buf) = buffer_ids.first() {
-                    let data = self.active_buffers.iter().find(|b| b.buffer_id == *first_buf).map(|b| b.data.clone());
+                    let data = self
+                        .active_buffers
+                        .iter()
+                        .find(|b| b.buffer_id == *first_buf)
+                        .map(|b| b.data.clone());
                     if let Some(src_data) = data {
                         for &bid in buffer_ids.iter().skip(1) {
-                            if let Some(dst) = self.active_buffers.iter_mut().find(|b| b.buffer_id == bid) {
+                            if let Some(dst) =
+                                self.active_buffers.iter_mut().find(|b| b.buffer_id == bid)
+                            {
                                 let len = src_data.len().min(dst.size_bytes);
                                 dst.data[..len].copy_from_slice(&src_data[..len]);
                             }
@@ -547,7 +695,11 @@ impl WebGpuComputeEngine {
 
     /// Execute a render pass, simulating vertex processing and rasterization.
     pub fn execute_render_pass(&mut self, encoder_id: usize, render_pass_id: usize) -> bool {
-        let render_pass = match self.command_encoders.iter().find(|e| e.encoder_id == encoder_id) {
+        let render_pass = match self
+            .command_encoders
+            .iter()
+            .find(|e| e.encoder_id == encoder_id)
+        {
             Some(enc) => enc.render_passes.get(render_pass_id).cloned(),
             None => None,
         };
@@ -558,12 +710,18 @@ impl WebGpuComputeEngine {
         };
 
         // Validate pipeline
-        if !self.render_pipelines.iter().any(|p| p.pipeline_id == render_pass.pipeline_id) {
+        if !self
+            .render_pipelines
+            .iter()
+            .any(|p| p.pipeline_id == render_pass.pipeline_id)
+        {
             return false;
         }
 
         // Simulate vertex processing: read vertex buffer
-        let vertex_data = self.active_buffers.iter()
+        let vertex_data = self
+            .active_buffers
+            .iter()
             .find(|b| b.buffer_id == render_pass.vertex_buffer_id)
             .map(|b| b.data.clone());
 
@@ -573,7 +731,11 @@ impl WebGpuComputeEngine {
         };
 
         // Simulate rasterization: write to color attachment texture
-        if let Some(tex) = self.textures.iter_mut().find(|t| t.texture_id == render_pass.color_attachment) {
+        if let Some(tex) = self
+            .textures
+            .iter_mut()
+            .find(|t| t.texture_id == render_pass.color_attachment)
+        {
             // Simple triangle fill: fill texture with a gradient based on vertex data
             let pattern_byte = vertex_data.first().copied().unwrap_or(128);
             for pixel in tex.data.chunks_exact_mut(4) {
@@ -588,8 +750,19 @@ impl WebGpuComputeEngine {
     }
 
     /// Add a render pass to an encoder.
-    pub fn add_render_pass(&mut self, encoder_id: usize, pipeline_id: usize, color_attachment: usize, vertex_buffer_id: usize, vertex_count: u32) -> bool {
-        if let Some(enc) = self.command_encoders.iter_mut().find(|e| e.encoder_id == encoder_id) {
+    pub fn add_render_pass(
+        &mut self,
+        encoder_id: usize,
+        pipeline_id: usize,
+        color_attachment: usize,
+        vertex_buffer_id: usize,
+        vertex_count: u32,
+    ) -> bool {
+        if let Some(enc) = self
+            .command_encoders
+            .iter_mut()
+            .find(|e| e.encoder_id == encoder_id)
+        {
             enc.render_passes.push(RenderPass {
                 pipeline_id,
                 color_attachment,
@@ -610,14 +783,19 @@ impl WebGpuComputeEngine {
 
     /// Query buffer information for agent inspection.
     pub fn query_buffer_summary(&self, buffer_id: usize) -> Option<(usize, usize, BufferUsage)> {
-        self.active_buffers.iter()
+        self.active_buffers
+            .iter()
             .find(|b| b.buffer_id == buffer_id)
             .map(|b| (b.size_bytes, b.data.len(), b.usage))
     }
 
     /// Query texture information for agent inspection.
-    pub fn query_texture_summary(&self, texture_id: usize) -> Option<(u32, u32, TextureFormat, usize)> {
-        self.textures.iter()
+    pub fn query_texture_summary(
+        &self,
+        texture_id: usize,
+    ) -> Option<(u32, u32, TextureFormat, usize)> {
+        self.textures
+            .iter()
             .find(|t| t.texture_id == texture_id)
             .map(|t| (t.width, t.height, t.format, t.data.len()))
     }
@@ -626,12 +804,16 @@ impl WebGpuComputeEngine {
 
     /// Begin a timestamp query (records fake GPU timestamp).
     pub fn begin_timestamp_query(&mut self, encoder_id: usize) -> bool {
-        self.command_encoders.iter().any(|e| e.encoder_id == encoder_id)
+        self.command_encoders
+            .iter()
+            .any(|e| e.encoder_id == encoder_id)
     }
 
     /// End a timestamp query (records fake GPU timestamp).
     pub fn end_timestamp_query(&mut self, encoder_id: usize) -> bool {
-        self.command_encoders.iter().any(|e| e.encoder_id == encoder_id)
+        self.command_encoders
+            .iter()
+            .any(|e| e.encoder_id == encoder_id)
     }
 }
 
@@ -653,7 +835,10 @@ mod tests {
         let mut engine = WebGpuComputeEngine::new();
         let buf1 = engine.create_buffer(16);
         let buf2 = engine.create_buffer(16);
-        engine.write_buffer(buf1, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        engine.write_buffer(
+            buf1,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        );
 
         let pipeline = engine.create_pipeline("@compute fn copy() { /* copy */ }", (4, 1, 1));
         engine.bind_buffer(pipeline, buf1);
@@ -661,7 +846,10 @@ mod tests {
 
         assert!(engine.execute_compute(pipeline, (1, 1, 1)));
         let data2 = engine.read_buffer(buf2).unwrap();
-        assert_eq!(data2, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(
+            data2,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
     }
 
     #[test]
@@ -670,7 +858,8 @@ mod tests {
         let buf = engine.create_buffer(4);
         engine.write_buffer(buf, &[10, 20, 30, 40]);
 
-        let pipeline = engine.create_pipeline("@compute fn transform() { /* transform */ }", (1, 1, 1));
+        let pipeline =
+            engine.create_pipeline("@compute fn transform() { /* transform */ }", (1, 1, 1));
         engine.bind_buffer(pipeline, buf);
 
         assert!(engine.execute_compute(pipeline, (1, 1, 1)));
@@ -684,8 +873,14 @@ mod tests {
         let vertex_buf = engine.create_buffer_with_usage(12, BufferUsage::Vertex);
         engine.write_buffer(vertex_buf, &[100, 50, 25]);
 
-        let texture = engine.create_texture(4, 4, TextureFormat::Rgba8Unorm, TextureUsage::new(TextureUsage::RENDER_ATTACHMENT));
-        let pipeline = engine.create_render_pipeline("vertex", "fragment", TextureFormat::Rgba8Unorm);
+        let texture = engine.create_texture(
+            4,
+            4,
+            TextureFormat::Rgba8Unorm,
+            TextureUsage::new(TextureUsage::RENDER_ATTACHMENT),
+        );
+        let pipeline =
+            engine.create_render_pipeline("vertex", "fragment", TextureFormat::Rgba8Unorm);
 
         let encoder = engine.create_command_encoder();
         engine.add_render_pass(encoder, pipeline, texture, vertex_buf, 3);
@@ -703,7 +898,12 @@ mod tests {
     fn query_buffer_and_texture() {
         let mut engine = WebGpuComputeEngine::new();
         let buf = engine.create_buffer(1024);
-        let tex = engine.create_texture(256, 256, TextureFormat::Rgba8Unorm, TextureUsage::new(TextureUsage::TEXTURE_BINDING));
+        let tex = engine.create_texture(
+            256,
+            256,
+            TextureFormat::Rgba8Unorm,
+            TextureUsage::new(TextureUsage::TEXTURE_BINDING),
+        );
 
         let (size, data_len, usage) = engine.query_buffer_summary(buf).unwrap();
         assert_eq!(size, 1024);
@@ -832,4 +1032,3 @@ mod tests {
         assert!(!engine.end_timestamp_query(999));
     }
 }
-

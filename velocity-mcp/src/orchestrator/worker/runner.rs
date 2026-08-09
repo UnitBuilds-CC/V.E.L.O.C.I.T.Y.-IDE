@@ -103,7 +103,8 @@ pub fn run_assignment(
 
     match outcome {
         Ok(execution) => {
-            let wa_run_path = detect_wa_run_artifact_path(&execution.changed_files, &execution.created_files);
+            let wa_run_path =
+                detect_wa_run_artifact_path(&execution.changed_files, &execution.created_files);
             let wa_run_id = wa_run_path.as_deref().and_then(wa_run_id_from_path);
             result.outputs = execution.changed_files;
             result.created_files = execution.created_files;
@@ -122,7 +123,8 @@ pub fn run_assignment(
             result.message = execution.message;
         }
         Err(execution) => {
-            let wa_run_path = detect_wa_run_artifact_path(&execution.changed_files, &execution.created_files);
+            let wa_run_path =
+                detect_wa_run_artifact_path(&execution.changed_files, &execution.created_files);
             let wa_run_id = wa_run_path.as_deref().and_then(wa_run_id_from_path);
             result.success = false;
             result.outputs = execution.changed_files;
@@ -302,7 +304,10 @@ pub fn execute_live_task(
             false,
         );
         // Persist ledger for diagnostics and potential manual inspection.
-        let ledger_path = run_dir.join(format!("continuation_ledger_attempt_{}.txt", attempts.len()));
+        let ledger_path = run_dir.join(format!(
+            "continuation_ledger_attempt_{}.txt",
+            attempts.len()
+        ));
         let _ = fs::write(&ledger_path, ledger.continuation_prompt());
     }
 
@@ -316,7 +321,8 @@ pub fn execute_live_task(
             "cancelled by operator before scoped changes were produced".to_string()
         }
     } else if assignment.task_kind == AgentTaskKind::DesktopAutomation {
-        "Desktop automation run finished without scoped file changes or captured WA evidence.".to_string()
+        "Desktop automation run finished without scoped file changes or captured WA evidence."
+            .to_string()
     } else {
         "No scoped file changes were produced by any provider-backed sub-agent route.".to_string()
     };

@@ -20,7 +20,9 @@ fn intl_collator() {
 
 #[test]
 fn intl_number_format() {
-    let result = eval_full("var nf = new Intl.NumberFormat({locale: 'en-US', style: 'decimal'}); nf.format(1234.5)");
+    let result = eval_full(
+        "var nf = new Intl.NumberFormat({locale: 'en-US', style: 'decimal'}); nf.format(1234.5)",
+    );
     match result {
         JsValue::String(s) => assert!(s.contains("1234")),
         _ => panic!("Expected string"),
@@ -42,15 +44,22 @@ fn intl_datetime_format() {
 
 #[test]
 fn intl_plural_rules() {
-    assert_eq!(eval_full("var pr = new Intl.PluralRules({locale: 'en'}); pr.select(1)"), JsValue::String("one".to_string()));
-    assert_eq!(eval_full("var pr = new Intl.PluralRules({locale: 'en'}); pr.select(2)"), JsValue::String("other".to_string()));
+    assert_eq!(
+        eval_full("var pr = new Intl.PluralRules({locale: 'en'}); pr.select(1)"),
+        JsValue::String("one".to_string())
+    );
+    assert_eq!(
+        eval_full("var pr = new Intl.PluralRules({locale: 'en'}); pr.select(2)"),
+        JsValue::String("other".to_string())
+    );
 }
 
 // ── Intl.RelativeTimeFormat ──────────────────────────────────────────────
 
 #[test]
 fn intl_relative_time_format() {
-    let result = eval_full("var rtf = new Intl.RelativeTimeFormat({locale: 'en'}); rtf.format(-1, 'day')");
+    let result =
+        eval_full("var rtf = new Intl.RelativeTimeFormat({locale: 'en'}); rtf.format(-1, 'day')");
     match result {
         JsValue::String(s) => assert!(s.contains("yesterday") || s.contains("ago")),
         _ => panic!("Expected string"),
@@ -61,7 +70,9 @@ fn intl_relative_time_format() {
 
 #[test]
 fn intl_duration_format() {
-    let result = eval_full("var df = new Intl.DurationFormat({locale: 'en'}); df.format({hours: 1, minutes: 30})");
+    let result = eval_full(
+        "var df = new Intl.DurationFormat({locale: 'en'}); df.format({hours: 1, minutes: 30})",
+    );
     match result {
         JsValue::String(s) => assert!(s.contains("1h") || s.contains("30min")),
         _ => panic!("Expected string"),
@@ -83,6 +94,12 @@ fn intl_list_format() {
 
 #[test]
 fn intl_display_names() {
-    assert_eq!(eval_full("var dn = new Intl.DisplayNames({locale: 'en', type: 'language'}); dn.of('en')"), JsValue::String("English".to_string()));
-    assert_eq!(eval_full("var dn = new Intl.DisplayNames({locale: 'en', type: 'region'}); dn.of('US')"), JsValue::String("United States".to_string()));
+    assert_eq!(
+        eval_full("var dn = new Intl.DisplayNames({locale: 'en', type: 'language'}); dn.of('en')"),
+        JsValue::String("English".to_string())
+    );
+    assert_eq!(
+        eval_full("var dn = new Intl.DisplayNames({locale: 'en', type: 'region'}); dn.of('US')"),
+        JsValue::String("United States".to_string())
+    );
 }

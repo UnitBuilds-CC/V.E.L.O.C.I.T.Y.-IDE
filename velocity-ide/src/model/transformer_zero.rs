@@ -22,14 +22,8 @@ use rayon::prelude::*;
 
 use crate::model::{config::ModelConfig, weights::ModelWeights};
 use crate::nda_int::{
-    AliBiSlopes, NdaVec, NdaEmbedding,
-    apply_alibi_bias_i32,
-    nda_gemv_nda_to_nda,
-    nda_vec_add_inplace,
-    rms_norm_nda,
-    swiglu_nda, SiluLut,
-    argmax_i32,
-    DOT_4_LUT,
+    apply_alibi_bias_i32, argmax_i32, nda_gemv_nda_to_nda, nda_vec_add_inplace, rms_norm_nda,
+    swiglu_nda, AliBiSlopes, NdaEmbedding, NdaVec, SiluLut, DOT_4_LUT,
 };
 use crate::site_map::SiteMap;
 
@@ -48,13 +42,19 @@ struct ZeroKvLayer {
 }
 
 impl ZeroKvLayer {
-    fn new() -> Self { Self { entries: Vec::new() } }
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
 
     fn push(&mut self, k: NdaVec, v: NdaVec) {
         self.entries.push(ZeroKvEntry { k, v });
     }
 
-    fn len(&self) -> usize { self.entries.len() }
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 // ─── Attention (ALiBi + bitwise Q·K, integer V decode) ─────────────────────
@@ -73,12 +73,12 @@ impl ZeroKvLayer {
 /// Exact for the argmax token; approximation elsewhere.
 #[allow(clippy::needless_range_loop)]
 fn attention_head_zero(
-    q:         &NdaVec,
-    kv_layer:  &ZeroKvLayer,
-    h_start:   usize,
-    q_pos:     usize,
-    head_idx:  usize,
-    alibi:     &AliBiSlopes,
+    q: &NdaVec,
+    kv_layer: &ZeroKvLayer,
+    h_start: usize,
+    q_pos: usize,
+    head_idx: usize,
+    alibi: &AliBiSlopes,
 ) -> NdaVec {
     let _n_cached = kv_layer.len();
     let head_dim = q.len;
@@ -95,34 +95,49 @@ fn attention_head_zero(
         q_high[b] = (((qs >> 4) & 0x0F) | (qe & 0xF0)) as usize;
     }
 
-    let mut scores: Vec<i32> = kv_layer.entries.iter().map(|entry| {
-        // K entry covers full hidden_size; we extract head h_start..h_start+head_dim
-        let head_byte_start = h_start / 8;
+    let mut scores: Vec<i32> = kv_layer
+        .entries
+        .iter()
+        .map(|entry| {
+            // K entry covers full hidden_size; we extract head h_start..h_start+head_dim
+            let head_byte_start = h_start / 8;
 
-        let mut acc = 0i32;
-        for b in 0.._head_bytes {
-            let ks = entry.k.sign[head_byte_start + b];
-            let ke = entry.k.extra[head_byte_start + b];
-            let k_low = ((ks & 0x0F) | ((ke & 0x0F) << 4)) as usize;
-            let k_high = (((ks >> 4) & 0x0F) | (ke & 0xF0)) as usize;
+            let mut acc = 0i32;
+            for b in 0.._head_bytes {
+                let ks = entry.k.sign[head_byte_start + b];
+                let ke = entry.k.extra[head_byte_start + b];
+                let k_low = ((ks & 0x0F) | ((ke & 0x0F) << 4)) as usize;
+                let k_high = (((ks >> 4) & 0x0F) | (ke & 0xF0)) as usize;
 
-            acc += (DOT_4_LUT[q_low[b]][k_low] + DOT_4_LUT[q_high[b]][k_high]) as i32;
-        }
-        // Scale: q.log2_scale + k.log2_scale combined (integer add)
-        acc
-    }).collect();
+                acc += (DOT_4_LUT[q_low[b]][k_low] + DOT_4_LUT[q_high[b]][k_high]) as i32;
+            }
+            // Scale: q.log2_scale + k.log2_scale combined (integer add)
+            acc
+        })
+        .collect();
 
     // Scale: q.log2_scale + k_log2 - 3 (representing Q·K / sqrt(head_dim))
-    let k_log2 = kv_layer.entries.first().map(|e| e.k.log2_scale).unwrap_or(0);
+    let k_log2 = kv_layer
+        .entries
+        .first()
+        .map(|e| e.k.log2_scale)
+        .unwrap_or(0);
     let scores_log2 = q.log2_scale + k_log2 - 3;
     let scale_shift = (-scores_log2).max(0) as u32;
 
     if q_pos < 5 && head_idx == 0 {
-        println!("[Debug Attention] q_pos: {}, q_log2: {}, k_log2: {}, scores_log2: {}, scale_shift: {}", 
-                 q_pos, q.log2_scale, k_log2, scores_log2, scale_shift);
+        println!(
+            "[Debug Attention] q_pos: {}, q_log2: {}, k_log2: {}, scores_log2: {}, scale_shift: {}",
+            q_pos, q.log2_scale, k_log2, scores_log2, scale_shift
+        );
         println!("[Debug Attention] raw scores (pre-ALiBi): {:?}", scores);
         for (i, entry) in kv_layer.entries.iter().enumerate() {
-            println!("  k_pos {} k.sign: {:?}, k.extra: {:?}", i, &entry.k.sign[..2.min(entry.k.sign.len())], &entry.k.extra[..2.min(entry.k.extra.len())]);
+            println!(
+                "  k_pos {} k.sign: {:?}, k.extra: {:?}",
+                i,
+                &entry.k.sign[..2.min(entry.k.sign.len())],
+                &entry.k.extra[..2.min(entry.k.extra.len())]
+            );
         }
     }
 
@@ -133,27 +148,33 @@ fn attention_head_zero(
     //   Instead of 1i32 >> gap (which collapses to hard argmax), we use Q14 fixed-point
     //   weights with Q8 fractional linear interpolation for 2^-gap_float.
     let max_score = *scores.iter().max().unwrap_or(&0);
-    let weights: Vec<i32> = scores.iter().map(|&s| {
-        let gap = max_score - s;
-        // Represent gap in Q8 (fixed-point with 8 fractional bits)
-        let gap_q8 = if scale_shift >= 8 {
-            gap >> (scale_shift - 8)
-        } else {
-            gap << (8 - scale_shift)
-        };
-        let integer_part = (gap_q8 >> 8).clamp(0, 14) as u32;
-        let fractional_part = gap_q8 & 0xFF;
-        
-        let a = 16384i32 >> integer_part;
-        let b = 16384i32 >> (integer_part + 1);
-        a - (((a - b) * fractional_part) >> 8)
-    }).collect();
-    
+    let weights: Vec<i32> = scores
+        .iter()
+        .map(|&s| {
+            let gap = max_score - s;
+            // Represent gap in Q8 (fixed-point with 8 fractional bits)
+            let gap_q8 = if scale_shift >= 8 {
+                gap >> (scale_shift - 8)
+            } else {
+                gap << (8 - scale_shift)
+            };
+            let integer_part = (gap_q8 >> 8).clamp(0, 14) as u32;
+            let fractional_part = gap_q8 & 0xFF;
+
+            let a = 16384i32 >> integer_part;
+            let b = 16384i32 >> (integer_part + 1);
+            a - (((a - b) * fractional_part) >> 8)
+        })
+        .collect();
+
     if q_pos < 5 && head_idx == 0 {
-        println!("[Debug Softmax] scores: {:?}, weights: {:?}", 
-                 &scores[..scores.len().min(5)], &weights[..weights.len().min(5)]);
+        println!(
+            "[Debug Softmax] scores: {:?}, weights: {:?}",
+            &scores[..scores.len().min(5)],
+            &weights[..weights.len().min(5)]
+        );
     }
-    
+
     let weight_sum: i32 = weights.iter().sum::<i32>().max(1);
 
     // ── Step 4: Weighted V accumulation — pure integer add/subtract ──────────
@@ -162,17 +183,20 @@ fn attention_head_zero(
     let _head_bytes = head_dim.div_ceil(8);
 
     for (w, entry) in weights.iter().zip(kv_layer.entries.iter()) {
-        if *w == 0 { continue; }
+        if *w == 0 {
+            continue;
+        }
         for i in 0..head_dim {
             let global_byte = head_byte_start + i / 8;
             let bit_idx = i % 8;
             let mask = 1u8 << bit_idx;
-            let is_pos   = (entry.v.sign[global_byte]  & mask) != 0;
-            let is_large = (entry.v.sign[global_byte]  & mask) == (entry.v.extra[global_byte] & mask);
+            let is_pos = (entry.v.sign[global_byte] & mask) != 0;
+            let is_large =
+                (entry.v.sign[global_byte] & mask) == (entry.v.extra[global_byte] & mask);
             let raw = if is_large { 2i32 } else { 1 };
             let val = if is_pos { raw } else { -raw };
             // Weighted add: pure integer addition
-            out_i32[i] += val * w;  // w ∈ {1, 0} for bit-shift weights — one mult per token
+            out_i32[i] += val * w; // w ∈ {1, 0} for bit-shift weights — one mult per token
         }
     }
 
@@ -182,7 +206,9 @@ fn attention_head_zero(
     }
 
     // Output scale = v.log2_scale (same for all V entries, use first)
-    let v_log2 = kv_layer.entries.first()
+    let v_log2 = kv_layer
+        .entries
+        .first()
         .map(|e| e.v.log2_scale)
         .unwrap_or(0);
 
@@ -192,39 +218,41 @@ fn attention_head_zero(
 // ─── Zero-Float Transformer ─────────────────────────────────────────────────
 
 pub struct ZeroTransformer {
-    config:       ModelConfig,
-    weights:      ModelWeights,
-    kv_cache:     Vec<ZeroKvLayer>,
+    config: ModelConfig,
+    weights: ModelWeights,
+    kv_cache: Vec<ZeroKvLayer>,
     #[allow(dead_code)]
-    embed:        NdaEmbedding,
+    embed: NdaEmbedding,
     /// LM head stored as NdaEmbedding rows (vocab × hidden), reused as matrix.
-    lm_head_nda:  NdaEmbedding,
-    alibi:        AliBiSlopes,
-    silu:         SiluLut,
+    lm_head_nda: NdaEmbedding,
+    alibi: AliBiSlopes,
+    silu: SiluLut,
 }
 
 impl ZeroTransformer {
     pub fn new(config: ModelConfig, weights: ModelWeights) -> Self {
         let kv_cache = (0..config.n_layers).map(|_| ZeroKvLayer::new()).collect();
-        let alibi    = AliBiSlopes::new(config.n_heads);
-        let silu     = SiluLut::new();
+        let alibi = AliBiSlopes::new(config.n_heads);
+        let silu = SiluLut::new();
 
         // Build NDA embedding table from FP32 weights
-        let embed = NdaEmbedding::from_f32(
-            &weights.embed_tokens,
-            config.vocab_size,
-            config.hidden_size,
-        );
+        let embed =
+            NdaEmbedding::from_f32(&weights.embed_tokens, config.vocab_size, config.hidden_size);
 
         // Build NDA LM head (vocab × hidden) from FP32 weights
         // lm_head is [vocab_size × hidden_size] — same layout as embed_tokens
-        let lm_head_nda = NdaEmbedding::from_f32(
-            &weights.lm_head,
-            config.vocab_size,
-            config.hidden_size,
-        );
+        let lm_head_nda =
+            NdaEmbedding::from_f32(&weights.lm_head, config.vocab_size, config.hidden_size);
 
-        Self { config, weights, kv_cache, embed, lm_head_nda, alibi, silu }
+        Self {
+            config,
+            weights,
+            kv_cache,
+            embed,
+            lm_head_nda,
+            alibi,
+            silu,
+        }
     }
 
     pub fn reset_cache(&mut self) {
@@ -244,8 +272,8 @@ impl ZeroTransformer {
         stats_misses: &mut usize,
     ) -> Vec<i32> {
         let cfg = &self.config;
-        let h   = cfg.hidden_size;
-        let hd  = cfg.head_dim;
+        let h = cfg.hidden_size;
+        let hd = cfg.head_dim;
 
         // ── Token embedding: Lookup FP32 vector and quantize dynamically per-token ──
         let start = token as usize * h;
@@ -266,7 +294,13 @@ impl ZeroTransformer {
             NdaVec::from_f32_slice(x_f32)
         };
         if pos < 5 {
-            println!("[Debug Embed] pos: {}, token: {}, scale: {}, sign: {:?}", pos, token, x.log2_scale, &x.sign[..2.min(x.sign.len())]);
+            println!(
+                "[Debug Embed] pos: {}, token: {}, scale: {}, sign: {:?}",
+                pos,
+                token,
+                x.log2_scale,
+                &x.sign[..2.min(x.sign.len())]
+            );
         }
 
         // ── 24 transformer layers ─────────────────────────────────────────────
@@ -276,7 +310,12 @@ impl ZeroTransformer {
             // 1. Attention pre-norm (integer fixed-point RMSNorm)
             let x_norm = rms_norm_nda(&x, &norm_to_ndavec(&lw.attn_norm), 6);
             if pos < 5 && layer_idx == 0 {
-                println!("[Debug Norm] pos: {}, scale: {}, sign: {:?}", pos, x_norm.log2_scale, &x_norm.sign[..2.min(x_norm.sign.len())]);
+                println!(
+                    "[Debug Norm] pos: {}, scale: {}, sign: {:?}",
+                    pos,
+                    x_norm.log2_scale,
+                    &x_norm.sign[..2.min(x_norm.sign.len())]
+                );
             }
 
             // 2. Q/K/V projections — NDA GEMV → NdaVec (pure bitwise popcount)
@@ -301,7 +340,12 @@ impl ZeroTransformer {
 
             // 3. Store K/V in cache (NDA bitmaps — no float conversion)
             if pos < 5 && layer_idx == 0 {
-                println!("[Debug K] pos: {}, scale: {}, sign: {:?}", pos, k.log2_scale, &k.sign[..2.min(k.sign.len())]);
+                println!(
+                    "[Debug K] pos: {}, scale: {}, sign: {:?}",
+                    pos,
+                    k.log2_scale,
+                    &k.sign[..2.min(k.sign.len())]
+                );
             }
             self.kv_cache[layer_idx].push(k, v.clone());
 
@@ -321,20 +365,14 @@ impl ZeroTransformer {
                 // Extract this head's Q bitmap slice
                 let hb = head * head_bytes;
                 let q_head = NdaVec {
-                    len:        hd,
+                    len: hd,
                     log2_scale: q.log2_scale,
-                    sign:       q.sign[hb..hb + head_bytes].to_vec().into(),
-                    extra:      q.extra[hb..hb + head_bytes].to_vec().into(),
+                    sign: q.sign[hb..hb + head_bytes].to_vec().into(),
+                    extra: q.extra[hb..hb + head_bytes].to_vec().into(),
                 };
 
-                let head_out = attention_head_zero(
-                    &q_head,
-                    kv_layer,
-                    hs_kv,
-                    pos,
-                    head,
-                    &self.alibi,
-                );
+                let head_out =
+                    attention_head_zero(&q_head, kv_layer, hs_kv, pos, head, &self.alibi);
 
                 // Write head output into attn_out_i32
                 for i in 0..hd {
@@ -355,7 +393,7 @@ impl ZeroTransformer {
 
             // 8. SwiGLU: down(SiLU(gate) ⊙ up) — pure NDA, 4-entry SiLU LUT
             let gate = nda_gemv_nda_to_nda(&lw.gate_proj, &x_ffn);
-            let up   = nda_gemv_nda_to_nda(&lw.up_proj,   &x_ffn);
+            let up = nda_gemv_nda_to_nda(&lw.up_proj, &x_ffn);
             let gated = swiglu_nda(&gate, &up, &self.silu);
 
             // 9. Down projection + residual
@@ -383,24 +421,27 @@ impl ZeroTransformer {
             x_high[b] = (((xs >> 4) & 0x0F) | (xe & 0xF0)) as usize;
         }
 
-        logits.par_iter_mut().enumerate().for_each(|(tok_id, logit)| {
-            let stride    = self.lm_head_nda.stride();
-            let start     = tok_id * stride;
-            let row_sign  = &self.lm_head_nda.sign[start..start + stride];
-            let row_extra = &self.lm_head_nda.extra[start..start + stride];
+        logits
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(tok_id, logit)| {
+                let stride = self.lm_head_nda.stride();
+                let start = tok_id * stride;
+                let row_sign = &self.lm_head_nda.sign[start..start + stride];
+                let row_extra = &self.lm_head_nda.extra[start..start + stride];
 
-            let mut acc = 0i32;
-            let limit = x_bytes.min(stride);
-            for b in 0..limit {
-                let ws = row_sign[b];
-                let we = row_extra[b];
-                let w_low = ((ws & 0x0F) | ((we & 0x0F) << 4)) as usize;
-                let w_high = (((ws >> 4) & 0x0F) | (we & 0xF0)) as usize;
+                let mut acc = 0i32;
+                let limit = x_bytes.min(stride);
+                for b in 0..limit {
+                    let ws = row_sign[b];
+                    let we = row_extra[b];
+                    let w_low = ((ws & 0x0F) | ((we & 0x0F) << 4)) as usize;
+                    let w_high = (((ws >> 4) & 0x0F) | (we & 0xF0)) as usize;
 
-                acc += (DOT_4_LUT[w_low][x_low[b]] + DOT_4_LUT[w_high][x_high[b]]) as i32;
-            }
-            *logit = acc;
-        });
+                    acc += (DOT_4_LUT[w_low][x_low[b]] + DOT_4_LUT[w_high][x_high[b]]) as i32;
+                }
+                *logit = acc;
+            });
         logits
     }
 
@@ -416,29 +457,29 @@ impl ZeroTransformer {
     /// Calls `on_token` for each generated token ID.
     pub fn generate_greedy(
         &mut self,
-        prompt_tokens:  &[u32],
+        prompt_tokens: &[u32],
         max_new_tokens: usize,
-        mut on_token:   impl FnMut(u32),
+        mut on_token: impl FnMut(u32),
     ) {
         // ── repetition-penalty config (integer-native, no floats) ──
-        const REP_WINDOW:        usize = 64;   // sliding history window
+        const REP_WINDOW: usize = 64; // sliding history window
 
         self.reset_cache();
 
         let n_prompt = prompt_tokens.len();
-        let max_new  = max_new_tokens.min(self.config.max_seq_len.saturating_sub(n_prompt));
+        let max_new = max_new_tokens.min(self.config.max_seq_len.saturating_sub(n_prompt));
 
         // Prefill
         let mut logits = Vec::new();
-        let mut h = 0; let mut m = 0;
+        let mut h = 0;
+        let mut m = 0;
         for (pos, &tok) in prompt_tokens.iter().enumerate() {
             logits = self.forward_one_zero(tok, pos, None, None, &mut h, &mut m);
         }
 
         // History ring buffer for repetition penalty.
         // Prompt tokens seed the window so we also penalise repeating the prompt.
-        let mut history: std::collections::VecDeque<u32> =
-            prompt_tokens.iter().copied().collect();
+        let mut history: std::collections::VecDeque<u32> = prompt_tokens.iter().copied().collect();
         if history.len() > REP_WINDOW {
             let excess = history.len() - REP_WINDOW;
             history.drain(..excess);
@@ -493,20 +534,29 @@ fn norm_to_ndavec(w: &[f32]) -> NdaVec {
     let inv_s = 1.0 / scale;
 
     let bytes = w.len().div_ceil(8);
-    let mut sign  = vec![0u8; bytes];
+    let mut sign = vec![0u8; bytes];
     let mut extra = vec![0u8; bytes];
 
     for (i, &v) in w.iter().enumerate() {
         let vs = v * inv_s;
-        let is_pos   = vs >= 0.0;
+        let is_pos = vs >= 0.0;
         let is_large = vs.abs() >= 1.5;
         let byte_idx = i / 8;
-        let bit_idx  = i % 8;
-        if is_pos               { sign[byte_idx]  |= 1 << bit_idx; }
-        if is_pos == is_large   { extra[byte_idx] |= 1 << bit_idx; }
+        let bit_idx = i % 8;
+        if is_pos {
+            sign[byte_idx] |= 1 << bit_idx;
+        }
+        if is_pos == is_large {
+            extra[byte_idx] |= 1 << bit_idx;
+        }
     }
 
-    NdaVec { len: w.len(), log2_scale, sign: sign.into(), extra: extra.into() }
+    NdaVec {
+        len: w.len(),
+        log2_scale,
+        sign: sign.into(),
+        extra: extra.into(),
+    }
 }
 
 #[cfg(test)]
@@ -561,8 +611,18 @@ mod tests {
     fn test_zero_kv_layer_push() {
         let mut layer = ZeroKvLayer::new();
         assert_eq!(layer.len(), 0);
-        let k = NdaVec { len: 4, log2_scale: 0, sign: vec![0b10101010].into(), extra: vec![0b01010101].into() };
-        let v = NdaVec { len: 4, log2_scale: 0, sign: vec![0b11110000].into(), extra: vec![0b00001111].into() };
+        let k = NdaVec {
+            len: 4,
+            log2_scale: 0,
+            sign: vec![0b10101010].into(),
+            extra: vec![0b01010101].into(),
+        };
+        let v = NdaVec {
+            len: 4,
+            log2_scale: 0,
+            sign: vec![0b11110000].into(),
+            extra: vec![0b00001111].into(),
+        };
         layer.push(k, v);
         assert_eq!(layer.len(), 1);
     }

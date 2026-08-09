@@ -116,8 +116,12 @@ fn code_review_pipeline(id: &str, name: &str) -> WorkflowCanvas {
     let end_id = canvas.nodes[1].id.clone();
 
     // Position Start and End
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 900.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition { x: 900.0, y: 200.0 };
+    }
 
     let compile = canvas.add_node(
         CanvasNodeKind::Tool {
@@ -155,8 +159,12 @@ fn test_and_report(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 900.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition { x: 900.0, y: 200.0 };
+    }
 
     let test = canvas.add_node(
         CanvasNodeKind::Tool {
@@ -193,8 +201,15 @@ fn refactor_safely(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 1100.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition {
+            x: 1100.0,
+            y: 200.0,
+        };
+    }
 
     let analyze = canvas.add_node(
         CanvasNodeKind::AgentTask {
@@ -221,7 +236,9 @@ fn refactor_safely(id: &str, name: &str) -> WorkflowCanvas {
     );
 
     let condition = canvas.add_node(
-        CanvasNodeKind::Condition { description: "Tests still pass?".into() },
+        CanvasNodeKind::Condition {
+            description: "Tests still pass?".into(),
+        },
         NodePosition { x: 900.0, y: 200.0 },
     );
 
@@ -238,8 +255,12 @@ fn research_and_document(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 900.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition { x: 900.0, y: 200.0 };
+    }
 
     let research = canvas.add_node(
         CanvasNodeKind::AgentTask {
@@ -277,8 +298,15 @@ fn build_deploy_check(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 1100.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition {
+            x: 1100.0,
+            y: 200.0,
+        };
+    }
 
     let build = canvas.add_node(
         CanvasNodeKind::Tool {
@@ -289,7 +317,9 @@ fn build_deploy_check(id: &str, name: &str) -> WorkflowCanvas {
     );
 
     let condition1 = canvas.add_node(
-        CanvasNodeKind::Condition { description: "Build succeeded?".into() },
+        CanvasNodeKind::Condition {
+            description: "Build succeeded?".into(),
+        },
         NodePosition { x: 450.0, y: 200.0 },
     );
 
@@ -322,8 +352,15 @@ fn bug_investigation(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 1100.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition {
+            x: 1100.0,
+            y: 200.0,
+        };
+    }
 
     let read_logs = canvas.add_node(
         CanvasNodeKind::AgentTask {
@@ -370,8 +407,15 @@ fn feature_implementation(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 1300.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition {
+            x: 1300.0,
+            y: 200.0,
+        };
+    }
 
     let plan = canvas.add_node(
         CanvasNodeKind::AgentTask {
@@ -427,8 +471,15 @@ fn dependency_audit(id: &str, name: &str) -> WorkflowCanvas {
     let start_id = canvas.nodes[0].id.clone();
     let end_id = canvas.nodes[1].id.clone();
 
-    if let Some(n) = canvas.node_mut(&start_id) { n.position = NodePosition { x: 50.0, y: 200.0 }; }
-    if let Some(n) = canvas.node_mut(&end_id) { n.position = NodePosition { x: 1100.0, y: 200.0 }; }
+    if let Some(n) = canvas.node_mut(&start_id) {
+        n.position = NodePosition { x: 50.0, y: 200.0 };
+    }
+    if let Some(n) = canvas.node_mut(&end_id) {
+        n.position = NodePosition {
+            x: 1100.0,
+            y: 200.0,
+        };
+    }
 
     let check = canvas.add_node(
         CanvasNodeKind::Tool {
@@ -477,12 +528,17 @@ mod tests {
     #[test]
     fn all_templates_produce_valid_canvases() {
         for template in all_templates() {
-            let canvas = template.build(
-                &format!("test_{}", template.id),
-                template.name,
+            let canvas = template.build(&format!("test_{}", template.id), template.name);
+            assert!(
+                canvas.nodes.len() >= 2,
+                "Template {} has too few nodes",
+                template.id
             );
-            assert!(canvas.nodes.len() >= 2, "Template {} has too few nodes", template.id);
-            assert!(canvas.execution_order().is_some(), "Template {} has a cycle", template.id);
+            assert!(
+                canvas.execution_order().is_some(),
+                "Template {} has a cycle",
+                template.id
+            );
             let wf = canvas.to_workflow();
             assert!(wf.is_some(), "Template {} failed to convert", template.id);
         }
@@ -491,7 +547,8 @@ mod tests {
     #[test]
     fn templates_cover_all_categories() {
         let templates = all_templates();
-        let categories: std::collections::HashSet<_> = templates.iter().map(|t| t.category).collect();
+        let categories: std::collections::HashSet<_> =
+            templates.iter().map(|t| t.category).collect();
         assert!(categories.len() >= 5, "Should cover at least 5 categories");
     }
 }

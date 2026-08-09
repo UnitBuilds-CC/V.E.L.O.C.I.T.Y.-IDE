@@ -28,10 +28,7 @@ impl DesktopAutomationAdapter {
         DesktopPlatformKind::current()
     }
 
-    pub fn capture_tree_snapshot(
-        workspace_root: &Path,
-        app_name: &str,
-    ) -> Result<String, String> {
+    pub fn capture_tree_snapshot(workspace_root: &Path, app_name: &str) -> Result<String, String> {
         match Self::platform_kind() {
             DesktopPlatformKind::Windows => {
                 let report = crate::wa::windows::capture_windows_snapshot_report(
@@ -43,7 +40,8 @@ impl DesktopAutomationAdapter {
                     Some(app_name),
                     15,
                     100,
-                ).map_err(|e| format!("failed to capture windows accessibility snapshot: {e}"))?;
+                )
+                .map_err(|e| format!("failed to capture windows accessibility snapshot: {e}"))?;
                 serde_json::to_string_pretty(&report)
                     .map_err(|e| format!("failed to serialize windows accessibility snapshot: {e}"))
             }
@@ -67,10 +65,14 @@ impl DesktopAutomationAdapter {
         // We invoke `gdbus call` to list accessible applications and their trees.
         let output = std::process::Command::new("gdbus")
             .args([
-                "call", "--session",
-                "--dest", "org.a11y.atspi.Registry",
-                "--object-path", "/org/a11y/atspi/accessible/root",
-                "--method", "org.a11y.atspi.Accessible.GetChildren",
+                "call",
+                "--session",
+                "--dest",
+                "org.a11y.atspi.Registry",
+                "--object-path",
+                "/org/a11y/atspi/accessible/root",
+                "--method",
+                "org.a11y.atspi.Accessible.GetChildren",
             ])
             .output();
 

@@ -21,12 +21,20 @@ impl SlotProjectionEngine {
         if let Some(host_node) = tree.get_node(host_node_id) {
             for &child_id in &host_node.children {
                 if let Some(child_node) = tree.get_node(child_id) {
-                    let slot_name = child_node.attributes.get("slot").cloned().unwrap_or_default();
-                    projections.entry(slot_name.clone()).or_insert_with(|| SlotProjection {
-                        slot_name,
-                        assigned_nodes: Vec::new(),
-                        fallback_content: None,
-                    }).assigned_nodes.push(child_id);
+                    let slot_name = child_node
+                        .attributes
+                        .get("slot")
+                        .cloned()
+                        .unwrap_or_default();
+                    projections
+                        .entry(slot_name.clone())
+                        .or_insert_with(|| SlotProjection {
+                            slot_name,
+                            assigned_nodes: Vec::new(),
+                            fallback_content: None,
+                        })
+                        .assigned_nodes
+                        .push(child_id);
                 }
             }
         }
@@ -50,7 +58,11 @@ impl SlotProjectionEngine {
     }
 
     /// Set fallback content for a slot when no nodes are assigned.
-    pub fn set_fallback(projections: &mut HashMap<String, SlotProjection>, slot_name: &str, content: &str) {
+    pub fn set_fallback(
+        projections: &mut HashMap<String, SlotProjection>,
+        slot_name: &str,
+        content: &str,
+    ) {
         if let Some(proj) = projections.get_mut(slot_name) {
             if proj.assigned_nodes.is_empty() {
                 proj.fallback_content = Some(content.to_string());
@@ -66,7 +78,10 @@ impl SlotProjectionEngine {
         let mut changed = Vec::new();
         for (name, new_proj) in new {
             let old_proj = old.get(name);
-            let old_nodes = old_proj.map(|p| &p.assigned_nodes).cloned().unwrap_or_default();
+            let old_nodes = old_proj
+                .map(|p| &p.assigned_nodes)
+                .cloned()
+                .unwrap_or_default();
             if old_nodes != new_proj.assigned_nodes {
                 changed.push(name.clone());
             }
@@ -82,7 +97,10 @@ impl SlotProjectionEngine {
 
     /// Get all assigned node IDs across all slots.
     pub fn all_assigned_nodes(projections: &HashMap<String, SlotProjection>) -> Vec<usize> {
-        projections.values().flat_map(|p| p.assigned_nodes.iter().cloned()).collect()
+        projections
+            .values()
+            .flat_map(|p| p.assigned_nodes.iter().cloned())
+            .collect()
     }
 }
 
@@ -97,24 +115,48 @@ mod tests {
         let host_id = 0;
         let nodes = vec![
             DomNode {
-                id: 0, node_type: NodeType::Element, tag_name: "my-component".to_string(),
-                attributes: HashMap::new(), text_content: String::new(),
-                children: vec![1, 2, 3], parent: None,
-            },
-            DomNode {
-                id: 1, node_type: NodeType::Element, tag_name: "span".to_string(),
-                attributes: { let mut m = HashMap::new(); m.insert("slot".to_string(), "header".to_string()); m },
-                text_content: "Header".to_string(), children: Vec::new(), parent: Some(0),
-            },
-            DomNode {
-                id: 2, node_type: NodeType::Element, tag_name: "div".to_string(),
+                id: 0,
+                node_type: NodeType::Element,
+                tag_name: "my-component".to_string(),
                 attributes: HashMap::new(),
-                text_content: "Default content".to_string(), children: Vec::new(), parent: Some(0),
+                text_content: String::new(),
+                children: vec![1, 2, 3],
+                parent: None,
             },
             DomNode {
-                id: 3, node_type: NodeType::Element, tag_name: "span".to_string(),
-                attributes: { let mut m = HashMap::new(); m.insert("slot".to_string(), "footer".to_string()); m },
-                text_content: "Footer".to_string(), children: Vec::new(), parent: Some(0),
+                id: 1,
+                node_type: NodeType::Element,
+                tag_name: "span".to_string(),
+                attributes: {
+                    let mut m = HashMap::new();
+                    m.insert("slot".to_string(), "header".to_string());
+                    m
+                },
+                text_content: "Header".to_string(),
+                children: Vec::new(),
+                parent: Some(0),
+            },
+            DomNode {
+                id: 2,
+                node_type: NodeType::Element,
+                tag_name: "div".to_string(),
+                attributes: HashMap::new(),
+                text_content: "Default content".to_string(),
+                children: Vec::new(),
+                parent: Some(0),
+            },
+            DomNode {
+                id: 3,
+                node_type: NodeType::Element,
+                tag_name: "span".to_string(),
+                attributes: {
+                    let mut m = HashMap::new();
+                    m.insert("slot".to_string(), "footer".to_string());
+                    m
+                },
+                text_content: "Footer".to_string(),
+                children: Vec::new(),
+                parent: Some(0),
             },
         ];
         (DomTree::new(nodes), host_id)
@@ -140,19 +182,32 @@ mod tests {
     #[test]
     fn test_fallback_content() {
         let mut projections = HashMap::new();
-        projections.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: Vec::new(), fallback_content: None,
-        });
+        projections.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: Vec::new(),
+                fallback_content: None,
+            },
+        );
         SlotProjectionEngine::set_fallback(&mut projections, "header", "Default Header");
-        assert_eq!(projections["header"].fallback_content.as_deref(), Some("Default Header"));
+        assert_eq!(
+            projections["header"].fallback_content.as_deref(),
+            Some("Default Header")
+        );
     }
 
     #[test]
     fn test_no_fallback_when_assigned() {
         let mut projections = HashMap::new();
-        projections.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
-        });
+        projections.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: vec![1],
+                fallback_content: None,
+            },
+        );
         SlotProjectionEngine::set_fallback(&mut projections, "header", "Default Header");
         assert!(projections["header"].fallback_content.is_none());
     }
@@ -160,13 +215,23 @@ mod tests {
     #[test]
     fn test_detect_changes() {
         let mut old = HashMap::new();
-        old.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
-        });
+        old.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: vec![1],
+                fallback_content: None,
+            },
+        );
         let mut new = HashMap::new();
-        new.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: vec![1, 2], fallback_content: None,
-        });
+        new.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: vec![1, 2],
+                fallback_content: None,
+            },
+        );
         let changed = SlotProjectionEngine::detect_slot_changes(&old, &new);
         assert_eq!(changed.len(), 1);
         assert_eq!(changed[0], "header");
@@ -175,25 +240,37 @@ mod tests {
     #[test]
     fn test_all_assigned_nodes() {
         let mut projections = HashMap::new();
-        projections.insert("a".to_string(), SlotProjection {
-            slot_name: "a".to_string(), assigned_nodes: vec![1, 2], fallback_content: None,
-        });
-        projections.insert("b".to_string(), SlotProjection {
-            slot_name: "b".to_string(), assigned_nodes: vec![3], fallback_content: None,
-        });
+        projections.insert(
+            "a".to_string(),
+            SlotProjection {
+                slot_name: "a".to_string(),
+                assigned_nodes: vec![1, 2],
+                fallback_content: None,
+            },
+        );
+        projections.insert(
+            "b".to_string(),
+            SlotProjection {
+                slot_name: "b".to_string(),
+                assigned_nodes: vec![3],
+                fallback_content: None,
+            },
+        );
         let all = SlotProjectionEngine::all_assigned_nodes(&projections);
         assert_eq!(all.len(), 3);
     }
 
     #[test]
     fn test_empty_host_produces_no_slots() {
-        let nodes = vec![
-            DomNode {
-                id: 0, node_type: NodeType::Element, tag_name: "my-component".to_string(),
-                attributes: HashMap::new(), text_content: String::new(),
-                children: Vec::new(), parent: None,
-            },
-        ];
+        let nodes = vec![DomNode {
+            id: 0,
+            node_type: NodeType::Element,
+            tag_name: "my-component".to_string(),
+            attributes: HashMap::new(),
+            text_content: String::new(),
+            children: Vec::new(),
+            parent: None,
+        }];
         let tree = DomTree::new(nodes);
         let projections = SlotProjectionEngine::project_slots(&tree, 0);
         assert!(projections.is_empty());
@@ -202,12 +279,22 @@ mod tests {
     #[test]
     fn test_detect_changes_removed_slot() {
         let mut old = HashMap::new();
-        old.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
-        });
-        old.insert("footer".to_string(), SlotProjection {
-            slot_name: "footer".to_string(), assigned_nodes: vec![2], fallback_content: None,
-        });
+        old.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: vec![1],
+                fallback_content: None,
+            },
+        );
+        old.insert(
+            "footer".to_string(),
+            SlotProjection {
+                slot_name: "footer".to_string(),
+                assigned_nodes: vec![2],
+                fallback_content: None,
+            },
+        );
         let new = HashMap::new(); // all slots removed
         let changed = SlotProjectionEngine::detect_slot_changes(&old, &new);
         assert_eq!(changed.len(), 2);
@@ -216,13 +303,23 @@ mod tests {
     #[test]
     fn test_detect_changes_no_change() {
         let mut old = HashMap::new();
-        old.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
-        });
+        old.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: vec![1],
+                fallback_content: None,
+            },
+        );
         let mut new = HashMap::new();
-        new.insert("header".to_string(), SlotProjection {
-            slot_name: "header".to_string(), assigned_nodes: vec![1], fallback_content: None,
-        });
+        new.insert(
+            "header".to_string(),
+            SlotProjection {
+                slot_name: "header".to_string(),
+                assigned_nodes: vec![1],
+                fallback_content: None,
+            },
+        );
         let changed = SlotProjectionEngine::detect_slot_changes(&old, &new);
         assert!(changed.is_empty());
     }
@@ -238,19 +335,39 @@ mod tests {
     fn test_multiple_nodes_same_slot() {
         let nodes = vec![
             DomNode {
-                id: 0, node_type: NodeType::Element, tag_name: "host".to_string(),
-                attributes: HashMap::new(), text_content: String::new(),
-                children: vec![1, 2], parent: None,
+                id: 0,
+                node_type: NodeType::Element,
+                tag_name: "host".to_string(),
+                attributes: HashMap::new(),
+                text_content: String::new(),
+                children: vec![1, 2],
+                parent: None,
             },
             DomNode {
-                id: 1, node_type: NodeType::Element, tag_name: "span".to_string(),
-                attributes: { let mut m = HashMap::new(); m.insert("slot".to_string(), "header".to_string()); m },
-                text_content: String::new(), children: Vec::new(), parent: Some(0),
+                id: 1,
+                node_type: NodeType::Element,
+                tag_name: "span".to_string(),
+                attributes: {
+                    let mut m = HashMap::new();
+                    m.insert("slot".to_string(), "header".to_string());
+                    m
+                },
+                text_content: String::new(),
+                children: Vec::new(),
+                parent: Some(0),
             },
             DomNode {
-                id: 2, node_type: NodeType::Element, tag_name: "div".to_string(),
-                attributes: { let mut m = HashMap::new(); m.insert("slot".to_string(), "header".to_string()); m },
-                text_content: String::new(), children: Vec::new(), parent: Some(0),
+                id: 2,
+                node_type: NodeType::Element,
+                tag_name: "div".to_string(),
+                attributes: {
+                    let mut m = HashMap::new();
+                    m.insert("slot".to_string(), "header".to_string());
+                    m
+                },
+                text_content: String::new(),
+                children: Vec::new(),
+                parent: Some(0),
             },
         ];
         let tree = DomTree::new(nodes);

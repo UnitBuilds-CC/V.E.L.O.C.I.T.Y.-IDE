@@ -11,13 +11,17 @@ pub struct AuthTokenState {
 pub struct AuthReseeder;
 
 impl AuthReseeder {
-    pub fn extract_auth_state(cookies: &[crate::session::Cookie], storage: &HashMap<String, String>) -> AuthTokenState {
+    pub fn extract_auth_state(
+        cookies: &[crate::session::Cookie],
+        storage: &HashMap<String, String>,
+    ) -> AuthTokenState {
         let mut cookie_map = HashMap::new();
         for c in cookies {
             cookie_map.insert(c.name.clone(), c.value.clone());
         }
 
-        let bearer = storage.get("access_token")
+        let bearer = storage
+            .get("access_token")
             .or_else(|| storage.get("token"))
             .or_else(|| storage.get("auth_token"))
             .cloned();
@@ -29,7 +33,10 @@ impl AuthReseeder {
         }
     }
 
-    pub fn reseed_into_session(session: &mut crate::session::BrowserSession, auth: &AuthTokenState) {
+    pub fn reseed_into_session(
+        session: &mut crate::session::BrowserSession,
+        auth: &AuthTokenState,
+    ) {
         for (k, v) in &auth.cookies {
             session.cookies.push(crate::session::Cookie {
                 name: k.clone(),

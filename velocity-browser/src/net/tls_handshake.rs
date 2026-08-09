@@ -18,8 +18,8 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use crate::net::tls13::{
-    derive_early_secret, derive_handshake_secret, derive_master_secret, derive_secret,
-    hmac_sha256, sha256, traffic_key_iv,
+    derive_early_secret, derive_handshake_secret, derive_master_secret, derive_secret, hmac_sha256,
+    sha256, traffic_key_iv,
 };
 use crate::net::tls_record::{open_record, seal_record, AeadAlg};
 use crate::net::x25519;
@@ -408,9 +408,13 @@ impl Tls13Handshake {
     /// Decrypts and processes EncryptedExtensions, Certificate, CertVerify, Finished.
     pub fn process_encrypted_record(&mut self, ciphertext: &[u8]) -> Result<(), String> {
         // Decrypt the record using the server handshake traffic key
-        let additional_data = [CONTENT_APPLICATION_DATA, 0x03, 0x03,
+        let additional_data = [
+            CONTENT_APPLICATION_DATA,
+            0x03,
+            0x03,
             ((ciphertext.len() >> 8) & 0xff) as u8,
-            (ciphertext.len() & 0xff) as u8];
+            (ciphertext.len() & 0xff) as u8,
+        ];
 
         let plaintext = open_record(
             AeadAlg::ChaCha20Poly1305,
@@ -419,7 +423,8 @@ impl Tls13Handshake {
             self.server_seq,
             &additional_data,
             ciphertext,
-        ).ok_or("failed to decrypt handshake record")?;
+        )
+        .ok_or("failed to decrypt handshake record")?;
 
         self.server_seq += 1;
 
@@ -470,10 +475,8 @@ impl Tls13Handshake {
                             let mut verdict = x509::verify(&parsed, &self.hostname, self.now_unix);
                             // Build and validate a chain to a trusted root using
                             // rustls-webpki + the Mozilla root program.
-                            match crate::net::tls_trust::verify_chain_to_root(
-                                &chain,
-                                self.now_unix,
-                            ) {
+                            match crate::net::tls_trust::verify_chain_to_root(&chain, self.now_unix)
+                            {
                                 Ok(()) => verdict.chain_verified = true,
                                 Err(e) => {
                                     verdict.chain_verified = false;
@@ -519,9 +522,8 @@ impl Tls13Handshake {
                                 v.authenticated =
                                     v.hostname_matched && v.time_valid && v.chain_verified;
                                 if v.authenticated {
-                                    v.reason =
-                                        "hostname, validity, chain and signature verified"
-                                            .to_string();
+                                    v.reason = "hostname, validity, chain and signature verified"
+                                        .to_string();
                                 } else if !v.chain_verified {
                                     v.reason = format!(
                                         "signature valid but chain not trusted: {}",
@@ -542,14 +544,19 @@ impl Tls13Handshake {
                     // Callers that demand real authentication fail closed here
                     // if the peer could not be authenticated.
                     if self.require_authentication
-                        && !self.cert_verdict.as_ref().map(|v| v.authenticated).unwrap_or(false)
+                        && !self
+                            .cert_verdict
+                            .as_ref()
+                            .map(|v| v.authenticated)
+                            .unwrap_or(false)
                     {
                         let reason = self
                             .cert_verdict
                             .as_ref()
                             .map(|v| v.reason.clone())
                             .unwrap_or_else(|| "no certificate presented".to_string());
-                        let msg = format!("peer authentication required but not satisfied: {reason}");
+                        let msg =
+                            format!("peer authentication required but not satisfied: {reason}");
                         self.state = HandshakeState::Failed(msg.clone());
                         return Err(msg);
                     }
@@ -576,7 +583,9 @@ impl Tls13Handshake {
                         diff |= verify_data[i] ^ expected_verify[i];
                     }
                     if diff != 0 {
-                        self.state = HandshakeState::Failed("server Finished verification failed".to_string());
+                        self.state = HandshakeState::Failed(
+                            "server Finished verification failed".to_string(),
+                        );
                         return Err("server Finished verification failed".to_string());
                     }
 
@@ -659,9 +668,13 @@ impl Tls13Handshake {
 
         // Encrypt with client handshake write key
         let record_len = inner_plaintext.len() + 16; // + tag
-        let additional_data = [CONTENT_APPLICATION_DATA, 0x03, 0x03,
+        let additional_data = [
+            CONTENT_APPLICATION_DATA,
+            0x03,
+            0x03,
             ((record_len >> 8) & 0xff) as u8,
-            (record_len & 0xff) as u8];
+            (record_len & 0xff) as u8,
+        ];
 
         let sealed = seal_record(
             AeadAlg::ChaCha20Poly1305,
@@ -691,9 +704,13 @@ impl Tls13Handshake {
         inner.push(CONTENT_APPLICATION_DATA); // inner content type
 
         let record_len = inner.len() + 16;
-        let additional_data = [CONTENT_APPLICATION_DATA, 0x03, 0x03,
+        let additional_data = [
+            CONTENT_APPLICATION_DATA,
+            0x03,
+            0x03,
             ((record_len >> 8) & 0xff) as u8,
-            (record_len & 0xff) as u8];
+            (record_len & 0xff) as u8,
+        ];
 
         let sealed = seal_record(
             AeadAlg::ChaCha20Poly1305,
@@ -715,9 +732,13 @@ impl Tls13Handshake {
 
     /// Decrypt application data received from the server.
     pub fn decrypt_app_data(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
-        let additional_data = [CONTENT_APPLICATION_DATA, 0x03, 0x03,
+        let additional_data = [
+            CONTENT_APPLICATION_DATA,
+            0x03,
+            0x03,
             ((ciphertext.len() >> 8) & 0xff) as u8,
-            (ciphertext.len() & 0xff) as u8];
+            (ciphertext.len() & 0xff) as u8,
+        ];
 
         let plaintext = open_record(
             AeadAlg::ChaCha20Poly1305,
@@ -726,7 +747,8 @@ impl Tls13Handshake {
             self.server_seq,
             &additional_data,
             ciphertext,
-        ).ok_or("failed to decrypt application record")?;
+        )
+        .ok_or("failed to decrypt application record")?;
 
         self.server_seq += 1;
 
@@ -786,9 +808,8 @@ fn extract_all_certificates(body: &[u8]) -> Vec<Vec<u8>> {
     }
     // Each CertificateEntry: opaque cert_data<1..2^24-1> then extensions<0..2^16-1>.
     while off + 3 <= list_end {
-        let cert_len = ((body[off] as usize) << 16)
-            | ((body[off + 1] as usize) << 8)
-            | body[off + 2] as usize;
+        let cert_len =
+            ((body[off] as usize) << 16) | ((body[off + 1] as usize) << 8) | body[off + 2] as usize;
         off += 3;
         if off + cert_len > list_end {
             break;
@@ -817,7 +838,9 @@ fn generate_random_bytes() -> [u8; 32] {
     let mut state = seed;
     let mut out = [0u8; 32];
     for byte in out.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *byte = (state >> 33) as u8;
     }
     // Mix with SHA-256 for better distribution
@@ -827,14 +850,18 @@ fn generate_random_bytes() -> [u8; 32] {
 /// Read one TLS record from a TCP stream. Returns (content_type, payload).
 pub fn read_tls_record(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), String> {
     let mut header = [0u8; 5];
-    stream.read_exact(&mut header).map_err(|e| format!("read header: {}", e))?;
+    stream
+        .read_exact(&mut header)
+        .map_err(|e| format!("read header: {}", e))?;
     let content_type = header[0];
     let length = u16::from_be_bytes([header[3], header[4]]) as usize;
     if length > 16384 + 256 {
         return Err("record too large".to_string());
     }
     let mut payload = vec![0u8; length];
-    stream.read_exact(&mut payload).map_err(|e| format!("read payload: {}", e))?;
+    stream
+        .read_exact(&mut payload)
+        .map_err(|e| format!("read payload: {}", e))?;
     Ok((content_type, payload))
 }
 
@@ -845,13 +872,18 @@ pub fn perform_handshake(stream: &mut TcpStream, hostname: &str) -> Result<Tls13
 
     // Send ClientHello
     let client_hello = hs.build_client_hello();
-    stream.write_all(&client_hello).map_err(|e| format!("write ClientHello: {}", e))?;
+    stream
+        .write_all(&client_hello)
+        .map_err(|e| format!("write ClientHello: {}", e))?;
     stream.flush().map_err(|e| format!("flush: {}", e))?;
 
     // Read ServerHello
     let (ct, payload) = read_tls_record(stream)?;
     if ct != CONTENT_HANDSHAKE {
-        return Err(format!("expected handshake record, got content_type {}", ct));
+        return Err(format!(
+            "expected handshake record, got content_type {}",
+            ct
+        ));
     }
     hs.process_server_hello(&payload)?;
 
@@ -878,7 +910,9 @@ pub fn perform_handshake(stream: &mut TcpStream, hostname: &str) -> Result<Tls13
 
     // Send client Finished
     let client_finished = hs.build_client_finished();
-    stream.write_all(&client_finished).map_err(|e| format!("write Finished: {}", e))?;
+    stream
+        .write_all(&client_finished)
+        .map_err(|e| format!("write Finished: {}", e))?;
     stream.flush().map_err(|e| format!("flush: {}", e))?;
 
     Ok(hs)
@@ -1023,8 +1057,7 @@ mod tests {
     #[test]
     #[ignore]
     fn tls13_handshake_from_scratch_end_to_end() {
-        let mut stream = TcpStream::connect("example.com:443")
-            .expect("TCP connect");
+        let mut stream = TcpStream::connect("example.com:443").expect("TCP connect");
         let hs = perform_handshake(&mut stream, "example.com");
         match hs {
             Ok(ctx) => {

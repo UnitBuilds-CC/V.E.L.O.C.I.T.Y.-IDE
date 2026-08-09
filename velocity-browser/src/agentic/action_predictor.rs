@@ -1,5 +1,5 @@
-use crate::dom::DomTree;
 use super::adaptive_confidence::AdaptiveConfidence;
+use crate::dom::DomTree;
 
 #[derive(Debug, Clone)]
 pub struct PredictedActionTarget {
@@ -31,7 +31,11 @@ impl ActionPredictorEngine {
             } else if n.tag_name == "a" {
                 ("link", "click")
             } else if n.tag_name == "input" {
-                let input_type = n.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+                let input_type = n
+                    .attributes
+                    .get("type")
+                    .map(|s| s.as_str())
+                    .unwrap_or("text");
                 match input_type {
                     "submit" => ("button", "click"),
                     "text" | "email" | "password" | "search" | "tel" | "url" => ("textbox", "fill"),
@@ -47,7 +51,9 @@ impl ActionPredictorEngine {
                 continue;
             };
 
-            let text = n.attributes.get("value")
+            let text = n
+                .attributes
+                .get("value")
                 .or_else(|| n.attributes.get("aria-label"))
                 .map(|s| s.as_str())
                 .unwrap_or("");
@@ -95,7 +101,7 @@ mod tests {
 
     #[test]
     fn predicts_button_with_adaptive_confidence() {
-        let tree = make_dom(&[("button", vec![("value", "Submit")])]);  
+        let tree = make_dom(&[("button", vec![("value", "Submit")])]);
         let mut ac = AdaptiveConfidence::new();
         // Train high confidence for buttons
         for _ in 0..5 {
@@ -110,10 +116,7 @@ mod tests {
 
     #[test]
     fn prefers_higher_confidence_target() {
-        let tree = make_dom(&[
-            ("a", vec![]),
-            ("button", vec![("value", "Login")]),
-        ]);
+        let tree = make_dom(&[("a", vec![]), ("button", vec![("value", "Login")])]);
         let mut ac = AdaptiveConfidence::new();
         // Buttons succeed more than links on this domain
         for _ in 0..5 {

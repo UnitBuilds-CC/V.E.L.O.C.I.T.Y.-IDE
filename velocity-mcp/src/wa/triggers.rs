@@ -18,7 +18,10 @@ pub enum TriggerKind {
     /// Fire after a fixed delay.
     Delay(Duration),
     /// Fire at a specific interval (repeating).
-    Interval { period: Duration, max_fires: Option<u32> },
+    Interval {
+        period: Duration,
+        max_fires: Option<u32>,
+    },
     /// Fire when a file appears or changes.
     FileWatch {
         path: PathBuf,
@@ -180,7 +183,10 @@ impl TriggerManager {
             trigger_id: id.to_string(),
             success: true,
             fired_at_ms: now,
-            detail: format!("Manually fired trigger '{}' (fire #{})", trigger.name, trigger.fire_count),
+            detail: format!(
+                "Manually fired trigger '{}' (fire #{})",
+                trigger.name, trigger.fire_count
+            ),
             action_output: None,
         };
         self.fire_history.push(result.clone());
@@ -194,11 +200,7 @@ impl TriggerManager {
     pub fn expired_triggers(&self) -> Vec<&TriggerDefinition> {
         self.triggers
             .iter()
-            .filter(|t| {
-                t.max_fires
-                    .map(|max| t.fire_count >= max)
-                    .unwrap_or(false)
-            })
+            .filter(|t| t.max_fires.map(|max| t.fire_count >= max).unwrap_or(false))
             .collect()
     }
 
@@ -228,7 +230,11 @@ impl TriggerManager {
             if !trigger.enabled {
                 continue;
             }
-            if trigger.max_fires.map(|max| trigger.fire_count >= max).unwrap_or(false) {
+            if trigger
+                .max_fires
+                .map(|max| trigger.fire_count >= max)
+                .unwrap_or(false)
+            {
                 continue;
             }
             if self.should_fire(trigger, clipboard_changed) {
@@ -258,9 +264,7 @@ impl TriggerManager {
                 let elapsed = now_ms().saturating_sub(last);
                 elapsed >= period.as_millis() as u64
             }
-            TriggerKind::FileWatch { path, event } => {
-                check_file_condition(path, event)
-            }
+            TriggerKind::FileWatch { path, event } => check_file_condition(path, event),
             TriggerKind::WindowAppears { title_contains } => {
                 check_window_condition(title_contains, true)
             }
@@ -270,9 +274,7 @@ impl TriggerManager {
             TriggerKind::ProcessStarts { name_contains } => {
                 check_process_condition(name_contains, true)
             }
-            TriggerKind::ProcessExits { pid } => {
-                !check_process_alive(*pid)
-            }
+            TriggerKind::ProcessExits { pid } => !check_process_alive(*pid),
             TriggerKind::ClipboardChanged => clipboard_changed,
             TriggerKind::SystemIdle { idle_threshold } => {
                 check_system_idle(idle_threshold.as_millis() as u64)
@@ -300,11 +302,19 @@ fn now_ms() -> u64 {
 
 fn run_ps_quick(script: &str) -> Option<String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn().ok()?;
+        .spawn()
+        .ok()?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(script.as_bytes()).ok()?;
     }
@@ -324,16 +334,24 @@ fn check_file_condition(path: &Path, event: &FileWatchEvent) -> bool {
             // Check if file was modified in last 5 seconds
             if let Ok(meta) = std::fs::metadata(path) {
                 if let Ok(modified) = meta.modified() {
-                    let age = SystemTime::now().duration_since(modified).unwrap_or(Duration::MAX);
+                    let age = SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or(Duration::MAX);
                     age < Duration::from_secs(5)
-                } else { false }
-            } else { false }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         }
     }
 }
 
 fn check_window_condition(title_contains: &str, should_exist: bool) -> bool {
-    if !cfg!(target_os = "windows") { return false; }
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
     let escaped = title_contains.replace('\'', "''");
     let script = format!(
         r#"Add-Type -AssemblyName UIAutomationClient; $root = [System.Windows.Automation.AutomationElement]::RootElement; $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition); $found = $false; foreach ($w in $windows) {{ if ($w.Current.Name -like '*{}*') {{ $found = $true; break }} }}; Write-Output $found"#,
@@ -342,14 +360,20 @@ fn check_window_condition(title_contains: &str, should_exist: bool) -> bool {
     match run_ps_quick(&script) {
         Some(out) => {
             let is_true = out.eq_ignore_ascii_case("true");
-            if should_exist { is_true } else { !is_true }
+            if should_exist {
+                is_true
+            } else {
+                !is_true
+            }
         }
         None => false,
     }
 }
 
 fn check_process_condition(name_contains: &str, should_exist: bool) -> bool {
-    if !cfg!(target_os = "windows") { return false; }
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
     let escaped = name_contains.replace('\'', "''");
     let script = format!(
         r#"$p = Get-Process | Where-Object {{ $_.ProcessName -like '*{}*' }}; Write-Output ($null -ne $p)"#,
@@ -358,15 +382,24 @@ fn check_process_condition(name_contains: &str, should_exist: bool) -> bool {
     match run_ps_quick(&script) {
         Some(out) => {
             let is_true = out.eq_ignore_ascii_case("true");
-            if should_exist { is_true } else { !is_true }
+            if should_exist {
+                is_true
+            } else {
+                !is_true
+            }
         }
         None => false,
     }
 }
 
 fn check_process_alive(pid: u32) -> bool {
-    if !cfg!(target_os = "windows") { return true; }
-    let script = format!(r#"$p = Get-Process -Id {} -ErrorAction SilentlyContinue; Write-Output ($null -ne $p)"#, pid);
+    if !cfg!(target_os = "windows") {
+        return true;
+    }
+    let script = format!(
+        r#"$p = Get-Process -Id {} -ErrorAction SilentlyContinue; Write-Output ($null -ne $p)"#,
+        pid
+    );
     match run_ps_quick(&script) {
         Some(out) => out.eq_ignore_ascii_case("true"),
         None => true, // assume alive if we can't check
@@ -374,7 +407,9 @@ fn check_process_alive(pid: u32) -> bool {
 }
 
 fn check_system_idle(threshold_ms: u64) -> bool {
-    if !cfg!(target_os = "windows") { return false; }
+    if !cfg!(target_os = "windows") {
+        return false;
+    }
     let script = format!(
         r#"Add-Type @'
 using System; using System.Runtime.InteropServices;
@@ -397,7 +432,10 @@ public class IdleCheck {{
 /// Build a PowerShell script to watch for file system events.
 pub fn build_file_watch_script(path: &Path, event: &FileWatchEvent, timeout_ms: u64) -> String {
     let dir = path.parent().unwrap_or(path);
-    let filename = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "*".to_string());
+    let filename = path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| "*".to_string());
     let event_filter = match event {
         FileWatchEvent::Created => "Created",
         FileWatchEvent::Modified => "Changed",
@@ -489,7 +527,9 @@ mod tests {
             id: "t1".to_string(),
             name: "Test Trigger".to_string(),
             kind: TriggerKind::Delay(Duration::from_secs(5)),
-            action: TriggerAction::LogEvent { category: "test".to_string() },
+            action: TriggerAction::LogEvent {
+                category: "test".to_string(),
+            },
             enabled: true,
             max_fires: Some(3),
             fire_count: 0,
@@ -507,8 +547,13 @@ mod tests {
         mgr.register(TriggerDefinition {
             id: "t2".to_string(),
             name: "Fire Test".to_string(),
-            kind: TriggerKind::Interval { period: Duration::from_secs(60), max_fires: None },
-            action: TriggerAction::LogEvent { category: "test".to_string() },
+            kind: TriggerKind::Interval {
+                period: Duration::from_secs(60),
+                max_fires: None,
+            },
+            action: TriggerAction::LogEvent {
+                category: "test".to_string(),
+            },
             enabled: true,
             max_fires: None,
             fire_count: 0,
@@ -527,7 +572,9 @@ mod tests {
             id: "t3".to_string(),
             name: "Limited".to_string(),
             kind: TriggerKind::Delay(Duration::from_secs(1)),
-            action: TriggerAction::LogEvent { category: "test".to_string() },
+            action: TriggerAction::LogEvent {
+                category: "test".to_string(),
+            },
             enabled: true,
             max_fires: Some(2),
             fire_count: 2,

@@ -77,7 +77,11 @@ fn render_index(model: &WikiModel) -> String {
         out.push_str("- [Files](#files)\n");
         let modules = group_by_module(&model.file_pages);
         for module in modules.keys() {
-            out.push_str(&format!("  - [{}](#module-{})\n", module, slugify_module(module)));
+            out.push_str(&format!(
+                "  - [{}](#module-{})\n",
+                module,
+                slugify_module(module)
+            ));
         }
     }
     if !model.symbol_pages.is_empty() {
@@ -117,9 +121,7 @@ fn render_index(model: &WikiModel) -> String {
         for page in &model.symbol_pages {
             out.push_str(&format!(
                 "- [{}](symbols/{}.md) — {}\n",
-                page.title,
-                page.slug,
-                page.summary
+                page.title, page.slug, page.summary
             ));
         }
         out.push('\n');
@@ -135,7 +137,10 @@ pub fn render_page_markdown(page: &WikiPage, model: &WikiModel) -> String {
 
     // Breadcrumb navigation
     let kind_label = page.kind.label();
-    out.push_str(&format!("> [Wiki](../index.md) > {} > {}\n\n", kind_label, page.title));
+    out.push_str(&format!(
+        "> [Wiki](../index.md) > {} > {}\n\n",
+        kind_label, page.title
+    ));
     out.push_str(&generated_header(model));
     out.push('\n');
     out.push_str(&page.summary);
@@ -191,7 +196,12 @@ fn render_symbol_index(model: &WikiModel) -> String {
     // Group by first letter
     let mut by_letter: BTreeMap<char, Vec<&WikiPage>> = BTreeMap::new();
     for page in &model.symbol_pages {
-        let first = page.title.chars().next().unwrap_or('#').to_ascii_uppercase();
+        let first = page
+            .title
+            .chars()
+            .next()
+            .unwrap_or('#')
+            .to_ascii_uppercase();
         by_letter.entry(first).or_default().push(page);
     }
 
@@ -199,7 +209,9 @@ fn render_symbol_index(model: &WikiModel) -> String {
     out.push_str("**Letters:** ");
     let letters: Vec<char> = by_letter.keys().cloned().collect();
     for (i, letter) in letters.iter().enumerate() {
-        if i > 0 { out.push_str(" · "); }
+        if i > 0 {
+            out.push_str(" · ");
+        }
         out.push_str(&format!("[{}](#{})", letter, letter.to_ascii_lowercase()));
     }
     out.push_str("\n\n");
@@ -209,9 +221,7 @@ fn render_symbol_index(model: &WikiModel) -> String {
         for page in pages {
             out.push_str(&format!(
                 "- [{}](symbols/{}.md) — {}\n",
-                page.title,
-                page.slug,
-                page.summary
+                page.title, page.slug, page.summary
             ));
         }
         out.push('\n');
@@ -234,7 +244,9 @@ fn render_dependency_graph(model: &WikiModel) -> String {
     let mut node_ids: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     for page in model.file_pages.iter().chain(model.symbol_pages.iter()) {
-        if node_count >= max_nodes { break; }
+        if node_count >= max_nodes {
+            break;
+        }
         let id = format!("N{}", node_count);
         let label = if page.title.len() > 20 {
             format!("{}...", &page.title[..17])
@@ -274,17 +286,28 @@ fn group_by_module(pages: &[WikiPage]) -> BTreeMap<String, Vec<&WikiPage>> {
     let mut modules: BTreeMap<String, Vec<&WikiPage>> = BTreeMap::new();
     for page in pages {
         let module = page.title.split('/').next().unwrap_or("root").to_string();
-        let module = if module.contains('.') || module.is_empty() { "root".to_string() } else { module };
+        let module = if module.contains('.') || module.is_empty() {
+            "root".to_string()
+        } else {
+            module
+        };
         modules.entry(module).or_default().push(page);
     }
     modules
 }
 
 pub fn slugify_module(name: &str) -> String {
-    name.chars().map(|c| {
-        if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() }
-        else { '-' }
-    }).collect::<String>().trim_matches('-').to_string()
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
 }
 
 /// Build a relative Markdown link to a target page if one exists, otherwise
@@ -295,7 +318,11 @@ fn link_for(target: &str, model: &WikiModel) -> String {
             WikiPageKind::File => {
                 // Use module-aware path for file pages
                 let module = page.title.split('/').next().unwrap_or("root");
-                let module = if module.contains('.') || module.is_empty() { "root" } else { module };
+                let module = if module.contains('.') || module.is_empty() {
+                    "root"
+                } else {
+                    module
+                };
                 format!("../files/{}/{}.md", slugify_module(module), page.slug)
             }
             WikiPageKind::Symbol => format!("../symbols/{}.md", page.slug),

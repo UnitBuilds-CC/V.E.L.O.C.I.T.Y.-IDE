@@ -20,7 +20,10 @@ fn test_52_pure_rust_engine_modules() {
     assert_eq!(stream_tokens.len(), 3); // open tag + text + close tag
 
     let mut session = BrowserSession::new("sess_52_modules".to_string());
-    let _ = session.load_html("https://example.com", "<html><body><button id='b1'>Submit</button></body></html>");
+    let _ = session.load_html(
+        "https://example.com",
+        "<html><body><button id='b1'>Submit</button></body></html>",
+    );
     let pred = session.predict_action();
     assert!(pred.is_some());
     assert_eq!(pred.unwrap().action_type, "click");

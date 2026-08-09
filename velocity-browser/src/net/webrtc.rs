@@ -133,10 +133,22 @@ pub enum TrackState {
 
 impl MediaStreamTrack {
     pub fn new_audio(id: &str) -> Self {
-        Self { id: id.to_string(), kind: TrackKind::Audio, enabled: true, muted: false, ready_state: TrackState::Live }
+        Self {
+            id: id.to_string(),
+            kind: TrackKind::Audio,
+            enabled: true,
+            muted: false,
+            ready_state: TrackState::Live,
+        }
     }
     pub fn new_video(id: &str) -> Self {
-        Self { id: id.to_string(), kind: TrackKind::Video, enabled: true, muted: false, ready_state: TrackState::Live }
+        Self {
+            id: id.to_string(),
+            kind: TrackKind::Video,
+            enabled: true,
+            muted: false,
+            ready_state: TrackState::Live,
+        }
     }
     pub fn stop(&mut self) {
         self.ready_state = TrackState::Ended;
@@ -153,7 +165,11 @@ pub struct IceServer {
 
 impl IceServer {
     pub fn stun(url: &str) -> Self {
-        Self { urls: vec![url.to_string()], username: None, credential: None }
+        Self {
+            urls: vec![url.to_string()],
+            username: None,
+            credential: None,
+        }
     }
     pub fn turn(url: &str, username: &str, credential: &str) -> Self {
         Self {
@@ -235,7 +251,10 @@ impl WebRtcTransport {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs()).unwrap_or(0)
         );
-        let desc = SessionDescription { sdp_type: SdpType::Offer, sdp };
+        let desc = SessionDescription {
+            sdp_type: SdpType::Offer,
+            sdp,
+        };
         self.sdp_offer = Some(desc.clone());
         self.signaling_state = SignalingState::HaveLocalOffer;
         self.ice_gathering_state = IceCandidateState::Gathering;
@@ -244,8 +263,12 @@ impl WebRtcTransport {
 
     /// Create an SDP answer in response to a remote offer.
     pub fn create_answer(&mut self) -> SessionDescription {
-        let sdp = "v=0\r\no=- 12345 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=sendrecv\r\n".to_string();
-        let desc = SessionDescription { sdp_type: SdpType::Answer, sdp };
+        let sdp =
+            "v=0\r\no=- 12345 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=sendrecv\r\n".to_string();
+        let desc = SessionDescription {
+            sdp_type: SdpType::Answer,
+            sdp,
+        };
         self.sdp_answer = Some(desc.clone());
         if self.signaling_state == SignalingState::HaveRemoteOffer {
             self.signaling_state = SignalingState::Stable;

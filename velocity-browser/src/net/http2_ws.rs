@@ -1,6 +1,6 @@
+use crate::net::tls::ProxyResolver;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use crate::net::tls::ProxyResolver;
 
 /// WebSocket opcodes per RFC 6455.
 #[allow(dead_code)]
@@ -41,7 +41,11 @@ pub struct NativeWsClient {
 impl NativeWsClient {
     /// Connect with HTTP/1.1 upgrade handshake (ws:// only; wss:// should use
     /// TLS wrapper externally and pass the underlying stream).
-    pub fn connect(host: &str, port: u16, path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn connect(
+        host: &str,
+        port: u16,
+        path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let addr = format!("{}:{}", host, port);
         let mut stream = TcpStream::connect(&addr)?;
 
@@ -61,7 +65,10 @@ impl NativeWsClient {
             return Err("WebSocket handshake failed".into());
         }
 
-        Ok(Self { stream, is_connected: true })
+        Ok(Self {
+            stream,
+            is_connected: true,
+        })
     }
 
     /// Connect through a proxy resolver (HTTP CONNECT / SOCKS5 tunnel first,
@@ -90,21 +97,33 @@ impl NativeWsClient {
             return Err("WebSocket handshake failed".into());
         }
 
-        Ok(Self { stream, is_connected: true })
+        Ok(Self {
+            stream,
+            is_connected: true,
+        })
     }
 
     /// Send a masked text frame.
-    pub fn send_text(&mut self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn send_text(
+        &mut self,
+        text: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.send_frame(OPCODE_TEXT, text.as_bytes())
     }
 
     /// Send a masked binary frame.
-    pub fn send_binary(&mut self, data: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn send_binary(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.send_frame(OPCODE_BINARY, data)
     }
 
     /// Send a close frame with optional status code.
-    pub fn send_close(&mut self, code: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn send_close(
+        &mut self,
+        code: u16,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let payload = code.to_be_bytes();
         self.send_frame(OPCODE_CLOSE, &payload)?;
         self.is_connected = false;
@@ -156,11 +175,19 @@ impl NativeWsClient {
             self.is_connected = false;
         }
 
-        Ok(WsFrame { fin, opcode, payload })
+        Ok(WsFrame {
+            fin,
+            opcode,
+            payload,
+        })
     }
 
     /// Low-level: send a masked frame with given opcode.
-    fn send_frame(&mut self, opcode: u8, payload: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn send_frame(
+        &mut self,
+        opcode: u8,
+        payload: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let len = payload.len();
         let mut frame = Vec::with_capacity(len + 14);
 

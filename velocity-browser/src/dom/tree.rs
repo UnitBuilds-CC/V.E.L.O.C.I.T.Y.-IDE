@@ -176,7 +176,9 @@ impl DomTree {
 
     /// Get innerHTML: serialize child subtree to HTML string.
     pub fn get_inner_html(&self, node_id: usize) -> String {
-        let Some(node) = self.get_node(node_id) else { return String::new() };
+        let Some(node) = self.get_node(node_id) else {
+            return String::new();
+        };
         let mut html = String::new();
         for &child_id in &node.children {
             self.serialize_node(child_id, &mut html);
@@ -185,7 +187,9 @@ impl DomTree {
     }
 
     pub fn serialize_node(&self, node_id: usize, out: &mut String) {
-        let Some(node) = self.get_node(node_id) else { return };
+        let Some(node) = self.get_node(node_id) else {
+            return;
+        };
         match node.node_type {
             NodeType::Text => out.push_str(&node.text_content),
             NodeType::Element => {
@@ -212,7 +216,9 @@ impl DomTree {
 
     /// Deep clone a node and all its descendants.
     pub fn clone_node(&mut self, node_id: usize, deep: bool) -> usize {
-        let Some(node) = self.get_node(node_id).cloned() else { return 0 };
+        let Some(node) = self.get_node(node_id).cloned() else {
+            return 0;
+        };
         let new_id = self.nodes.len();
         let mut cloned = node;
         cloned.id = new_id;
@@ -241,7 +247,9 @@ impl DomTree {
         }
         let mut results = Vec::new();
         for node in &self.nodes {
-            if node.node_type != NodeType::Element { continue; }
+            if node.node_type != NodeType::Element {
+                continue;
+            }
             if matches_simple_selector(self, node.id, sel) {
                 results.push(node.id);
             }
@@ -258,11 +266,15 @@ impl DomTree {
     fn query_complex_selector(&self, selector: &str) -> Vec<usize> {
         // Split by combinators while preserving combinator type
         let parts = parse_selector_parts(selector);
-        if parts.is_empty() { return Vec::new(); }
+        if parts.is_empty() {
+            return Vec::new();
+        }
 
         let mut results = Vec::new();
         for node in &self.nodes {
-            if node.node_type != NodeType::Element { continue; }
+            if node.node_type != NodeType::Element {
+                continue;
+            }
             if self.matches_complex_parts(node.id, &parts) {
                 results.push(node.id);
             }
@@ -272,15 +284,25 @@ impl DomTree {
 
     /// Check if a node matches a complex selector (rightmost part must match the node,
     /// then walk up ancestors for descendant/child relations).
-    fn matches_complex_parts(&self, node_id: usize, parts: &[(String, SelectorCombinator)]) -> bool {
-        if parts.is_empty() { return false; }
+    fn matches_complex_parts(
+        &self,
+        node_id: usize,
+        parts: &[(String, SelectorCombinator)],
+    ) -> bool {
+        if parts.is_empty() {
+            return false;
+        }
         let (last_sel, _) = &parts[parts.len() - 1];
         let node = match self.get_node(node_id) {
             Some(n) => n,
             None => return false,
         };
-        if !matches_simple_selector(self, node_id, last_sel) { return false; }
-        if parts.len() == 1 { return true; }
+        if !matches_simple_selector(self, node_id, last_sel) {
+            return false;
+        }
+        if parts.len() == 1 {
+            return true;
+        }
 
         // Walk up the ancestor chain for remaining parts
         let remaining = &parts[..parts.len() - 1];
@@ -293,8 +315,16 @@ impl DomTree {
                 if let Some(parent_id) = node.parent {
                     if let Some(_parent_node) = self.get_node(parent_id) {
                         if matches_simple_selector(self, parent_id, parent_sel) {
-                            if remaining.len() == 1 { return true; }
-                            return self.matches_complex_parts(parent_id, &remaining[..remaining.len() - 1].iter().map(|(s, _)| (s.clone(), SelectorCombinator::Descendant)).collect::<Vec<_>>());
+                            if remaining.len() == 1 {
+                                return true;
+                            }
+                            return self.matches_complex_parts(
+                                parent_id,
+                                &remaining[..remaining.len() - 1]
+                                    .iter()
+                                    .map(|(s, _)| (s.clone(), SelectorCombinator::Descendant))
+                                    .collect::<Vec<_>>(),
+                            );
                         }
                     }
                 }
@@ -306,11 +336,21 @@ impl DomTree {
                 while let Some(pid) = current {
                     if let Some(pnode) = self.get_node(pid) {
                         if matches_simple_selector(self, pid, parent_sel) {
-                            if remaining.len() == 1 { return true; }
-                            return self.matches_complex_parts(pid, &remaining[..remaining.len() - 1].iter().map(|(s, _)| (s.clone(), SelectorCombinator::Descendant)).collect::<Vec<_>>());
+                            if remaining.len() == 1 {
+                                return true;
+                            }
+                            return self.matches_complex_parts(
+                                pid,
+                                &remaining[..remaining.len() - 1]
+                                    .iter()
+                                    .map(|(s, _)| (s.clone(), SelectorCombinator::Descendant))
+                                    .collect::<Vec<_>>(),
+                            );
                         }
                         current = pnode.parent;
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
                 false
             }
@@ -338,9 +378,17 @@ impl DomTree {
     /// Get children that are elements (for element.children).
     pub fn element_children(&self, node_id: usize) -> Vec<usize> {
         self.get_node(node_id)
-            .map(|n| n.children.iter().copied()
-                .filter(|&c| self.get_node(c).map(|n| n.node_type == NodeType::Element).unwrap_or(false))
-                .collect())
+            .map(|n| {
+                n.children
+                    .iter()
+                    .copied()
+                    .filter(|&c| {
+                        self.get_node(c)
+                            .map(|n| n.node_type == NodeType::Element)
+                            .unwrap_or(false)
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -408,7 +456,9 @@ fn matches_simple_selector(tree: &DomTree, node_id: usize, sel: &str) -> bool {
     if let Some(base_and_pseudo) = sel.split_once(':') {
         let (base, pseudo) = base_and_pseudo;
         // base might be empty (":first-child") or a tag/class ("li:nth-child(2)")
-        if !base.is_empty() && !matches_simple_selector(tree, node_id, base) { return false; }
+        if !base.is_empty() && !matches_simple_selector(tree, node_id, base) {
+            return false;
+        }
         return matches_pseudo(tree, node_id, pseudo);
     }
     // Handle attribute selectors: tag[attr=val] or [attr=val]
@@ -419,7 +469,8 @@ fn matches_simple_selector(tree: &DomTree, node_id: usize, sel: &str) -> bool {
     if let Some(id) = sel.strip_prefix('#') {
         node.attributes.get("id").map(|s| s.as_str()) == Some(id)
     } else if let Some(class) = sel.strip_prefix('.') {
-        node.attributes.get("class")
+        node.attributes
+            .get("class")
             .map(|c| c.split_whitespace().any(|x| x == class))
             .unwrap_or(false)
     } else if sel.contains('.') || sel.contains('#') {
@@ -433,7 +484,10 @@ fn matches_simple_selector(tree: &DomTree, node_id: usize, sel: &str) -> bool {
         };
         let tag_ok = tag.is_empty() || node.tag_name == tag;
         let rest_ok = if sel.contains('.') {
-            node.attributes.get("class").map(|c| c.split_whitespace().any(|x| x == rest)).unwrap_or(false)
+            node.attributes
+                .get("class")
+                .map(|c| c.split_whitespace().any(|x| x == rest))
+                .unwrap_or(false)
         } else {
             node.attributes.get("id").map(|s| s.as_str()) == Some(rest)
         };
@@ -445,27 +499,47 @@ fn matches_simple_selector(tree: &DomTree, node_id: usize, sel: &str) -> bool {
 
 /// Handle attribute selectors: [attr], [attr=val], [attr^=val], [attr$=val], [attr*=val]
 fn matches_attr_selector(node: &DomNode, sel: &str) -> bool {
-    let bracket_start = match sel.find('[') { Some(i) => i, None => return false };
-    let bracket_end = match sel.find(']') { Some(i) => i, None => return false };
+    let bracket_start = match sel.find('[') {
+        Some(i) => i,
+        None => return false,
+    };
+    let bracket_end = match sel.find(']') {
+        Some(i) => i,
+        None => return false,
+    };
 
     // Check tag prefix
     let tag_prefix = &sel[..bracket_start];
-    if !tag_prefix.is_empty() && node.tag_name != tag_prefix { return false; }
+    if !tag_prefix.is_empty() && node.tag_name != tag_prefix {
+        return false;
+    }
 
     let attr_expr = &sel[bracket_start + 1..bracket_end];
 
     if let Some((attr, val)) = attr_expr.split_once("^=") {
         let val = val.trim_matches('"').trim_matches('\'');
-        node.attributes.get(attr).map(|v| v.starts_with(val)).unwrap_or(false)
+        node.attributes
+            .get(attr)
+            .map(|v| v.starts_with(val))
+            .unwrap_or(false)
     } else if let Some((attr, val)) = attr_expr.split_once("$=") {
         let val = val.trim_matches('"').trim_matches('\'');
-        node.attributes.get(attr).map(|v| v.ends_with(val)).unwrap_or(false)
+        node.attributes
+            .get(attr)
+            .map(|v| v.ends_with(val))
+            .unwrap_or(false)
     } else if let Some((attr, val)) = attr_expr.split_once("*=") {
         let val = val.trim_matches('"').trim_matches('\'');
-        node.attributes.get(attr).map(|v| v.contains(val)).unwrap_or(false)
+        node.attributes
+            .get(attr)
+            .map(|v| v.contains(val))
+            .unwrap_or(false)
     } else if let Some((attr, val)) = attr_expr.split_once('=') {
         let val = val.trim_matches('"').trim_matches('\'');
-        node.attributes.get(attr).map(|v| v.as_str() == val).unwrap_or(false)
+        node.attributes
+            .get(attr)
+            .map(|v| v.as_str() == val)
+            .unwrap_or(false)
     } else {
         // Just [attr] - check existence
         node.attributes.contains_key(attr_expr)
@@ -487,16 +561,21 @@ fn matches_pseudo(tree: &DomTree, node_id: usize, pseudo: &str) -> bool {
         None => return false,
     };
     let siblings = &parent.children;
-    
+
     match pseudo {
         "first-child" => siblings.first() == Some(&node_id),
         "last-child" => siblings.last() == Some(&node_id),
         p if p.starts_with("nth-child(") => {
             // Parse nth-child(n)
-            if let Some(n_str) = p.strip_prefix("nth-child(").and_then(|s| s.strip_suffix(')')) {
+            if let Some(n_str) = p
+                .strip_prefix("nth-child(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
                 if let Ok(n) = n_str.parse::<usize>() {
                     // nth-child is 1-indexed
-                    if n == 0 { return false; }
+                    if n == 0 {
+                        return false;
+                    }
                     siblings.iter().position(|&s| s == node_id) == Some(n - 1)
                 } else {
                     false
@@ -588,7 +667,10 @@ mod tests {
         let orig_node = tree.get_node(orig).unwrap();
         let clone_node = tree.get_node(cloned).unwrap();
         assert_eq!(clone_node.tag_name, orig_node.tag_name);
-        assert_eq!(clone_node.attributes.get("class"), orig_node.attributes.get("class"));
+        assert_eq!(
+            clone_node.attributes.get("class"),
+            orig_node.attributes.get("class")
+        );
     }
 
     #[test]

@@ -40,7 +40,10 @@ struct CharClass {
 
 impl CharClass {
     fn matches(&self, c: char, case_insensitive: bool) -> bool {
-        let hit = self.items.iter().any(|it| item_matches(it, c, case_insensitive));
+        let hit = self
+            .items
+            .iter()
+            .any(|it| item_matches(it, c, case_insensitive));
         hit ^ self.negated
     }
 }
@@ -171,19 +174,35 @@ impl Parser {
         match self.peek() {
             Some('*') => {
                 self.bump();
-                Ok(Ast::Repeat { node: Box::new(atom), min: 0, max: None })
+                Ok(Ast::Repeat {
+                    node: Box::new(atom),
+                    min: 0,
+                    max: None,
+                })
             }
             Some('+') => {
                 self.bump();
-                Ok(Ast::Repeat { node: Box::new(atom), min: 1, max: None })
+                Ok(Ast::Repeat {
+                    node: Box::new(atom),
+                    min: 1,
+                    max: None,
+                })
             }
             Some('?') => {
                 self.bump();
-                Ok(Ast::Repeat { node: Box::new(atom), min: 0, max: Some(1) })
+                Ok(Ast::Repeat {
+                    node: Box::new(atom),
+                    min: 0,
+                    max: Some(1),
+                })
             }
             Some('{') => {
                 let (min, max) = self.parse_brace()?;
-                Ok(Ast::Repeat { node: Box::new(atom), min, max })
+                Ok(Ast::Repeat {
+                    node: Box::new(atom),
+                    min,
+                    max,
+                })
             }
             _ => Ok(atom),
         }
@@ -200,7 +219,9 @@ impl Parser {
                 break;
             }
         }
-        let min: usize = min_str.parse().map_err(|_| "invalid {n} quantifier".to_string())?;
+        let min: usize = min_str
+            .parse()
+            .map_err(|_| "invalid {n} quantifier".to_string())?;
         let max = if self.peek() == Some(',') {
             self.bump();
             let mut max_str = String::new();
@@ -215,7 +236,11 @@ impl Parser {
             if max_str.is_empty() {
                 None
             } else {
-                Some(max_str.parse().map_err(|_| "invalid {n,m} quantifier".to_string())?)
+                Some(
+                    max_str
+                        .parse()
+                        .map_err(|_| "invalid {n,m} quantifier".to_string())?,
+                )
             }
         } else {
             Some(min)
@@ -264,7 +289,10 @@ impl Parser {
                 let esc = self.bump().ok_or("dangling escape")?;
                 if let Some(item) = shorthand_class(esc) {
                     let idx = self.classes.len();
-                    self.classes.push(CharClass { negated: false, items: vec![item] });
+                    self.classes.push(CharClass {
+                        negated: false,
+                        items: vec![item],
+                    });
                     Ok(Ast::Class(idx))
                 } else {
                     Ok(Ast::Char(unescape(esc)))

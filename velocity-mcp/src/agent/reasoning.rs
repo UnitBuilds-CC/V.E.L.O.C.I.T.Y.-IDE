@@ -170,12 +170,21 @@ impl ReasoningTree {
         }
 
         // Find the root with highest confidence.
-        let best_root = self.roots.iter()
-            .map(|id| (id, self.thoughts.get(id).map(|t| t.confidence).unwrap_or(0.0)))
+        let best_root = self
+            .roots
+            .iter()
+            .map(|id| {
+                (
+                    id,
+                    self.thoughts.get(id).map(|t| t.confidence).unwrap_or(0.0),
+                )
+            })
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(id, _)| id.clone());
 
-        let Some(root_id) = best_root else { return Vec::new(); };
+        let Some(root_id) = best_root else {
+            return Vec::new();
+        };
 
         // Greedily follow the highest-confidence child at each level.
         let mut path = Vec::new();
@@ -184,7 +193,9 @@ impl ReasoningTree {
             if let Some(thought) = self.thoughts.get(&current_id) {
                 path.push(thought);
                 // Find best child.
-                let best_child = thought.children.iter()
+                let best_child = thought
+                    .children
+                    .iter()
                     .filter_map(|cid| self.thoughts.get(cid).map(|t| (cid, t.confidence)))
                     .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
                     .map(|(cid, _)| cid.clone());
@@ -202,7 +213,8 @@ impl ReasoningTree {
 
     /// Get all unexplored thoughts (candidates for further expansion).
     pub fn unexplored(&self) -> Vec<&Thought> {
-        self.thoughts.values()
+        self.thoughts
+            .values()
             .filter(|t| !t.explored && t.depth < self.max_depth)
             .collect()
     }
@@ -225,15 +237,26 @@ impl ReasoningTree {
 
     /// Number of leaf nodes (no children).
     pub fn leaf_count(&self) -> usize {
-        self.thoughts.values().filter(|t| t.children.is_empty()).count()
+        self.thoughts
+            .values()
+            .filter(|t| t.children.is_empty())
+            .count()
     }
 
     /// Summary of the reasoning tree for display.
     pub fn summary(&self) -> ReasoningSummary {
         let total = self.thoughts.len();
         let explored = self.thoughts.values().filter(|t| t.explored).count();
-        let promising = self.thoughts.values().filter(|t| t.evaluation == ThoughtEvaluation::Promising).count();
-        let invalid = self.thoughts.values().filter(|t| t.evaluation == ThoughtEvaluation::Invalid).count();
+        let promising = self
+            .thoughts
+            .values()
+            .filter(|t| t.evaluation == ThoughtEvaluation::Promising)
+            .count();
+        let invalid = self
+            .thoughts
+            .values()
+            .filter(|t| t.evaluation == ThoughtEvaluation::Invalid)
+            .count();
 
         ReasoningSummary {
             problem: self.problem.clone(),

@@ -10,9 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
-use velocity_browser::nda_portable::{
-    CommandKind, DisplayCommand, NdaPortableDoc,
-};
+use velocity_browser::nda_portable::{CommandKind, DisplayCommand, NdaPortableDoc};
 
 use crate::editor::theme::IdePalette;
 use crate::editor::toast::{Toast, ToastQueue};
@@ -56,10 +54,24 @@ pub fn resolve_author(workspace_root: &Path) -> Author {
     // Tier 1: configured workspace identity.
     if let Ok(raw) = std::fs::read_to_string(identity_path(workspace_root)) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-            let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").trim().to_string();
-            let email = v.get("email").and_then(|e| e.as_str()).unwrap_or("").trim().to_string();
+            let name = v
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let email = v
+                .get("email")
+                .and_then(|e| e.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !name.is_empty() {
-                return Author { name, email, source: "configured".to_string() };
+                return Author {
+                    name,
+                    email,
+                    source: "configured".to_string(),
+                };
             }
         }
     }
@@ -67,13 +79,21 @@ pub fn resolve_author(workspace_root: &Path) -> Author {
     let git_name = run_git(workspace_root, "user.name");
     let git_email = run_git(workspace_root, "user.email");
     if !git_name.is_empty() {
-        return Author { name: git_name, email: git_email, source: "git".to_string() };
+        return Author {
+            name: git_name,
+            email: git_email,
+            source: "git".to_string(),
+        };
     }
     // Tier 3: OS username.
     let user = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_else(|_| "anonymous".to_string());
-    Author { name: user, email: String::new(), source: "os".to_string() }
+    Author {
+        name: user,
+        email: String::new(),
+        source: "os".to_string(),
+    }
 }
 
 /// Persist the configured workspace identity (tier 1).
@@ -136,7 +156,10 @@ fn seal_label(path: Option<&Path>) -> Vec<u8> {
 }
 
 /// Read a `.nda` file, distinguishing portable / sealed / opaque.
-pub fn load_from_disk(workspace_root: &Path, path: &Path) -> Result<(NdaPortableDoc, LoadedKind), String> {
+pub fn load_from_disk(
+    workspace_root: &Path,
+    path: &Path,
+) -> Result<(NdaPortableDoc, LoadedKind), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
     if bytes.len() < 8 || &bytes[0..4] != b"NDA1" {
         return Err("not an NDA file (bad magic)".to_string());
@@ -146,17 +169,27 @@ pub fn load_from_disk(workspace_root: &Path, path: &Path) -> Result<(NdaPortable
         let doc = NdaPortableDoc::from_portable_bytes(&bytes).map_err(|e| e.to_string())?;
         return Ok((doc, LoadedKind::Portable));
     }
-    if flags & (velocity_browser::nda::NDA_FLAG_ENCRYPTED | velocity_browser::nda::NDA_FLAG_RAW) != 0 {
+    if flags & (velocity_browser::nda::NDA_FLAG_ENCRYPTED | velocity_browser::nda::NDA_FLAG_RAW)
+        != 0
+    {
         let plain = crate::agent::crypto::open(workspace_root, &seal_label(Some(path)), &bytes);
         if plain.is_empty() {
             return Err("sealed NDA could not be opened (wrong workspace key?)".to_string());
         }
         match NdaPortableDoc::from_portable_bytes(&plain) {
             Ok(doc) => return Ok((doc, LoadedKind::Sealed)),
-            Err(_) => return Ok((NdaPortableDoc::new(), LoadedKind::Opaque("sealed envelope (not a document)".to_string()))),
+            Err(_) => {
+                return Ok((
+                    NdaPortableDoc::new(),
+                    LoadedKind::Opaque("sealed envelope (not a document)".to_string()),
+                ))
+            }
         }
     }
-    Ok((NdaPortableDoc::new(), LoadedKind::Opaque(format!("unknown NDA flags {flags:#x}"))))
+    Ok((
+        NdaPortableDoc::new(),
+        LoadedKind::Opaque(format!("unknown NDA flags {flags:#x}")),
+    ))
 }
 
 /// Outcome of a save, distinguishing a true sealed write from a graceful
@@ -175,10 +208,17 @@ pub enum SaveOutcome {
 /// portable bytes** (returning [`SaveOutcome::FellBackToPortable`]) rather than
 /// failing — a save is never lost. Uses the bounds-validating encoder so an
 /// oversized document surfaces a clear error instead of a corrupt file.
-pub fn save_to_disk(workspace_root: &Path, path: &Path, doc: &NdaPortableDoc, sealed: bool) -> Result<SaveOutcome, String> {
+pub fn save_to_disk(
+    workspace_root: &Path,
+    path: &Path,
+    doc: &NdaPortableDoc,
+    sealed: bool,
+) -> Result<SaveOutcome, String> {
     let portable = doc.try_to_portable_bytes().map_err(|e| e.to_string())?;
     if sealed {
-        if let Some(envelope) = crate::agent::crypto::seal(workspace_root, &seal_label(Some(path)), &portable) {
+        if let Some(envelope) =
+            crate::agent::crypto::seal(workspace_root, &seal_label(Some(path)), &portable)
+        {
             std::fs::write(path, &envelope).map_err(|e| format!("write failed: {e}"))?;
             return Ok(SaveOutcome::Saved { sealed: true });
         }
@@ -308,11 +348,30 @@ impl NdaDocumentView {
         if let LoadedKind::Opaque(reason) = &self.kind {
             ui.add_space(16.0);
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new("◇").size(28.0).color(palette.accent.gamma_multiply(0.7)));
+                ui.label(
+                    egui::RichText::new("◇")
+                        .size(28.0)
+                        .color(palette.accent.gamma_multiply(0.7)),
+                );
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Opaque NDA envelope").size(13.0).strong().color(palette.text));
-                ui.label(egui::RichText::new(reason.clone()).size(11.0).color(palette.text_muted));
-                ui.label(egui::RichText::new("This is an encrypted state file, not a viewable document.").size(11.0).color(palette.text_muted));
+                ui.label(
+                    egui::RichText::new("Opaque NDA envelope")
+                        .size(13.0)
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.label(
+                    egui::RichText::new(reason.clone())
+                        .size(11.0)
+                        .color(palette.text_muted),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "This is an encrypted state file, not a viewable document.",
+                    )
+                    .size(11.0)
+                    .color(palette.text_muted),
+                );
             });
             return None;
         }
@@ -320,7 +379,12 @@ impl NdaDocumentView {
         ui.vertical(|ui| {
             // Header.
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("NDA Document").size(13.0).strong().color(palette.accent));
+                ui.label(
+                    egui::RichText::new("NDA Document")
+                        .size(13.0)
+                        .strong()
+                        .color(palette.accent),
+                );
                 ui.add_space(6.0);
                 let badge = match self.kind {
                     LoadedKind::Sealed => ("sealed", palette.warning),
@@ -328,14 +392,23 @@ impl NdaDocumentView {
                 };
                 ui.label(egui::RichText::new(badge.0).size(10.0).color(badge.1));
                 if self.dirty {
-                    ui.label(egui::RichText::new("● unsaved").size(10.0).color(palette.warning));
+                    ui.label(
+                        egui::RichText::new("● unsaved")
+                            .size(10.0)
+                            .color(palette.warning),
+                    );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let revs = self.doc.revisions().len();
                     ui.label(
-                        egui::RichText::new(format!("{} triples · {} commands · {} revisions", self.doc.triples.len(), self.doc.commands.len(), revs))
-                            .size(11.0)
-                            .color(palette.text_muted),
+                        egui::RichText::new(format!(
+                            "{} triples · {} commands · {} revisions",
+                            self.doc.triples.len(),
+                            self.doc.commands.len(),
+                            revs
+                        ))
+                        .size(11.0)
+                        .color(palette.text_muted),
                     );
                 });
             });
@@ -343,13 +416,27 @@ impl NdaDocumentView {
 
             // Toolbar.
             ui.horizontal(|ui| {
-                if ui.button(egui::RichText::new("Save").color(palette.text)).on_hover_text("Write the .nda to disk (honors seal toggle)").clicked() {
+                if ui
+                    .button(egui::RichText::new("Save").color(palette.text))
+                    .on_hover_text("Write the .nda to disk (honors seal toggle)")
+                    .clicked()
+                {
                     self.save(workspace_root, toasts);
                 }
-                if ui.button(egui::RichText::new("Commit Revision").color(palette.accent)).on_hover_text("Append an author-signed revision to the in-file history and save").clicked() {
+                if ui
+                    .button(egui::RichText::new("Commit Revision").color(palette.accent))
+                    .on_hover_text(
+                        "Append an author-signed revision to the in-file history and save",
+                    )
+                    .clicked()
+                {
                     self.commit(workspace_root, toasts);
                 }
-                if ui.button(egui::RichText::new("Export HTML").color(palette.success)).on_hover_text("Write a self-contained browser viewer next to the file").clicked() {
+                if ui
+                    .button(egui::RichText::new("Export HTML").color(palette.success))
+                    .on_hover_text("Write a self-contained browser viewer next to the file")
+                    .clicked()
+                {
                     open_in_browser = self.export_html(workspace_root, toasts);
                 }
                 ui.checkbox(&mut self.sealed, "Seal at rest");
@@ -357,7 +444,11 @@ impl NdaDocumentView {
             ui.separator();
 
             if let Some(err) = &self.last_error {
-                ui.label(egui::RichText::new(format!("⚠ {err}")).size(11.0).color(palette.error));
+                ui.label(
+                    egui::RichText::new(format!("⚠ {err}"))
+                        .size(11.0)
+                        .color(palette.error),
+                );
             }
 
             // Sub-view tabs.
@@ -393,21 +484,33 @@ impl NdaDocumentView {
         let size = egui::vec2(ui.available_width().max(320.0), 420.0);
         let (rect, _resp) = ui.allocate_exact_size(size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, egui::CornerRadius::same(4), egui::Color32::from_rgb(13, 17, 23));
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(4),
+            egui::Color32::from_rgb(13, 17, 23),
+        );
         let ctx = ui.ctx().clone();
         // Precompute wrapped text galleys (layout needs &mut Fonts via the ctx closure).
-        let galleys: std::collections::HashMap<usize, std::sync::Arc<egui::Galley>> = ui.ctx().fonts_mut(|f| {
-            self.doc
-                .commands
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| CommandKind::from_u8(c.kind) == Some(CommandKind::DrawText) && c.w > 0)
-                .map(|(i, c)| {
-                    let g = f.layout(c.content.clone(), egui::FontId::monospace(14.0), color_from_u32(c.color), c.w as f32);
-                    (i, g)
-                })
-                .collect()
-        });
+        let galleys: std::collections::HashMap<usize, std::sync::Arc<egui::Galley>> =
+            ui.ctx().fonts_mut(|f| {
+                self.doc
+                    .commands
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| {
+                        CommandKind::from_u8(c.kind) == Some(CommandKind::DrawText) && c.w > 0
+                    })
+                    .map(|(i, c)| {
+                        let g = f.layout(
+                            c.content.clone(),
+                            egui::FontId::monospace(14.0),
+                            color_from_u32(c.color),
+                            c.w as f32,
+                        );
+                        (i, g)
+                    })
+                    .collect()
+            });
         for (idx, c) in self.doc.commands.iter().enumerate() {
             let color = color_from_u32(c.color);
             let min = rect.min + egui::vec2(c.x as f32, c.y as f32);
@@ -440,17 +543,39 @@ impl NdaDocumentView {
                             image::load_from_memory(&bytes).ok().map(|img| {
                                 let rgba = img.to_rgba8();
                                 let dims = [rgba.width() as usize, rgba.height() as usize];
-                                let image = egui::ColorImage::from_rgba_unmultiplied(dims, rgba.as_raw());
-                                ctx.load_texture(format!("nda-img-{idx}"), image, egui::TextureOptions::LINEAR).id()
+                                let image =
+                                    egui::ColorImage::from_rgba_unmultiplied(dims, rgba.as_raw());
+                                ctx.load_texture(
+                                    format!("nda-img-{idx}"),
+                                    image,
+                                    egui::TextureOptions::LINEAR,
+                                )
+                                .id()
                             })
                         }),
                     };
                     if let Some(id) = tex {
                         self.image_textures.insert(idx, (c.content.clone(), id));
-                        painter.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                        painter.image(
+                            id,
+                            r,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
                     } else {
-                        painter.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
-                        painter.text(min + egui::vec2(4.0, 4.0), egui::Align2::LEFT_TOP, "[image]", egui::FontId::monospace(11.0), color);
+                        painter.rect_stroke(
+                            r,
+                            egui::CornerRadius::ZERO,
+                            egui::Stroke::new(1.0, color),
+                            egui::StrokeKind::Inside,
+                        );
+                        painter.text(
+                            min + egui::vec2(4.0, 4.0),
+                            egui::Align2::LEFT_TOP,
+                            "[image]",
+                            egui::FontId::monospace(11.0),
+                            color,
+                        );
                     }
                 }
                 Some(CommandKind::DrawVector) => {
@@ -461,14 +586,22 @@ impl NdaDocumentView {
                         .collect();
                     let stroke_w = if c.h > 0 { c.h as f32 } else { 1.0 };
                     if points.len() >= 2 {
-                        painter.add(egui::Shape::line(points, egui::Stroke::new(stroke_w, color)));
+                        painter.add(egui::Shape::line(
+                            points,
+                            egui::Stroke::new(stroke_w, color),
+                        ));
                     } else if points.len() == 1 {
                         painter.circle_filled(points[0], stroke_w.max(1.0), color);
                     }
                 }
                 None => {
                     let r = egui::Rect::from_min_size(min, egui::vec2(c.w as f32, c.h as f32));
-                    painter.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+                    painter.rect_stroke(
+                        r,
+                        egui::CornerRadius::ZERO,
+                        egui::Stroke::new(1.0, color),
+                        egui::StrokeKind::Inside,
+                    );
                 }
             }
         }
@@ -495,7 +628,12 @@ impl NdaDocumentView {
         ui.separator();
 
         // Add triple.
-        ui.label(egui::RichText::new("Add content triple").size(11.0).strong().color(palette.text));
+        ui.label(
+            egui::RichText::new("Add content triple")
+                .size(11.0)
+                .strong()
+                .color(palette.text),
+        );
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut self.ts);
             ui.label("→");
@@ -503,7 +641,8 @@ impl NdaDocumentView {
             ui.label("→");
             ui.text_edit_singleline(&mut self.to);
             if ui.button("Add").clicked() && !self.ts.is_empty() && !self.tp.is_empty() {
-                self.doc.push_triple(self.ts.clone(), self.tp.clone(), self.to.clone());
+                self.doc
+                    .push_triple(self.ts.clone(), self.tp.clone(), self.to.clone());
                 self.ts.clear();
                 self.tp.clear();
                 self.to.clear();
@@ -513,7 +652,12 @@ impl NdaDocumentView {
 
         // Add display command (all kinds).
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("Add display command").size(11.0).strong().color(palette.text));
+        ui.label(
+            egui::RichText::new("Add display command")
+                .size(11.0)
+                .strong()
+                .color(palette.text),
+        );
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.cmd_kind, CommandKind::DrawText as u8, "Text");
             ui.selectable_value(&mut self.cmd_kind, CommandKind::DrawRect as u8, "Rect");
@@ -573,7 +717,11 @@ impl NdaDocumentView {
                 ui.horizontal(|ui| {
                     ui.label("or file");
                     ui.text_edit_singleline(&mut self.cmd_image_path);
-                    if ui.button("Load").on_hover_text("Read an image file and embed it as a PNG data-url").clicked() {
+                    if ui
+                        .button("Load")
+                        .on_hover_text("Read an image file and embed it as a PNG data-url")
+                        .clicked()
+                    {
                         match load_image_as_data_url(workspace_root, self.cmd_image_path.trim()) {
                             Ok(url) => {
                                 self.cmd_data_url = url;
@@ -599,7 +747,8 @@ impl NdaDocumentView {
                     ui.label("points");
                     ui.add(egui::TextEdit::singleline(&mut self.cmd_points).desired_width(220.0));
                     if ui.button("Add").clicked() {
-                        let pts = velocity_browser::nda_portable::parse_vector_points(&self.cmd_points);
+                        let pts =
+                            velocity_browser::nda_portable::parse_vector_points(&self.cmd_points);
                         self.doc.push_command(DisplayCommand::vector(
                             &pts,
                             self.cmd_x.parse().unwrap_or(10),
@@ -617,13 +766,30 @@ impl NdaDocumentView {
 
         // Content triple list.
         let mut remove: Option<usize> = None;
-        ui.label(egui::RichText::new(format!("Triples ({})", self.doc.triples.len())).size(11.0).strong().color(palette.text));
+        ui.label(
+            egui::RichText::new(format!("Triples ({})", self.doc.triples.len()))
+                .size(11.0)
+                .strong()
+                .color(palette.text),
+        );
         for (i, (s, p, o)) in self.doc.triples.clone().iter().enumerate() {
             let provenance = velocity_browser::nda_portable::is_provenance_predicate(p);
             ui.horizontal(|ui| {
-                let color = if provenance { palette.text_muted } else { palette.text };
-                ui.label(egui::RichText::new(format!("{s} → {p} → {o}")).size(11.0).color(color));
-                if ui.small_button("✕").on_hover_text("Remove triple").clicked() {
+                let color = if provenance {
+                    palette.text_muted
+                } else {
+                    palette.text
+                };
+                ui.label(
+                    egui::RichText::new(format!("{s} → {p} → {o}"))
+                        .size(11.0)
+                        .color(color),
+                );
+                if ui
+                    .small_button("✕")
+                    .on_hover_text("Remove triple")
+                    .clicked()
+                {
                     remove = Some(i);
                 }
             });
@@ -635,7 +801,12 @@ impl NdaDocumentView {
 
         // Command list (inline edit + reorder).
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(format!("Display commands ({})", self.doc.commands.len())).size(11.0).strong().color(palette.text));
+        ui.label(
+            egui::RichText::new(format!("Display commands ({})", self.doc.commands.len()))
+                .size(11.0)
+                .strong()
+                .color(palette.text),
+        );
         let mut remove_cmd: Option<usize> = None;
         let mut swap: Option<(usize, usize)> = None;
         let n = self.doc.commands.len();
@@ -652,20 +823,30 @@ impl NdaDocumentView {
                 None => "?",
             };
             let preview = match CommandKind::from_u8(kind) {
-                Some(CommandKind::DrawText) => format!("\"{}\"", content.chars().take(24).collect::<String>()),
+                Some(CommandKind::DrawText) => {
+                    format!("\"{}\"", content.chars().take(24).collect::<String>())
+                }
                 Some(CommandKind::DrawImage) => format!("{}x{}", w, h),
-                Some(CommandKind::DrawVector) => format!("{} pts", velocity_browser::nda_portable::parse_vector_points(&content).len()),
+                Some(CommandKind::DrawVector) => format!(
+                    "{} pts",
+                    velocity_browser::nda_portable::parse_vector_points(&content).len()
+                ),
                 _ => format!("{}x{}", w, h),
             };
             egui::CollapsingHeader::new(
-                egui::RichText::new(format!("#{i} {kind_name} @{x},{y} {preview}")).size(11.0).color(palette.text),
+                egui::RichText::new(format!("#{i} {kind_name} @{x},{y} {preview}"))
+                    .size(11.0)
+                    .color(palette.text),
             )
             .default_open(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("x");
                     let mut sx = x.to_string();
-                    if ui.add(egui::TextEdit::singleline(&mut sx).desired_width(48.0)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut sx).desired_width(48.0))
+                        .changed()
+                    {
                         if let Ok(v) = sx.parse() {
                             self.doc.commands[i].x = v;
                             self.dirty = true;
@@ -673,7 +854,10 @@ impl NdaDocumentView {
                     }
                     ui.label("y");
                     let mut sy = y.to_string();
-                    if ui.add(egui::TextEdit::singleline(&mut sy).desired_width(48.0)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut sy).desired_width(48.0))
+                        .changed()
+                    {
                         if let Ok(v) = sy.parse() {
                             self.doc.commands[i].y = v;
                             self.dirty = true;
@@ -681,7 +865,10 @@ impl NdaDocumentView {
                     }
                     ui.label("w");
                     let mut sw = w.to_string();
-                    if ui.add(egui::TextEdit::singleline(&mut sw).desired_width(48.0)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut sw).desired_width(48.0))
+                        .changed()
+                    {
                         if let Ok(v) = sw.parse() {
                             self.doc.commands[i].w = v;
                             self.dirty = true;
@@ -689,7 +876,10 @@ impl NdaDocumentView {
                     }
                     ui.label("h");
                     let mut sh = h.to_string();
-                    if ui.add(egui::TextEdit::singleline(&mut sh).desired_width(48.0)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut sh).desired_width(48.0))
+                        .changed()
+                    {
                         if let Ok(v) = sh.parse() {
                             self.doc.commands[i].h = v;
                             self.dirty = true;
@@ -699,7 +889,10 @@ impl NdaDocumentView {
                 ui.horizontal(|ui| {
                     ui.label("color");
                     let mut color_hex = color_to_hex(color);
-                    if ui.add(egui::TextEdit::singleline(&mut color_hex).desired_width(80.0)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut color_hex).desired_width(80.0))
+                        .changed()
+                    {
                         if let Some(v) = parse_color_hex(&color_hex) {
                             self.doc.commands[i].color = v;
                             self.dirty = true;
@@ -715,7 +908,10 @@ impl NdaDocumentView {
                 };
                 ui.horizontal(|ui| {
                     ui.label(content_label);
-                    if ui.add(egui::TextEdit::singleline(&mut content_edit).desired_width(280.0)).changed() {
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut content_edit).desired_width(280.0))
+                        .changed()
+                    {
                         self.doc.commands[i].content = content_edit.clone();
                         self.dirty = true;
                     }
@@ -723,13 +919,27 @@ impl NdaDocumentView {
             });
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
-                if ui.small_button("↑").on_hover_text("Move earlier (paints below)").clicked() && i > 0 {
+                if ui
+                    .small_button("↑")
+                    .on_hover_text("Move earlier (paints below)")
+                    .clicked()
+                    && i > 0
+                {
                     swap = Some((i, i - 1));
                 }
-                if ui.small_button("↓").on_hover_text("Move later (paints above)").clicked() && i + 1 < n {
+                if ui
+                    .small_button("↓")
+                    .on_hover_text("Move later (paints above)")
+                    .clicked()
+                    && i + 1 < n
+                {
                     swap = Some((i, i + 1));
                 }
-                if ui.small_button("✕").on_hover_text("Remove command").clicked() {
+                if ui
+                    .small_button("✕")
+                    .on_hover_text("Remove command")
+                    .clicked()
+                {
                     remove_cmd = Some(i);
                 }
             });
@@ -756,23 +966,55 @@ impl NdaDocumentView {
             }
             self.identity_loaded = true;
         }
-        egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {
-            ui.label(egui::RichText::new("Author identity (used for new revisions)").size(11.0).strong().color(palette.accent));
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Name").size(11.0).color(palette.text_muted));
-                ui.text_edit_singleline(&mut self.identity_name);
-                ui.label(egui::RichText::new("Email").size(11.0).color(palette.text_muted));
-                ui.text_edit_singleline(&mut self.identity_email);
-                if ui.button("Save").on_hover_text("Persist as the configured workspace identity").clicked() {
-                    match set_identity(workspace_root, self.identity_name.trim(), self.identity_email.trim()) {
-                        Ok(_) => self.set_error(None),
-                        Err(e) => self.set_error(Some(format!("failed to save identity: {e}"))),
+        egui::Frame::new()
+            .fill(palette.bg_tertiary)
+            .corner_radius(4.0)
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Author identity (used for new revisions)")
+                        .size(11.0)
+                        .strong()
+                        .color(palette.accent),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Name")
+                            .size(11.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.text_edit_singleline(&mut self.identity_name);
+                    ui.label(
+                        egui::RichText::new("Email")
+                            .size(11.0)
+                            .color(palette.text_muted),
+                    );
+                    ui.text_edit_singleline(&mut self.identity_email);
+                    if ui
+                        .button("Save")
+                        .on_hover_text("Persist as the configured workspace identity")
+                        .clicked()
+                    {
+                        match set_identity(
+                            workspace_root,
+                            self.identity_name.trim(),
+                            self.identity_email.trim(),
+                        ) {
+                            Ok(_) => self.set_error(None),
+                            Err(e) => self.set_error(Some(format!("failed to save identity: {e}"))),
+                        }
                     }
-                }
+                });
+                let resolved = resolve_author(workspace_root);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Resolved: {} <{}> [{}]",
+                        resolved.name, resolved.email, resolved.source
+                    ))
+                    .size(10.0)
+                    .color(palette.text_muted),
+                );
             });
-            let resolved = resolve_author(workspace_root);
-            ui.label(egui::RichText::new(format!("Resolved: {} <{}> [{}]", resolved.name, resolved.email, resolved.source)).size(10.0).color(palette.text_muted));
-        });
         ui.add_space(8.0);
 
         let origin = self
@@ -788,25 +1030,57 @@ impl NdaDocumentView {
             .find(|(_, p, _)| p == velocity_browser::nda_portable::NDA_CREATED)
             .map(|(_, _, o)| o.clone());
 
-        egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {
-            ui.label(egui::RichText::new("Origin").size(11.0).strong().color(palette.accent));
-            ui.label(egui::RichText::new(format!("Workspace: {}", origin.clone().unwrap_or_else(|| "unknown".into()))).size(11.0).color(palette.text));
-            if let Some(c) = created {
-                ui.label(egui::RichText::new(format!("Created: {c}")).size(11.0).color(palette.text_muted));
-            }
-        });
+        egui::Frame::new()
+            .fill(palette.bg_tertiary)
+            .corner_radius(4.0)
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Origin")
+                        .size(11.0)
+                        .strong()
+                        .color(palette.accent),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Workspace: {}",
+                        origin.clone().unwrap_or_else(|| "unknown".into())
+                    ))
+                    .size(11.0)
+                    .color(palette.text),
+                );
+                if let Some(c) = created {
+                    ui.label(
+                        egui::RichText::new(format!("Created: {c}"))
+                            .size(11.0)
+                            .color(palette.text_muted),
+                    );
+                }
+            });
         ui.add_space(8.0);
 
         let revs = self.doc.revisions();
         if revs.is_empty() {
-            ui.label(egui::RichText::new("No revisions recorded yet — use “Commit Revision”.").size(11.0).color(palette.text_muted));
+            ui.label(
+                egui::RichText::new("No revisions recorded yet — use “Commit Revision”.")
+                    .size(11.0)
+                    .color(palette.text_muted),
+            );
             return;
         }
         let chain_ok = self.doc.verify_history().is_ok();
         ui.label(
-            egui::RichText::new(if chain_ok { "✓ history chain verified" } else { "⚠ history chain broken" })
-                .size(11.0)
-                .color(if chain_ok { palette.success } else { palette.error }),
+            egui::RichText::new(if chain_ok {
+                "✓ history chain verified"
+            } else {
+                "⚠ history chain broken"
+            })
+            .size(11.0)
+            .color(if chain_ok {
+                palette.success
+            } else {
+                palette.error
+            }),
         );
         ui.add_space(4.0);
 
@@ -822,9 +1096,12 @@ impl NdaDocumentView {
             };
             ui.label(egui::RichText::new(txt).size(11.0).color(col));
             ui.label(
-                egui::RichText::new(format!("· {} content triples · {} commands", delta.content_triples, delta.commands))
-                    .size(10.0)
-                    .color(palette.text_muted),
+                egui::RichText::new(format!(
+                    "· {} content triples · {} commands",
+                    delta.content_triples, delta.commands
+                ))
+                .size(10.0)
+                .color(palette.text_muted),
             );
         });
         ui.add_space(6.0);
@@ -841,14 +1118,23 @@ impl NdaDocumentView {
             if self.diff_b == 0 && max > 0 {
                 self.diff_b = 1;
             }
-            ui.label(egui::RichText::new("Compare revisions").size(11.0).strong().color(palette.text));
+            ui.label(
+                egui::RichText::new("Compare revisions")
+                    .size(11.0)
+                    .strong()
+                    .color(palette.text),
+            );
             ui.horizontal(|ui| {
                 ui.label("A");
                 egui::ComboBox::from_id_salt("nda-diff-a")
                     .selected_text(format!("#{}", self.diff_a))
                     .show_ui(ui, |ui| {
                         for i in 0..=max {
-                            ui.selectable_value(&mut self.diff_a, i, format!("#{i} {}", revs[i].message));
+                            ui.selectable_value(
+                                &mut self.diff_a,
+                                i,
+                                format!("#{i} {}", revs[i].message),
+                            );
                         }
                     });
                 ui.label("B");
@@ -856,53 +1142,103 @@ impl NdaDocumentView {
                     .selected_text(format!("#{}", self.diff_b))
                     .show_ui(ui, |ui| {
                         for i in 0..=max {
-                            ui.selectable_value(&mut self.diff_b, i, format!("#{i} {}", revs[i].message));
+                            ui.selectable_value(
+                                &mut self.diff_b,
+                                i,
+                                format!("#{i} {}", revs[i].message),
+                            );
                         }
                     });
             });
             if let Some(diff) = self.doc.diff_revisions(self.diff_a, self.diff_b) {
-                egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {
-                    let (badge, bcol) = if diff.same_content {
-                        ("same content", palette.success)
-                    } else {
-                        ("different content", palette.warning)
-                    };
-                    ui.label(egui::RichText::new(format!("{} ↔ {}: {badge}", diff.a_id, diff.b_id)).size(11.0).color(bcol));
-                    if diff.changed_fields.is_empty() {
-                        ui.label(egui::RichText::new("metadata identical").size(10.0).color(palette.text_muted));
-                    } else {
-                        for (field, va, vb) in &diff.changed_fields {
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        let (badge, bcol) = if diff.same_content {
+                            ("same content", palette.success)
+                        } else {
+                            ("different content", palette.warning)
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("{} ↔ {}: {badge}", diff.a_id, diff.b_id))
+                                .size(11.0)
+                                .color(bcol),
+                        );
+                        if diff.changed_fields.is_empty() {
                             ui.label(
-                                egui::RichText::new(format!("{field}: “{va}” → “{vb}”"))
-                                    .monospace()
+                                egui::RichText::new("metadata identical")
                                     .size(10.0)
-                                    .color(palette.text),
+                                    .color(palette.text_muted),
                             );
+                        } else {
+                            for (field, va, vb) in &diff.changed_fields {
+                                ui.label(
+                                    egui::RichText::new(format!("{field}: “{va}” → “{vb}”"))
+                                        .monospace()
+                                        .size(10.0)
+                                        .color(palette.text),
+                                );
+                            }
                         }
-                    }
-                });
+                    });
             }
             ui.add_space(6.0);
         }
 
         for (i, r) in revs.iter().enumerate() {
-            egui::Frame::new().fill(palette.bg_tertiary).corner_radius(4.0).inner_margin(8.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("#{i}")).size(11.0).strong().color(palette.accent));
-                    ui.label(egui::RichText::new(format!("[{}]", r.author_source)).size(10.0).color(palette.text_muted));
-                    ui.label(egui::RichText::new(&r.author_name).size(11.0).strong().color(palette.text));
-                    if !r.author_email.is_empty() {
-                        ui.label(egui::RichText::new(&r.author_email).size(10.0).color(palette.text_muted));
-                    }
-                });
-                ui.label(egui::RichText::new(format!("{} {}", r.timestamp, r.message)).size(11.0).color(palette.text));
-                ui.label(
-                    egui::RichText::new(format!("content {}… ← parent {}", &r.content_hash[..r.content_hash.len().min(16)], if r.parent == velocity_browser::nda_portable::GENESIS { "genesis".to_string() } else { format!("{}…", &r.parent[..r.parent.len().min(16)]) }))
+            egui::Frame::new()
+                .fill(palette.bg_tertiary)
+                .corner_radius(4.0)
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("#{i}"))
+                                .size(11.0)
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("[{}]", r.author_source))
+                                .size(10.0)
+                                .color(palette.text_muted),
+                        );
+                        ui.label(
+                            egui::RichText::new(&r.author_name)
+                                .size(11.0)
+                                .strong()
+                                .color(palette.text),
+                        );
+                        if !r.author_email.is_empty() {
+                            ui.label(
+                                egui::RichText::new(&r.author_email)
+                                    .size(10.0)
+                                    .color(palette.text_muted),
+                            );
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(format!("{} {}", r.timestamp, r.message))
+                            .size(11.0)
+                            .color(palette.text),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "content {}… ← parent {}",
+                            &r.content_hash[..r.content_hash.len().min(16)],
+                            if r.parent == velocity_browser::nda_portable::GENESIS {
+                                "genesis".to_string()
+                            } else {
+                                format!("{}…", &r.parent[..r.parent.len().min(16)])
+                            }
+                        ))
                         .monospace()
                         .size(10.0)
                         .color(palette.text_muted),
-                );
-            });
+                    );
+                });
             ui.add_space(4.0);
         }
     }
@@ -914,27 +1250,50 @@ impl NdaDocumentView {
         let triples_end = 48 + triple_count * 12;
         let commands_end = triples_end + command_count * 18;
         ui.label(
-            egui::RichText::new(format!("{} bytes · header 0–47 · triples 48–{} · commands –{} · pool –{}", bytes.len(), triples_end.saturating_sub(1), commands_end.saturating_sub(1), bytes.len().saturating_sub(1)))
-                .size(10.0)
-                .color(palette.text_muted),
+            egui::RichText::new(format!(
+                "{} bytes · header 0–47 · triples 48–{} · commands –{} · pool –{}",
+                bytes.len(),
+                triples_end.saturating_sub(1),
+                commands_end.saturating_sub(1),
+                bytes.len().saturating_sub(1)
+            ))
+            .size(10.0)
+            .color(palette.text_muted),
         );
         ui.add_space(4.0);
         egui::ScrollArea::horizontal().show(ui, |ui| {
             let mut text = String::new();
             for (l, chunk) in bytes.chunks(16).enumerate() {
                 let off = l * 16;
-                let region = if off < 48 { "HDR" } else if off < triples_end { "TRI" } else if off < commands_end { "CMD" } else { "POOL" };
+                let region = if off < 48 {
+                    "HDR"
+                } else if off < triples_end {
+                    "TRI"
+                } else if off < commands_end {
+                    "CMD"
+                } else {
+                    "POOL"
+                };
                 text.push_str(&format!("{off:08X} [{region:>4}] "));
                 for b in chunk {
                     text.push_str(&format!("{b:02X} "));
                 }
                 text.push_str(" |");
                 for b in chunk {
-                    text.push(if (32..127).contains(b) { *b as char } else { '.' });
+                    text.push(if (32..127).contains(b) {
+                        *b as char
+                    } else {
+                        '.'
+                    });
                 }
                 text.push_str("|\n");
             }
-            ui.label(egui::RichText::new(text).monospace().size(11.0).color(palette.text));
+            ui.label(
+                egui::RichText::new(text)
+                    .monospace()
+                    .size(11.0)
+                    .color(palette.text),
+            );
         });
     }
 
@@ -947,7 +1306,16 @@ impl NdaDocumentView {
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| "untitled".to_string());
-        let safe: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let safe: String = stem
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         workspace_root.join(format!("{safe}.nda"))
     }
 
@@ -967,11 +1335,17 @@ impl NdaDocumentView {
                 self.kind = LoadedKind::Portable;
                 self.image_textures.clear();
                 toasts.push(Toast::success(format!("Saved {}", path.display())));
-                toasts.push(Toast::info("Seal unavailable (no key material) — saved portable instead."));
+                toasts.push(Toast::info(
+                    "Seal unavailable (no key material) — saved portable instead.",
+                ));
             }
             Ok(SaveOutcome::Saved { sealed }) => {
                 self.dirty = false;
-                self.kind = if sealed { LoadedKind::Sealed } else { LoadedKind::Portable };
+                self.kind = if sealed {
+                    LoadedKind::Sealed
+                } else {
+                    LoadedKind::Portable
+                };
                 toasts.push(Toast::success(format!("Saved {}", path.display())));
             }
             Err(e) => {
@@ -989,15 +1363,28 @@ impl NdaDocumentView {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "workspace".to_string());
-        self.doc.commit_revision(&author.name, &author.email, &author.source, &ts, &msg, &origin);
+        self.doc.commit_revision(
+            &author.name,
+            &author.email,
+            &author.source,
+            &ts,
+            &msg,
+            &origin,
+        );
         self.commit_msg.clear();
         self.dirty = true;
-        toasts.push(Toast::info(format!("Revision committed as {} ({})", author.name, author.source)));
+        toasts.push(Toast::info(format!(
+            "Revision committed as {} ({})",
+            author.name, author.source
+        )));
         self.save(workspace_root, toasts);
     }
 
     fn export_html(&self, workspace_root: &Path, toasts: &mut ToastQueue) -> Option<PathBuf> {
-        let nda_path = self.path.clone().unwrap_or_else(|| self.default_save_path(workspace_root));
+        let nda_path = self
+            .path
+            .clone()
+            .unwrap_or_else(|| self.default_save_path(workspace_root));
         let bytes = self.doc.to_portable_bytes();
         let title = self.doc.title().unwrap_or("NDA Document").to_string();
         let html = crate::editor::nda_viewer::self_contained_html(&bytes, &title);
@@ -1038,14 +1425,24 @@ const CSV_COL_WIDTH: u16 = 140;
 /// they fall through to the text extractor and error with a clear message.
 pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
     let mut doc = NdaPortableDoc::new();
-    let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".to_string());
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
     doc.set_title(&file_name);
     doc.push_triple("nda:doc", "nda:source_file", &file_name);
 
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     // Images: normalize to PNG and embed with real (capped) dimensions.
-    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
+    if matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+    ) {
         let raw = std::fs::read(path).map_err(|e| format!("read failed: {e}"))?;
         let img = image::load_from_memory(&raw).map_err(|e| format!("cannot decode image: {e}"))?;
         let rgba = img.to_rgba8();
@@ -1053,7 +1450,10 @@ pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
         let mut png = Vec::new();
         rgba.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .map_err(|e| format!("cannot encode PNG: {e}"))?;
-        let data_url = format!("data:image/png;base64,{}", crate::editor::nda_viewer::base64_encode(&png));
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            crate::editor::nda_viewer::base64_encode(&png)
+        );
         let cw = w.min(MAX_IMAGE_DIM) as u16;
         let ch = h.min(MAX_IMAGE_DIM) as u16;
         doc.push_command(DisplayCommand::image(data_url, 10, 10, cw, ch));
@@ -1094,7 +1494,9 @@ pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
         // DrawText table grid: header row + bounded data rows.
         let mut y: u16 = 20;
         for (c, header) in headers.iter().enumerate() {
-            let x = 12u32.saturating_add((c as u32).saturating_mul(CSV_COL_WIDTH as u32)).min(u16::MAX as u32) as u16;
+            let x = 12u32
+                .saturating_add((c as u32).saturating_mul(CSV_COL_WIDTH as u32))
+                .min(u16::MAX as u32) as u16;
             let mut cmd = DisplayCommand::text(header.clone(), x, y, 0x58A6_FFFF);
             cmd.w = CSV_COL_WIDTH;
             doc.push_command(cmd);
@@ -1102,7 +1504,9 @@ pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
         y = y.saturating_add(18);
         for row in rows.iter().skip(1).take(MAX_CSV_ROWS) {
             for (c, val) in row.iter().enumerate() {
-                let x = 12u32.saturating_add((c as u32).saturating_mul(CSV_COL_WIDTH as u32)).min(u16::MAX as u32) as u16;
+                let x = 12u32
+                    .saturating_add((c as u32).saturating_mul(CSV_COL_WIDTH as u32))
+                    .min(u16::MAX as u32) as u16;
                 let cell: String = val.chars().take(32).collect();
                 let mut cmd = DisplayCommand::text(cell, x, y, 0xC9D1_D9FF);
                 cmd.w = CSV_COL_WIDTH;
@@ -1116,7 +1520,9 @@ pub fn convert_file_to_doc(path: &Path) -> Result<NdaPortableDoc, String> {
     // Text/code: wrapped DrawText lines + content triples.
     let text = crate::editor::knowledge_base::extract_text(path)
         .or_else(|| std::fs::read_to_string(path).ok())
-        .ok_or_else(|| format!("cannot extract text from {file_name} (PDF/DOCX/XLSX are out of scope)"))?;
+        .ok_or_else(|| {
+            format!("cannot extract text from {file_name} (PDF/DOCX/XLSX are out of scope)")
+        })?;
 
     doc.push_triple("nda:doc", "nda:kind", "text");
     let mut y: u16 = 20;
@@ -1169,7 +1575,9 @@ fn split_csv_line(line: &str, delim: char) -> Vec<String> {
 pub fn open_in_browser(path: &Path) {
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("cmd").args(["/C", "start", "", &path.to_string_lossy()]).spawn();
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path.to_string_lossy()])
+            .spawn();
     }
     #[cfg(target_os = "macos")]
     {
@@ -1259,7 +1667,11 @@ pub fn color_to_hex(c: u32) -> String {
 /// both the egui (`image` crate) and browser viewers can decode the embed.
 pub fn load_image_as_data_url(workspace_root: &Path, path_str: &str) -> Result<String, String> {
     let p = PathBuf::from(path_str);
-    let full = if p.is_absolute() { p } else { workspace_root.join(p) };
+    let full = if p.is_absolute() {
+        p
+    } else {
+        workspace_root.join(p)
+    };
     let img = image::open(&full).map_err(|e| format!("failed to load image: {e}"))?;
     let rgba = img.to_rgba8();
     let mut png = Vec::new();
@@ -1312,7 +1724,10 @@ mod tests {
         let doc = convert_file_to_doc(&tmp).unwrap();
         assert!(doc.title().unwrap().ends_with(".txt"));
         assert_eq!(doc.commands.len(), 3);
-        assert!(doc.commands.iter().all(|c| c.kind == CommandKind::DrawText as u8));
+        assert!(doc
+            .commands
+            .iter()
+            .all(|c| c.kind == CommandKind::DrawText as u8));
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -1332,12 +1747,24 @@ mod tests {
         std::fs::write(&tmp, "name,age\nAlice,30\nBob,25").unwrap();
         let doc = convert_file_to_doc(&tmp).unwrap();
         // Cell triples: (row:1, col:name, Alice), (row:1, col:age, 30), etc.
-        assert!(doc.triples.iter().any(|(s, p, o)| s == "row:1" && p == "col:name" && o == "Alice"));
-        assert!(doc.triples.iter().any(|(s, p, o)| s == "row:2" && p == "col:age" && o == "25"));
+        assert!(doc
+            .triples
+            .iter()
+            .any(|(s, p, o)| s == "row:1" && p == "col:name" && o == "Alice"));
+        assert!(doc
+            .triples
+            .iter()
+            .any(|(s, p, o)| s == "row:2" && p == "col:age" && o == "25"));
         // Grid: 2 header cells + 2 rows x 2 cols = 6 DrawText commands.
         assert_eq!(doc.commands.len(), 6);
-        assert!(doc.commands.iter().all(|c| c.kind == CommandKind::DrawText as u8));
-        assert!(doc.commands.iter().all(|c| c.w > 0), "table cells wrap to column width");
+        assert!(doc
+            .commands
+            .iter()
+            .all(|c| c.kind == CommandKind::DrawText as u8));
+        assert!(
+            doc.commands.iter().all(|c| c.w > 0),
+            "table cells wrap to column width"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -1345,7 +1772,10 @@ mod tests {
     fn split_csv_line_honors_quotes() {
         assert_eq!(split_csv_line("a,b,c", ','), vec!["a", "b", "c"]);
         assert_eq!(split_csv_line("a,\"b,c\",d", ','), vec!["a", "b,c", "d"]);
-        assert_eq!(split_csv_line("\"say \"\"hi\"\"\",x", ','), vec!["say \"hi\"", "x"]);
+        assert_eq!(
+            split_csv_line("\"say \"\"hi\"\"\",x", ','),
+            vec!["say \"hi\"", "x"]
+        );
         assert_eq!(split_csv_line("a\tb", '\t'), vec!["a", "b"]);
     }
 
@@ -1358,9 +1788,15 @@ mod tests {
         assert_eq!(doc.commands.len(), 1);
         let cmd = &doc.commands[0];
         assert_eq!(cmd.kind, CommandKind::DrawImage as u8);
-        assert!(cmd.content.starts_with("data:image/png;base64,"), "normalized to PNG");
+        assert!(
+            cmd.content.starts_with("data:image/png;base64,"),
+            "normalized to PNG"
+        );
         assert_eq!((cmd.w, cmd.h), (5, 4), "real dimensions recorded");
-        assert!(doc.triples.iter().any(|(_, p, o)| p == "nda:width" && o == "5"));
+        assert!(doc
+            .triples
+            .iter()
+            .any(|(_, p, o)| p == "nda:width" && o == "5"));
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -1383,15 +1819,31 @@ mod tests {
 
     #[test]
     fn from_base64_inverts_encoder() {
-        for sample in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", b"\x00\x01\xff\xfe"] {
+        for sample in [
+            &b""[..],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+            b"\x00\x01\xff\xfe",
+        ] {
             let enc = crate::editor::nda_viewer::base64_encode(sample);
-            assert_eq!(from_base64(&enc).unwrap(), sample.to_vec(), "sample {sample:?}");
+            assert_eq!(
+                from_base64(&enc).unwrap(),
+                sample.to_vec(),
+                "sample {sample:?}"
+            );
         }
     }
 
     #[test]
     fn decode_data_url_extracts_payload() {
-        let url = format!("data:text/plain;base64,{}", crate::editor::nda_viewer::base64_encode(b"hello nda"));
+        let url = format!(
+            "data:text/plain;base64,{}",
+            crate::editor::nda_viewer::base64_encode(b"hello nda")
+        );
         assert_eq!(decode_data_url(&url).unwrap(), b"hello nda");
         assert!(decode_data_url("https://example.com/x.png").is_none());
         assert!(decode_data_url("data:image/png;base64,!!!not-base64!!!").is_none());
@@ -1402,8 +1854,12 @@ mod tests {
         // Encode a 2x2 PNG via the image crate, wrap as a data-url, decode back.
         let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));
         let mut png: Vec<u8> = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
-        let url = format!("data:image/png;base64,{}", crate::editor::nda_viewer::base64_encode(&png));
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let url = format!(
+            "data:image/png;base64,{}",
+            crate::editor::nda_viewer::base64_encode(&png)
+        );
         let decoded = decode_data_url(&url).unwrap();
         let reloaded = image::load_from_memory(&decoded).unwrap();
         assert_eq!((reloaded.width(), reloaded.height()), (2, 2));
@@ -1418,7 +1874,10 @@ mod tests {
         assert!(parse_color_hex("nothex").is_none());
         // Formatting drops alpha and round-trips through the parser.
         assert_eq!(color_to_hex(0x58A6_FFFF), "#58A6FF");
-        assert_eq!(parse_color_hex(&color_to_hex(0xC9D1_D9FF)), Some(0xC9D1_D9FF));
+        assert_eq!(
+            parse_color_hex(&color_to_hex(0xC9D1_D9FF)),
+            Some(0xC9D1_D9FF)
+        );
     }
 
     #[test]

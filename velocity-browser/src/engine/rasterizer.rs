@@ -27,7 +27,12 @@ impl PixelBuffer {
     pub fn get_pixel(&self, x: usize, y: usize) -> [u8; 4] {
         if x < self.width && y < self.height {
             let idx = (y * self.width + x) * 4;
-            [self.data[idx], self.data[idx + 1], self.data[idx + 2], self.data[idx + 3]]
+            [
+                self.data[idx],
+                self.data[idx + 1],
+                self.data[idx + 2],
+                self.data[idx + 3],
+            ]
         } else {
             [255, 255, 255, 255]
         }
@@ -35,11 +40,13 @@ impl PixelBuffer {
 
     /// Alpha-blend a pixel over the existing content (source-over compositing).
     pub fn blend_pixel(&mut self, x: usize, y: usize, r: u8, g: u8, b: u8, a: u8) {
-        if x >= self.width || y >= self.height { return; }
+        if x >= self.width || y >= self.height {
+            return;
+        }
         let idx = (y * self.width + x) * 4;
         let src_a = a as f32 / 255.0;
         let inv_a = 1.0 - src_a;
-        self.data[idx]     = (r as f32 * src_a + self.data[idx] as f32 * inv_a) as u8;
+        self.data[idx] = (r as f32 * src_a + self.data[idx] as f32 * inv_a) as u8;
         self.data[idx + 1] = (g as f32 * src_a + self.data[idx + 1] as f32 * inv_a) as u8;
         self.data[idx + 2] = (b as f32 * src_a + self.data[idx + 2] as f32 * inv_a) as u8;
         self.data[idx + 3] = (a as f32 + self.data[idx + 3] as f32 * inv_a).min(255.0) as u8;
@@ -55,7 +62,17 @@ impl PixelBuffer {
     }
 
     /// Fill a rectangle with a solid color.
-    pub fn fill_rect(&mut self, x0: usize, y0: usize, w: usize, h: usize, r: u8, g: u8, b: u8, a: u8) {
+    pub fn fill_rect(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        w: usize,
+        h: usize,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) {
         let x1 = (x0 + w).min(self.width);
         let y1 = (y0 + h).min(self.height);
         for y in y0..y1 {
@@ -66,18 +83,32 @@ impl PixelBuffer {
     }
 
     /// Draw a rectangle outline.
-    pub fn stroke_rect(&mut self, x0: usize, y0: usize, w: usize, h: usize, r: u8, g: u8, b: u8, a: u8) {
+    pub fn stroke_rect(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        w: usize,
+        h: usize,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) {
         let x1 = (x0 + w).min(self.width);
         let y1 = (y0 + h).min(self.height);
         // Top and bottom edges
         for x in x0..x1 {
             self.set_pixel(x, y0, r, g, b, a);
-            if y1 > 0 { self.set_pixel(x, y1 - 1, r, g, b, a); }
+            if y1 > 0 {
+                self.set_pixel(x, y1 - 1, r, g, b, a);
+            }
         }
         // Left and right edges
         for y in y0..y1 {
             self.set_pixel(x0, y, r, g, b, a);
-            if x1 > 0 { self.set_pixel(x1 - 1, y, r, g, b, a); }
+            if x1 > 0 {
+                self.set_pixel(x1 - 1, y, r, g, b, a);
+            }
         }
     }
 
@@ -94,15 +125,21 @@ impl PixelBuffer {
             if cx >= 0 && cy >= 0 {
                 self.set_pixel(cx as usize, cy as usize, r, g, b, a);
             }
-            if cx == x1 && cy == y1 { break; }
+            if cx == x1 && cy == y1 {
+                break;
+            }
             let e2 = 2 * err;
             if e2 >= dy {
-                if cx == x1 { break; }
+                if cx == x1 {
+                    break;
+                }
                 err += dy;
                 cx += sx;
             }
             if e2 <= dx {
-                if cy == y1 { break; }
+                if cy == y1 {
+                    break;
+                }
                 err += dx;
                 cy += sy;
             }
@@ -120,15 +157,23 @@ impl PixelBuffer {
                 let px = cx + dx;
                 let py_up = cy + y;
                 let py_dn = cy - y;
-                if px >= 0 && py_up >= 0 { self.set_pixel(px as usize, py_up as usize, r, g, b, a); }
-                if px >= 0 && py_dn >= 0 { self.set_pixel(px as usize, py_dn as usize, r, g, b, a); }
+                if px >= 0 && py_up >= 0 {
+                    self.set_pixel(px as usize, py_up as usize, r, g, b, a);
+                }
+                if px >= 0 && py_dn >= 0 {
+                    self.set_pixel(px as usize, py_dn as usize, r, g, b, a);
+                }
             }
             for dx in -y..=y {
                 let px = cx + dx;
                 let py_up = cy + x;
                 let py_dn = cy - x;
-                if px >= 0 && py_up >= 0 { self.set_pixel(px as usize, py_up as usize, r, g, b, a); }
-                if px >= 0 && py_dn >= 0 { self.set_pixel(px as usize, py_dn as usize, r, g, b, a); }
+                if px >= 0 && py_up >= 0 {
+                    self.set_pixel(px as usize, py_up as usize, r, g, b, a);
+                }
+                if px >= 0 && py_dn >= 0 {
+                    self.set_pixel(px as usize, py_dn as usize, r, g, b, a);
+                }
             }
             y += 1;
             if d < 0 {
@@ -147,8 +192,14 @@ impl PixelBuffer {
         let mut d = 1 - radius;
         while x >= y {
             for &(px, py) in &[
-                (cx+x, cy+y), (cx-x, cy+y), (cx+x, cy-y), (cx-x, cy-y),
-                (cx+y, cy+x), (cx-y, cy+x), (cx+y, cy-x), (cx-y, cy-x),
+                (cx + x, cy + y),
+                (cx - x, cy + y),
+                (cx + x, cy - y),
+                (cx - x, cy - y),
+                (cx + y, cy + x),
+                (cx - y, cy + x),
+                (cx + y, cy - x),
+                (cx - y, cy - x),
             ] {
                 if px >= 0 && py >= 0 {
                     self.set_pixel(px as usize, py as usize, r, g, b, a);
@@ -165,7 +216,16 @@ impl PixelBuffer {
     }
 
     /// Copy a rectangular region from another PixelBuffer.
-    pub fn blit(&mut self, src: &PixelBuffer, dst_x: usize, dst_y: usize, src_x: usize, src_y: usize, w: usize, h: usize) {
+    pub fn blit(
+        &mut self,
+        src: &PixelBuffer,
+        dst_x: usize,
+        dst_y: usize,
+        src_x: usize,
+        src_y: usize,
+        w: usize,
+        h: usize,
+    ) {
         for dy in 0..h {
             for dx in 0..w {
                 let sx = src_x + dx;
@@ -214,7 +274,13 @@ impl SoftwareRasterizer {
     }
 
     /// Render a checkerboard pattern (useful as a placeholder background).
-    pub fn render_checkerboard(width: usize, height: usize, cell_size: usize, c1: [u8; 4], c2: [u8; 4]) -> PixelBuffer {
+    pub fn render_checkerboard(
+        width: usize,
+        height: usize,
+        cell_size: usize,
+        c1: [u8; 4],
+        c2: [u8; 4],
+    ) -> PixelBuffer {
         let mut buf = PixelBuffer::new(width, height);
         for y in 0..height {
             for x in 0..width {
@@ -228,10 +294,19 @@ impl SoftwareRasterizer {
     }
 
     /// Render a vertical linear gradient.
-    pub fn render_gradient_v(width: usize, height: usize, top: [u8; 4], bottom: [u8; 4]) -> PixelBuffer {
+    pub fn render_gradient_v(
+        width: usize,
+        height: usize,
+        top: [u8; 4],
+        bottom: [u8; 4],
+    ) -> PixelBuffer {
         let mut buf = PixelBuffer::new(width, height);
         for y in 0..height {
-            let t = if height > 1 { y as f32 / (height - 1) as f32 } else { 0.0 };
+            let t = if height > 1 {
+                y as f32 / (height - 1) as f32
+            } else {
+                0.0
+            };
             let r = (top[0] as f32 * (1.0 - t) + bottom[0] as f32 * t) as u8;
             let g = (top[1] as f32 * (1.0 - t) + bottom[1] as f32 * t) as u8;
             let b = (top[2] as f32 * (1.0 - t) + bottom[2] as f32 * t) as u8;
@@ -244,10 +319,19 @@ impl SoftwareRasterizer {
     }
 
     /// Render a horizontal linear gradient.
-    pub fn render_gradient_h(width: usize, height: usize, left: [u8; 4], right: [u8; 4]) -> PixelBuffer {
+    pub fn render_gradient_h(
+        width: usize,
+        height: usize,
+        left: [u8; 4],
+        right: [u8; 4],
+    ) -> PixelBuffer {
         let mut buf = PixelBuffer::new(width, height);
         for x in 0..width {
-            let t = if width > 1 { x as f32 / (width - 1) as f32 } else { 0.0 };
+            let t = if width > 1 {
+                x as f32 / (width - 1) as f32
+            } else {
+                0.0
+            };
             let r = (left[0] as f32 * (1.0 - t) + right[0] as f32 * t) as u8;
             let g = (left[1] as f32 * (1.0 - t) + right[1] as f32 * t) as u8;
             let b = (left[2] as f32 * (1.0 - t) + right[2] as f32 * t) as u8;
@@ -260,8 +344,20 @@ impl SoftwareRasterizer {
     }
 
     /// Draw an ellipse outline on a PixelBuffer using the midpoint ellipse algorithm.
-    pub fn stroke_ellipse(buf: &mut PixelBuffer, cx: i32, cy: i32, rx: i32, ry: i32, r: u8, g: u8, b: u8, a: u8) {
-        if rx <= 0 || ry <= 0 { return; }
+    pub fn stroke_ellipse(
+        buf: &mut PixelBuffer,
+        cx: i32,
+        cy: i32,
+        rx: i32,
+        ry: i32,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) {
+        if rx <= 0 || ry <= 0 {
+            return;
+        }
         let mut x = 0i32;
         let mut y = ry;
         let rx2 = rx * rx;
@@ -269,35 +365,61 @@ impl SoftwareRasterizer {
         // Region 1
         let mut p = (ry2 as f32) - (rx2 as f32) * (ry as f32) + 0.25 * (rx2 as f32);
         while ry2 * x < rx2 * y {
-            for &(px, py) in &[(cx+x,cy+y),(cx-x,cy+y),(cx+x,cy-y),(cx-x,cy-y)] {
-                if px >= 0 && py >= 0 { buf.set_pixel(px as usize, py as usize, r, g, b, a); }
+            for &(px, py) in &[
+                (cx + x, cy + y),
+                (cx - x, cy + y),
+                (cx + x, cy - y),
+                (cx - x, cy - y),
+            ] {
+                if px >= 0 && py >= 0 {
+                    buf.set_pixel(px as usize, py as usize, r, g, b, a);
+                }
             }
             x += 1;
             if p < 0.0 {
                 p += 2.0 * (ry2 as f32) * (x as f32) + (ry2 as f32);
             } else {
                 y -= 1;
-                p += 2.0 * (ry2 as f32) * (x as f32) - 2.0 * (rx2 as f32) * (y as f32) + (ry2 as f32);
+                p += 2.0 * (ry2 as f32) * (x as f32) - 2.0 * (rx2 as f32) * (y as f32)
+                    + (ry2 as f32);
             }
         }
         // Region 2
-        let mut p2 = (ry2 as f32) * ((x as f32) + 0.5).powi(2) + (rx2 as f32) * ((y as f32) - 1.0).powi(2) - (rx2 as f32) * (ry2 as f32);
+        let mut p2 = (ry2 as f32) * ((x as f32) + 0.5).powi(2)
+            + (rx2 as f32) * ((y as f32) - 1.0).powi(2)
+            - (rx2 as f32) * (ry2 as f32);
         while y >= 0 {
-            for &(px, py) in &[(cx+x,cy+y),(cx-x,cy+y),(cx+x,cy-y),(cx-x,cy-y)] {
-                if px >= 0 && py >= 0 { buf.set_pixel(px as usize, py as usize, r, g, b, a); }
+            for &(px, py) in &[
+                (cx + x, cy + y),
+                (cx - x, cy + y),
+                (cx + x, cy - y),
+                (cx - x, cy - y),
+            ] {
+                if px >= 0 && py >= 0 {
+                    buf.set_pixel(px as usize, py as usize, r, g, b, a);
+                }
             }
             y -= 1;
             if p2 > 0.0 {
                 p2 -= 2.0 * (rx2 as f32) * (y as f32) + (rx2 as f32);
             } else {
                 x += 1;
-                p2 += 2.0 * (ry2 as f32) * (x as f32) - 2.0 * (rx2 as f32) * (y as f32) + (rx2 as f32);
+                p2 += 2.0 * (ry2 as f32) * (x as f32) - 2.0 * (rx2 as f32) * (y as f32)
+                    + (rx2 as f32);
             }
         }
     }
 
     /// Copy a rectangular region within the same buffer.
-    pub fn copy_within(buf: &mut PixelBuffer, src_x: usize, src_y: usize, dst_x: usize, dst_y: usize, w: usize, h: usize) {
+    pub fn copy_within(
+        buf: &mut PixelBuffer,
+        src_x: usize,
+        src_y: usize,
+        dst_x: usize,
+        dst_y: usize,
+        w: usize,
+        h: usize,
+    ) {
         let tmp = buf.crop(src_x, src_y, w, h);
         buf.blit(&tmp, dst_x, dst_y, 0, 0, w, h);
     }
@@ -455,7 +577,8 @@ mod tests {
 
     #[test]
     fn test_render_checkerboard() {
-        let buf = SoftwareRasterizer::render_checkerboard(4, 4, 2, [0, 0, 0, 255], [255, 255, 255, 255]);
+        let buf =
+            SoftwareRasterizer::render_checkerboard(4, 4, 2, [0, 0, 0, 255], [255, 255, 255, 255]);
         assert_eq!(buf.get_pixel(0, 0), [0, 0, 0, 255]);
         assert_eq!(buf.get_pixel(2, 0), [255, 255, 255, 255]);
         assert_eq!(buf.get_pixel(0, 2), [255, 255, 255, 255]);

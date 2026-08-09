@@ -104,8 +104,11 @@ impl OcrEngine {
     pub fn recognize_region(region: &OcrRegion, config: &OcrConfig) -> OcrResult {
         if !cfg!(target_os = "windows") {
             return OcrResult {
-                blocks: Vec::new(), full_text: String::new(),
-                language: None, duration: Duration::ZERO, source: "region".into(),
+                blocks: Vec::new(),
+                full_text: String::new(),
+                language: None,
+                duration: Duration::ZERO,
+                source: "region".into(),
             };
         }
         let start = Instant::now();
@@ -117,8 +120,10 @@ impl OcrEngine {
                 result
             }
             Err(e) => OcrResult {
-                blocks: Vec::new(), full_text: String::new(),
-                language: None, duration: start.elapsed(),
+                blocks: Vec::new(),
+                full_text: String::new(),
+                language: None,
+                duration: start.elapsed(),
                 source: format!("region error: {e}"),
             },
         }
@@ -128,8 +133,11 @@ impl OcrEngine {
     pub fn recognize_window(pid: u32, config: &OcrConfig) -> OcrResult {
         if !cfg!(target_os = "windows") {
             return OcrResult {
-                blocks: Vec::new(), full_text: String::new(),
-                language: None, duration: Duration::ZERO, source: "window".into(),
+                blocks: Vec::new(),
+                full_text: String::new(),
+                language: None,
+                duration: Duration::ZERO,
+                source: "window".into(),
             };
         }
         let start = Instant::now();
@@ -146,11 +154,18 @@ impl OcrEngine {
         match run_ps_script(&bounds_script) {
             Ok(json) => {
                 #[derive(serde::Deserialize)]
-                struct Bounds { x: Option<i32>, y: Option<i32>, w: Option<u32>, h: Option<u32> }
+                struct Bounds {
+                    x: Option<i32>,
+                    y: Option<i32>,
+                    w: Option<u32>,
+                    h: Option<u32>,
+                }
                 if let Ok(b) = serde_json::from_str::<Bounds>(&json) {
                     let region = OcrRegion {
-                        x: b.x.unwrap_or(0), y: b.y.unwrap_or(0),
-                        width: b.w.unwrap_or(800), height: b.h.unwrap_or(600),
+                        x: b.x.unwrap_or(0),
+                        y: b.y.unwrap_or(0),
+                        width: b.w.unwrap_or(800),
+                        height: b.h.unwrap_or(600),
                     };
                     let mut result = Self::recognize_region(&region, config);
                     result.source = format!("window pid={pid}");
@@ -158,15 +173,19 @@ impl OcrEngine {
                     result
                 } else {
                     OcrResult {
-                        blocks: Vec::new(), full_text: String::new(),
-                        language: None, duration: start.elapsed(),
+                        blocks: Vec::new(),
+                        full_text: String::new(),
+                        language: None,
+                        duration: start.elapsed(),
                         source: "window bounds parse error".into(),
                     }
                 }
             }
             Err(e) => OcrResult {
-                blocks: Vec::new(), full_text: String::new(),
-                language: None, duration: start.elapsed(),
+                blocks: Vec::new(),
+                full_text: String::new(),
+                language: None,
+                duration: start.elapsed(),
                 source: format!("window error: {e}"),
             },
         }
@@ -178,7 +197,9 @@ impl OcrEngine {
         region: Option<&OcrRegion>,
         config: &OcrConfig,
     ) -> Vec<OcrTextBlock> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let script = build_find_text_script(text, region);
         match run_ps_script(&script) {
             Ok(json) => parse_ocr_blocks(&json, config.min_confidence),
@@ -188,12 +209,17 @@ impl OcrEngine {
 
     /// Get available OCR languages on this system.
     pub fn available_languages() -> Vec<String> {
-        if !cfg!(target_os = "windows") { return Vec::new(); }
+        if !cfg!(target_os = "windows") {
+            return Vec::new();
+        }
         let script = build_list_ocr_languages_script();
         match run_ps_script(&script) {
             Ok(json) => {
                 #[derive(serde::Deserialize)]
-                struct Lang { tag: Option<String>, name: Option<String> }
+                struct Lang {
+                    tag: Option<String>,
+                    name: Option<String>,
+                }
                 serde_json::from_str::<Vec<Lang>>(&json)
                     .unwrap_or_default()
                     .into_iter()
@@ -366,14 +392,23 @@ ConvertTo-Json @{{ search = $searchText; matches = @($matches) }} -Compress
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -402,29 +437,39 @@ fn parse_ocr_result(json: &str, region: &OcrRegion) -> OcrResult {
     }
     match serde_json::from_str::<PsOcrResult>(json) {
         Ok(r) => {
-            let blocks = r.blocks.unwrap_or_default().into_iter().map(|b| {
-                OcrTextBlock {
+            let blocks = r
+                .blocks
+                .unwrap_or_default()
+                .into_iter()
+                .map(|b| OcrTextBlock {
                     text: b.text.unwrap_or_default(),
                     bounds: OcrRect {
-                        x: b.x.unwrap_or(0.0), y: b.y.unwrap_or(0.0),
-                        width: b.width.unwrap_or(0.0), height: b.height.unwrap_or(0.0),
+                        x: b.x.unwrap_or(0.0),
+                        y: b.y.unwrap_or(0.0),
+                        width: b.width.unwrap_or(0.0),
+                        height: b.height.unwrap_or(0.0),
                     },
                     confidence: 0.9,
                     line_index: b.line_index.unwrap_or(0),
                     word_index: b.word_index.unwrap_or(0),
-                }
-            }).collect();
+                })
+                .collect();
             OcrResult {
                 blocks,
                 full_text: r.full_text.unwrap_or_default(),
                 language: r.language,
                 duration: Duration::ZERO,
-                source: format!("region ({},{},{},{})", region.x, region.y, region.width, region.height),
+                source: format!(
+                    "region ({},{},{},{})",
+                    region.x, region.y, region.width, region.height
+                ),
             }
         }
         Err(_) => OcrResult {
-            blocks: Vec::new(), full_text: String::new(),
-            language: None, duration: Duration::ZERO,
+            blocks: Vec::new(),
+            full_text: String::new(),
+            language: None,
+            duration: Duration::ZERO,
             source: "parse error".into(),
         },
     }
@@ -432,13 +477,18 @@ fn parse_ocr_result(json: &str, region: &OcrRegion) -> OcrResult {
 
 fn parse_ocr_blocks(json: &str, min_confidence: f32) -> Vec<OcrTextBlock> {
     #[derive(serde::Deserialize)]
-    struct PsFindResult { matches: Option<Vec<PsOcrBlockInner>> }
+    struct PsFindResult {
+        matches: Option<Vec<PsOcrBlockInner>>,
+    }
     #[derive(serde::Deserialize)]
     struct PsOcrBlockInner {
         text: Option<String>,
-        x: Option<f64>, y: Option<f64>,
-        width: Option<f64>, height: Option<f64>,
-        line_index: Option<u32>, word_index: Option<u32>,
+        x: Option<f64>,
+        y: Option<f64>,
+        width: Option<f64>,
+        height: Option<f64>,
+        line_index: Option<u32>,
+        word_index: Option<u32>,
     }
     serde_json::from_str::<PsFindResult>(json)
         .ok()
@@ -448,8 +498,10 @@ fn parse_ocr_blocks(json: &str, min_confidence: f32) -> Vec<OcrTextBlock> {
         .map(|b| OcrTextBlock {
             text: b.text.unwrap_or_default(),
             bounds: OcrRect {
-                x: b.x.unwrap_or(0.0), y: b.y.unwrap_or(0.0),
-                width: b.width.unwrap_or(0.0), height: b.height.unwrap_or(0.0),
+                x: b.x.unwrap_or(0.0),
+                y: b.y.unwrap_or(0.0),
+                width: b.width.unwrap_or(0.0),
+                height: b.height.unwrap_or(0.0),
             },
             confidence: 0.9,
             line_index: b.line_index.unwrap_or(0),
@@ -467,7 +519,12 @@ mod tests {
 
     #[test]
     fn ocr_rect_center() {
-        let rect = OcrRect { x: 10.0, y: 20.0, width: 100.0, height: 50.0 };
+        let rect = OcrRect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
         let (cx, cy) = rect.center();
         assert_eq!(cx, 60.0);
         assert_eq!(cy, 45.0);
@@ -475,14 +532,24 @@ mod tests {
 
     #[test]
     fn ocr_rect_contains() {
-        let rect = OcrRect { x: 0.0, y: 0.0, width: 100.0, height: 50.0 };
+        let rect = OcrRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 50.0,
+        };
         assert!(rect.contains(50.0, 25.0));
         assert!(!rect.contains(150.0, 25.0));
     }
 
     #[test]
     fn ocr_script_includes_region() {
-        let region = OcrRegion { x: 100, y: 200, width: 400, height: 300 };
+        let region = OcrRegion {
+            x: 100,
+            y: 200,
+            width: 400,
+            height: 300,
+        };
         let config = OcrConfig::default();
         let script = build_ocr_script(&region, &config);
         assert!(script.contains("100"));

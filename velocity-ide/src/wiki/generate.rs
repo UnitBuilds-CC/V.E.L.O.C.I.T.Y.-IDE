@@ -95,9 +95,10 @@ fn slugify(name: &str) -> String {
         if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
             slug.push(ch.to_ascii_lowercase());
         } else if (ch == '/' || ch == '\\' || ch == '.' || ch == ' ' || ch == ':')
-            && !slug.ends_with('-') {
-                slug.push('-');
-            }
+            && !slug.ends_with('-')
+        {
+            slug.push('-');
+        }
         // Drop any other characters.
     }
     let slug = slug.trim_matches('-').to_string();
@@ -276,7 +277,10 @@ mod inline_tests {
 
     #[test]
     fn slugify_handles_paths_and_symbols() {
-        assert_eq!(slugify("velocity-mcp/src/editor/app.rs"), "velocity-mcp-src-editor-app-rs");
+        assert_eq!(
+            slugify("velocity-mcp/src/editor/app.rs"),
+            "velocity-mcp-src-editor-app-rs"
+        );
         assert_eq!(slugify("match_token"), "match_token");
         assert_eq!(slugify("///"), "page");
     }

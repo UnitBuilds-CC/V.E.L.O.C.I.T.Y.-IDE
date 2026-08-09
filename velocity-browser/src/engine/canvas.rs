@@ -1,7 +1,7 @@
 use crate::engine::canvas_context::DrawCommand;
 use crate::nda::{NdaDocument, NdaTriple};
 use crate::predicates::{
-    CANVAS_CONTEXT, CANVAS_DRAW_CALLS, CANVAS_IMAGE, CANVAS_SIZE, CANVAS_SHAPE, CANVAS_SUMMARY,
+    CANVAS_CONTEXT, CANVAS_DRAW_CALLS, CANVAS_IMAGE, CANVAS_SHAPE, CANVAS_SIZE, CANVAS_SUMMARY,
     CANVAS_TEXT,
 };
 
@@ -31,7 +31,12 @@ impl CanvasElement {
     }
 
     /// A 2d canvas carrying its recorded display list.
-    pub fn with_display_list(id: &str, width: u32, height: u32, display_list: Vec<DrawCommand>) -> Self {
+    pub fn with_display_list(
+        id: &str,
+        width: u32,
+        height: u32,
+        display_list: Vec<DrawCommand>,
+    ) -> Self {
         Self {
             id: id.to_string(),
             context_type: "2d".to_string(),
@@ -52,9 +57,21 @@ impl CanvasExtractor {
     pub fn extract_canvases_nda(canvases: &[CanvasElement]) -> Vec<NdaTriple> {
         let mut triples = Vec::with_capacity(canvases.len() * 3);
         for canvas in canvases {
-            triples.push(NdaTriple::new(&canvas.id, CANVAS_CONTEXT, &canvas.context_type));
-            triples.push(NdaTriple::new(&canvas.id, CANVAS_SIZE, &format!("{}x{}", canvas.width, canvas.height)));
-            triples.push(NdaTriple::new(&canvas.id, CANVAS_DRAW_CALLS, &canvas.draw_call_count.to_string()));
+            triples.push(NdaTriple::new(
+                &canvas.id,
+                CANVAS_CONTEXT,
+                &canvas.context_type,
+            ));
+            triples.push(NdaTriple::new(
+                &canvas.id,
+                CANVAS_SIZE,
+                &format!("{}x{}", canvas.width, canvas.height),
+            ));
+            triples.push(NdaTriple::new(
+                &canvas.id,
+                CANVAS_DRAW_CALLS,
+                &canvas.draw_call_count.to_string(),
+            ));
         }
         triples
     }
@@ -65,7 +82,11 @@ impl CanvasExtractor {
         let mut doc = NdaDocument::new();
         for canvas in canvases {
             doc.push_str(&canvas.id, CANVAS_CONTEXT, &canvas.context_type);
-            doc.push_str(&canvas.id, CANVAS_SIZE, &format!("{}x{}", canvas.width, canvas.height));
+            doc.push_str(
+                &canvas.id,
+                CANVAS_SIZE,
+                &format!("{}x{}", canvas.width, canvas.height),
+            );
             doc.push_int(&canvas.id, CANVAS_DRAW_CALLS, canvas.draw_call_count as i64);
             Self::emit_display_list(&mut doc, &canvas.id, &canvas.display_list);
         }
@@ -83,17 +104,35 @@ impl CanvasExtractor {
                     text_count += 1;
                     doc.push_str(id, CANVAS_TEXT, &format!("{}@{},{}", text, x, y));
                 }
-                DrawCommand::DrawImage { src, dx, dy, dw, dh } => {
+                DrawCommand::DrawImage {
+                    src,
+                    dx,
+                    dy,
+                    dw,
+                    dh,
+                } => {
                     image_count += 1;
-                    doc.push_str(id, CANVAS_IMAGE, &format!("{}@{},{},{},{}", src, dx, dy, dw, dh));
+                    doc.push_str(
+                        id,
+                        CANVAS_IMAGE,
+                        &format!("{}@{},{},{},{}", src, dx, dy, dw, dh),
+                    );
                 }
                 DrawCommand::FillRect { x, y, w, h, .. } => {
                     shape_count += 1;
-                    doc.push_str(id, CANVAS_SHAPE, &format!("fillRect {},{},{},{}", x, y, w, h));
+                    doc.push_str(
+                        id,
+                        CANVAS_SHAPE,
+                        &format!("fillRect {},{},{},{}", x, y, w, h),
+                    );
                 }
                 DrawCommand::StrokeRect { x, y, w, h, .. } => {
                     shape_count += 1;
-                    doc.push_str(id, CANVAS_SHAPE, &format!("strokeRect {},{},{},{}", x, y, w, h));
+                    doc.push_str(
+                        id,
+                        CANVAS_SHAPE,
+                        &format!("strokeRect {},{},{},{}", x, y, w, h),
+                    );
                 }
                 DrawCommand::Arc { x, y, radius, .. } => {
                     shape_count += 1;
@@ -107,7 +146,10 @@ impl CanvasExtractor {
         doc.push_str(
             id,
             CANVAS_SUMMARY,
-            &format!("{} texts, {} shapes, {} images", text_count, shape_count, image_count),
+            &format!(
+                "{} texts, {} shapes, {} images",
+                text_count, shape_count, image_count
+            ),
         );
     }
 }
@@ -126,7 +168,13 @@ mod tests {
                 font: "16px Arial".to_string(),
                 style: "#000".to_string(),
             },
-            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 5.0, h: 5.0, style: "#fff".to_string() },
+            DrawCommand::FillRect {
+                x: 0.0,
+                y: 0.0,
+                w: 5.0,
+                h: 5.0,
+                style: "#fff".to_string(),
+            },
         ];
         let canvas = CanvasElement::with_display_list("canvas_1", 300, 150, list);
         let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
@@ -154,19 +202,41 @@ mod tests {
     #[test]
     fn document_captures_images_and_shapes() {
         let list = vec![
-            DrawCommand::DrawImage { src: "logo.png".to_string(), dx: 10.0, dy: 20.0, dw: 100.0, dh: 50.0 },
-            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 50.0, h: 50.0, style: "red".to_string() },
-            DrawCommand::Arc { x: 25.0, y: 25.0, radius: 10.0, start_angle: 0.0, end_angle: std::f64::consts::TAU },
+            DrawCommand::DrawImage {
+                src: "logo.png".to_string(),
+                dx: 10.0,
+                dy: 20.0,
+                dw: 100.0,
+                dh: 50.0,
+            },
+            DrawCommand::FillRect {
+                x: 0.0,
+                y: 0.0,
+                w: 50.0,
+                h: 50.0,
+                style: "red".to_string(),
+            },
+            DrawCommand::Arc {
+                x: 25.0,
+                y: 25.0,
+                radius: 10.0,
+                start_angle: 0.0,
+                end_angle: std::f64::consts::TAU,
+            },
         ];
         let canvas = CanvasElement::with_display_list("c2", 200, 200, list);
         let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
-        let images: Vec<String> = doc.facts.iter()
+        let images: Vec<String> = doc
+            .facts
+            .iter()
             .filter(|f| f.predicate == CANVAS_IMAGE)
             .filter_map(|f| doc.object_display(f))
             .collect();
         assert_eq!(images.len(), 1);
         assert!(images[0].contains("logo.png"));
-        let shapes: Vec<String> = doc.facts.iter()
+        let shapes: Vec<String> = doc
+            .facts
+            .iter()
             .filter(|f| f.predicate == CANVAS_SHAPE)
             .filter_map(|f| doc.object_display(f))
             .collect();
@@ -176,13 +246,33 @@ mod tests {
     #[test]
     fn summary_counts_are_accurate() {
         let list = vec![
-            DrawCommand::FillText { text: "A".to_string(), x: 0.0, y: 0.0, font: "12px".to_string(), style: "".to_string() },
-            DrawCommand::StrokeText { text: "B".to_string(), x: 10.0, y: 10.0, font: "12px".to_string(), style: "".to_string() },
-            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 10.0, h: 10.0, style: "".to_string() },
+            DrawCommand::FillText {
+                text: "A".to_string(),
+                x: 0.0,
+                y: 0.0,
+                font: "12px".to_string(),
+                style: "".to_string(),
+            },
+            DrawCommand::StrokeText {
+                text: "B".to_string(),
+                x: 10.0,
+                y: 10.0,
+                font: "12px".to_string(),
+                style: "".to_string(),
+            },
+            DrawCommand::FillRect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+                style: "".to_string(),
+            },
         ];
         let canvas = CanvasElement::with_display_list("c3", 100, 100, list);
         let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
-        let summary: Vec<String> = doc.facts.iter()
+        let summary: Vec<String> = doc
+            .facts
+            .iter()
             .filter(|f| f.predicate == CANVAS_SUMMARY)
             .filter_map(|f| doc.object_display(f))
             .collect();
@@ -206,8 +296,20 @@ mod tests {
     #[test]
     fn with_display_list_sets_call_count() {
         let list = vec![
-            DrawCommand::FillRect { x: 0.0, y: 0.0, w: 10.0, h: 10.0, style: "red".to_string() },
-            DrawCommand::Arc { x: 5.0, y: 5.0, radius: 3.0, start_angle: 0.0, end_angle: 1.0 },
+            DrawCommand::FillRect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+                style: "red".to_string(),
+            },
+            DrawCommand::Arc {
+                x: 5.0,
+                y: 5.0,
+                radius: 3.0,
+                start_angle: 0.0,
+                end_angle: 1.0,
+            },
         ];
         let c = CanvasElement::with_display_list("cv2", 200, 200, list);
         assert_eq!(c.context_type, "2d");
@@ -227,7 +329,9 @@ mod tests {
     fn empty_canvas_document_has_summary() {
         let c = CanvasElement::new("empty", "2d", 50, 50);
         let doc = CanvasExtractor::extract_canvases_document(&[c]);
-        let summary: Vec<String> = doc.facts.iter()
+        let summary: Vec<String> = doc
+            .facts
+            .iter()
             .filter(|f| f.predicate == CANVAS_SUMMARY)
             .filter_map(|f| doc.object_display(f))
             .collect();
@@ -239,12 +343,18 @@ mod tests {
 
     #[test]
     fn document_preserves_stroke_text() {
-        let list = vec![
-            DrawCommand::StrokeText { text: "Hello".to_string(), x: 5.0, y: 15.0, font: "14px".to_string(), style: "#000".to_string() },
-        ];
+        let list = vec![DrawCommand::StrokeText {
+            text: "Hello".to_string(),
+            x: 5.0,
+            y: 15.0,
+            font: "14px".to_string(),
+            style: "#000".to_string(),
+        }];
         let canvas = CanvasElement::with_display_list("st", 100, 100, list);
         let doc = CanvasExtractor::extract_canvases_document(&[canvas]);
-        let texts: Vec<String> = doc.facts.iter()
+        let texts: Vec<String> = doc
+            .facts
+            .iter()
             .filter(|f| f.predicate == CANVAS_TEXT)
             .filter_map(|f| doc.object_display(f))
             .collect();
@@ -256,7 +366,9 @@ mod tests {
         let c1 = CanvasElement::new("a", "2d", 10, 10);
         let c2 = CanvasElement::new("b", "2d", 20, 20);
         let doc = CanvasExtractor::extract_canvases_document(&[c1, c2]);
-        let contexts: Vec<String> = doc.facts.iter()
+        let contexts: Vec<String> = doc
+            .facts
+            .iter()
             .filter(|f| f.predicate == CANVAS_CONTEXT)
             .filter_map(|f| doc.object_display(f))
             .collect();

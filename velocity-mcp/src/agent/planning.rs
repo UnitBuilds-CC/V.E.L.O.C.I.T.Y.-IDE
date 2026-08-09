@@ -141,7 +141,13 @@ impl Plan {
     }
 
     /// Add a step to the plan.
-    pub fn add_step(&mut self, description: &str, action: &str, depends_on: Vec<String>, complexity: u8) -> String {
+    pub fn add_step(
+        &mut self,
+        description: &str,
+        action: &str,
+        depends_on: Vec<String>,
+        complexity: u8,
+    ) -> String {
         let id = self.gen_id();
         self.steps.push(PlanStep {
             id: id.clone(),
@@ -194,7 +200,8 @@ impl Plan {
             }
             // Check all dependencies are completed.
             step.depends_on.iter().all(|dep_id| {
-                self.steps.iter()
+                self.steps
+                    .iter()
                     .find(|s| s.id == *dep_id)
                     .map(|s| s.status == StepStatus::Completed)
                     .unwrap_or(false)
@@ -204,18 +211,23 @@ impl Plan {
 
     /// Get steps that are blocked (have unmet dependencies).
     pub fn blocked_steps(&self) -> Vec<&PlanStep> {
-        self.steps.iter().filter(|step| {
-            if step.status != StepStatus::Pending {
-                return false;
-            }
-            // Has dependencies but not all are completed.
-            !step.depends_on.is_empty() && !step.depends_on.iter().all(|dep_id| {
-                self.steps.iter()
-                    .find(|s| s.id == *dep_id)
-                    .map(|s| s.status == StepStatus::Completed)
-                    .unwrap_or(false)
+        self.steps
+            .iter()
+            .filter(|step| {
+                if step.status != StepStatus::Pending {
+                    return false;
+                }
+                // Has dependencies but not all are completed.
+                !step.depends_on.is_empty()
+                    && !step.depends_on.iter().all(|dep_id| {
+                        self.steps
+                            .iter()
+                            .find(|s| s.id == *dep_id)
+                            .map(|s| s.status == StepStatus::Completed)
+                            .unwrap_or(false)
+                    })
             })
-        }).collect()
+            .collect()
     }
 
     /// Record the output of a completed step.
@@ -227,7 +239,11 @@ impl Plan {
         // Check if all steps are done.
         if self.steps.iter().all(|s| s.status.is_terminal()) {
             let all_ok = self.steps.iter().all(|s| s.status == StepStatus::Completed);
-            self.status = if all_ok { PlanStatus::Completed } else { PlanStatus::Failed };
+            self.status = if all_ok {
+                PlanStatus::Completed
+            } else {
+                PlanStatus::Failed
+            };
         }
     }
 
@@ -248,7 +264,11 @@ impl Plan {
     /// Record a revision snapshot.
     pub fn snapshot(&mut self, note: &str) {
         let revision = self.revisions.len() as u32 + 1;
-        let completed = self.steps.iter().filter(|s| s.status == StepStatus::Completed).count();
+        let completed = self
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Completed)
+            .count();
         self.revisions.push(PlanRevision {
             revision,
             timestamp: now_secs(),
@@ -272,16 +292,32 @@ impl Plan {
         if self.steps.is_empty() {
             return 0.0;
         }
-        let done = self.steps.iter().filter(|s| s.status == StepStatus::Completed).count();
+        let done = self
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Completed)
+            .count();
         done as f32 / self.steps.len() as f32
     }
 
     /// Summary for display.
     pub fn summary(&self) -> PlanSummary {
         let total = self.steps.len();
-        let completed = self.steps.iter().filter(|s| s.status == StepStatus::Completed).count();
-        let failed = self.steps.iter().filter(|s| s.status == StepStatus::Failed).count();
-        let pending = self.steps.iter().filter(|s| s.status == StepStatus::Pending).count();
+        let completed = self
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Completed)
+            .count();
+        let failed = self
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Failed)
+            .count();
+        let pending = self
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Pending)
+            .count();
         let validated = self.steps.iter().filter(|s| s.validated).count();
         let total_complexity: u8 = self.steps.iter().map(|s| s.complexity).sum();
 
@@ -345,32 +381,132 @@ pub fn decompose_task(goal: &str) -> Plan {
     let mut plan = Plan::new(goal);
 
     if contains_any(&lower, &["implement", "build", "create", "add feature"]) {
-        let s1 = plan.add_step("Analyze requirements", "Read relevant code and understand current state", vec![], 2);
-        let s2 = plan.add_step("Design solution", "Plan the implementation approach", vec![s1.clone()], 3);
-        let s3 = plan.add_step("Implement changes", "Write the code following the design", vec![s2.clone()], 4);
-        let s4 = plan.add_step("Write tests", "Add tests for the new functionality", vec![s3.clone()], 3);
-        let s5 = plan.add_step("Validate", "Run tests and check for regressions", vec![s4.clone()], 2);
-        let s6 = plan.add_step("Document", "Update documentation and comments", vec![s5.clone()], 1);
+        let s1 = plan.add_step(
+            "Analyze requirements",
+            "Read relevant code and understand current state",
+            vec![],
+            2,
+        );
+        let s2 = plan.add_step(
+            "Design solution",
+            "Plan the implementation approach",
+            vec![s1.clone()],
+            3,
+        );
+        let s3 = plan.add_step(
+            "Implement changes",
+            "Write the code following the design",
+            vec![s2.clone()],
+            4,
+        );
+        let s4 = plan.add_step(
+            "Write tests",
+            "Add tests for the new functionality",
+            vec![s3.clone()],
+            3,
+        );
+        let s5 = plan.add_step(
+            "Validate",
+            "Run tests and check for regressions",
+            vec![s4.clone()],
+            2,
+        );
+        let s6 = plan.add_step(
+            "Document",
+            "Update documentation and comments",
+            vec![s5.clone()],
+            1,
+        );
     } else if contains_any(&lower, &["fix", "bug", "error", "debug"]) {
-        let s1 = plan.add_step("Reproduce the issue", "Understand the error and how to trigger it", vec![], 2);
-        let s2 = plan.add_step("Identify root cause", "Trace the execution path to find the bug", vec![s1.clone()], 3);
-        let s3 = plan.add_step("Implement fix", "Apply the minimal fix for the root cause", vec![s2.clone()], 3);
-        let s4 = plan.add_step("Verify fix", "Run tests to confirm the fix works", vec![s3.clone()], 2);
-        let s5 = plan.add_step("Add regression test", "Prevent this bug from recurring", vec![s4.clone()], 2);
+        let s1 = plan.add_step(
+            "Reproduce the issue",
+            "Understand the error and how to trigger it",
+            vec![],
+            2,
+        );
+        let s2 = plan.add_step(
+            "Identify root cause",
+            "Trace the execution path to find the bug",
+            vec![s1.clone()],
+            3,
+        );
+        let s3 = plan.add_step(
+            "Implement fix",
+            "Apply the minimal fix for the root cause",
+            vec![s2.clone()],
+            3,
+        );
+        let s4 = plan.add_step(
+            "Verify fix",
+            "Run tests to confirm the fix works",
+            vec![s3.clone()],
+            2,
+        );
+        let s5 = plan.add_step(
+            "Add regression test",
+            "Prevent this bug from recurring",
+            vec![s4.clone()],
+            2,
+        );
     } else if contains_any(&lower, &["refactor", "clean", "improve"]) {
-        let s1 = plan.add_step("Audit current code", "Identify pain points and improvement areas", vec![], 2);
-        let s2 = plan.add_step("Plan refactoring", "Design the new structure", vec![s1.clone()], 3);
-        let s3 = plan.add_step("Apply changes", "Refactor the code incrementally", vec![s2.clone()], 4);
-        let s4 = plan.add_step("Run tests", "Ensure no behavior changes", vec![s3.clone()], 2);
+        let s1 = plan.add_step(
+            "Audit current code",
+            "Identify pain points and improvement areas",
+            vec![],
+            2,
+        );
+        let s2 = plan.add_step(
+            "Plan refactoring",
+            "Design the new structure",
+            vec![s1.clone()],
+            3,
+        );
+        let s3 = plan.add_step(
+            "Apply changes",
+            "Refactor the code incrementally",
+            vec![s2.clone()],
+            4,
+        );
+        let s4 = plan.add_step(
+            "Run tests",
+            "Ensure no behavior changes",
+            vec![s3.clone()],
+            2,
+        );
     } else if contains_any(&lower, &["test", "verify", "validate"]) {
-        let s1 = plan.add_step("Identify test targets", "Determine what needs testing", vec![], 1);
-        let s2 = plan.add_step("Write test cases", "Create comprehensive test scenarios", vec![s1.clone()], 3);
+        let s1 = plan.add_step(
+            "Identify test targets",
+            "Determine what needs testing",
+            vec![],
+            1,
+        );
+        let s2 = plan.add_step(
+            "Write test cases",
+            "Create comprehensive test scenarios",
+            vec![s1.clone()],
+            3,
+        );
         let s3 = plan.add_step("Run tests", "Execute the test suite", vec![s2.clone()], 2);
-        let s4 = plan.add_step("Analyze results", "Review failures and coverage gaps", vec![s3.clone()], 2);
+        let s4 = plan.add_step(
+            "Analyze results",
+            "Review failures and coverage gaps",
+            vec![s3.clone()],
+            2,
+        );
     } else {
         // Generic plan
-        let s1 = plan.add_step("Understand the task", "Analyze what needs to be done", vec![], 2);
-        let s2 = plan.add_step("Plan approach", "Determine the best strategy", vec![s1.clone()], 2);
+        let s1 = plan.add_step(
+            "Understand the task",
+            "Analyze what needs to be done",
+            vec![],
+            2,
+        );
+        let s2 = plan.add_step(
+            "Plan approach",
+            "Determine the best strategy",
+            vec![s1.clone()],
+            2,
+        );
         let s3 = plan.add_step("Execute", "Carry out the plan", vec![s2.clone()], 3);
         let s4 = plan.add_step("Verify", "Check the results", vec![s3.clone()], 2);
     }

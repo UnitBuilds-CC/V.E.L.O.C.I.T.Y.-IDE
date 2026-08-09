@@ -150,8 +150,20 @@ pub fn spawn_precompute(
 /// Extract top-level symbol names from source code.
 fn extract_symbols(content: &str) -> Vec<String> {
     const KEYWORDS: &[&str] = &[
-        "fn ", "struct ", "enum ", "trait ", "impl ", "type ", "const ", "static ", "mod ",
-        "class ", "def ", "interface ", "function ", "export ",
+        "fn ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "impl ",
+        "type ",
+        "const ",
+        "static ",
+        "mod ",
+        "class ",
+        "def ",
+        "interface ",
+        "function ",
+        "export ",
     ];
     let mut symbols = Vec::new();
     for line in content.lines() {

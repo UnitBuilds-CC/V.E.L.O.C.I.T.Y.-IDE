@@ -22,9 +22,15 @@ const WORKFLOWS_DIR: &str = "workflows";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WorkflowStep {
     /// Dispatch a free-form prompt to a headless agent (optionally a named team).
-    AgentTask { prompt: String, team: Option<String> },
+    AgentTask {
+        prompt: String,
+        team: Option<String>,
+    },
     /// Invoke a registered MCP tool with JSON arguments.
-    Tool { name: String, args: serde_json::Value },
+    Tool {
+        name: String,
+        args: serde_json::Value,
+    },
     /// Invoke a configured connector by id (wired in Pillar 2).
     Connector { id: String, req: serde_json::Value },
     /// Continue only if the previous step's outcome matches `require`;
@@ -224,7 +230,11 @@ fn run_step(
             ),
             Some(o) => (
                 StepOutcome::Failed,
-                format!("condition failed: prior {} != {}", o.label(), require.label()),
+                format!(
+                    "condition failed: prior {} != {}",
+                    o.label(),
+                    require.label()
+                ),
             ),
             None => (
                 StepOutcome::Failed,
@@ -267,8 +277,7 @@ impl WorkflowRegistry {
     /// orphaned `*.json` files whose id is no longer present.
     pub fn save(&self, workspace_root: &Path) -> Result<(), String> {
         let dir = workspace_root.join(".velocity").join(WORKFLOWS_DIR);
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create workflows dir: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create workflows dir: {e}"))?;
 
         for wf in &self.workflows {
             let json = serde_json::to_vec_pretty(wf)

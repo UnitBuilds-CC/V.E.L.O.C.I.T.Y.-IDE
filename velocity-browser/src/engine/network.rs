@@ -67,7 +67,9 @@ impl NetworkTracker {
     }
 
     pub fn record_request(&mut self, url: &str, method: &str, status: u16, resource_type: &str) {
-        if !self.recording { return; }
+        if !self.recording {
+            return;
+        }
         if let Some(ref filter) = self.resource_filter {
             if !filter.iter().any(|t| t == resource_type) {
                 return;
@@ -98,7 +100,9 @@ impl NetworkTracker {
         body_size: usize,
         duration_ms: f64,
     ) {
-        if !self.recording { return; }
+        if !self.recording {
+            return;
+        }
         self.requests.push(NetworkRequest {
             url: url.to_string(),
             method: method.to_string(),
@@ -126,7 +130,12 @@ impl NetworkTracker {
     }
 
     /// Add an intercept rule.
-    pub fn add_intercept_rule(&mut self, url_pattern: &str, resource_types: Vec<&str>, action: InterceptAction) {
+    pub fn add_intercept_rule(
+        &mut self,
+        url_pattern: &str,
+        resource_types: Vec<&str>,
+        action: InterceptAction,
+    ) {
         self.intercept_rules.push(InterceptRule {
             url_pattern: url_pattern.to_string(),
             resource_types: resource_types.into_iter().map(|s| s.to_string()).collect(),
@@ -143,7 +152,9 @@ impl NetworkTracker {
             } else {
                 url.contains(&rule.url_pattern)
             };
-            if !url_matches { continue; }
+            if !url_matches {
+                continue;
+            }
 
             let type_matches = rule.resource_types.is_empty()
                 || rule.resource_types.iter().any(|t| t == resource_type);
@@ -166,12 +177,18 @@ impl NetworkTracker {
 
     /// Get requests filtered by resource type.
     pub fn requests_by_type(&self, resource_type: &str) -> Vec<&NetworkRequest> {
-        self.requests.iter().filter(|r| r.resource_type == resource_type).collect()
+        self.requests
+            .iter()
+            .filter(|r| r.resource_type == resource_type)
+            .collect()
     }
 
     /// Get requests filtered by URL pattern (substring match).
     pub fn requests_by_url(&self, pattern: &str) -> Vec<&NetworkRequest> {
-        self.requests.iter().filter(|r| r.url.contains(pattern)).collect()
+        self.requests
+            .iter()
+            .filter(|r| r.url.contains(pattern))
+            .collect()
     }
 
     /// Get failed requests (4xx/5xx status).
@@ -196,8 +213,8 @@ impl NetworkTracker {
     pub fn stats(&self) -> NetworkStats {
         let total = self.requests.len();
         let failed = self.requests.iter().filter(|r| r.status >= 400).count();
-        let by_type: HashMap<String, usize> = self.requests.iter()
-            .fold(HashMap::new(), |mut acc, r| {
+        let by_type: HashMap<String, usize> =
+            self.requests.iter().fold(HashMap::new(), |mut acc, r| {
                 *acc.entry(r.resource_type.clone()).or_insert(0) += 1;
                 acc
             });
@@ -312,16 +329,28 @@ mod tests {
         let mut resp_h = HashMap::new();
         resp_h.insert("Content-Type".into(), "text/html".into());
         tracker.record_full_request(
-            "https://example.com/page", "GET", 200, "document",
-            req_h.clone(), resp_h.clone(), 4096, 123.45,
+            "https://example.com/page",
+            "GET",
+            200,
+            "document",
+            req_h.clone(),
+            resp_h.clone(),
+            4096,
+            123.45,
         );
         let req = &tracker.requests[0];
         assert_eq!(req.url, "https://example.com/page");
         assert_eq!(req.method, "GET");
         assert_eq!(req.status, 200);
         assert_eq!(req.resource_type, "document");
-        assert_eq!(req.request_headers.get("Accept").map(|s| s.as_str()), Some("text/html"));
-        assert_eq!(req.response_headers.get("Content-Type").map(|s| s.as_str()), Some("text/html"));
+        assert_eq!(
+            req.request_headers.get("Accept").map(|s| s.as_str()),
+            Some("text/html")
+        );
+        assert_eq!(
+            req.response_headers.get("Content-Type").map(|s| s.as_str()),
+            Some("text/html")
+        );
         assert_eq!(req.body_size, 4096);
         assert!((req.duration_ms - 123.45).abs() < 0.01);
     }
@@ -331,8 +360,14 @@ mod tests {
         let mut tracker = NetworkTracker::new();
         tracker.set_recording(false);
         tracker.record_full_request(
-            "https://x.com", "POST", 201, "xhr",
-            HashMap::new(), HashMap::new(), 0, 0.0,
+            "https://x.com",
+            "POST",
+            201,
+            "xhr",
+            HashMap::new(),
+            HashMap::new(),
+            0,
+            0.0,
         );
         assert!(tracker.requests.is_empty());
     }
@@ -343,7 +378,7 @@ mod tests {
         tracker.record_request("https://api.com/data", "POST", 201, "xhr");
         let triples = tracker.export_triples_nda();
         assert_eq!(triples.len(), 2); // one for method (200), one for status (201)
-        // Predicate 200 = method, 201 = status
+                                      // Predicate 200 = method, 201 = status
         assert_eq!(triples[0].predicate_id, 200);
         assert_eq!(triples[1].predicate_id, 201);
     }
@@ -382,7 +417,11 @@ mod tests {
     #[test]
     fn intercept_redirect_action() {
         let mut tracker = NetworkTracker::new();
-        tracker.add_intercept_rule("old.example.com", vec![], InterceptAction::Redirect("https://new.example.com".into()));
+        tracker.add_intercept_rule(
+            "old.example.com",
+            vec![],
+            InterceptAction::Redirect("https://new.example.com".into()),
+        );
         match tracker.check_intercept("https://old.example.com/page", "document") {
             InterceptAction::Redirect(url) => assert_eq!(url, "https://new.example.com"),
             _ => panic!("Expected Redirect"),
@@ -394,10 +433,16 @@ mod tests {
         let mut tracker = NetworkTracker::new();
         let mut headers = HashMap::new();
         headers.insert("X-Custom".into(), "value".into());
-        tracker.add_intercept_rule("api.example.com", vec!["xhr"], InterceptAction::ModifyHeaders(headers));
+        tracker.add_intercept_rule(
+            "api.example.com",
+            vec!["xhr"],
+            InterceptAction::ModifyHeaders(headers),
+        );
         // Should match for xhr
         match tracker.check_intercept("https://api.example.com/data", "xhr") {
-            InterceptAction::ModifyHeaders(h) => assert_eq!(h.get("X-Custom").map(|s| s.as_str()), Some("value")),
+            InterceptAction::ModifyHeaders(h) => {
+                assert_eq!(h.get("X-Custom").map(|s| s.as_str()), Some("value"))
+            }
             _ => panic!("Expected ModifyHeaders"),
         }
         // Should NOT match for document (resource type filter)

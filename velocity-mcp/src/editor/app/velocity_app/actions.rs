@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
+use super::super::helpers::*;
+use super::super::types::*;
+use super::struct_def::VelocityApp;
 use crate::editor::buffer::EditorBuffer;
 use crate::editor::theme::WorkspaceProfile;
-use super::super::types::*;
-use super::super::helpers::*;
-use super::struct_def::VelocityApp;
 
 /// Loose subsequence match: every character of `needle` must appear in
 /// `haystack` in order (not necessarily contiguously). Lets "tsb" find
@@ -46,71 +46,425 @@ impl VelocityApp {
     pub fn commands(&self) -> Vec<Command> {
         vec![
             // File
-            Command { label: "New File", category: "File", shortcut: Some("Ctrl+N"), action: |a| a.open_editor(None), modes: &[] },
-            Command { label: "Open File…", category: "File", shortcut: Some("Ctrl+O"), action: |a| a.open_file_dialog(), modes: &[] },
-            Command { label: "Go to File…", category: "File", shortcut: Some("Ctrl+P"), action: |a| a.open_quick_open(), modes: &[] },
-            Command { label: "Next Tab", category: "File", shortcut: Some("Ctrl+PageDown"), action: |a| a.cycle_tabs(1), modes: &[] },
-            Command { label: "Previous Tab", category: "File", shortcut: Some("Ctrl+PageUp"), action: |a| a.cycle_tabs(-1), modes: &[] },
-            Command { label: "Close Other Tabs", category: "File", shortcut: None, action: |a| a.close_other_tabs(), modes: &[] },
-            Command { label: "Reopen Closed Tab", category: "File", shortcut: Some("Ctrl+Shift+T"), action: |a| a.reopen_closed_tab(), modes: &[] },
-            Command { label: "Go to Line…", category: "File", shortcut: Some("Ctrl+G"), action: |a| a.open_goto_line(), modes: &[] },
-            Command { label: "Go to Symbol…", category: "File", shortcut: Some("Ctrl+Shift+O"), action: |a| a.open_goto_symbol(), modes: &[] },
-            Command { label: "Go Back", category: "File", shortcut: Some("Alt+Left"), action: |a| a.nav_back(), modes: &[] },
-            Command { label: "Go Forward", category: "File", shortcut: Some("Alt+Right"), action: |a| a.nav_forward(), modes: &[] },
-            Command { label: "Go to Definition", category: "File", shortcut: Some("F12"), action: |a| a.goto_definition_at_cursor(), modes: &[] },
-            Command { label: "Find All References", category: "File", shortcut: Some("Shift+F12"), action: |a| a.find_references_at_cursor(), modes: &[] },
-            Command { label: "Show Hover Info", category: "File", shortcut: None, action: |a| a.show_hover_at_cursor(), modes: &[] },
-            Command { label: "Save", category: "File", shortcut: Some("Ctrl+S"), action: |a| a.save_active(), modes: &[] },
-            Command { label: "Save As…", category: "File", shortcut: None, action: |a| a.save_active_as(), modes: &[] },
-            Command { label: "Save All", category: "File", shortcut: Some("Ctrl+Shift+S"), action: |a| a.save_all(), modes: &[] },
-            Command { label: "Close Tab", category: "File", shortcut: Some("Ctrl+W"), action: |a| a.close_active_tab(), modes: &[] },
+            Command {
+                label: "New File",
+                category: "File",
+                shortcut: Some("Ctrl+N"),
+                action: |a| a.open_editor(None),
+                modes: &[],
+            },
+            Command {
+                label: "Open File…",
+                category: "File",
+                shortcut: Some("Ctrl+O"),
+                action: |a| a.open_file_dialog(),
+                modes: &[],
+            },
+            Command {
+                label: "Go to File…",
+                category: "File",
+                shortcut: Some("Ctrl+P"),
+                action: |a| a.open_quick_open(),
+                modes: &[],
+            },
+            Command {
+                label: "Next Tab",
+                category: "File",
+                shortcut: Some("Ctrl+PageDown"),
+                action: |a| a.cycle_tabs(1),
+                modes: &[],
+            },
+            Command {
+                label: "Previous Tab",
+                category: "File",
+                shortcut: Some("Ctrl+PageUp"),
+                action: |a| a.cycle_tabs(-1),
+                modes: &[],
+            },
+            Command {
+                label: "Close Other Tabs",
+                category: "File",
+                shortcut: None,
+                action: |a| a.close_other_tabs(),
+                modes: &[],
+            },
+            Command {
+                label: "Reopen Closed Tab",
+                category: "File",
+                shortcut: Some("Ctrl+Shift+T"),
+                action: |a| a.reopen_closed_tab(),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Line…",
+                category: "File",
+                shortcut: Some("Ctrl+G"),
+                action: |a| a.open_goto_line(),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Symbol…",
+                category: "File",
+                shortcut: Some("Ctrl+Shift+O"),
+                action: |a| a.open_goto_symbol(),
+                modes: &[],
+            },
+            Command {
+                label: "Go Back",
+                category: "File",
+                shortcut: Some("Alt+Left"),
+                action: |a| a.nav_back(),
+                modes: &[],
+            },
+            Command {
+                label: "Go Forward",
+                category: "File",
+                shortcut: Some("Alt+Right"),
+                action: |a| a.nav_forward(),
+                modes: &[],
+            },
+            Command {
+                label: "Go to Definition",
+                category: "File",
+                shortcut: Some("F12"),
+                action: |a| a.goto_definition_at_cursor(),
+                modes: &[],
+            },
+            Command {
+                label: "Find All References",
+                category: "File",
+                shortcut: Some("Shift+F12"),
+                action: |a| a.find_references_at_cursor(),
+                modes: &[],
+            },
+            Command {
+                label: "Show Hover Info",
+                category: "File",
+                shortcut: None,
+                action: |a| a.show_hover_at_cursor(),
+                modes: &[],
+            },
+            Command {
+                label: "Save",
+                category: "File",
+                shortcut: Some("Ctrl+S"),
+                action: |a| a.save_active(),
+                modes: &[],
+            },
+            Command {
+                label: "Save As…",
+                category: "File",
+                shortcut: None,
+                action: |a| a.save_active_as(),
+                modes: &[],
+            },
+            Command {
+                label: "Save All",
+                category: "File",
+                shortcut: Some("Ctrl+Shift+S"),
+                action: |a| a.save_all(),
+                modes: &[],
+            },
+            Command {
+                label: "Close Tab",
+                category: "File",
+                shortcut: Some("Ctrl+W"),
+                action: |a| a.close_active_tab(),
+                modes: &[],
+            },
             // Build
-            Command { label: "Build", category: "Build", shortcut: Some("Ctrl+B"), action: |a| a.build_active(), modes: &[WorkspaceProfile::Coder] },
-            Command { label: "Run", category: "Build", shortcut: Some("Ctrl+R"), action: |a| a.run_active(), modes: &[WorkspaceProfile::Coder] },
+            Command {
+                label: "Build",
+                category: "Build",
+                shortcut: Some("Ctrl+B"),
+                action: |a| a.build_active(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Run",
+                category: "Build",
+                shortcut: Some("Ctrl+R"),
+                action: |a| a.run_active(),
+                modes: &[WorkspaceProfile::Coder],
+            },
             // Automation
-            Command { label: "Run Selected Flow", category: "Automation", shortcut: Some("Ctrl+Enter"), action: |a| a.run_active(), modes: &[WorkspaceProfile::AutomationOperator] },
+            Command {
+                label: "Run Selected Flow",
+                category: "Automation",
+                shortcut: Some("Ctrl+Enter"),
+                action: |a| a.run_active(),
+                modes: &[WorkspaceProfile::AutomationOperator],
+            },
             // Panels
-            Command { label: "Chat", category: "Panels", shortcut: Some("Ctrl+J"), action: |a| a.toggle_panel(TabKind::Chat), modes: &[] },
-            Command { label: "Output", category: "Panels", shortcut: Some("Ctrl+`"), action: |a| a.toggle_panel(TabKind::Output), modes: &[] },
-            Command { label: "Orchestrator", category: "Panels", shortcut: Some("Ctrl+Shift+Y"), action: |a| a.focus_orchestrator_tab(), modes: &[WorkspaceProfile::AutomationOperator] },
-            Command { label: "Mission Control", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::MissionControl), modes: &[WorkspaceProfile::MissionControl] },
-            Command { label: "Search", category: "Panels", shortcut: Some("Ctrl+Shift+F"), action: |a| a.toggle_search(), modes: &[] },
-            Command { label: "Usage", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Usage), modes: &[] },
-            Command { label: "Graph", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Graph), modes: &[] },
-            Command { label: "Wiki", category: "Panels", shortcut: None, action: |a| a.toggle_panel(TabKind::Wiki), modes: &[] },
-            Command { label: "Settings", category: "Panels", shortcut: Some("Ctrl+,"), action: |a| a.toggle_settings(), modes: &[] },
-            Command { label: "Extensions", category: "Panels", shortcut: None, action: |a| a.toggle_extensions(), modes: &[] },
-            Command { label: "Live Activity", category: "Panels", shortcut: None, action: |a| a.toggle_activity(), modes: &[WorkspaceProfile::MissionControl] },
-            Command { label: "Test Coverage", category: "Panels", shortcut: None, action: |a| a.toggle_coverage(), modes: &[WorkspaceProfile::Coder] },
-            Command { label: "Deploy Pipeline", category: "Build", shortcut: None, action: |a| a.toggle_pipeline(), modes: &[WorkspaceProfile::Coder] },
-            Command { label: "Voice Commands", category: "Panels", shortcut: None, action: |a| a.toggle_voice(), modes: &[] },
-            Command { label: "Knowledge", category: "Panels", shortcut: None, action: |a| a.toggle_knowledge(), modes: &[] },
-            Command { label: "Triggers", category: "Panels", shortcut: None, action: |a| a.toggle_triggers(), modes: &[] },
-            Command { label: "Workflows", category: "Panels", shortcut: None, action: |a| a.toggle_workflows(), modes: &[] },
-            Command { label: "Governance", category: "Panels", shortcut: None, action: |a| a.toggle_governance(), modes: &[] },
-            Command { label: "Find / Replace", category: "Edit", shortcut: Some("Ctrl+H"), action: |a| a.open_find_replace_active(), modes: &[] },
-            Command { label: "Find", category: "Edit", shortcut: Some("Ctrl+F"), action: |a| a.open_find_active(), modes: &[] },
-            Command { label: "Request Inline Suggestion", category: "Agent", shortcut: Some("Ctrl+Shift+I"), action: |a| a.request_inline_suggestion(), modes: &[] },
-            Command { label: "Rollback Deploy", category: "Build", shortcut: Some("Ctrl+Alt+R"), action: |a| a.rollback_deploy(), modes: &[] },
+            Command {
+                label: "Chat",
+                category: "Panels",
+                shortcut: Some("Ctrl+J"),
+                action: |a| a.toggle_panel(TabKind::Chat),
+                modes: &[],
+            },
+            Command {
+                label: "Output",
+                category: "Panels",
+                shortcut: Some("Ctrl+`"),
+                action: |a| a.toggle_panel(TabKind::Output),
+                modes: &[],
+            },
+            Command {
+                label: "Orchestrator",
+                category: "Panels",
+                shortcut: Some("Ctrl+Shift+Y"),
+                action: |a| a.focus_orchestrator_tab(),
+                modes: &[WorkspaceProfile::AutomationOperator],
+            },
+            Command {
+                label: "Mission Control",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_panel(TabKind::MissionControl),
+                modes: &[WorkspaceProfile::MissionControl],
+            },
+            Command {
+                label: "Search",
+                category: "Panels",
+                shortcut: Some("Ctrl+Shift+F"),
+                action: |a| a.toggle_search(),
+                modes: &[],
+            },
+            Command {
+                label: "Usage",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_panel(TabKind::Usage),
+                modes: &[],
+            },
+            Command {
+                label: "Graph",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_panel(TabKind::Graph),
+                modes: &[],
+            },
+            Command {
+                label: "Wiki",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_panel(TabKind::Wiki),
+                modes: &[],
+            },
+            Command {
+                label: "Settings",
+                category: "Panels",
+                shortcut: Some("Ctrl+,"),
+                action: |a| a.toggle_settings(),
+                modes: &[],
+            },
+            Command {
+                label: "Extensions",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_extensions(),
+                modes: &[],
+            },
+            Command {
+                label: "Live Activity",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_activity(),
+                modes: &[WorkspaceProfile::MissionControl],
+            },
+            Command {
+                label: "Test Coverage",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_coverage(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Deploy Pipeline",
+                category: "Build",
+                shortcut: None,
+                action: |a| a.toggle_pipeline(),
+                modes: &[WorkspaceProfile::Coder],
+            },
+            Command {
+                label: "Voice Commands",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_voice(),
+                modes: &[],
+            },
+            Command {
+                label: "Knowledge",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_knowledge(),
+                modes: &[],
+            },
+            Command {
+                label: "Triggers",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_triggers(),
+                modes: &[],
+            },
+            Command {
+                label: "Workflows",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_workflows(),
+                modes: &[],
+            },
+            Command {
+                label: "Governance",
+                category: "Panels",
+                shortcut: None,
+                action: |a| a.toggle_governance(),
+                modes: &[],
+            },
+            Command {
+                label: "Find / Replace",
+                category: "Edit",
+                shortcut: Some("Ctrl+H"),
+                action: |a| a.open_find_replace_active(),
+                modes: &[],
+            },
+            Command {
+                label: "Find",
+                category: "Edit",
+                shortcut: Some("Ctrl+F"),
+                action: |a| a.open_find_active(),
+                modes: &[],
+            },
+            Command {
+                label: "Request Inline Suggestion",
+                category: "Agent",
+                shortcut: Some("Ctrl+Shift+I"),
+                action: |a| a.request_inline_suggestion(),
+                modes: &[],
+            },
+            Command {
+                label: "Rollback Deploy",
+                category: "Build",
+                shortcut: Some("Ctrl+Alt+R"),
+                action: |a| a.rollback_deploy(),
+                modes: &[],
+            },
             // Agent
-            Command { label: "Approve All Tools", category: "Agent", shortcut: None, action: |a| a.approve_all_pending_tools(), modes: &[] },
-            Command { label: "Decline All Tools", category: "Agent", shortcut: None, action: |a| a.reject_all_pending_tools(), modes: &[] },
-            Command { label: "Plan Sub-Agents", category: "Agent", shortcut: None, action: |a| a.plan_routed_subagents(), modes: &[] },
-            Command { label: "Refresh Models", category: "Agent", shortcut: None, action: |a| a.refresh_models(), modes: &[] },
+            Command {
+                label: "Approve All Tools",
+                category: "Agent",
+                shortcut: None,
+                action: |a| a.approve_all_pending_tools(),
+                modes: &[],
+            },
+            Command {
+                label: "Decline All Tools",
+                category: "Agent",
+                shortcut: None,
+                action: |a| a.reject_all_pending_tools(),
+                modes: &[],
+            },
+            Command {
+                label: "Plan Sub-Agents",
+                category: "Agent",
+                shortcut: None,
+                action: |a| a.plan_routed_subagents(),
+                modes: &[],
+            },
+            Command {
+                label: "Refresh Models",
+                category: "Agent",
+                shortcut: None,
+                action: |a| a.refresh_models(),
+                modes: &[],
+            },
             // Workspace modes
-            Command { label: "Mode: Coder", category: "Workspace", shortcut: Some("Ctrl+1"), action: |a| a.set_work_mode(WorkspaceProfile::Coder), modes: &[] },
-            Command { label: "Mode: Automation Operator", category: "Workspace", shortcut: Some("Ctrl+2"), action: |a| a.set_work_mode(WorkspaceProfile::AutomationOperator), modes: &[] },
-            Command { label: "Mode: Mission Control", category: "Workspace", shortcut: Some("Ctrl+3"), action: |a| a.set_work_mode(WorkspaceProfile::MissionControl), modes: &[] },
-            Command { label: "Mode: Accessibility", category: "Workspace", shortcut: Some("Ctrl+4"), action: |a| a.set_work_mode(WorkspaceProfile::Accessibility), modes: &[] },
-            Command { label: "Mode: Reset Layout to Default", category: "Workspace", shortcut: None, action: |a| a.reset_current_mode_layout(), modes: &[] },
-            Command { label: "Wiki: Export to Markdown", category: "Workspace", shortcut: None, action: |a| a.export_wiki_markdown(), modes: &[] },
-            Command { label: "NDA: New Document", category: "Workspace", shortcut: None, action: |a| a.new_nda_document(), modes: &[] },
-            Command { label: "NDA: Import Active File", category: "Workspace", shortcut: None, action: |a| a.import_file_to_nda(), modes: &[] },
-            Command { label: "NDA: Open Browser Viewer", category: "Workspace", shortcut: None, action: |a| a.open_nda_viewer(), modes: &[] },
+            Command {
+                label: "Mode: Coder",
+                category: "Workspace",
+                shortcut: Some("Ctrl+1"),
+                action: |a| a.set_work_mode(WorkspaceProfile::Coder),
+                modes: &[],
+            },
+            Command {
+                label: "Mode: Automation Operator",
+                category: "Workspace",
+                shortcut: Some("Ctrl+2"),
+                action: |a| a.set_work_mode(WorkspaceProfile::AutomationOperator),
+                modes: &[],
+            },
+            Command {
+                label: "Mode: Mission Control",
+                category: "Workspace",
+                shortcut: Some("Ctrl+3"),
+                action: |a| a.set_work_mode(WorkspaceProfile::MissionControl),
+                modes: &[],
+            },
+            Command {
+                label: "Mode: Accessibility",
+                category: "Workspace",
+                shortcut: Some("Ctrl+4"),
+                action: |a| a.set_work_mode(WorkspaceProfile::Accessibility),
+                modes: &[],
+            },
+            Command {
+                label: "Mode: Reset Layout to Default",
+                category: "Workspace",
+                shortcut: None,
+                action: |a| a.reset_current_mode_layout(),
+                modes: &[],
+            },
+            Command {
+                label: "Wiki: Export to Markdown",
+                category: "Workspace",
+                shortcut: None,
+                action: |a| a.export_wiki_markdown(),
+                modes: &[],
+            },
+            Command {
+                label: "NDA: New Document",
+                category: "Workspace",
+                shortcut: None,
+                action: |a| a.new_nda_document(),
+                modes: &[],
+            },
+            Command {
+                label: "NDA: Import Active File",
+                category: "Workspace",
+                shortcut: None,
+                action: |a| a.import_file_to_nda(),
+                modes: &[],
+            },
+            Command {
+                label: "NDA: Open Browser Viewer",
+                category: "Workspace",
+                shortcut: None,
+                action: |a| a.open_nda_viewer(),
+                modes: &[],
+            },
             // View
-            Command { label: "Toggle Sidebar", category: "View", shortcut: Some("Ctrl+E"), action: |a| a.toggle_left_sidebar(), modes: &[] },
-            Command { label: "Toggle History", category: "View", shortcut: None, action: |a| a.toggle_right_sidebar(), modes: &[] },
-            Command { label: "Reset Layout", category: "View", shortcut: None, action: |a| a.reset_workspace_layout(), modes: &[] },
+            Command {
+                label: "Toggle Sidebar",
+                category: "View",
+                shortcut: Some("Ctrl+E"),
+                action: |a| a.toggle_left_sidebar(),
+                modes: &[],
+            },
+            Command {
+                label: "Toggle History",
+                category: "View",
+                shortcut: None,
+                action: |a| a.toggle_right_sidebar(),
+                modes: &[],
+            },
+            Command {
+                label: "Reset Layout",
+                category: "View",
+                shortcut: None,
+                action: |a| a.reset_workspace_layout(),
+                modes: &[],
+            },
         ]
     }
 
@@ -121,7 +475,8 @@ impl VelocityApp {
         let priority_cats = mode_cfg.priority_categories();
         let hidden_cats = mode_cfg.hidden_categories();
 
-        let mut commands: Vec<Command> = self.commands()
+        let mut commands: Vec<Command> = self
+            .commands()
             .into_iter()
             // Filter by mode availability
             .filter(|c| c.modes.is_empty() || c.modes.contains(&current_mode))
@@ -400,7 +755,10 @@ impl VelocityApp {
     /// Return a cached copy of the workspace site map, refreshing it from disk
     /// at most every `ttl` (and when the index entry count changes). This avoids
     /// re-reading and re-parsing `index.json` on every rendered frame.
-    pub fn cached_site_map(&mut self, ttl: std::time::Duration) -> Option<std::sync::Arc<velocity_ide::site_map::SiteMap>> {
+    pub fn cached_site_map(
+        &mut self,
+        ttl: std::time::Duration,
+    ) -> Option<std::sync::Arc<velocity_ide::site_map::SiteMap>> {
         let stale = match self.cached_site_map_at {
             Some(at) => at.elapsed() >= ttl,
             None => true,
@@ -469,14 +827,18 @@ impl VelocityApp {
         self.quick_open.query.clear();
         self.quick_open.selected = 0;
         self.quick_open.just_opened = true;
-        self.quick_open.files = crate::editor::search::list_workspace_files(&self.workspace_root, 5000);
+        self.quick_open.files =
+            crate::editor::search::list_workspace_files(&self.workspace_root, 5000);
     }
 
     pub fn open_editor(&mut self, path: Option<PathBuf>) {
         // Route portable/sealed NDA documents to the dedicated NDA editor tab
         // (but never the `.velocity/` / `memory/` at-rest state envelopes).
         if let Some(ref p) = path {
-            if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("nda")).unwrap_or(false)
+            if p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("nda"))
+                .unwrap_or(false)
                 && !Self::is_internal_nda_path(p)
             {
                 self.open_nda_document(Some(p.clone()));
@@ -529,7 +891,10 @@ impl VelocityApp {
     pub fn split_editor(&mut self) {
         // Get the path of the currently active editor tab.
         let active_path = self.active_tab.as_ref().and_then(|id| {
-            self.tabs.iter().find(|t| &t.id == id).and_then(|t| t.editor_path().cloned())
+            self.tabs
+                .iter()
+                .find(|t| &t.id == id)
+                .and_then(|t| t.editor_path().cloned())
         });
 
         let Some(path) = active_path else {
@@ -659,8 +1024,7 @@ impl VelocityApp {
             return None;
         }
 
-        let (added_lines, removed_lines, preview) =
-            diff_preview(&disk_content, buf.content(), 10);
+        let (added_lines, removed_lines, preview) = diff_preview(&disk_content, buf.content(), 10);
         let (_, _, full_diff) = diff_preview(&disk_content, buf.content(), usize::MAX);
         Some(ActiveChangePreview {
             file_label: path

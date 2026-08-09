@@ -112,8 +112,8 @@ pub fn build_request(
 
 /// Execute a prepared request over the network via `ureq`.
 pub fn execute(prepared: &PreparedRequest) -> Result<ConnectorResponse, String> {
-    let mut request = ureq::request(&prepared.method, &prepared.url)
-        .timeout(Duration::from_secs(30));
+    let mut request =
+        ureq::request(&prepared.method, &prepared.url).timeout(Duration::from_secs(30));
     for (name, value) in &prepared.headers {
         request = request.set(name, value);
     }
@@ -177,16 +177,16 @@ mod tests {
         assert_eq!(prepared.method, "POST");
         assert_eq!(prepared.url, "https://api.github.com/repos/o/r/issues");
         // static github headers + per-call header + injected auth
-        assert!(prepared
-            .headers
-            .contains(&("Accept".to_string(), "application/vnd.github+json".to_string())));
+        assert!(prepared.headers.contains(&(
+            "Accept".to_string(),
+            "application/vnd.github+json".to_string()
+        )));
         assert!(prepared
             .headers
             .contains(&("X-Extra".to_string(), "1".to_string())));
-        assert!(prepared.headers.contains(&(
-            "Authorization".to_string(),
-            "Bearer secret123".to_string()
-        )));
+        assert!(prepared
+            .headers
+            .contains(&("Authorization".to_string(), "Bearer secret123".to_string())));
         assert_eq!(prepared.body.as_deref(), Some("{}"));
     }
 

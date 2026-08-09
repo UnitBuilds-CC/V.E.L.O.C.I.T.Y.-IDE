@@ -38,7 +38,12 @@ impl Matrix4x4 {
             m: [
                 [f / aspect, 0.0, 0.0, 0.0],
                 [0.0, f, 0.0, 0.0],
-                [0.0, 0.0, (far + near) * range_inv, 2.0 * far * near * range_inv],
+                [
+                    0.0,
+                    0.0,
+                    (far + near) * range_inv,
+                    2.0 * far * near * range_inv,
+                ],
                 [0.0, 0.0, -1.0, 0.0],
             ],
         }
@@ -135,10 +140,17 @@ impl TextureFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TextureFilter { Nearest, Linear }
+pub enum TextureFilter {
+    Nearest,
+    Linear,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TextureWrap { ClampToEdge, Repeat, MirroredRepeat }
+pub enum TextureWrap {
+    ClampToEdge,
+    Repeat,
+    MirroredRepeat,
+}
 
 /// Framebuffer object with color attachment and optional depth buffer.
 #[derive(Debug, Clone)]
@@ -160,7 +172,10 @@ pub struct IndexBuffer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum IndexType { UnsignedShort, UnsignedInt }
+pub enum IndexType {
+    UnsignedShort,
+    UnsignedInt,
+}
 
 /// Viewport state.
 #[derive(Debug, Clone, Copy)]
@@ -201,7 +216,12 @@ impl WebGLContext {
             model_view_matrix: Matrix4x4::identity(),
             vertex_buffer: Vec::new(),
             pixel_buffer: PixelBuffer::new(width, height),
-            viewport: Viewport { x: 0, y: 0, width, height },
+            viewport: Viewport {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
             programs: Vec::new(),
             textures: Vec::new(),
             framebuffers: Vec::new(),
@@ -223,7 +243,12 @@ impl WebGLContext {
     }
 
     pub fn viewport(&mut self, x: i32, y: i32, width: usize, height: usize) {
-        self.viewport = Viewport { x, y, width, height };
+        self.viewport = Viewport {
+            x,
+            y,
+            width,
+            height,
+        };
     }
 
     pub fn clear(&mut self, r: f32, g: f32, b: f32, a: f32) {
@@ -276,10 +301,19 @@ impl WebGLContext {
 
     // -- Textures --
 
-    pub fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat, data: &[u8]) -> u32 {
+    pub fn create_texture(
+        &mut self,
+        width: usize,
+        height: usize,
+        format: TextureFormat,
+        data: &[u8],
+    ) -> u32 {
         let id = self.alloc_id();
         self.textures.push(Texture2D {
-            id, width, height, format,
+            id,
+            width,
+            height,
+            format,
             data: data.to_vec(),
             min_filter: TextureFilter::Linear,
             mag_filter: TextureFilter::Linear,
@@ -298,7 +332,14 @@ impl WebGLContext {
         // bind to the GL texture object. Here it's a no-op state setter.
     }
 
-    pub fn set_texture_params(&mut self, texture_id: u32, min: TextureFilter, mag: TextureFilter, wrap_s: TextureWrap, wrap_t: TextureWrap) {
+    pub fn set_texture_params(
+        &mut self,
+        texture_id: u32,
+        min: TextureFilter,
+        mag: TextureFilter,
+        wrap_s: TextureWrap,
+        wrap_t: TextureWrap,
+    ) {
         if let Some(tex) = self.textures.iter_mut().find(|t| t.id == texture_id) {
             tex.min_filter = min;
             tex.mag_filter = mag;
@@ -312,25 +353,47 @@ impl WebGLContext {
             let bpp = tex.format.bytes_per_pixel();
             let wrap_u = match tex.wrap_s {
                 TextureWrap::Repeat => ((u * tex.width as f32) % tex.width as f32) as usize,
-                TextureWrap::ClampToEdge => (u * (tex.width - 1) as f32).clamp(0.0, (tex.width - 1) as f32) as usize,
+                TextureWrap::ClampToEdge => {
+                    (u * (tex.width - 1) as f32).clamp(0.0, (tex.width - 1) as f32) as usize
+                }
                 TextureWrap::MirroredRepeat => {
                     let t = (u * tex.width as f32) % (2.0 * tex.width as f32);
-                    if t < tex.width as f32 { t as usize } else { 2 * tex.width - 1 - t as usize }
+                    if t < tex.width as f32 {
+                        t as usize
+                    } else {
+                        2 * tex.width - 1 - t as usize
+                    }
                 }
             };
             let wrap_v = match tex.wrap_t {
                 TextureWrap::Repeat => ((v * tex.height as f32) % tex.height as f32) as usize,
-                TextureWrap::ClampToEdge => (v * (tex.height - 1) as f32).clamp(0.0, (tex.height - 1) as f32) as usize,
+                TextureWrap::ClampToEdge => {
+                    (v * (tex.height - 1) as f32).clamp(0.0, (tex.height - 1) as f32) as usize
+                }
                 TextureWrap::MirroredRepeat => {
                     let t = (v * tex.height as f32) % (2.0 * tex.height as f32);
-                    if t < tex.height as f32 { t as usize } else { 2 * tex.height - 1 - t as usize }
+                    if t < tex.height as f32 {
+                        t as usize
+                    } else {
+                        2 * tex.height - 1 - t as usize
+                    }
                 }
             };
             let offset = (wrap_v * tex.width + wrap_u) * bpp;
             if offset + bpp <= tex.data.len() {
                 match tex.format {
-                    TextureFormat::RGBA8 => [tex.data[offset], tex.data[offset+1], tex.data[offset+2], tex.data[offset+3]],
-                    TextureFormat::RGB8 => [tex.data[offset], tex.data[offset+1], tex.data[offset+2], 255],
+                    TextureFormat::RGBA8 => [
+                        tex.data[offset],
+                        tex.data[offset + 1],
+                        tex.data[offset + 2],
+                        tex.data[offset + 3],
+                    ],
+                    TextureFormat::RGB8 => [
+                        tex.data[offset],
+                        tex.data[offset + 1],
+                        tex.data[offset + 2],
+                        255,
+                    ],
                     TextureFormat::Alpha8 => [255, 255, 255, tex.data[offset]],
                     _ => [0, 0, 0, 255],
                 }
@@ -346,7 +409,12 @@ impl WebGLContext {
 
     pub fn create_framebuffer(&mut self, width: usize, height: usize, with_depth: bool) -> u32 {
         let id = self.alloc_id();
-        let color_tex_id = self.create_texture(width, height, TextureFormat::RGBA8, &vec![0u8; width * height * 4]);
+        let color_tex_id = self.create_texture(
+            width,
+            height,
+            TextureFormat::RGBA8,
+            &vec![0u8; width * height * 4],
+        );
         self.framebuffers.push(Framebuffer {
             id,
             color_texture_id: Some(color_tex_id),
@@ -363,7 +431,9 @@ impl WebGLContext {
     }
 
     pub fn check_framebuffer_status(&self, framebuffer_id: u32) -> bool {
-        self.framebuffers.iter().any(|fb| fb.id == framebuffer_id && fb.complete)
+        self.framebuffers
+            .iter()
+            .any(|fb| fb.id == framebuffer_id && fb.complete)
     }
 
     // -- Index buffers --
@@ -503,8 +573,7 @@ mod tests {
         let mut ctx = WebGLContext::new(8, 8);
         // 2x2 RGBA texture: red, green, blue, white
         let data = vec![
-            255, 0, 0, 255,     0, 255, 0, 255,
-            0, 0, 255, 255,     255, 255, 255, 255,
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
         ];
         let tex_id = ctx.create_texture(2, 2, TextureFormat::RGBA8, &data);
         // Sample top-left (u=0, v=0) -> red

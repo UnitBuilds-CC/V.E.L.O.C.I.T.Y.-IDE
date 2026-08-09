@@ -12,18 +12,18 @@ pub(super) fn eval_full(s: &str) -> JsValue {
     eval_script(s, &scope).unwrap()
 }
 
-pub mod basics;
-pub mod functions;
-pub mod objects;
-pub mod builtins;
-pub mod intl;
-pub mod async_tests;
-pub mod modules;
 pub mod agent;
-pub mod es2024;
-pub mod browser_env;
-pub mod dom_bridge;
-pub mod web_platform;
-pub mod streams;
-pub mod canvas;
 pub mod agent_layer;
+pub mod async_tests;
+pub mod basics;
+pub mod browser_env;
+pub mod builtins;
+pub mod canvas;
+pub mod dom_bridge;
+pub mod es2024;
+pub mod functions;
+pub mod intl;
+pub mod modules;
+pub mod objects;
+pub mod streams;
+pub mod web_platform;

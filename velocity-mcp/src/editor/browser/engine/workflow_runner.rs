@@ -153,10 +153,9 @@ fn execute_workflow_steps(
                     *timeout_ms,
                     *interval_ms,
                     |candidate| {
-                        candidate
-                            .mutations
-                            .iter()
-                            .any(|entry: &String| entry.to_ascii_lowercase().contains(lowered.as_str()))
+                        candidate.mutations.iter().any(|entry: &String| {
+                            entry.to_ascii_lowercase().contains(lowered.as_str())
+                        })
                     },
                 )?;
                 log.push(format!(
@@ -304,7 +303,9 @@ fn execute_workflow_steps(
                                 && entry.key.eq_ignore_ascii_case(&lowered_key)
                                 && lowered_value
                                     .as_ref()
-                                    .map(|value: &String| entry.value.to_ascii_lowercase().contains(value.as_str()))
+                                    .map(|value: &String| {
+                                        entry.value.to_ascii_lowercase().contains(value.as_str())
+                                    })
                                     .unwrap_or(true)
                         })
                     },
@@ -721,8 +722,12 @@ pub fn replay_workflow_with_artifacts_report(
     };
     let (result, final_state, report) =
         replay_workflow_with_state(workflow, state, Some(workspace_root))?;
-    let (snapshot_path, session_path, facts_path, html_fallback_path): (PathBuf, PathBuf, PathBuf, Option<PathBuf>) =
-        persist_replay_state(workspace_root, &final_state, sitemap_path)?;
+    let (snapshot_path, session_path, facts_path, html_fallback_path): (
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        Option<PathBuf>,
+    ) = persist_replay_state(workspace_root, &final_state, sitemap_path)?;
     let report_path = persist_run_report(workspace_root, &report)?;
     let workflow = summarize_workflow_run(report);
     let _ = result;
@@ -868,8 +873,12 @@ pub fn replay_workflow_in_session_report(
     };
     let (_result, final_state, report) =
         replay_workflow_with_state(workflow, state, Some(workspace_root))?;
-    let (snapshot_path, session_path, facts_path, html_fallback_path): (PathBuf, PathBuf, PathBuf, Option<PathBuf>) =
-        persist_replay_state(workspace_root, &final_state, sitemap_path)?;
+    let (snapshot_path, session_path, facts_path, html_fallback_path): (
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        Option<PathBuf>,
+    ) = persist_replay_state(workspace_root, &final_state, sitemap_path)?;
     let report_path = persist_run_report(workspace_root, &report)?;
     let workflow = summarize_workflow_run(report);
     Ok(BrowserWorkflowReplayReport {
@@ -918,6 +927,3 @@ pub fn replay_workflow_in_session(
         report.html_fallback_path.as_deref().map(Path::new),
     ))
 }
-
-
-

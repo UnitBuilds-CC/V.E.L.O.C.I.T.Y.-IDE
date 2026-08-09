@@ -1,7 +1,7 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use sha2::{Digest, Sha256};
 use velocity_ide::site_map::{NdaNode, SiteMap, VcTriple};
 
 pub fn read_snapshot(url: &str, sitemap_path: &Path) -> Result<BrowserPageSnapshot, String> {
@@ -127,7 +127,11 @@ pub fn list_snapshots(
             Err(err) => return Err(format!("read browser snapshot dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser snapshot: {err}"))?;
@@ -520,4 +524,3 @@ pub fn persist_snapshot_to_sitemap(
         .map_err(|e| e.to_string())?;
     sm.flush().map_err(|e| e.to_string())
 }
-

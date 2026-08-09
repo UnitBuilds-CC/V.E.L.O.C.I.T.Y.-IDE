@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use crate::safety::SafeMutex;
-use velocity_browser::{
-    AgentActionResult, AgenticAomTree, BrowserSession, NdaTriple, SwarmSessionOrchestrator,
-};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 use velocity_browser::agentic::outcome_scorer::extract_domain;
 use velocity_browser::agentic::{
     ActionKind, ActionOutcome, AdaptiveConfidence, OutcomeScorer, OutcomeSignals, Reflection,
@@ -11,9 +11,9 @@ use velocity_browser::agentic::{
 };
 use velocity_browser::screencast::ScreencastRecorder;
 use velocity_browser::vector_memory::{SiteVectorStore, VectorMemoryNode};
-use std::sync::{Arc, Mutex, LazyLock};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use velocity_browser::{
+    AgentActionResult, AgenticAomTree, BrowserSession, NdaTriple, SwarmSessionOrchestrator,
+};
 
 /// One agent-readable element of the live Agentic Object Model.
 ///
@@ -130,7 +130,10 @@ impl NativeBrowserBridge {
     /// (`.velocity/browser_artifacts/default_all.nda`) into this session's
     /// stores. Runs at most once per session and is silent when no bundle
     /// exists; returns (patterns, memories, outcomes) restored.
-    pub fn seed_default_experience(&mut self, workspace_root: &Path) -> Option<(usize, usize, usize)> {
+    pub fn seed_default_experience(
+        &mut self,
+        workspace_root: &Path,
+    ) -> Option<(usize, usize, usize)> {
         if self.experience_seeded {
             return None;
         }
@@ -147,19 +150,32 @@ impl NativeBrowserBridge {
         Some((patterns, memories, outcomes))
     }
 
-    pub fn navigate(&mut self, url: &str) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn navigate(
+        &mut self,
+        url: &str,
+    ) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
         self.active_session.fetch_and_load(url)
     }
 
-    pub fn click(&mut self, selector: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn click(
+        &mut self,
+        selector: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.active_session.click(selector)
     }
 
-    pub fn click_ocr(&mut self, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn click_ocr(
+        &mut self,
+        text: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.active_session.click_ocr_text(text)
     }
 
-    pub fn fill(&mut self, selector: &str, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn fill(
+        &mut self,
+        selector: &str,
+        text: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.active_session.fill(selector, text)
     }
 
@@ -440,7 +456,7 @@ impl NativeBrowserBridge {
         self.active_session.agent_submit(node_id)
     }
 
-        pub fn agent_scroll(&mut self, delta_x: i32, delta_y: i32) -> AgentActionResult {
+    pub fn agent_scroll(&mut self, delta_x: i32, delta_y: i32) -> AgentActionResult {
         self.active_session.agent_scroll(delta_x, delta_y)
     }
 
@@ -456,7 +472,10 @@ impl NativeBrowserBridge {
         self.active_session.agent_forward()
     }
 
-    pub fn eval_js(&mut self, expr: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn eval_js(
+        &mut self,
+        expr: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         self.active_session.eval_js(expr)
     }
 
@@ -548,8 +567,13 @@ impl NativeBrowserBridge {
     /// exact accessible-name match before falling back to a substring match.
     pub fn resolve_target(&self, role: Option<&str>, name: &str) -> Option<usize> {
         let view = self.current_view();
-        let role_ok = |e: &NativeAomElement| role.map(|r| e.role.eq_ignore_ascii_case(r)).unwrap_or(true);
-        if let Some(e) = view.elements.iter().find(|e| role_ok(e) && e.name.eq_ignore_ascii_case(name)) {
+        let role_ok =
+            |e: &NativeAomElement| role.map(|r| e.role.eq_ignore_ascii_case(r)).unwrap_or(true);
+        if let Some(e) = view
+            .elements
+            .iter()
+            .find(|e| role_ok(e) && e.name.eq_ignore_ascii_case(name))
+        {
             return Some(e.node_id);
         }
         let name_lc = name.to_lowercase();
@@ -564,7 +588,12 @@ impl NativeBrowserBridge {
     /// Wait for an element matching role/name to appear in the AOM.
     /// Polls up to `timeout_ms` (simulated — in our sync model, just checks once
     /// since scripts have already executed during page load).
-    pub fn agent_wait_for(&self, role: Option<&str>, name: &str, _timeout_ms: u64) -> Option<usize> {
+    pub fn agent_wait_for(
+        &self,
+        role: Option<&str>,
+        name: &str,
+        _timeout_ms: u64,
+    ) -> Option<usize> {
         self.resolve_target(role, name)
     }
 
@@ -760,12 +789,22 @@ impl NativeBrowserBridge {
     /// Score a native action from its observed result and record it in the
     /// outcome history. All signals derive from the NDA delta and status
     /// string — nothing is self-reported.
-    pub fn record_outcome(&mut self, action: &str, role: &str, target: &str, result: &AgentActionResult) {
+    pub fn record_outcome(
+        &mut self,
+        action: &str,
+        role: &str,
+        target: &str,
+        result: &AgentActionResult,
+    ) {
         let kind = ActionKind::from_str(action);
         let status = result.status.to_lowercase();
         let signals = OutcomeSignals {
             dom_changed: !result.delta.is_empty(),
-            url_changed: result.delta.changed.iter().any(|c| c.predicate == velocity_browser::predicates::SESSION_URL),
+            url_changed: result
+                .delta
+                .changed
+                .iter()
+                .any(|c| c.predicate == velocity_browser::predicates::SESSION_URL),
             error_thrown: status.starts_with("no ")
                 || status.contains("failed")
                 || status.contains("error"),
@@ -780,7 +819,8 @@ impl NativeBrowserBridge {
         let page_url = self.active_session.current_url.clone();
         // Feed the learned confidence store so predict_learned improves with
         // every observed outcome on this domain.
-        self.confidence.record(role, kind.label(), extract_domain(&page_url), score);
+        self.confidence
+            .record(role, kind.label(), extract_domain(&page_url), score);
         self.scorer.record(ActionOutcome {
             action_kind: kind,
             target_selector: target.to_string(),
@@ -822,7 +862,10 @@ impl NativeBrowserBridge {
     /// Hover an element by node id.
     pub fn agent_hover(&mut self, node_id: usize) -> AgentActionResult {
         let before = self.active_session.capture_state_document();
-        let selector = self.active_session.dom_tree.as_ref()
+        let selector = self
+            .active_session
+            .dom_tree
+            .as_ref()
             .and_then(|tree| tree.get_node(node_id))
             .and_then(|n| n.attributes.get("id"))
             .map(|id| format!("#{}", id))
@@ -838,9 +881,17 @@ impl NativeBrowserBridge {
                     default_prevented: false,
                     propagation_stopped: false,
                 };
-                let _ = velocity_browser::SyntheticEventDispatcher::dispatch_pointer_event_static(tree, node_id, event);
-                let _ = self.active_session.js_vm.dispatch_event(tree, &selector, "mouseenter");
-                let _ = self.active_session.js_vm.dispatch_event(tree, &selector, "mouseover");
+                let _ = velocity_browser::SyntheticEventDispatcher::dispatch_pointer_event_static(
+                    tree, node_id, event,
+                );
+                let _ = self
+                    .active_session
+                    .js_vm
+                    .dispatch_event(tree, &selector, "mouseenter");
+                let _ = self
+                    .active_session
+                    .js_vm
+                    .dispatch_event(tree, &selector, "mouseover");
             }
         }
         let after = self.active_session.capture_state_document();
@@ -851,24 +902,38 @@ impl NativeBrowserBridge {
     /// Press a key and fire keyboard events.
     pub fn agent_press_key(&mut self, key: &str) -> AgentActionResult {
         let before = self.active_session.capture_state_document();
-        self.active_session.trace_collector.record_console(
-            "info",
-            &format!("Key press: {}", key),
-        );
+        self.active_session
+            .trace_collector
+            .record_console("info", &format!("Key press: {}", key));
         let after = self.active_session.capture_state_document();
-        AgentActionResult::new(format!("pressed key '{}'", key), velocity_browser::agent_api::diff(&before, &after))
+        AgentActionResult::new(
+            format!("pressed key '{}'", key),
+            velocity_browser::agent_api::diff(&before, &after),
+        )
     }
 
     /// List recent network requests.
     pub fn list_network_requests(&self) -> Vec<(String, String, u16, String)> {
-        self.active_session.network_tracker.requests.iter()
-            .map(|r| (r.url.clone(), r.method.clone(), r.status, r.resource_type.clone()))
+        self.active_session
+            .network_tracker
+            .requests
+            .iter()
+            .map(|r| {
+                (
+                    r.url.clone(),
+                    r.method.clone(),
+                    r.status,
+                    r.resource_type.clone(),
+                )
+            })
             .collect()
     }
 
     /// Get a cookie value by name.
     pub fn get_cookie(&self, name: &str) -> Option<String> {
-        self.active_session.cookies.iter()
+        self.active_session
+            .cookies
+            .iter()
             .find(|c| c.name == name)
             .map(|c| c.value.clone())
     }
@@ -928,12 +993,21 @@ impl NativeBrowserBridge {
         let view = self.current_view();
         let mut out = format!("URL: {}\nTitle: {}\n", view.url, view.title);
         out.push_str(&format!("DOM nodes: {}\n", tree.nodes.len()));
-        out.push_str(&format!("Actionable elements: {}\n---\n", view.elements.len()));
+        out.push_str(&format!(
+            "Actionable elements: {}\n---\n",
+            view.elements.len()
+        ));
         for e in &view.elements {
             out.push_str(&format!(
                 "[{}] {} \"{}\"{}\n",
-                e.node_id, e.role, e.name,
-                if e.value.is_empty() { String::new() } else { format!(" val=\"{}\"", e.value) }
+                e.node_id,
+                e.role,
+                e.name,
+                if e.value.is_empty() {
+                    String::new()
+                } else {
+                    format!(" val=\"{}\"", e.value)
+                }
             ));
         }
         out
@@ -959,20 +1033,24 @@ mod native_bridge_tests {
 
         let view = bridge.current_view();
         assert_eq!(view.title, "Login");
-        assert!(!view.elements.is_empty(), "AOM must expose actionable elements");
+        assert!(
+            !view.elements.is_empty(),
+            "AOM must expose actionable elements"
+        );
 
         let username = bridge
             .resolve_target(Some("textbox"), "Username")
             .expect("username textbox resolvable by role+name");
         let result = bridge.agent_type(username, "agent007");
-        assert!(result.status.contains("typed") || result.status.contains(&format!("node_{username}")));
-        assert!(!result.delta.is_empty(), "typing must produce a readable NDA delta");
         assert!(
-            result
-                .delta
-                .changed
-                .iter()
-                .any(|c| c.new == "agent007")
+            result.status.contains("typed") || result.status.contains(&format!("node_{username}"))
+        );
+        assert!(
+            !result.delta.is_empty(),
+            "typing must produce a readable NDA delta"
+        );
+        assert!(
+            result.delta.changed.iter().any(|c| c.new == "agent007")
                 || result.delta.added.iter().any(|(_, _, o)| o == "agent007"),
             "delta must reflect the typed value"
         );

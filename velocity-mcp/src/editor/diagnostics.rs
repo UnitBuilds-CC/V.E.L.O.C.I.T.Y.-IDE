@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 //! Diagnostics display — manages error/warning squiggles and the problems panel.
 
-use std::path::PathBuf;
 use eframe::egui;
+use std::path::PathBuf;
 
-pub use crate::editor::lsp_client::{LspDiagnostic, DiagnosticSeverity};
+pub use crate::editor::lsp_client::{DiagnosticSeverity, LspDiagnostic};
 
 /// Aggregated diagnostics state across all open files.
 #[derive(Debug, Clone, Default)]
@@ -33,19 +33,28 @@ impl DiagnosticsState {
     }
 
     pub fn error_count(&self) -> usize {
-        self.items.iter().filter(|d| d.severity == DiagnosticSeverity::Error).count()
+        self.items
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Error)
+            .count()
     }
 
     pub fn warning_count(&self) -> usize {
-        self.items.iter().filter(|d| d.severity == DiagnosticSeverity::Warning).count()
+        self.items
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Warning)
+            .count()
     }
 
     pub fn filtered_items(&self) -> Vec<&LspDiagnostic> {
-        self.items.iter().filter(|d| match self.filter {
-            DiagnosticFilter::All => true,
-            DiagnosticFilter::ErrorsOnly => d.severity == DiagnosticSeverity::Error,
-            DiagnosticFilter::WarningsOnly => d.severity == DiagnosticSeverity::Warning,
-        }).collect()
+        self.items
+            .iter()
+            .filter(|d| match self.filter {
+                DiagnosticFilter::All => true,
+                DiagnosticFilter::ErrorsOnly => d.severity == DiagnosticSeverity::Error,
+                DiagnosticFilter::WarningsOnly => d.severity == DiagnosticSeverity::Warning,
+            })
+            .collect()
     }
 
     /// Get diagnostics for a specific file.
@@ -56,7 +65,8 @@ impl DiagnosticsState {
     /// Get (line, severity_u8) pairs for the gutter display in a specific file.
     /// severity: 1=error, 2=warning, 3=info, 4=hint
     pub fn lines_for_file(&self, path: &std::path::Path) -> Vec<(usize, u8)> {
-        self.items.iter()
+        self.items
+            .iter()
             .filter(|d| d.file == path)
             .map(|d| {
                 let sev = match d.severity {
@@ -72,7 +82,8 @@ impl DiagnosticsState {
 
     /// Get diagnostics for a specific line in a file (0-based line number).
     pub fn diagnostics_at_line(&self, path: &std::path::Path, line: usize) -> Vec<&LspDiagnostic> {
-        self.items.iter()
+        self.items
+            .iter()
             .filter(|d| d.file == path && d.line == line)
             .collect()
     }
@@ -116,12 +127,7 @@ impl DiagnosticsState {
                     };
 
                     ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(icon)
-                                .size(12.0)
-                                .strong()
-                                .color(color),
-                        );
+                        ui.label(egui::RichText::new(icon).size(12.0).strong().color(color));
                         ui.label(
                             egui::RichText::new(&diag.message)
                                 .size(11.0)
@@ -155,7 +161,11 @@ impl DiagnosticsState {
     }
 
     /// Render the problems panel.
-    pub fn show_panel(&mut self, ui: &mut egui::Ui, palette: &crate::editor::theme::IdePalette) -> Option<DiagnosticAction> {
+    pub fn show_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &crate::editor::theme::IdePalette,
+    ) -> Option<DiagnosticAction> {
         let mut action = None;
 
         ui.horizontal(|ui| {
@@ -166,20 +176,32 @@ impl DiagnosticsState {
             ui.colored_label(palette.error, format!("\u{2716} {errors}"));
             ui.colored_label(palette.warning, format!("\u{26A0} {warnings}"));
             ui.separator();
-            if ui.selectable_label(self.filter == DiagnosticFilter::All, "All").clicked() {
+            if ui
+                .selectable_label(self.filter == DiagnosticFilter::All, "All")
+                .clicked()
+            {
                 self.filter = DiagnosticFilter::All;
             }
-            if ui.selectable_label(self.filter == DiagnosticFilter::ErrorsOnly, "Errors").clicked() {
+            if ui
+                .selectable_label(self.filter == DiagnosticFilter::ErrorsOnly, "Errors")
+                .clicked()
+            {
                 self.filter = DiagnosticFilter::ErrorsOnly;
             }
-            if ui.selectable_label(self.filter == DiagnosticFilter::WarningsOnly, "Warnings").clicked() {
+            if ui
+                .selectable_label(self.filter == DiagnosticFilter::WarningsOnly, "Warnings")
+                .clicked()
+            {
                 self.filter = DiagnosticFilter::WarningsOnly;
             }
         });
 
         ui.separator();
 
-        let filtered: Vec<(usize, LspDiagnostic)> = self.filtered_items().iter().enumerate()
+        let filtered: Vec<(usize, LspDiagnostic)> = self
+            .filtered_items()
+            .iter()
+            .enumerate()
             .map(|(i, d)| (i, (*d).clone()))
             .collect();
         let current_selected = self.selected;
@@ -192,10 +214,15 @@ impl DiagnosticsState {
                     DiagnosticSeverity::Hint => ("\u{1F4A1}", palette.text_muted),
                 };
 
-                let file_name = diag.file.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy();
-                let label = format!("{} {}:{}:{} {}", icon.0, file_name, diag.line + 1, diag.col + 1, diag.message);
+                let file_name = diag.file.file_name().unwrap_or_default().to_string_lossy();
+                let label = format!(
+                    "{} {}:{}:{} {}",
+                    icon.0,
+                    file_name,
+                    diag.line + 1,
+                    diag.col + 1,
+                    diag.message
+                );
 
                 let resp = ui.selectable_label(*idx == current_selected, &label);
                 if resp.clicked() {
@@ -210,7 +237,10 @@ impl DiagnosticsState {
 
         if let Some(DiagnosticAction::Jump { ref file, line, .. }) = action {
             // Update selected based on the clicked index
-            if let Some((idx, _)) = filtered.iter().find(|(_, d)| &d.file == file && d.line == line) {
+            if let Some((idx, _)) = filtered
+                .iter()
+                .find(|(_, d)| &d.file == file && d.line == line)
+            {
                 self.selected = *idx;
             }
         }
@@ -222,7 +252,11 @@ impl DiagnosticsState {
 /// Actions from the diagnostics panel.
 #[derive(Debug, Clone)]
 pub enum DiagnosticAction {
-    Jump { file: PathBuf, line: usize, col: usize },
+    Jump {
+        file: PathBuf,
+        line: usize,
+        col: usize,
+    },
 }
 
 /// Inline diagnostic rendering data (for squiggles in the editor).
@@ -265,12 +299,26 @@ mod tests {
         let mut state = DiagnosticsState::default();
         state.update(vec![
             LspDiagnostic {
-                file: PathBuf::from("a.rs"), line: 0, col: 0, end_line: 0, end_col: 5,
-                severity: DiagnosticSeverity::Error, message: "err".into(), source: None, code: None,
+                file: PathBuf::from("a.rs"),
+                line: 0,
+                col: 0,
+                end_line: 0,
+                end_col: 5,
+                severity: DiagnosticSeverity::Error,
+                message: "err".into(),
+                source: None,
+                code: None,
             },
             LspDiagnostic {
-                file: PathBuf::from("b.rs"), line: 1, col: 0, end_line: 1, end_col: 3,
-                severity: DiagnosticSeverity::Warning, message: "warn".into(), source: None, code: None,
+                file: PathBuf::from("b.rs"),
+                line: 1,
+                col: 0,
+                end_line: 1,
+                end_col: 3,
+                severity: DiagnosticSeverity::Warning,
+                message: "warn".into(),
+                source: None,
+                code: None,
             },
         ]);
         assert_eq!(state.error_count(), 1);
@@ -282,12 +330,26 @@ mod tests {
         let mut state = DiagnosticsState::default();
         state.update(vec![
             LspDiagnostic {
-                file: PathBuf::from("a.rs"), line: 0, col: 0, end_line: 0, end_col: 5,
-                severity: DiagnosticSeverity::Error, message: "err".into(), source: None, code: None,
+                file: PathBuf::from("a.rs"),
+                line: 0,
+                col: 0,
+                end_line: 0,
+                end_col: 5,
+                severity: DiagnosticSeverity::Error,
+                message: "err".into(),
+                source: None,
+                code: None,
             },
             LspDiagnostic {
-                file: PathBuf::from("b.rs"), line: 1, col: 0, end_line: 1, end_col: 3,
-                severity: DiagnosticSeverity::Warning, message: "warn".into(), source: None, code: None,
+                file: PathBuf::from("b.rs"),
+                line: 1,
+                col: 0,
+                end_line: 1,
+                end_col: 3,
+                severity: DiagnosticSeverity::Warning,
+                message: "warn".into(),
+                source: None,
+                code: None,
             },
         ]);
         state.filter = DiagnosticFilter::ErrorsOnly;

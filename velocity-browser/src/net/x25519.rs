@@ -294,8 +294,7 @@ mod tests {
         // Both parties derive the same shared secret (RFC 7748 §6.1).
         let alice_priv =
             from_hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
-        let bob_priv =
-            from_hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
+        let bob_priv = from_hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
         let alice_pub = x25519_base(alice_priv);
         let bob_pub = x25519_base(bob_priv);
         let alice_shared = x25519(alice_priv, bob_pub);

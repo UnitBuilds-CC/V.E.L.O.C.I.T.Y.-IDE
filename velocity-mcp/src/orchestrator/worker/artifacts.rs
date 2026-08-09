@@ -3,7 +3,10 @@ use crate::automation::instruction_registry::AgentTaskKind;
 use std::fs;
 use std::path::Path;
 
-pub fn detect_wa_run_artifact_path(changed_files: &[String], created_files: &[String]) -> Option<String> {
+pub fn detect_wa_run_artifact_path(
+    changed_files: &[String],
+    created_files: &[String],
+) -> Option<String> {
     changed_files
         .iter()
         .chain(created_files.iter())
@@ -13,7 +16,9 @@ pub fn detect_wa_run_artifact_path(changed_files: &[String], created_files: &[St
 
 pub fn wa_run_id_from_path(path: &str) -> Option<String> {
     let file_name = Path::new(path).file_name()?.to_str()?;
-    file_name.strip_suffix(".wa-run.nda").map(|value| value.to_string())
+    file_name
+        .strip_suffix(".wa-run.nda")
+        .map(|value| value.to_string())
 }
 
 pub fn serialize_execution_contract_nda(assignment: &WorkerAssignment) -> String {
@@ -297,7 +302,10 @@ pub fn write_execution_facts(run_dir: &Path, outcome: &ExecutionOutcome) -> Resu
     }
     if outcome.task_kind == AgentTaskKind::DesktopAutomation {
         facts.push("wa_field\tevidence_lane\tdesktop_automation".to_string());
-        facts.push(format!("wa_field\tartifact_summary_present\t{}", outcome.success));
+        facts.push(format!(
+            "wa_field\tartifact_summary_present\t{}",
+            outcome.success
+        ));
         facts.push(format!(
             "wa_field\tchanged_signal_count\t{}",
             outcome.changed_files.len() + outcome.created_files.len() + outcome.deleted_files.len()

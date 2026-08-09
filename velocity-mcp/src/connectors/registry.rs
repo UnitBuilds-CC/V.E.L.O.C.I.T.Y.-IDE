@@ -82,8 +82,16 @@ mod tests {
     #[test]
     fn add_replaces_by_id() {
         let mut reg = ConnectorRegistry::default();
-        reg.add(ConnectorConfig::generic("a", "First", "https://one.example"));
-        reg.add(ConnectorConfig::generic("a", "Second", "https://two.example"));
+        reg.add(ConnectorConfig::generic(
+            "a",
+            "First",
+            "https://one.example",
+        ));
+        reg.add(ConnectorConfig::generic(
+            "a",
+            "Second",
+            "https://two.example",
+        ));
         assert_eq!(reg.len(), 1);
         assert_eq!(reg.get("a").unwrap().name, "Second");
     }

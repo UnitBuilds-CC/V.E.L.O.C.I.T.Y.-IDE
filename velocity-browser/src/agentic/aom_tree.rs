@@ -107,7 +107,11 @@ mod tests {
 
     #[test]
     fn aria_label_overrides_visible_text() {
-        let tree = DomTree::new(vec![make_node(0, "button", &[("aria-label", "Close dialog")])]);
+        let tree = DomTree::new(vec![make_node(
+            0,
+            "button",
+            &[("aria-label", "Close dialog")],
+        )]);
         let nodes = AgenticAomTree::build_aom_nodes(&tree);
         assert_eq!(nodes[0].name, "Close dialog");
     }
@@ -193,7 +197,11 @@ mod tests {
 
     #[test]
     fn value_attribute_captured() {
-        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "text"), ("value", "hello")])]);
+        let tree = DomTree::new(vec![make_node(
+            0,
+            "input",
+            &[("type", "text"), ("value", "hello")],
+        )]);
         let nodes = AgenticAomTree::build_aom_nodes(&tree);
         assert_eq!(nodes[0].value, "hello");
     }
@@ -231,7 +239,11 @@ mod tests {
 
     #[test]
     fn autofocus_sets_focused() {
-        let tree = DomTree::new(vec![make_node(0, "input", &[("type", "text"), ("autofocus", "")])]);
+        let tree = DomTree::new(vec![make_node(
+            0,
+            "input",
+            &[("type", "text"), ("autofocus", "")],
+        )]);
         let nodes = AgenticAomTree::build_aom_nodes(&tree);
         assert!(nodes[0].is_focused);
     }
@@ -293,7 +305,10 @@ mod tests {
         }];
         let triples = AgenticAomTree::to_nda_triples(&nodes);
         let name_triple = triples.iter().find(|t| t.predicate_id == AOM_NAME);
-        assert!(name_triple.is_none(), "Empty name should not emit AOM_NAME triple");
+        assert!(
+            name_triple.is_none(),
+            "Empty name should not emit AOM_NAME triple"
+        );
     }
 
     #[test]
@@ -335,7 +350,11 @@ impl AgenticAomTree {
                 "button" => "button",
                 "a" => "link",
                 "input" => {
-                    let type_attr = node.attributes.get("type").map(|s| s.as_str()).unwrap_or("text");
+                    let type_attr = node
+                        .attributes
+                        .get("type")
+                        .map(|s| s.as_str())
+                        .unwrap_or("text");
                     match type_attr {
                         "button" | "submit" | "reset" => "button",
                         "checkbox" => "checkbox",
@@ -354,7 +373,10 @@ impl AgenticAomTree {
                 _ => "generic",
             });
 
-            if role == "generic" && !node.attributes.contains_key("aria-label") && !node.attributes.contains_key("id") {
+            if role == "generic"
+                && !node.attributes.contains_key("aria-label")
+                && !node.attributes.contains_key("id")
+            {
                 continue;
             }
 
@@ -363,7 +385,8 @@ impl AgenticAomTree {
             // what an agent reads on screen). aria-label still wins overall.
             let content_named = matches!(role, "button" | "link");
             let attr_name = if content_named {
-                node.attributes.get("aria-label")
+                node.attributes
+                    .get("aria-label")
                     .cloned()
                     .or_else(|| node.attributes.get("title").cloned())
                     .filter(|s| !s.is_empty())
@@ -372,7 +395,8 @@ impl AgenticAomTree {
                     .or_else(|| node.attributes.get("id").cloned())
                     .unwrap_or_default()
             } else {
-                node.attributes.get("aria-label")
+                node.attributes
+                    .get("aria-label")
                     .cloned()
                     .or_else(|| node.attributes.get("placeholder").cloned())
                     .or_else(|| node.attributes.get("name").cloned())
@@ -388,7 +412,11 @@ impl AgenticAomTree {
 
             let value = node.attributes.get("value").cloned().unwrap_or_default();
             let is_focused = node.attributes.contains_key("autofocus");
-            let is_expanded = node.attributes.get("aria-expanded").map(|s| s == "true").unwrap_or(false);
+            let is_expanded = node
+                .attributes
+                .get("aria-expanded")
+                .map(|s| s == "true")
+                .unwrap_or(false);
 
             let actionability_score = match role {
                 "button" | "link" => 100,
@@ -422,7 +450,11 @@ impl AgenticAomTree {
             if !node.value.is_empty() {
                 triples.push(NdaTriple::new(&node.id, AOM_VALUE, &node.value));
             }
-            triples.push(NdaTriple::new(&node.id, AOM_ACTIONABILITY, &node.actionability_score.to_string()));
+            triples.push(NdaTriple::new(
+                &node.id,
+                AOM_ACTIONABILITY,
+                &node.actionability_score.to_string(),
+            ));
             if node.is_focused {
                 triples.push(NdaTriple::new(&node.id, AOM_FOCUSED, "focused"));
             }

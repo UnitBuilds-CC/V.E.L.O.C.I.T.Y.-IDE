@@ -129,7 +129,9 @@ impl PersistentMemory {
         hits.sort_by(|a, b| {
             let score_a = a.similarity * a.entry.score;
             let score_b = b.similarity * b.entry.score;
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+            score_b
+                .partial_cmp(&score_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         hits.truncate(limit);
@@ -174,8 +176,7 @@ impl PersistentMemory {
         }
         let json = serde_json::to_string_pretty(&self.entries)
             .map_err(|e| format!("Serialize failed: {}", e))?;
-        std::fs::write(&self.file_path, json)
-            .map_err(|e| format!("Write failed: {}", e))?;
+        std::fs::write(&self.file_path, json).map_err(|e| format!("Write failed: {}", e))?;
         self.dirty = false;
         Ok(())
     }
@@ -276,9 +277,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut mem = PersistentMemory::open(dir.path());
 
-        mem.remember("tool:write_file", "Successfully wrote src/main.rs", &["tool", "file"], 0.9);
-        mem.remember("tool:read_file", "Read Cargo.toml for dependencies", &["tool", "file"], 0.8);
-        mem.remember("site:github", "Login form has username and password fields", &["web", "auth"], 0.7);
+        mem.remember(
+            "tool:write_file",
+            "Successfully wrote src/main.rs",
+            &["tool", "file"],
+            0.9,
+        );
+        mem.remember(
+            "tool:read_file",
+            "Read Cargo.toml for dependencies",
+            &["tool", "file"],
+            0.8,
+        );
+        mem.remember(
+            "site:github",
+            "Login form has username and password fields",
+            &["web", "auth"],
+            0.7,
+        );
 
         let hits = mem.recall("write file to disk", 5);
         assert!(!hits.is_empty());
@@ -335,8 +351,18 @@ mod tests {
     fn recall_ranks_by_relevance_and_filters_noise() {
         let dir = tempfile::tempdir().unwrap();
         let mut mem = PersistentMemory::open(dir.path());
-        mem.remember("k_auth", "oauth login authentication flow tokens", &["auth"], 0.9);
-        mem.remember("k_db", "database connection pooling migrations", &["db"], 0.9);
+        mem.remember(
+            "k_auth",
+            "oauth login authentication flow tokens",
+            &["auth"],
+            0.9,
+        );
+        mem.remember(
+            "k_db",
+            "database connection pooling migrations",
+            &["db"],
+            0.9,
+        );
         mem.remember("k_unrelated", "cooking pasta recipes basil", &["food"], 0.9);
 
         let hits = mem.recall("authentication login tokens", 5);

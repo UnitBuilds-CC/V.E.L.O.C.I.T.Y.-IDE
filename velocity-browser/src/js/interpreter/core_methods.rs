@@ -1,12 +1,16 @@
-use super::signal::*;
 use super::coercion::*;
 use super::function::call_function;
+use super::signal::*;
 use crate::js::scope::ScopeRef;
 use crate::js::vm::JsValue;
 use std::collections::HashMap;
 
 #[allow(dead_code)]
-pub(super) fn call_object_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> EvalResult {
+pub(super) fn call_object_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "hasOwnProperty" => {
             let key = _args.first().map(to_string).unwrap_or_default();
@@ -19,24 +23,42 @@ pub(super) fn call_object_method(map: &HashMap<String, JsValue>, method: &str, _
     })
 }
 
-pub(super) fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
-    let mut entries = if let Some(JsValue::Array(e)) = map.get("__entries__") { e.clone() } else { Vec::new() };
+pub(super) fn call_map_method(
+    map: &mut HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
+    let mut entries = if let Some(JsValue::Array(e)) = map.get("__entries__") {
+        e.clone()
+    } else {
+        Vec::new()
+    };
     Ok(match method {
         "get" => {
             let key = args.first().cloned().unwrap_or(JsValue::Undefined);
             let key_str = to_string(&key);
-            entries.iter().find_map(|entry| {
-                if let JsValue::Array(kv) = entry {
-                    if kv.len() >= 2 && to_string(&kv[0]) == key_str { return Some(kv[1].clone()); }
-                }
-                None
-            }).unwrap_or(JsValue::Undefined)
+            entries
+                .iter()
+                .find_map(|entry| {
+                    if let JsValue::Array(kv) = entry {
+                        if kv.len() >= 2 && to_string(&kv[0]) == key_str {
+                            return Some(kv[1].clone());
+                        }
+                    }
+                    None
+                })
+                .unwrap_or(JsValue::Undefined)
         }
         "has" => {
             let key = args.first().cloned().unwrap_or(JsValue::Undefined);
             let key_str = to_string(&key);
             JsValue::Boolean(entries.iter().any(|entry| {
-                if let JsValue::Array(kv) = entry { kv.first().map(to_string).as_deref() == Some(&key_str) } else { false }
+                if let JsValue::Array(kv) = entry {
+                    kv.first().map(to_string).as_deref() == Some(&key_str)
+                } else {
+                    false
+                }
             }))
         }
         "set" => {
@@ -47,13 +69,19 @@ pub(super) fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, 
             for entry in entries.iter_mut() {
                 if let JsValue::Array(kv) = entry {
                     if kv.first().map(to_string).as_deref() == Some(&key_str) {
-                        if kv.len() >= 2 { kv[1] = value.clone(); } else { kv.push(value.clone()); }
+                        if kv.len() >= 2 {
+                            kv[1] = value.clone();
+                        } else {
+                            kv.push(value.clone());
+                        }
                         replaced = true;
                         break;
                     }
                 }
             }
-            if !replaced { entries.push(JsValue::Array(vec![key, value])); }
+            if !replaced {
+                entries.push(JsValue::Array(vec![key, value]));
+            }
             map.insert("__entries__".to_string(), JsValue::Array(entries));
             JsValue::Object(map.clone())
         }
@@ -62,15 +90,41 @@ pub(super) fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, 
             let key_str = to_string(&key);
             let before = entries.len();
             entries.retain(|entry| {
-                if let JsValue::Array(kv) = entry { kv.first().map(to_string).as_deref() != Some(&key_str) } else { true }
+                if let JsValue::Array(kv) = entry {
+                    kv.first().map(to_string).as_deref() != Some(&key_str)
+                } else {
+                    true
+                }
             });
             let removed = entries.len() != before;
             map.insert("__entries__".to_string(), JsValue::Array(entries));
             JsValue::Boolean(removed)
         }
         "size" => JsValue::Number(entries.len() as f64),
-        "keys" => JsValue::Array(entries.iter().filter_map(|e| if let JsValue::Array(kv) = e { kv.first().cloned() } else { None }).collect()),
-        "values" => JsValue::Array(entries.iter().filter_map(|e| if let JsValue::Array(kv) = e { kv.get(1).cloned() } else { None }).collect()),
+        "keys" => JsValue::Array(
+            entries
+                .iter()
+                .filter_map(|e| {
+                    if let JsValue::Array(kv) = e {
+                        kv.first().cloned()
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        ),
+        "values" => JsValue::Array(
+            entries
+                .iter()
+                .filter_map(|e| {
+                    if let JsValue::Array(kv) = e {
+                        kv.get(1).cloned()
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        ),
         "entries" => JsValue::Array(entries),
         "forEach" => {
             let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -91,8 +145,17 @@ pub(super) fn call_map_method(map: &mut HashMap<String, JsValue>, method: &str, 
     })
 }
 
-pub(super) fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
-    let mut items = if let Some(JsValue::Array(i)) = map.get("__items__") { i.clone() } else { Vec::new() };
+pub(super) fn call_set_method(
+    map: &mut HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
+    let mut items = if let Some(JsValue::Array(i)) = map.get("__items__") {
+        i.clone()
+    } else {
+        Vec::new()
+    };
     Ok(match method {
         "has" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -100,7 +163,9 @@ pub(super) fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, 
         }
         "add" => {
             let val = args.first().cloned().unwrap_or(JsValue::Undefined);
-            if !items.iter().any(|x| strict_eq(x, &val)) { items.push(val); }
+            if !items.iter().any(|x| strict_eq(x, &val)) {
+                items.push(val);
+            }
             map.insert("__items__".to_string(), JsValue::Array(items));
             JsValue::Object(map.clone())
         }
@@ -129,7 +194,9 @@ pub(super) fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, 
         "union" => {
             let other = set_items_of(args.first());
             for v in other {
-                if !items.iter().any(|x| strict_eq(x, &v)) { items.push(v); }
+                if !items.iter().any(|x| strict_eq(x, &v)) {
+                    items.push(v);
+                }
             }
             make_set(items)
         }
@@ -145,9 +212,15 @@ pub(super) fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, 
         }
         "symmetricDifference" => {
             let other = set_items_of(args.first());
-            let mut out: Vec<JsValue> = items.iter().filter(|x| !other.iter().any(|y| strict_eq(x, y))).cloned().collect();
+            let mut out: Vec<JsValue> = items
+                .iter()
+                .filter(|x| !other.iter().any(|y| strict_eq(x, y)))
+                .cloned()
+                .collect();
             for v in other {
-                if !items.iter().any(|x| strict_eq(x, &v)) { out.push(v); }
+                if !items.iter().any(|x| strict_eq(x, &v)) {
+                    out.push(v);
+                }
             }
             make_set(out)
         }
@@ -171,7 +244,11 @@ pub(super) fn call_set_method(map: &mut HashMap<String, JsValue>, method: &str, 
 fn set_items_of(v: Option<&JsValue>) -> Vec<JsValue> {
     match v {
         Some(JsValue::Object(m)) => {
-            if let Some(JsValue::Array(items)) = m.get("__items__") { items.clone() } else { Vec::new() }
+            if let Some(JsValue::Array(items)) = m.get("__items__") {
+                items.clone()
+            } else {
+                Vec::new()
+            }
         }
         Some(JsValue::Array(a)) => a.clone(),
         _ => Vec::new(),
@@ -186,33 +263,62 @@ fn make_set(items: Vec<JsValue>) -> JsValue {
     JsValue::Object(m)
 }
 
-pub(super) fn call_promise_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue], scope: &ScopeRef) -> EvalResult {
+pub(super) fn call_promise_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+    scope: &ScopeRef,
+) -> EvalResult {
     match method {
         "then" => {
             if let Some(rejected) = map.get("__rejected__") {
                 if *rejected != JsValue::Undefined {
                     let mut new_promise = HashMap::new();
-                    new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                    new_promise.insert(
+                        "__type__".to_string(),
+                        JsValue::String("Promise".to_string()),
+                    );
                     new_promise.insert("__rejected__".to_string(), rejected.clone());
                     return Ok(JsValue::Object(new_promise));
                 }
             }
-            let resolved = map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined);
+            let resolved = map
+                .get("__resolved__")
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
             if let Some(callback) = args.first() {
                 match call_function(callback, &[resolved], scope) {
                     Ok(result) => {
                         let mut new_promise = HashMap::new();
-                        new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                        new_promise.insert(
+                            "__type__".to_string(),
+                            JsValue::String("Promise".to_string()),
+                        );
                         match &result {
-                            JsValue::Object(inner_map) if inner_map.get("__type__").map(to_string).as_deref() == Some("Promise") => {
+                            JsValue::Object(inner_map)
+                                if inner_map.get("__type__").map(to_string).as_deref()
+                                    == Some("Promise") =>
+                            {
                                 if let Some(rej) = inner_map.get("__rejected__") {
                                     if *rej != JsValue::Undefined {
                                         new_promise.insert("__rejected__".to_string(), rej.clone());
                                     } else {
-                                        new_promise.insert("__resolved__".to_string(), inner_map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined));
+                                        new_promise.insert(
+                                            "__resolved__".to_string(),
+                                            inner_map
+                                                .get("__resolved__")
+                                                .cloned()
+                                                .unwrap_or(JsValue::Undefined),
+                                        );
                                     }
                                 } else {
-                                    new_promise.insert("__resolved__".to_string(), inner_map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined));
+                                    new_promise.insert(
+                                        "__resolved__".to_string(),
+                                        inner_map
+                                            .get("__resolved__")
+                                            .cloned()
+                                            .unwrap_or(JsValue::Undefined),
+                                    );
                                 }
                             }
                             _ => {
@@ -223,7 +329,10 @@ pub(super) fn call_promise_method(map: &HashMap<String, JsValue>, method: &str, 
                     }
                     Err(Signal::Throw(reason)) => {
                         let mut new_promise = HashMap::new();
-                        new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                        new_promise.insert(
+                            "__type__".to_string(),
+                            JsValue::String("Promise".to_string()),
+                        );
                         new_promise.insert("__rejected__".to_string(), reason);
                         Ok(JsValue::Object(new_promise))
                     }
@@ -240,13 +349,19 @@ pub(super) fn call_promise_method(map: &HashMap<String, JsValue>, method: &str, 
                         match call_function(callback, &[rejected.clone()], scope) {
                             Ok(result) => {
                                 let mut new_promise = HashMap::new();
-                                new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                                new_promise.insert(
+                                    "__type__".to_string(),
+                                    JsValue::String("Promise".to_string()),
+                                );
                                 new_promise.insert("__resolved__".to_string(), result);
                                 return Ok(JsValue::Object(new_promise));
                             }
                             Err(Signal::Throw(reason)) => {
                                 let mut new_promise = HashMap::new();
-                                new_promise.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
+                                new_promise.insert(
+                                    "__type__".to_string(),
+                                    JsValue::String("Promise".to_string()),
+                                );
                                 new_promise.insert("__rejected__".to_string(), reason);
                                 return Ok(JsValue::Object(new_promise));
                             }
@@ -268,8 +383,16 @@ pub(super) fn call_promise_method(map: &HashMap<String, JsValue>, method: &str, 
 }
 
 #[allow(dead_code)]
-pub(super) fn call_date_method(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> EvalResult {
-    let ts = if let Some(JsValue::Number(n)) = map.get("__value__") { *n } else { 0.0 };
+pub(super) fn call_date_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> EvalResult {
+    let ts = if let Some(JsValue::Number(n)) = map.get("__value__") {
+        *n
+    } else {
+        0.0
+    };
     Ok(match method {
         "getTime" | "valueOf" => JsValue::Number(ts),
         "toISOString" | "toJSON" => JsValue::String("1970-01-01T00:00:00.000Z".to_string()),
@@ -314,9 +437,17 @@ pub(super) fn call_generator_method(map: &HashMap<String, JsValue>, method: &str
 
 // ── Enhanced Date methods ────────────────────────────────────────────────────
 
-pub(super) fn call_date_method_enhanced(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> EvalResult {
-    let ts = if let Some(JsValue::Number(n)) = map.get("__value__") { *n } else { 0.0 };
-    
+pub(super) fn call_date_method_enhanced(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> EvalResult {
+    let ts = if let Some(JsValue::Number(n)) = map.get("__value__") {
+        *n
+    } else {
+        0.0
+    };
+
     // Decompose epoch millis into date components
     let secs = (ts / 1000.0).floor() as i64;
     let days = secs / 86400;
@@ -325,13 +456,15 @@ pub(super) fn call_date_method_enhanced(map: &HashMap<String, JsValue>, method: 
     let minutes = (day_secs % 3600) / 60;
     let seconds = day_secs % 60;
     let millis = (ts % 1000.0).floor() as i64;
-    
+
     // Calculate year, month, day from days since 1970-01-01
     let mut y = 1970;
     let mut remaining_days = days;
     loop {
         let days_in_year = if is_leap_year(y) { 366 } else { 365 };
-        if remaining_days < days_in_year { break; }
+        if remaining_days < days_in_year {
+            break;
+        }
         remaining_days -= days_in_year;
         y += 1;
     }
@@ -342,12 +475,15 @@ pub(super) fn call_date_method_enhanced(map: &HashMap<String, JsValue>, method: 
     };
     let mut m = 0;
     for (i, &md) in month_days.iter().enumerate() {
-        if remaining_days < md { m = i; break; }
+        if remaining_days < md {
+            m = i;
+            break;
+        }
         remaining_days -= md;
     }
     let d = remaining_days + 1;
     let dow = ((days % 7) + 4) % 7; // Jan 1 1970 = Thursday (4)
-    
+
     Ok(match method {
         "getTime" | "valueOf" => JsValue::Number(ts),
         "getFullYear" => JsValue::Number(y as f64),
@@ -359,22 +495,39 @@ pub(super) fn call_date_method_enhanced(map: &HashMap<String, JsValue>, method: 
         "getSeconds" => JsValue::Number(seconds as f64),
         "getMilliseconds" => JsValue::Number(millis as f64),
         "getTimezoneOffset" => JsValue::Number(0.0), // UTC
-        "toISOString" | "toJSON" => {
-            JsValue::String(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-                y, m + 1, d, hours, minutes, seconds, millis))
-        }
+        "toISOString" | "toJSON" => JsValue::String(format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            y,
+            m + 1,
+            d,
+            hours,
+            minutes,
+            seconds,
+            millis
+        )),
         "toDateString" => {
             let day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-            let month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-            JsValue::String(format!("{} {} {:02} {}", day_names[dow as usize], month_names[m], d, y))
+            let month_names = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ];
+            JsValue::String(format!(
+                "{} {} {:02} {}",
+                day_names[dow as usize], month_names[m], d, y
+            ))
         }
-        "toTimeString" => {
-            JsValue::String(format!("{:02}:{:02}:{:02} GMT+0000 (UTC)", hours, minutes, seconds))
-        }
+        "toTimeString" => JsValue::String(format!(
+            "{:02}:{:02}:{:02} GMT+0000 (UTC)",
+            hours, minutes, seconds
+        )),
         "toUTCString" => {
             let day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-            let month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-            JsValue::String(format!("{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT", day_names[dow as usize], d, month_names[m], y, hours, minutes, seconds))
+            let month_names = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ];
+            JsValue::String(format!(
+                "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+                day_names[dow as usize], d, month_names[m], y, hours, minutes, seconds
+            ))
         }
         "toString" => JsValue::String(format!("Date({})", ts)),
         _ => JsValue::Undefined,
@@ -387,7 +540,11 @@ pub(super) fn is_leap_year(y: i64) -> bool {
 
 // ── Object.prototype enhanced methods ────────────────────────────────────────
 
-pub(super) fn call_object_method_enhanced(map: &HashMap<String, JsValue>, method: &str, _args: &[JsValue]) -> EvalResult {
+pub(super) fn call_object_method_enhanced(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    _args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "hasOwnProperty" => {
             let key = _args.first().map(to_string).unwrap_or_default();
@@ -400,9 +557,13 @@ pub(super) fn call_object_method_enhanced(map: &HashMap<String, JsValue>, method
                 let mut proto = obj_map.get("__proto__").cloned();
                 let mut depth = 0;
                 while let Some(p) = proto {
-                    if depth > 64 { break; }
+                    if depth > 64 {
+                        break;
+                    }
                     if let JsValue::Object(pm) = &p {
-                        if std::ptr::eq(pm, map) { return Ok(JsValue::Boolean(true)); }
+                        if std::ptr::eq(pm, map) {
+                            return Ok(JsValue::Boolean(true));
+                        }
                         proto = pm.get("__proto__").cloned();
                     } else {
                         break;
@@ -435,7 +596,11 @@ pub(super) fn call_boolean_method(b: bool, method: &str, _args: &[JsValue]) -> E
 
 // ── NativeFunction methods ───────────────────────────────────────────────────
 
-pub(super) fn call_native_function_method(name: &str, method: &str, _args: &[JsValue]) -> EvalResult {
+pub(super) fn call_native_function_method(
+    name: &str,
+    method: &str,
+    _args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "toString" => JsValue::String(format!("function {}() {{ [native code] }}", name)),
         "name" => JsValue::String(name.to_string()),
@@ -449,8 +614,19 @@ pub(super) fn call_native_function_method(name: &str, method: &str, _args: &[JsV
 /// Build a settled Promise object (`resolved == false` means rejected).
 pub(super) fn make_promise(rejected: bool, val: JsValue) -> JsValue {
     let mut m = HashMap::new();
-    m.insert("__type__".to_string(), JsValue::String("Promise".to_string()));
-    m.insert(if rejected { "__rejected__" } else { "__resolved__" }.to_string(), val);
+    m.insert(
+        "__type__".to_string(),
+        JsValue::String("Promise".to_string()),
+    );
+    m.insert(
+        if rejected {
+            "__rejected__"
+        } else {
+            "__resolved__"
+        }
+        .to_string(),
+        val,
+    );
     JsValue::Object(m)
 }
 
@@ -460,13 +636,18 @@ pub(super) fn await_value(mut val: JsValue) -> EvalResult {
     let mut depth = 0;
     while depth < 32 {
         match &val {
-            JsValue::Object(map) if map.get("__type__").map(to_string).as_deref() == Some("Promise") => {
+            JsValue::Object(map)
+                if map.get("__type__").map(to_string).as_deref() == Some("Promise") =>
+            {
                 if let Some(reason) = map.get("__rejected__") {
                     if *reason != JsValue::Undefined {
                         return Err(Signal::Throw(reason.clone()));
                     }
                 }
-                val = map.get("__resolved__").cloned().unwrap_or(JsValue::Undefined);
+                val = map
+                    .get("__resolved__")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
                 depth += 1;
             }
             _ => break,
@@ -481,9 +662,18 @@ pub(super) fn await_value(mut val: JsValue) -> EvalResult {
 /// natives (they cannot retroactively settle the already-created promise).
 pub(super) fn promise_with_resolvers() -> JsValue {
     let mut out = HashMap::new();
-    out.insert("promise".to_string(), make_promise(false, JsValue::Undefined));
-    out.insert("resolve".to_string(), JsValue::NativeFunction("__promise_resolve__".to_string()));
-    out.insert("reject".to_string(), JsValue::NativeFunction("__promise_reject__".to_string()));
+    out.insert(
+        "promise".to_string(),
+        make_promise(false, JsValue::Undefined),
+    );
+    out.insert(
+        "resolve".to_string(),
+        JsValue::NativeFunction("__promise_resolve__".to_string()),
+    );
+    out.insert(
+        "reject".to_string(),
+        JsValue::NativeFunction("__promise_reject__".to_string()),
+    );
     JsValue::Object(out)
 }
 
@@ -494,7 +684,10 @@ pub(super) fn promise_try(args: &[JsValue]) -> EvalResult {
     let call_args = if args.len() > 1 { &args[1..] } else { &[] };
     match call_function(&f, call_args, &crate::js::scope::Scope::new_global()) {
         Ok(v) => Ok(await_value(v).map_or_else(
-            |sig| match sig { Signal::Throw(reason) => make_promise(true, reason), _ => make_promise(false, JsValue::Undefined) },
+            |sig| match sig {
+                Signal::Throw(reason) => make_promise(true, reason),
+                _ => make_promise(false, JsValue::Undefined),
+            },
             |v| make_promise(false, v),
         )),
         Err(Signal::Throw(reason)) => Ok(make_promise(true, reason)),
@@ -513,7 +706,11 @@ fn group_pairs(args: &[JsValue]) -> Result<Vec<(String, Vec<JsValue>)>, Signal> 
     let scope = crate::js::scope::Scope::new_global();
     let mut groups: Vec<(String, Vec<JsValue>)> = Vec::new();
     for (i, item) in items.iter().enumerate() {
-        let key = to_string(&call_function(&callback, &[item.clone(), JsValue::Number(i as f64)], &scope)?);
+        let key = to_string(&call_function(
+            &callback,
+            &[item.clone(), JsValue::Number(i as f64)],
+            &scope,
+        )?);
         if let Some((_, g)) = groups.iter_mut().find(|(k, _)| *k == key) {
             g.push(item.clone());
         } else {
@@ -564,7 +761,9 @@ pub(super) fn array_from_async(args: &[JsValue]) -> EvalResult {
             Err(other) => return Err(other),
         };
         let v = match &map_fn {
-            Some(f) if !matches!(f, JsValue::Undefined) => call_function(f, &[v, JsValue::Number(i as f64)], &scope)?,
+            Some(f) if !matches!(f, JsValue::Undefined) => {
+                call_function(f, &[v, JsValue::Number(i as f64)], &scope)?
+            }
             _ => v,
         };
         out.push(v);
@@ -610,10 +809,15 @@ mod tests {
     use super::*;
     use crate::js::scope::Scope;
 
-    fn dummy_scope() -> ScopeRef { Scope::new_global() }
+    fn dummy_scope() -> ScopeRef {
+        Scope::new_global()
+    }
 
     fn make_map_obj(entries: Vec<(&str, JsValue)>) -> HashMap<String, JsValue> {
-        entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+        entries
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect()
     }
 
     fn make_set_obj(items: Vec<JsValue>) -> HashMap<String, JsValue> {
@@ -626,7 +830,8 @@ mod tests {
     fn make_map_with_entries(kvs: Vec<(JsValue, JsValue)>) -> HashMap<String, JsValue> {
         let mut m = HashMap::new();
         m.insert("__type__".to_string(), JsValue::String("Map".to_string()));
-        let entries: Vec<JsValue> = kvs.into_iter()
+        let entries: Vec<JsValue> = kvs
+            .into_iter()
             .map(|(k, v)| JsValue::Array(vec![k, v]))
             .collect();
         m.insert("__entries__".to_string(), JsValue::Array(entries));
@@ -642,7 +847,10 @@ mod tests {
 
     fn make_generator(values: Vec<JsValue>, index: f64) -> HashMap<String, JsValue> {
         let mut m = HashMap::new();
-        m.insert("__type__".to_string(), JsValue::String("Generator".to_string()));
+        m.insert(
+            "__type__".to_string(),
+            JsValue::String("Generator".to_string()),
+        );
         m.insert("__values__".to_string(), JsValue::Array(values));
         m.insert("__index__".to_string(), JsValue::Number(index));
         m
@@ -666,15 +874,22 @@ mod tests {
 
     #[test]
     fn object_keys() {
-        let m = make_map_obj(vec![("a", JsValue::Number(1.0)), ("b", JsValue::Number(2.0))]);
+        let m = make_map_obj(vec![
+            ("a", JsValue::Number(1.0)),
+            ("b", JsValue::Number(2.0)),
+        ]);
         let r = call_object_method(&m, "keys", &[]).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
             let mut keys: Vec<String> = Vec::new();
-            for v in &arr { keys.push(to_string(v)); }
+            for v in &arr {
+                keys.push(to_string(v));
+            }
             keys.sort();
             assert_eq!(keys, vec!["a".to_string(), "b".to_string()]);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -684,7 +899,9 @@ mod tests {
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0], JsValue::Number(42.0));
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -712,9 +929,8 @@ mod tests {
 
     #[test]
     fn map_get_existing() {
-        let mut m = make_map_with_entries(vec![
-            (JsValue::String("a".into()), JsValue::Number(10.0)),
-        ]);
+        let mut m =
+            make_map_with_entries(vec![(JsValue::String("a".into()), JsValue::Number(10.0))]);
         let sc = dummy_scope();
         let r = call_map_method(&mut m, "get", &[JsValue::String("a".into())], &sc).unwrap();
         assert_eq!(r, JsValue::Number(10.0));
@@ -730,9 +946,10 @@ mod tests {
 
     #[test]
     fn map_has_true() {
-        let mut m = make_map_with_entries(vec![
-            (JsValue::String("key".into()), JsValue::Boolean(true)),
-        ]);
+        let mut m = make_map_with_entries(vec![(
+            JsValue::String("key".into()),
+            JsValue::Boolean(true),
+        )]);
         let sc = dummy_scope();
         let r = call_map_method(&mut m, "has", &[JsValue::String("key".into())], &sc).unwrap();
         assert_eq!(r, JsValue::Boolean(true));
@@ -750,7 +967,13 @@ mod tests {
     fn map_set_new_entry() {
         let mut m = make_map_with_entries(vec![]);
         let sc = dummy_scope();
-        let _ = call_map_method(&mut m, "set", &[JsValue::String("k".into()), JsValue::Number(5.0)], &sc).unwrap();
+        let _ = call_map_method(
+            &mut m,
+            "set",
+            &[JsValue::String("k".into()), JsValue::Number(5.0)],
+            &sc,
+        )
+        .unwrap();
         // Verify via get
         let r = call_map_method(&mut m, "get", &[JsValue::String("k".into())], &sc).unwrap();
         assert_eq!(r, JsValue::Number(5.0));
@@ -758,11 +981,16 @@ mod tests {
 
     #[test]
     fn map_set_replace_existing() {
-        let mut m = make_map_with_entries(vec![
-            (JsValue::String("k".into()), JsValue::Number(1.0)),
-        ]);
+        let mut m =
+            make_map_with_entries(vec![(JsValue::String("k".into()), JsValue::Number(1.0))]);
         let sc = dummy_scope();
-        let _ = call_map_method(&mut m, "set", &[JsValue::String("k".into()), JsValue::Number(99.0)], &sc).unwrap();
+        let _ = call_map_method(
+            &mut m,
+            "set",
+            &[JsValue::String("k".into()), JsValue::Number(99.0)],
+            &sc,
+        )
+        .unwrap();
         let r = call_map_method(&mut m, "get", &[JsValue::String("k".into())], &sc).unwrap();
         assert_eq!(r, JsValue::Number(99.0));
         // Size should still be 1
@@ -785,9 +1013,8 @@ mod tests {
 
     #[test]
     fn map_delete_missing() {
-        let mut m = make_map_with_entries(vec![
-            (JsValue::String("a".into()), JsValue::Number(1.0)),
-        ]);
+        let mut m =
+            make_map_with_entries(vec![(JsValue::String("a".into()), JsValue::Number(1.0))]);
         let sc = dummy_scope();
         let r = call_map_method(&mut m, "delete", &[JsValue::String("z".into())], &sc).unwrap();
         assert_eq!(r, JsValue::Boolean(false));
@@ -815,35 +1042,41 @@ mod tests {
         let r = call_map_method(&mut m, "keys", &[], &sc).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
     fn map_values() {
-        let mut m = make_map_with_entries(vec![
-            (JsValue::String("x".into()), JsValue::Number(10.0)),
-        ]);
+        let mut m =
+            make_map_with_entries(vec![(JsValue::String("x".into()), JsValue::Number(10.0))]);
         let sc = dummy_scope();
         let r = call_map_method(&mut m, "values", &[], &sc).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0], JsValue::Number(10.0));
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
     fn map_entries() {
-        let mut m = make_map_with_entries(vec![
-            (JsValue::String("a".into()), JsValue::Number(1.0)),
-        ]);
+        let mut m =
+            make_map_with_entries(vec![(JsValue::String("a".into()), JsValue::Number(1.0))]);
         let sc = dummy_scope();
         let r = call_map_method(&mut m, "entries", &[], &sc).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1);
             if let JsValue::Array(kv) = &arr[0] {
                 assert_eq!(kv.len(), 2);
-            } else { panic!("expected inner Array"); }
-        } else { panic!("expected Array"); }
+            } else {
+                panic!("expected inner Array");
+            }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -914,7 +1147,11 @@ mod tests {
 
     #[test]
     fn set_size() {
-        let mut s = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        let mut s = make_set_obj(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]);
         let sc = dummy_scope();
         let r = call_set_method(&mut s, "size", &[], &sc).unwrap();
         assert_eq!(r, JsValue::Number(3.0));
@@ -922,12 +1159,17 @@ mod tests {
 
     #[test]
     fn set_values() {
-        let mut s = make_set_obj(vec![JsValue::String("a".into()), JsValue::String("b".into())]);
+        let mut s = make_set_obj(vec![
+            JsValue::String("a".into()),
+            JsValue::String("b".into()),
+        ]);
         let sc = dummy_scope();
         let r = call_set_method(&mut s, "values", &[], &sc).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -949,34 +1191,58 @@ mod tests {
             let items = m.get("__items__").unwrap();
             if let JsValue::Array(arr) = items {
                 assert_eq!(arr.len(), 3); // 1, 2, 3
-            } else { panic!("expected Array"); }
-        } else { panic!("expected Object"); }
+            } else {
+                panic!("expected Array");
+            }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
     fn set_intersection() {
-        let mut s1 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
-        let s2 = make_set_obj(vec![JsValue::Number(2.0), JsValue::Number(3.0), JsValue::Number(4.0)]);
+        let mut s1 = make_set_obj(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]);
+        let s2 = make_set_obj(vec![
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+            JsValue::Number(4.0),
+        ]);
         let sc = dummy_scope();
         let r = call_set_method(&mut s1, "intersection", &[JsValue::Object(s2)], &sc).unwrap();
         if let JsValue::Object(m) = r {
             if let JsValue::Array(arr) = m.get("__items__").unwrap() {
                 assert_eq!(arr.len(), 2); // 2, 3
-            } else { panic!("expected Array"); }
-        } else { panic!("expected Object"); }
+            } else {
+                panic!("expected Array");
+            }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
     fn set_difference() {
-        let mut s1 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        let mut s1 = make_set_obj(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]);
         let s2 = make_set_obj(vec![JsValue::Number(2.0)]);
         let sc = dummy_scope();
         let r = call_set_method(&mut s1, "difference", &[JsValue::Object(s2)], &sc).unwrap();
         if let JsValue::Object(m) = r {
             if let JsValue::Array(arr) = m.get("__items__").unwrap() {
                 assert_eq!(arr.len(), 2); // 1, 3
-            } else { panic!("expected Array"); }
-        } else { panic!("expected Object"); }
+            } else {
+                panic!("expected Array");
+            }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
@@ -984,18 +1250,27 @@ mod tests {
         let mut s1 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
         let s2 = make_set_obj(vec![JsValue::Number(2.0), JsValue::Number(3.0)]);
         let sc = dummy_scope();
-        let r = call_set_method(&mut s1, "symmetricDifference", &[JsValue::Object(s2)], &sc).unwrap();
+        let r =
+            call_set_method(&mut s1, "symmetricDifference", &[JsValue::Object(s2)], &sc).unwrap();
         if let JsValue::Object(m) = r {
             if let JsValue::Array(arr) = m.get("__items__").unwrap() {
                 assert_eq!(arr.len(), 2); // 1, 3
-            } else { panic!("expected Array"); }
-        } else { panic!("expected Object"); }
+            } else {
+                panic!("expected Array");
+            }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
     fn set_is_subset_of_true() {
         let mut s1 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
-        let s2 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        let s2 = make_set_obj(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]);
         let sc = dummy_scope();
         let r = call_set_method(&mut s1, "isSubsetOf", &[JsValue::Object(s2)], &sc).unwrap();
         assert_eq!(r, JsValue::Boolean(true));
@@ -1012,7 +1287,11 @@ mod tests {
 
     #[test]
     fn set_is_superset_of_true() {
-        let mut s1 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0), JsValue::Number(3.0)]);
+        let mut s1 = make_set_obj(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ]);
         let s2 = make_set_obj(vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
         let sc = dummy_scope();
         let r = call_set_method(&mut s1, "isSupersetOf", &[JsValue::Object(s2)], &sc).unwrap();
@@ -1083,7 +1362,9 @@ mod tests {
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("value").unwrap(), &JsValue::Number(10.0));
             assert_eq!(m.get("done").unwrap(), &JsValue::Boolean(false));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
@@ -1093,7 +1374,9 @@ mod tests {
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("value").unwrap(), &JsValue::Number(20.0));
             assert_eq!(m.get("done").unwrap(), &JsValue::Boolean(false));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
@@ -1103,7 +1386,9 @@ mod tests {
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("value").unwrap(), &JsValue::Undefined);
             assert_eq!(m.get("done").unwrap(), &JsValue::Boolean(true));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
@@ -1113,7 +1398,9 @@ mod tests {
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("value").unwrap(), &JsValue::Undefined);
             assert_eq!(m.get("done").unwrap(), &JsValue::Boolean(true));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
@@ -1122,7 +1409,9 @@ mod tests {
         let r = call_generator_method(&g, "next").unwrap();
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("done").unwrap(), &JsValue::Boolean(true));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     // ── is_leap_year ───────────────────────────────────────────────────
@@ -1156,21 +1445,48 @@ mod tests {
     #[test]
     fn date_enhanced_epoch_zero() {
         let d = make_date(0.0);
-        assert_eq!(call_date_method_enhanced(&d, "getFullYear", &[]).unwrap(), JsValue::Number(1970.0));
-        assert_eq!(call_date_method_enhanced(&d, "getMonth", &[]).unwrap(), JsValue::Number(0.0));
-        assert_eq!(call_date_method_enhanced(&d, "getDate", &[]).unwrap(), JsValue::Number(1.0));
-        assert_eq!(call_date_method_enhanced(&d, "getHours", &[]).unwrap(), JsValue::Number(0.0));
-        assert_eq!(call_date_method_enhanced(&d, "getMinutes", &[]).unwrap(), JsValue::Number(0.0));
-        assert_eq!(call_date_method_enhanced(&d, "getSeconds", &[]).unwrap(), JsValue::Number(0.0));
+        assert_eq!(
+            call_date_method_enhanced(&d, "getFullYear", &[]).unwrap(),
+            JsValue::Number(1970.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getMonth", &[]).unwrap(),
+            JsValue::Number(0.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getDate", &[]).unwrap(),
+            JsValue::Number(1.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getHours", &[]).unwrap(),
+            JsValue::Number(0.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getMinutes", &[]).unwrap(),
+            JsValue::Number(0.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getSeconds", &[]).unwrap(),
+            JsValue::Number(0.0)
+        );
     }
 
     #[test]
     fn date_enhanced_known_timestamp() {
         // 2000-01-01T00:00:00.000Z = 946684800000
         let d = make_date(946684800000.0);
-        assert_eq!(call_date_method_enhanced(&d, "getFullYear", &[]).unwrap(), JsValue::Number(2000.0));
-        assert_eq!(call_date_method_enhanced(&d, "getMonth", &[]).unwrap(), JsValue::Number(0.0));
-        assert_eq!(call_date_method_enhanced(&d, "getDate", &[]).unwrap(), JsValue::Number(1.0));
+        assert_eq!(
+            call_date_method_enhanced(&d, "getFullYear", &[]).unwrap(),
+            JsValue::Number(2000.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getMonth", &[]).unwrap(),
+            JsValue::Number(0.0)
+        );
+        assert_eq!(
+            call_date_method_enhanced(&d, "getDate", &[]).unwrap(),
+            JsValue::Number(1.0)
+        );
     }
 
     #[test]
@@ -1221,7 +1537,8 @@ mod tests {
     #[test]
     fn object_enhanced_has_own_property() {
         let m = make_map_obj(vec![("a", JsValue::Number(1.0))]);
-        let r = call_object_method_enhanced(&m, "hasOwnProperty", &[JsValue::String("a".into())]).unwrap();
+        let r = call_object_method_enhanced(&m, "hasOwnProperty", &[JsValue::String("a".into())])
+            .unwrap();
         assert_eq!(r, JsValue::Boolean(true));
     }
 
@@ -1229,27 +1546,45 @@ mod tests {
     fn object_enhanced_value_of() {
         let m = make_map_obj(vec![("a", JsValue::Number(1.0))]);
         let r = call_object_method_enhanced(&m, "valueOf", &[]).unwrap();
-        if let JsValue::Object(_) = r { /* ok */ } else { panic!("expected Object"); }
+        if let JsValue::Object(_) = r { /* ok */
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
     fn object_enhanced_property_is_enumerable_true() {
         let m = make_map_obj(vec![("foo", JsValue::Number(1.0))]);
-        let r = call_object_method_enhanced(&m, "propertyIsEnumerable", &[JsValue::String("foo".into())]).unwrap();
+        let r = call_object_method_enhanced(
+            &m,
+            "propertyIsEnumerable",
+            &[JsValue::String("foo".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::Boolean(true));
     }
 
     #[test]
     fn object_enhanced_property_is_enumerable_dunder_false() {
         let m = make_map_obj(vec![("__internal__", JsValue::Number(1.0))]);
-        let r = call_object_method_enhanced(&m, "propertyIsEnumerable", &[JsValue::String("__internal__".into())]).unwrap();
+        let r = call_object_method_enhanced(
+            &m,
+            "propertyIsEnumerable",
+            &[JsValue::String("__internal__".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::Boolean(false));
     }
 
     #[test]
     fn object_enhanced_property_is_enumerable_missing() {
         let m = make_map_obj(vec![]);
-        let r = call_object_method_enhanced(&m, "propertyIsEnumerable", &[JsValue::String("nope".into())]).unwrap();
+        let r = call_object_method_enhanced(
+            &m,
+            "propertyIsEnumerable",
+            &[JsValue::String("nope".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::Boolean(false));
     }
 
@@ -1269,13 +1604,22 @@ mod tests {
 
     #[test]
     fn boolean_value_of() {
-        assert_eq!(call_boolean_method(true, "valueOf", &[]).unwrap(), JsValue::Boolean(true));
-        assert_eq!(call_boolean_method(false, "valueOf", &[]).unwrap(), JsValue::Boolean(false));
+        assert_eq!(
+            call_boolean_method(true, "valueOf", &[]).unwrap(),
+            JsValue::Boolean(true)
+        );
+        assert_eq!(
+            call_boolean_method(false, "valueOf", &[]).unwrap(),
+            JsValue::Boolean(false)
+        );
     }
 
     #[test]
     fn boolean_unknown_method() {
-        assert_eq!(call_boolean_method(true, "nope", &[]).unwrap(), JsValue::Undefined);
+        assert_eq!(
+            call_boolean_method(true, "nope", &[]).unwrap(),
+            JsValue::Undefined
+        );
     }
 
     // ── call_native_function_method ────────────────────────────────────
@@ -1283,7 +1627,10 @@ mod tests {
     #[test]
     fn native_function_to_string() {
         let r = call_native_function_method("parseInt", "toString", &[]).unwrap();
-        assert_eq!(r, JsValue::String("function parseInt() { [native code] }".into()));
+        assert_eq!(
+            r,
+            JsValue::String("function parseInt() { [native code] }".into())
+        );
     }
 
     #[test]
@@ -1304,18 +1651,28 @@ mod tests {
     fn make_promise_resolved() {
         let p = make_promise(false, JsValue::Number(42.0));
         if let JsValue::Object(m) = p {
-            assert_eq!(m.get("__type__").unwrap(), &JsValue::String("Promise".into()));
+            assert_eq!(
+                m.get("__type__").unwrap(),
+                &JsValue::String("Promise".into())
+            );
             assert_eq!(m.get("__resolved__").unwrap(), &JsValue::Number(42.0));
             assert!(m.get("__rejected__").is_none());
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
     fn make_promise_rejected() {
         let p = make_promise(true, JsValue::String("err".into()));
         if let JsValue::Object(m) = p {
-            assert_eq!(m.get("__rejected__").unwrap(), &JsValue::String("err".into()));
-        } else { panic!("expected Object"); }
+            assert_eq!(
+                m.get("__rejected__").unwrap(),
+                &JsValue::String("err".into())
+            );
+        } else {
+            panic!("expected Object");
+        }
     }
 
     // ── await_value ────────────────────────────────────────────────────
@@ -1355,7 +1712,10 @@ mod tests {
         let mut m = HashMap::new();
         m.insert("message".to_string(), JsValue::String("oops".into()));
         m.insert("name".to_string(), JsValue::String("TypeError".into()));
-        assert_eq!(error_is_error(Some(&JsValue::Object(m))), JsValue::Boolean(true));
+        assert_eq!(
+            error_is_error(Some(&JsValue::Object(m))),
+            JsValue::Boolean(true)
+        );
     }
 
     #[test]
@@ -1363,26 +1723,38 @@ mod tests {
         let mut m = HashMap::new();
         m.insert("message".to_string(), JsValue::String("oops".into()));
         m.insert("name".to_string(), JsValue::String("Error".into()));
-        assert_eq!(error_is_error(Some(&JsValue::Object(m))), JsValue::Boolean(true));
+        assert_eq!(
+            error_is_error(Some(&JsValue::Object(m))),
+            JsValue::Boolean(true)
+        );
     }
 
     #[test]
     fn error_is_error_false_no_message() {
         let mut m = HashMap::new();
         m.insert("name".to_string(), JsValue::String("Error".into()));
-        assert_eq!(error_is_error(Some(&JsValue::Object(m))), JsValue::Boolean(false));
+        assert_eq!(
+            error_is_error(Some(&JsValue::Object(m))),
+            JsValue::Boolean(false)
+        );
     }
 
     #[test]
     fn error_is_error_false_no_name() {
         let mut m = HashMap::new();
         m.insert("message".to_string(), JsValue::String("oops".into()));
-        assert_eq!(error_is_error(Some(&JsValue::Object(m))), JsValue::Boolean(false));
+        assert_eq!(
+            error_is_error(Some(&JsValue::Object(m))),
+            JsValue::Boolean(false)
+        );
     }
 
     #[test]
     fn error_is_error_false_non_object() {
-        assert_eq!(error_is_error(Some(&JsValue::Number(1.0))), JsValue::Boolean(false));
+        assert_eq!(
+            error_is_error(Some(&JsValue::Number(1.0))),
+            JsValue::Boolean(false)
+        );
         assert_eq!(error_is_error(None), JsValue::Boolean(false));
     }
 
@@ -1392,12 +1764,20 @@ mod tests {
     fn get_own_property_symbols_finds_symbols() {
         let mut m = HashMap::new();
         m.insert("foo".to_string(), JsValue::Number(1.0));
-        m.insert("__symbol_desc_1__".to_string(), JsValue::String("sym".into()));
-        m.insert("__symbol_other_2__".to_string(), JsValue::String("sym2".into()));
+        m.insert(
+            "__symbol_desc_1__".to_string(),
+            JsValue::String("sym".into()),
+        );
+        m.insert(
+            "__symbol_other_2__".to_string(),
+            JsValue::String("sym2".into()),
+        );
         let r = get_own_property_symbols(Some(&JsValue::Object(m)));
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -1406,7 +1786,9 @@ mod tests {
         let r = get_own_property_symbols(Some(&JsValue::Object(m)));
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 0);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -1414,7 +1796,9 @@ mod tests {
         let r = get_own_property_symbols(Some(&JsValue::Number(1.0)));
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 0);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     // ── is_array_buffer_view ───────────────────────────────────────────
@@ -1436,14 +1820,20 @@ mod tests {
     #[test]
     fn is_view_float64array() {
         let mut m = HashMap::new();
-        m.insert("__type__".to_string(), JsValue::String("Float64Array".into()));
+        m.insert(
+            "__type__".to_string(),
+            JsValue::String("Float64Array".into()),
+        );
         assert!(is_array_buffer_view(Some(&JsValue::Object(m))));
     }
 
     #[test]
     fn is_view_not_a_view() {
         let mut m = HashMap::new();
-        m.insert("__type__".to_string(), JsValue::String("ArrayBuffer".into()));
+        m.insert(
+            "__type__".to_string(),
+            JsValue::String("ArrayBuffer".into()),
+        );
         assert!(!is_array_buffer_view(Some(&JsValue::Object(m))));
     }
 
@@ -1469,11 +1859,18 @@ mod tests {
             assert!(m.contains_key("reject"));
             // promise should be a Promise object
             if let Some(JsValue::Object(pm)) = m.get("promise") {
-                assert_eq!(pm.get("__type__").unwrap(), &JsValue::String("Promise".into()));
-            } else { panic!("expected promise to be Object"); }
+                assert_eq!(
+                    pm.get("__type__").unwrap(),
+                    &JsValue::String("Promise".into())
+                );
+            } else {
+                panic!("expected promise to be Object");
+            }
             // resolve and reject should be native functions
             assert!(matches!(m.get("resolve"), Some(JsValue::NativeFunction(_))));
             assert!(matches!(m.get("reject"), Some(JsValue::NativeFunction(_))));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 }

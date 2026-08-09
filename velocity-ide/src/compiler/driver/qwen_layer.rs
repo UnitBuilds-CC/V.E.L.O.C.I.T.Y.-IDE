@@ -301,18 +301,18 @@ impl VulkanQwenLayer {
             (inputs_2304_buffer, weight_k_buffer, out_256_k_buffer),
             (inputs_2304_buffer, weight_v_buffer, out_256_v_buffer),
             (inputs_2304_buffer, weight_o_buffer, out_2304_b_buffer),
-            (inputs_2304_buffer, weight_gate_buffer, out_11008_gate_buffer),
+            (
+                inputs_2304_buffer,
+                weight_gate_buffer,
+                out_11008_gate_buffer,
+            ),
             (inputs_2304_buffer, weight_up_buffer, out_11008_up_buffer),
             (
                 out_11008_gate_buffer,
                 out_11008_up_buffer,
                 inputs_11008_buffer,
             ),
-            (
-                inputs_11008_buffer,
-                weight_down_buffer,
-                out_2304_a_buffer,
-            ),
+            (inputs_11008_buffer, weight_down_buffer, out_2304_a_buffer),
         ];
 
         for (i, (b0, b1, b2)) in set_configs.iter().enumerate() {
@@ -545,8 +545,7 @@ impl Drop for VulkanQwenLayer {
             self.device.destroy_buffer(self.out_256_v_buffer, None);
 
             self.device.free_memory(self.out_11008_gate_memory, None);
-            self.device
-                .destroy_buffer(self.out_11008_gate_buffer, None);
+            self.device.destroy_buffer(self.out_11008_gate_buffer, None);
 
             self.device.free_memory(self.out_11008_up_memory, None);
             self.device.destroy_buffer(self.out_11008_up_buffer, None);

@@ -257,7 +257,11 @@ pub fn list_session_checkpoints(
             Err(err) => return Err(format!("read checkpoint dir entry: {err}")),
         };
         let path = entry.path();
-        if path.extension().and_then(|ext: &std::ffi::OsStr| ext.to_str()) != Some("json") {
+        if path
+            .extension()
+            .and_then(|ext: &std::ffi::OsStr| ext.to_str())
+            != Some("json")
+        {
             continue;
         }
         let raw = fs::read(&path).map_err(|err| format!("read browser checkpoint: {err}"))?;
@@ -556,4 +560,3 @@ pub fn describe_url_resolution(requested_url: &str, resolved_url: &str) -> Strin
         )
     }
 }
-

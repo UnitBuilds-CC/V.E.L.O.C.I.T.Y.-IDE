@@ -23,7 +23,13 @@ pub struct Transform2D {
 
 impl Default for Transform2D {
     fn default() -> Self {
-        Self { translate_x: 0.0, translate_y: 0.0, scale_x: 1.0, scale_y: 1.0, rotation_rad: 0.0 }
+        Self {
+            translate_x: 0.0,
+            translate_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotation_rad: 0.0,
+        }
     }
 }
 
@@ -79,7 +85,11 @@ impl GpuTileCompositor {
 
     /// Remove a layer by ID.
     pub fn remove_layer(&mut self, layer_id: usize) -> bool {
-        if let Some(pos) = self.active_layers.iter().position(|l| l.layer_id == layer_id) {
+        if let Some(pos) = self
+            .active_layers
+            .iter()
+            .position(|l| l.layer_id == layer_id)
+        {
             self.active_layers.remove(pos);
             true
         } else {
@@ -89,7 +99,11 @@ impl GpuTileCompositor {
 
     /// Set layer opacity (0.0 to 1.0).
     pub fn set_layer_opacity(&mut self, layer_id: usize, opacity: f32) -> bool {
-        if let Some(layer) = self.active_layers.iter_mut().find(|l| l.layer_id == layer_id) {
+        if let Some(layer) = self
+            .active_layers
+            .iter_mut()
+            .find(|l| l.layer_id == layer_id)
+        {
             layer.opacity = opacity.clamp(0.0, 1.0);
             layer.dirty = true;
             self.mark_dirty(0, 0, self.viewport_width, self.viewport_height);
@@ -101,7 +115,11 @@ impl GpuTileCompositor {
 
     /// Set layer transform (position, scale, rotation).
     pub fn set_layer_transform(&mut self, layer_id: usize, transform: Transform2D) -> bool {
-        if let Some(layer) = self.active_layers.iter_mut().find(|l| l.layer_id == layer_id) {
+        if let Some(layer) = self
+            .active_layers
+            .iter_mut()
+            .find(|l| l.layer_id == layer_id)
+        {
             layer.transform = transform;
             layer.dirty = true;
             self.mark_dirty(0, 0, self.viewport_width, self.viewport_height);
@@ -113,7 +131,11 @@ impl GpuTileCompositor {
 
     /// Set layer visibility.
     pub fn set_layer_visible(&mut self, layer_id: usize, visible: bool) -> bool {
-        if let Some(layer) = self.active_layers.iter_mut().find(|l| l.layer_id == layer_id) {
+        if let Some(layer) = self
+            .active_layers
+            .iter_mut()
+            .find(|l| l.layer_id == layer_id)
+        {
             layer.visible = visible;
             layer.dirty = true;
             self.mark_dirty(0, 0, self.viewport_width, self.viewport_height);
@@ -124,8 +146,20 @@ impl GpuTileCompositor {
     }
 
     /// Write pixel data to a layer.
-    pub fn write_layer_pixels(&mut self, layer_id: usize, _x: usize, _y: usize, _width: usize, _height: usize, data: &[u8]) -> bool {
-        if let Some(layer) = self.active_layers.iter_mut().find(|l| l.layer_id == layer_id) {
+    pub fn write_layer_pixels(
+        &mut self,
+        layer_id: usize,
+        _x: usize,
+        _y: usize,
+        _width: usize,
+        _height: usize,
+        data: &[u8],
+    ) -> bool {
+        if let Some(layer) = self
+            .active_layers
+            .iter_mut()
+            .find(|l| l.layer_id == layer_id)
+        {
             let len = data.len().min(layer.pixel_data.len());
             layer.pixel_data[..len].copy_from_slice(&data[..len]);
             layer.dirty = true;
@@ -160,13 +194,17 @@ impl GpuTileCompositor {
 
         // Composite visible layers back-to-front
         for layer in &self.active_layers {
-            if !layer.visible { continue; }
+            if !layer.visible {
+                continue;
+            }
 
             let layer_opacity = (layer.opacity * 255.0) as u32;
 
             for y in start_y..end_y {
                 for x in start_x..end_x {
-                    if x >= layer.width || y >= layer.height { continue; }
+                    if x >= layer.width || y >= layer.height {
+                        continue;
+                    }
 
                     let layer_idx = (y * layer.width + x) * 4;
                     let tile_idx = ((y - start_y) * self.tile_size + (x - start_x)) * 4;
@@ -185,9 +223,12 @@ impl GpuTileCompositor {
                         // Alpha blend
                         let out_a = src_a + (dst_a * (255 - src_a)) / 255;
                         if out_a > 0 {
-                            tile_buffer[tile_idx] = ((src_r * src_a + dst_r * (255 - src_a)) / out_a) as u8;
-                            tile_buffer[tile_idx + 1] = ((src_g * src_a + dst_g * (255 - src_a)) / out_a) as u8;
-                            tile_buffer[tile_idx + 2] = ((src_b * src_a + dst_b * (255 - src_a)) / out_a) as u8;
+                            tile_buffer[tile_idx] =
+                                ((src_r * src_a + dst_r * (255 - src_a)) / out_a) as u8;
+                            tile_buffer[tile_idx + 1] =
+                                ((src_g * src_a + dst_g * (255 - src_a)) / out_a) as u8;
+                            tile_buffer[tile_idx + 2] =
+                                ((src_b * src_a + dst_b * (255 - src_a)) / out_a) as u8;
                             tile_buffer[tile_idx + 3] = out_a as u8;
                         }
                     }
@@ -221,12 +262,17 @@ impl GpuTileCompositor {
                             for x in 0..self.tile_size {
                                 let fb_x = start_x + x;
                                 let fb_y = start_y + y;
-                                if fb_x >= self.viewport_width || fb_y >= self.viewport_height { continue; }
+                                if fb_x >= self.viewport_width || fb_y >= self.viewport_height {
+                                    continue;
+                                }
 
                                 let fb_idx = (fb_y * self.viewport_width + fb_x) * 4;
                                 let tile_idx = (y * self.tile_size + x) * 4;
-                                if fb_idx + 3 < self.frame_buffer.len() && tile_idx + 3 < tile_data.len() {
-                                    self.frame_buffer[fb_idx..fb_idx + 4].copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
+                                if fb_idx + 3 < self.frame_buffer.len()
+                                    && tile_idx + 3 < tile_data.len()
+                                {
+                                    self.frame_buffer[fb_idx..fb_idx + 4]
+                                        .copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
                                 }
                             }
                         }
@@ -246,12 +292,17 @@ impl GpuTileCompositor {
                         for x in 0..self.tile_size {
                             let fb_x = start_x + x;
                             let fb_y = start_y + y;
-                            if fb_x >= self.viewport_width || fb_y >= self.viewport_height { continue; }
+                            if fb_x >= self.viewport_width || fb_y >= self.viewport_height {
+                                continue;
+                            }
 
                             let fb_idx = (fb_y * self.viewport_width + fb_x) * 4;
                             let tile_idx = (y * self.tile_size + x) * 4;
-                            if fb_idx + 3 < self.frame_buffer.len() && tile_idx + 3 < tile_data.len() {
-                                self.frame_buffer[fb_idx..fb_idx + 4].copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
+                            if fb_idx + 3 < self.frame_buffer.len()
+                                && tile_idx + 3 < tile_data.len()
+                            {
+                                self.frame_buffer[fb_idx..fb_idx + 4]
+                                    .copy_from_slice(&tile_data[tile_idx..tile_idx + 4]);
                             }
                         }
                     }
@@ -330,8 +381,8 @@ mod tests {
         let mut pixels = vec![0u8; 64 * 64 * 4];
         for pixel in pixels.chunks_exact_mut(4) {
             pixel[0] = 255; // R
-            pixel[1] = 0;   // G
-            pixel[2] = 0;   // B
+            pixel[1] = 0; // G
+            pixel[2] = 0; // B
             pixel[3] = 255; // A
         }
         compositor.write_layer_pixels(layer1, 0, 0, 64, 64, &pixels);
@@ -357,8 +408,8 @@ mod tests {
         let mut pixels1 = vec![0u8; 32 * 32 * 4];
         for pixel in pixels1.chunks_exact_mut(4) {
             pixel[0] = 255; // R
-            pixel[1] = 0;   // G
-            pixel[2] = 0;   // B
+            pixel[1] = 0; // G
+            pixel[2] = 0; // B
             pixel[3] = 255; // A
         }
         compositor.write_layer_pixels(layer1, 0, 0, 32, 32, &pixels1);
@@ -367,9 +418,9 @@ mod tests {
         compositor.set_layer_opacity(layer2, 0.5);
         let mut pixels2 = vec![0u8; 32 * 32 * 4];
         for pixel in pixels2.chunks_exact_mut(4) {
-            pixel[0] = 0;   // R
+            pixel[0] = 0; // R
             pixel[1] = 255; // G
-            pixel[2] = 0;   // B
+            pixel[2] = 0; // B
             pixel[3] = 255; // A
         }
         compositor.write_layer_pixels(layer2, 0, 0, 32, 32, &pixels2);
@@ -503,7 +554,10 @@ mod tests {
         c.frame_buffer = vec![0u8; 32 * 32 * 4];
         let l = c.create_layer(32, 32);
         let mut pixels = vec![0u8; 32 * 32 * 4];
-        for p in pixels.chunks_exact_mut(4) { p[0] = 255; p[3] = 255; }
+        for p in pixels.chunks_exact_mut(4) {
+            p[0] = 255;
+            p[3] = 255;
+        }
         c.write_layer_pixels(l, 0, 0, 32, 32, &pixels);
         c.set_layer_visible(l, false);
         c.composite_frame();
@@ -532,6 +586,12 @@ mod tests {
         let l = c.create_layer(32, 32);
         assert!(c.active_layers[0].dirty);
         c.composite_frame();
-        assert!(!c.active_layers.iter().find(|layer| layer.layer_id == l).unwrap().dirty);
+        assert!(
+            !c.active_layers
+                .iter()
+                .find(|layer| layer.layer_id == l)
+                .unwrap()
+                .dirty
+        );
     }
 }

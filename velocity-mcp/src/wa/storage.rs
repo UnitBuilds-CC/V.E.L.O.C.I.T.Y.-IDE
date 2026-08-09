@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::wa::model::{
-    WaListSortDirection, WaNode, WaRunArtifactReport, WaRunListEntry, WaScript,
-    WaScriptReadReport, WaScriptRunReport, WaScriptSaveReport, WaSession,
-    WaSessionCreateReport, WaSessionListEntry, WaSessionReadReport, WaSnapshot,
-    WaSnapshotListEntry, WaSnapshotReadReport, WaSnapshotSaveReport,
+    WaListSortDirection, WaNode, WaRunArtifactReport, WaRunListEntry, WaScript, WaScriptReadReport,
+    WaScriptRunReport, WaScriptSaveReport, WaSession, WaSessionCreateReport, WaSessionListEntry,
+    WaSessionReadReport, WaSnapshot, WaSnapshotListEntry, WaSnapshotReadReport,
+    WaSnapshotSaveReport,
 };
 
 fn now_ms() -> u64 {
@@ -97,12 +97,20 @@ fn snapshot_stem(session_id: &str, snapshot_name: &str) -> String {
     format!("{}--{}", slugify(session_id), slugify(snapshot_name))
 }
 
-fn snapshot_json_legacy_path(root: &Path, session_id: &str, snapshot_name: &str) -> Result<PathBuf, Box<dyn Error>> {
+fn snapshot_json_legacy_path(
+    root: &Path,
+    session_id: &str,
+    snapshot_name: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
     Ok(ensure_velocity_dir(root, "wa-snapshots")?
         .join(format!("{}.json", snapshot_stem(session_id, snapshot_name))))
 }
 
-fn snapshot_nda_path(root: &Path, session_id: &str, snapshot_name: &str) -> Result<PathBuf, Box<dyn Error>> {
+fn snapshot_nda_path(
+    root: &Path,
+    session_id: &str,
+    snapshot_name: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
     Ok(ensure_velocity_dir(root, "wa-snapshots")?
         .join(format!("{}.nda", snapshot_stem(session_id, snapshot_name))))
 }
@@ -244,7 +252,11 @@ pub fn list_sessions(
         }
         let session = crate::wa::nda::deserialize_session_nda(&read_nda_text(&path)?)?;
         if let Some(filter) = session_id_contains {
-            if !session.id.to_ascii_lowercase().contains(&filter.to_ascii_lowercase()) {
+            if !session
+                .id
+                .to_ascii_lowercase()
+                .contains(&filter.to_ascii_lowercase())
+            {
                 continue;
             }
         }
@@ -286,14 +298,20 @@ pub fn save_snapshot_report(
         nodes,
     };
     let snapshot_nda = snapshot_nda_path(root, session_id, snapshot_name)?;
-    write_nda_text(&snapshot_nda, &crate::wa::nda::serialize_snapshot_nda(&snapshot))?;
+    write_nda_text(
+        &snapshot_nda,
+        &crate::wa::nda::serialize_snapshot_nda(&snapshot),
+    )?;
 
     session.updated_at_ms = now_ms();
     session.latest_snapshot_name = Some(snapshot_name.to_string());
     session.latest_snapshot_nda_path = Some(relative_path(root, &snapshot_nda));
     session.snapshot_count = count_session_snapshots(root, session_id)?;
     let session_nda = session_nda_path(root, session_id)?;
-    write_nda_text(&session_nda, &crate::wa::nda::serialize_session_nda(&session))?;
+    write_nda_text(
+        &session_nda,
+        &crate::wa::nda::serialize_session_nda(&session),
+    )?;
 
     Ok(WaSnapshotSaveReport {
         snapshot,
@@ -419,7 +437,11 @@ pub fn list_scripts(
         }
         let script = crate::wa::nda::deserialize_script_nda(&read_nda_text(&path)?)?;
         if let Some(filter) = script_name_contains {
-            if !script.name.to_ascii_lowercase().contains(&filter.to_ascii_lowercase()) {
+            if !script
+                .name
+                .to_ascii_lowercase()
+                .contains(&filter.to_ascii_lowercase())
+            {
                 continue;
             }
         }
@@ -486,7 +508,11 @@ pub fn list_runs(
             }
         }
         if let Some(filter) = script_name_contains {
-            if !run.script_name.to_ascii_lowercase().contains(&filter.to_ascii_lowercase()) {
+            if !run
+                .script_name
+                .to_ascii_lowercase()
+                .contains(&filter.to_ascii_lowercase())
+            {
                 continue;
             }
         }

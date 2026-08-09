@@ -39,9 +39,20 @@ impl LayoutEngine {
 
             let box_model = Self::compute_bounding_box(node.id, 1);
             let subject = format!("node_{}", node.id);
-            let bounds_str = format!("{},{},{},{}", box_model.x, box_model.y, box_model.width, box_model.height);
+            let bounds_str = format!(
+                "{},{},{},{}",
+                box_model.x, box_model.y, box_model.width, box_model.height
+            );
             triples.push(NdaTriple::new(&subject, 60, &bounds_str));
-            triples.push(NdaTriple::new(&subject, 61, if box_model.is_visible { "visible" } else { "hidden" }));
+            triples.push(NdaTriple::new(
+                &subject,
+                61,
+                if box_model.is_visible {
+                    "visible"
+                } else {
+                    "hidden"
+                },
+            ));
         }
 
         triples
@@ -101,7 +112,11 @@ mod tests {
         let tree = DomTree::new(HtmlParser::parse_html5("<div><p>hi</p></div>"));
         let triples = LayoutEngine::compute_layout_triples(&tree);
         // Each element gets 2 triples (bounds predicate_id=60, visibility predicate_id=61)
-        let element_count = tree.nodes.iter().filter(|n| n.node_type == NodeType::Element).count();
+        let element_count = tree
+            .nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::Element)
+            .count();
         assert_eq!(triples.len(), element_count * 2);
         // Check that bounds triples use predicate_id 60
         let bounds = triples.iter().filter(|t| t.predicate_id == 60).count();
@@ -139,7 +154,11 @@ mod tests {
         let mut hashes = bounds.iter().map(|t| t.subject_hash).collect::<Vec<_>>();
         hashes.sort();
         hashes.dedup();
-        assert_eq!(hashes.len(), bounds.len(), "each node should have unique subject hash");
+        assert_eq!(
+            hashes.len(),
+            bounds.len(),
+            "each node should have unique subject hash"
+        );
     }
 
     #[test]

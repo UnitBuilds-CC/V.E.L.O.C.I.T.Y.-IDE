@@ -1,4 +1,4 @@
-﻿#![allow(dead_code)]
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -37,7 +37,10 @@ impl Default for UndoStack {
 
 impl UndoStack {
     pub fn new(capacity: usize) -> Self {
-        Self { capacity, ..Default::default() }
+        Self {
+            capacity,
+            ..Default::default()
+        }
     }
 
     /// Push a snapshot of the content *before* the edit that is about to happen.
@@ -79,9 +82,16 @@ impl UndoStack {
         Some(op)
     }
 
-    pub fn can_undo(&self) -> bool { !self.undo.is_empty() }
-    pub fn can_redo(&self) -> bool { !self.redo.is_empty() }
-    pub fn clear(&mut self) { self.undo.clear(); self.redo.clear(); }
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
 }
 
 /// A simple in-memory document.
@@ -261,7 +271,8 @@ impl EditorBuffer {
         }
         let content_len = self.content.len();
         let idx = self.line_index.as_ref().unwrap();
-        idx.line_range(line, content_len).map(|(start, end)| &self.content[start..end])
+        idx.line_range(line, content_len)
+            .map(|(start, end)| &self.content[start..end])
     }
 
     /// Convert byte offset to (line, col) using the cached index.
@@ -401,7 +412,10 @@ fn cheap_line_diff(old: &[&str], new: &[&str]) -> Vec<u8> {
         p += 1;
     }
     let mut s = 0;
-    while s < (old.len() - p) && s < (new.len() - p) && old[old.len() - 1 - s] == new[new.len() - 1 - s] {
+    while s < (old.len() - p)
+        && s < (new.len() - p)
+        && old[old.len() - 1 - s] == new[new.len() - 1 - s]
+    {
         s += 1;
     }
     let old_had_mid = old.len().saturating_sub(p + s) > 0;
@@ -440,7 +454,10 @@ impl LineIndex {
                 starts.push((i + 1) as u64);
             }
         }
-        Self { line_starts: starts, content_hash: fnv1a(content) }
+        Self {
+            line_starts: starts,
+            content_hash: fnv1a(content),
+        }
     }
 
     /// Check if the index is still valid for the given content.
@@ -455,7 +472,9 @@ impl LineIndex {
 
     /// Get the byte range of a line (0-indexed).
     pub fn line_range(&self, line: usize, content_len: usize) -> Option<(usize, usize)> {
-        if line >= self.line_starts.len() { return None; }
+        if line >= self.line_starts.len() {
+            return None;
+        }
         let start = self.line_starts[line] as usize;
         let end = if line + 1 < self.line_starts.len() {
             self.line_starts[line + 1] as usize
@@ -514,7 +533,9 @@ impl LineWindow {
 
     /// Scroll to make a specific line visible, keeping it centered if possible.
     pub fn scroll_to(&mut self, line: usize) {
-        if line >= self.total_lines { return; }
+        if line >= self.total_lines {
+            return;
+        }
         let half = self.visible_count / 2;
         self.first_visible = line.saturating_sub(half);
         if self.first_visible + self.visible_count > self.total_lines {

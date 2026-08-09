@@ -145,8 +145,9 @@ pub fn persist_mission_activity_nda(workspace_root: &Path, state: &TaskTimelineS
     let agentic_dir = workspace_root.join(".velocity").join("agentic");
     let _ = std::fs::create_dir_all(&agentic_dir);
     let serialized = serialize_mission_activity_nda(state);
-    let bytes = crate::agent::crypto::seal(workspace_root, b"mission_activity", serialized.as_bytes())
-        .unwrap_or_else(|| serialized.into_bytes());
+    let bytes =
+        crate::agent::crypto::seal(workspace_root, b"mission_activity", serialized.as_bytes())
+            .unwrap_or_else(|| serialized.into_bytes());
     let _ = std::fs::write(agentic_dir.join("mission_activity.nda"), bytes);
 }
 
@@ -412,9 +413,7 @@ pub fn render_mission_activity_feed(
             TaskEventType::ToolCall => ("⚙", palette.warning),
             TaskEventType::ToolResult => ("✓", palette.success),
             TaskEventType::PhaseChange => ("◆", palette.accent),
-            TaskEventType::TokenBudgetUpdate => {
-                ("$", palette.warning)
-            }
+            TaskEventType::TokenBudgetUpdate => ("$", palette.warning),
             TaskEventType::SessionMarker => ("║", palette.text_muted),
             TaskEventType::AgentMarker => ("◉", palette.accent),
         };
@@ -443,12 +442,9 @@ pub fn render_mission_activity_feed(
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{:.1}s",
-                        event.timestamp_ms as f32 / 1000.0
-                    ))
-                    .size(9.0)
-                    .color(palette.text_muted),
+                    egui::RichText::new(format!("{:.1}s", event.timestamp_ms as f32 / 1000.0))
+                        .size(9.0)
+                        .color(palette.text_muted),
                 );
             });
         });
@@ -457,7 +453,11 @@ pub fn render_mission_activity_feed(
 }
 
 /// Render task timeline panel
-pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot, palette: IdePalette) {
+pub fn render_task_timeline(
+    ui: &mut egui::Ui,
+    snapshot: &TaskTimelineSnapshot,
+    palette: IdePalette,
+) {
     let frame = egui::Frame::new()
         .fill(palette.bg_secondary)
         .inner_margin(8.0)
@@ -516,12 +516,8 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot, 
                         TaskEventType::ToolCall => ("⚙", palette.warning),
                         TaskEventType::ToolResult => ("✓", palette.success),
                         TaskEventType::PhaseChange => ("◆", palette.accent),
-                        TaskEventType::TokenBudgetUpdate => {
-                            ("$", palette.warning)
-                        }
-                        TaskEventType::SessionMarker => {
-                            ("║", palette.text_muted)
-                        }
+                        TaskEventType::TokenBudgetUpdate => ("$", palette.warning),
+                        TaskEventType::SessionMarker => ("║", palette.text_muted),
                         TaskEventType::AgentMarker => ("◉", palette.accent),
                     };
 
@@ -546,11 +542,7 @@ pub fn render_task_timeline(ui: &mut egui::Ui, snapshot: &TaskTimelineSnapshot, 
                             egui::RichText::new(name)
                                 .size(if is_marker { 11.0 } else { 10.0 })
                                 .strong()
-                                .color(if is_marker {
-                                    color
-                                } else {
-                                    palette.text
-                                }),
+                                .color(if is_marker { color } else { palette.text }),
                         );
                         if !desc.is_empty() {
                             ui.label(

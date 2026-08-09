@@ -64,7 +64,7 @@ impl Screenshot {
 
     /// Number of pixels in the image.
     pub fn pixel_count(&self) -> u32 {
-        self.width * self.height
+        self.width.saturating_mul(self.height)
     }
 
     /// Get RGBA value at (x, y). Returns None if out of bounds.
@@ -72,8 +72,12 @@ impl Screenshot {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let offset = ((y * self.width + x) * 4) as usize;
-        if offset + 4 > self.pixels.len() {
+        // Use checked arithmetic to prevent overflow on large images.
+        let pixel_index = (y as usize)
+            .checked_mul(self.width as usize)?
+            .checked_add(x as usize)?;
+        let offset = pixel_index.checked_mul(4)?;
+        if offset.checked_add(4)? > self.pixels.len() {
             return None;
         }
         Some([
@@ -96,7 +100,7 @@ impl Screenshot {
         data.extend_from_slice(&file_size.to_le_bytes());
         data.extend_from_slice(&[0u8; 4]); // reserved
         data.extend_from_slice(&54u32.to_le_bytes()); // pixel data offset
-        // DIB Header (BITMAPINFOHEADER)
+                                                      // DIB Header (BITMAPINFOHEADER)
         data.extend_from_slice(&40u32.to_le_bytes()); // header size
         data.extend_from_slice(&(self.width as i32).to_le_bytes());
         data.extend_from_slice(&(-(self.height as i32)).to_le_bytes()); // top-down
@@ -273,8 +277,12 @@ pub fn check_assertion(screenshot: &Screenshot, assertion: &VisualAssertion) -> 
                 passed: diff.matches,
                 detail: format!(
                     "Region ({},{} {}x{}) diff: {:.2}% ({} pixels)",
-                    region.x, region.y, region.width, region.height,
-                    diff.diff_percentage, diff.diff_pixel_count
+                    region.x,
+                    region.y,
+                    region.width,
+                    region.height,
+                    diff.diff_percentage,
+                    diff.diff_pixel_count
                 ),
             }
         }
@@ -285,7 +293,8 @@ pub fn check_assertion(screenshot: &Screenshot, assertion: &VisualAssertion) -> 
             tolerance,
         } => {
             if let Some([r, g, b, _]) = screenshot.pixel_at(*x, *y) {
-                let matches = (r as i16 - expected_rgb[0] as i16).unsigned_abs() as u8 <= *tolerance
+                let matches = (r as i16 - expected_rgb[0] as i16).unsigned_abs() as u8
+                    <= *tolerance
                     && (g as i16 - expected_rgb[1] as i16).unsigned_abs() as u8 <= *tolerance
                     && (b as i16 - expected_rgb[2] as i16).unsigned_abs() as u8 <= *tolerance;
                 AssertionResult {
@@ -311,14 +320,15 @@ pub fn check_assertion(screenshot: &Screenshot, assertion: &VisualAssertion) -> 
             }
             let first = screenshot.pixel_at(0, 0).unwrap_or([0; 4]);
             let all_same = (0..screenshot.height).all(|y| {
-                (0..screenshot.width).all(|x| {
-                    screenshot.pixel_at(x, y).unwrap_or([0; 4]) == first
-                })
+                (0..screenshot.width).all(|x| screenshot.pixel_at(x, y).unwrap_or([0; 4]) == first)
             });
             AssertionResult {
                 passed: !all_same,
                 detail: if all_same {
-                    format!("All pixels are [{},{},{},{}]", first[0], first[1], first[2], first[3])
+                    format!(
+                        "All pixels are [{},{},{},{}]",
+                        first[0], first[1], first[2], first[3]
+                    )
                 } else {
                     "Screenshot has varied content".to_string()
                 },
@@ -404,14 +414,23 @@ pub fn capture(target: &CaptureTarget) -> Screenshot {
 
 fn run_ps_script(script: &str) -> Result<String, String> {
     let mut child = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn powershell: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(script.as_bytes()).map_err(|e| format!("stdin write: {e}"))?;
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("stdin write: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
     if !output.status.success() {
@@ -568,8 +587,16 @@ mod tests {
             let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | b2 as u32;
             out.push(T[((n >> 18) & 63) as usize] as char);
             out.push(T[((n >> 12) & 63) as usize] as char);
-            out.push(if chunk.len() > 1 { T[((n >> 6) & 63) as usize] as char } else { '=' });
-            out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+            out.push(if chunk.len() > 1 {
+                T[((n >> 6) & 63) as usize] as char
+            } else {
+                '='
+            });
+            out.push(if chunk.len() > 2 {
+                T[(n & 63) as usize] as char
+            } else {
+                '='
+            });
         }
         out
     }
@@ -583,7 +610,10 @@ mod tests {
         img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255]));
         let mut png_bytes: Vec<u8> = Vec::new();
         image::DynamicImage::ImageRgba8(img)
-            .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageOutputFormat::Png,
+            )
             .unwrap();
         let b64 = base64_encode(&png_bytes);
 
@@ -607,13 +637,15 @@ mod tests {
         }
         let mut png_bytes: Vec<u8> = Vec::new();
         image::DynamicImage::ImageRgba8(img)
-            .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageOutputFormat::Png,
+            )
             .unwrap();
         let b64 = base64_encode(&png_bytes);
         // Deliberately report wrong dims in JSON; the PNG's own dims must win.
-        let json = format!(
-            r#"{{"width":999,"height":999,"source":"full_screen","png_base64":"{b64}"}}"#
-        );
+        let json =
+            format!(r#"{{"width":999,"height":999,"source":"full_screen","png_base64":"{b64}"}}"#);
         let shot = parse_capture_result(&json);
         assert_eq!((shot.width, shot.height), (3, 2));
         assert_eq!(shot.pixels.len(), 3 * 2 * 4);

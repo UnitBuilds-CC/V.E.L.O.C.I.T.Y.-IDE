@@ -10,7 +10,12 @@ impl<'a> ZeroAllocNdaWriter<'a> {
     }
 
     /// Write a triple with zero heap allocations directly into fixed-size byte buffer.
-    pub fn write_triple(&mut self, subject: &[u8], predicate_id: u16, object: &[u8]) -> Result<usize, &'static str> {
+    pub fn write_triple(
+        &mut self,
+        subject: &[u8],
+        predicate_id: u16,
+        object: &[u8],
+    ) -> Result<usize, &'static str> {
         let req_len = 2 + subject.len() + 2 + 2 + object.len();
         if self.cursor + req_len > self.buffer.len() {
             return Err("BufferOverflow: Zero-alloc NDA buffer full");
@@ -38,7 +43,12 @@ impl<'a> ZeroAllocNdaWriter<'a> {
     }
 
     /// Write a string triple (convenience wrapper).
-    pub fn write_str_triple(&mut self, subject: &str, predicate_id: u16, object: &str) -> Result<usize, &'static str> {
+    pub fn write_str_triple(
+        &mut self,
+        subject: &str,
+        predicate_id: u16,
+        object: &str,
+    ) -> Result<usize, &'static str> {
         self.write_triple(subject.as_bytes(), predicate_id, object.as_bytes())
     }
 
@@ -79,7 +89,8 @@ impl<'a> ZeroAllocNdaReader<'a> {
         if self.cursor + 2 > self.buffer.len() {
             return Err("BufferUnderflow: not enough data for subject length");
         }
-        let subj_len = u16::from_le_bytes([self.buffer[self.cursor], self.buffer[self.cursor + 1]]) as usize;
+        let subj_len =
+            u16::from_le_bytes([self.buffer[self.cursor], self.buffer[self.cursor + 1]]) as usize;
         self.cursor += 2;
 
         if self.cursor + subj_len > self.buffer.len() {
@@ -91,13 +102,15 @@ impl<'a> ZeroAllocNdaReader<'a> {
         if self.cursor + 2 > self.buffer.len() {
             return Err("BufferUnderflow: not enough data for predicate");
         }
-        let predicate_id = u16::from_le_bytes([self.buffer[self.cursor], self.buffer[self.cursor + 1]]);
+        let predicate_id =
+            u16::from_le_bytes([self.buffer[self.cursor], self.buffer[self.cursor + 1]]);
         self.cursor += 2;
 
         if self.cursor + 2 > self.buffer.len() {
             return Err("BufferUnderflow: not enough data for object length");
         }
-        let obj_len = u16::from_le_bytes([self.buffer[self.cursor], self.buffer[self.cursor + 1]]) as usize;
+        let obj_len =
+            u16::from_le_bytes([self.buffer[self.cursor], self.buffer[self.cursor + 1]]) as usize;
         self.cursor += 2;
 
         if self.cursor + obj_len > self.buffer.len() {
@@ -245,7 +258,10 @@ mod tests {
         let mut buf = [0u8; 8]; // exactly fits one "a",1,"b" triple
         let mut writer = ZeroAllocNdaWriter::new(&mut buf);
         assert!(writer.write_triple(b"a", 1, b"b").is_ok());
-        assert!(writer.write_triple(b"c", 2, b"d").is_err(), "Second triple should overflow");
+        assert!(
+            writer.write_triple(b"c", 2, b"d").is_err(),
+            "Second triple should overflow"
+        );
     }
 
     #[test]
@@ -272,7 +288,10 @@ mod tests {
         let mut reader = ZeroAllocNdaReader::new(&buf[..written]);
         assert!(reader.has_more());
         reader.read_triple().unwrap();
-        assert!(reader.has_more(), "Should still have more after first triple");
+        assert!(
+            reader.has_more(),
+            "Should still have more after first triple"
+        );
         reader.read_triple().unwrap();
         assert!(!reader.has_more(), "Should have no more after all triples");
     }
@@ -296,7 +315,10 @@ mod tests {
         writer.write_triple(b"a", 1, b"b").unwrap();
         assert!(writer.write_triple(b"x", 2, b"y").is_err());
         writer.reset();
-        assert!(writer.write_triple(b"x", 2, b"y").is_ok(), "After reset, buffer is available again");
+        assert!(
+            writer.write_triple(b"x", 2, b"y").is_ok(),
+            "After reset, buffer is available again"
+        );
     }
 
     #[test]

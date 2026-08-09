@@ -1,7 +1,7 @@
+use super::velocity_app::VelocityApp;
+use crate::editor::expert_team::{load_expert_teams, save_expert_teams};
 use eframe::egui;
 use egui::RichText;
-use crate::editor::expert_team::{load_expert_teams, save_expert_teams};
-use super::velocity_app::VelocityApp;
 
 impl VelocityApp {
     pub fn render_team_studio(&mut self, ui: &mut egui::Ui) {

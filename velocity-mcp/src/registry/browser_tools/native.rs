@@ -1,4 +1,4 @@
-﻿//! Native-engine browser tools.
+//! Native-engine browser tools.
 //!
 //! Unlike the static-crawl and runtime-capture tool families (which fetch a
 //! page and hand back a metadata snapshot), this family drives the pure-Rust
@@ -374,11 +374,17 @@ pub fn handle_native_tool(
         if !memories.is_empty() {
             out.push_str("similar remembered pages:\n");
             for (n, sim) in &memories {
-                let score = sim.map(|s| format!("{s:.3}")).unwrap_or_else(|| "-".to_string());
+                let score = sim
+                    .map(|s| format!("{s:.3}"))
+                    .unwrap_or_else(|| "-".to_string());
                 out.push_str(&format!(
                     "  [{}] {} (outcome {:.2}) {}\n",
                     score,
-                    if n.url.is_empty() { "(no url)" } else { n.url.as_str() },
+                    if n.url.is_empty() {
+                        "(no url)"
+                    } else {
+                        n.url.as_str()
+                    },
                     n.outcome_score,
                     memory_snippet(&n.text),
                 ));
@@ -394,7 +400,9 @@ pub fn handle_native_tool(
         return Ok(Some(out));
     }
 
-    if let Some(res) = learn::handle_learn_tool(&mut bridge, root, session_id, name, arguments, compact)? {
+    if let Some(res) =
+        learn::handle_learn_tool(&mut bridge, root, session_id, name, arguments, compact)?
+    {
         return Ok(Some(res));
     }
 

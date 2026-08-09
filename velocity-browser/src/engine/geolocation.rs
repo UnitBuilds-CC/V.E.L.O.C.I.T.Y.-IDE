@@ -27,9 +27,18 @@ impl GeolocationConfig {
         let config_path = workspace_root.join(".velocity").join("session_geo.json");
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                let lat = parsed.get("latitude").and_then(|v| v.as_f64()).unwrap_or(37.7749);
-                let lon = parsed.get("longitude").and_then(|v| v.as_f64()).unwrap_or(-122.4194);
-                let acc = parsed.get("accuracy_meters").and_then(|v| v.as_f64()).unwrap_or(5.0);
+                let lat = parsed
+                    .get("latitude")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(37.7749);
+                let lon = parsed
+                    .get("longitude")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(-122.4194);
+                let acc = parsed
+                    .get("accuracy_meters")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(5.0);
                 return Self {
                     latitude: lat,
                     longitude: lon,
@@ -62,7 +71,10 @@ pub struct GeoPermissionState {
 
 impl Default for GeoPermissionState {
     fn default() -> Self {
-        Self { state: GeoPermission::Prompt, previously_asked: false }
+        Self {
+            state: GeoPermission::Prompt,
+            previously_asked: false,
+        }
     }
 }
 
@@ -142,7 +154,10 @@ impl GeolocationProvider {
         vec![NdaTriple::new(
             session_id,
             241,
-            &format!("lat:{},lon:{}", self.current_coords.latitude, self.current_coords.longitude),
+            &format!(
+                "lat:{},lon:{}",
+                self.current_coords.latitude, self.current_coords.longitude
+            ),
         )]
     }
 }
@@ -203,7 +218,11 @@ mod tests {
         assert!((custom.current_coords.latitude - 48.8566).abs() < 0.001);
         assert!((custom.current_coords.accuracy_meters - 10.0).abs() < 0.01);
 
-        let config = GeolocationConfig { latitude: 51.5074, longitude: -0.1278, accuracy_meters: 15.0 };
+        let config = GeolocationConfig {
+            latitude: 51.5074,
+            longitude: -0.1278,
+            accuracy_meters: 15.0,
+        };
         let london = GeolocationProvider::from_config(&config);
         assert!((london.current_coords.latitude - 51.5074).abs() < 0.001);
     }
@@ -269,7 +288,8 @@ mod tests {
     #[test]
     fn load_from_workspace_falls_back_to_default() {
         // Nonexistent workspace path should return default (SF)
-        let config = GeolocationConfig::load_from_workspace(std::path::Path::new("/nonexistent/path"));
+        let config =
+            GeolocationConfig::load_from_workspace(std::path::Path::new("/nonexistent/path"));
         assert!((config.latitude - 37.7749).abs() < 0.001);
         assert!((config.longitude - (-122.4194)).abs() < 0.001);
     }

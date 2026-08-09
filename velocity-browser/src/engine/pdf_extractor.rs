@@ -52,19 +52,21 @@ impl PdfMediaExtractor {
         for line in text.lines() {
             let trimmed = line.trim();
             // Detect page objects
-            if trimmed.starts_with("/Type /Page") && !trimmed.contains("/Pages")
-                && (!page_lines.is_empty() || pages.is_empty()) {
-                    pages.push(PdfPage {
-                        page_number: current_page,
-                        text_lines: page_lines.clone(),
-                        width: 612.0,
-                        height: 792.0,
-                        fonts: Vec::new(),
-                        has_compressed_streams: has_compressed,
-                    });
-                    current_page += 1;
-                    page_lines.clear();
-                }
+            if trimmed.starts_with("/Type /Page")
+                && !trimmed.contains("/Pages")
+                && (!page_lines.is_empty() || pages.is_empty())
+            {
+                pages.push(PdfPage {
+                    page_number: current_page,
+                    text_lines: page_lines.clone(),
+                    width: 612.0,
+                    height: 792.0,
+                    fonts: Vec::new(),
+                    has_compressed_streams: has_compressed,
+                });
+                current_page += 1;
+                page_lines.clear();
+            }
             // Extract text from Tj/TJ operators
             if trimmed.contains(" Tj") || trimmed.contains(" TJ") {
                 if let Some(text) = extract_text_from_operator(trimmed) {
@@ -108,7 +110,14 @@ impl PdfMediaExtractor {
         }
 
         let page_count = pages.len();
-        PdfDocument { pages, title, author, creator, page_count, encrypted }
+        PdfDocument {
+            pages,
+            title,
+            author,
+            creator,
+            page_count,
+            encrypted,
+        }
     }
 
     /// Decompress FlateDecode streams found in the PDF.
@@ -122,13 +131,14 @@ impl PdfMediaExtractor {
             if let Some(stream_start) = find_bytes(pdf_bytes, pos, b"stream") {
                 let after_keyword = stream_start + 6;
                 // Skip the newline after "stream"
-                let data_start = if after_keyword < pdf_bytes.len() && pdf_bytes[after_keyword] == b'\r' {
-                    after_keyword + 2 // skip \r\n
-                } else if after_keyword < pdf_bytes.len() && pdf_bytes[after_keyword] == b'\n' {
-                    after_keyword + 1
-                } else {
-                    after_keyword
-                };
+                let data_start =
+                    if after_keyword < pdf_bytes.len() && pdf_bytes[after_keyword] == b'\r' {
+                        after_keyword + 2 // skip \r\n
+                    } else if after_keyword < pdf_bytes.len() && pdf_bytes[after_keyword] == b'\n' {
+                        after_keyword + 1
+                    } else {
+                        after_keyword
+                    };
 
                 // Check if this stream has /FlateDecode filter
                 // Look backwards from stream keyword for /Filter
@@ -174,7 +184,8 @@ impl PdfMediaExtractor {
 
     /// Extract text lines from a parsed document.
     pub fn extract_text_lines(doc: &PdfDocument) -> Vec<String> {
-        doc.pages.iter()
+        doc.pages
+            .iter()
             .flat_map(|p| p.text_lines.iter().cloned())
             .collect()
     }
@@ -209,7 +220,8 @@ fn find_bytes(haystack: &[u8], start: usize, needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || start + needle.len() > haystack.len() {
         return None;
     }
-    haystack[start..].windows(needle.len())
+    haystack[start..]
+        .windows(needle.len())
         .position(|w| w == needle)
         .map(|p| p + start)
 }
@@ -251,20 +263,31 @@ fn inflate_raw(data: &[u8]) -> Option<Vec<u8>> {
     let mut byte_pos = 0usize;
 
     loop {
-        if byte_pos >= data.len() { break; }
+        if byte_pos >= data.len() {
+            break;
+        }
 
         // Read BFINAL bit
         let bfinal = read_bit(data, byte_pos, bit_pos);
         bit_pos += 1;
-        if bit_pos >= 8 { bit_pos -= 8; byte_pos += 1; }
+        if bit_pos >= 8 {
+            bit_pos -= 8;
+            byte_pos += 1;
+        }
 
         // Read BTYPE (2 bits)
         let btype0 = read_bit(data, byte_pos, bit_pos);
         bit_pos += 1;
-        if bit_pos >= 8 { bit_pos -= 8; byte_pos += 1; }
+        if bit_pos >= 8 {
+            bit_pos -= 8;
+            byte_pos += 1;
+        }
         let btype1 = read_bit(data, byte_pos, bit_pos);
         bit_pos += 1;
-        if bit_pos >= 8 { bit_pos -= 8; byte_pos += 1; }
+        if bit_pos >= 8 {
+            bit_pos -= 8;
+            byte_pos += 1;
+        }
         let btype = btype1 << 1 | btype0;
 
         match btype {
@@ -272,7 +295,9 @@ fn inflate_raw(data: &[u8]) -> Option<Vec<u8>> {
                 // No compression — skip to byte boundary, then copy LEN bytes
                 bit_pos = 0;
                 byte_pos += 1; // align to byte
-                if byte_pos + 4 > data.len() { break; }
+                if byte_pos + 4 > data.len() {
+                    break;
+                }
                 let len = data[byte_pos] as u16 | ((data[byte_pos + 1] as u16) << 8);
                 byte_pos += 4; // skip LEN + NLEN
                 let end = (byte_pos + len as usize).min(data.len());
@@ -290,15 +315,23 @@ fn inflate_raw(data: &[u8]) -> Option<Vec<u8>> {
             _ => break,
         }
 
-        if bfinal != 0 { break; }
+        if bfinal != 0 {
+            break;
+        }
     }
 
-    if output.is_empty() { None } else { Some(output) }
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
 }
 
 /// Read a single bit from a byte slice.
 fn read_bit(data: &[u8], byte_pos: usize, bit_pos: usize) -> u8 {
-    if byte_pos >= data.len() { return 0; }
+    if byte_pos >= data.len() {
+        return 0;
+    }
     (data[byte_pos] >> bit_pos) & 1
 }
 
@@ -318,7 +351,8 @@ fn extract_text_from_operator(line: &str) -> Option<String> {
         let end = line.find("] TJ")?;
         let hex_content = &line[start..end];
         // Simple hex decode
-        let text: String = hex_content.chars()
+        let text: String = hex_content
+            .chars()
             .filter(|c| c.is_ascii_alphanumeric())
             .collect();
         if !text.is_empty() {
@@ -355,7 +389,8 @@ mod tests {
 
     #[test]
     fn test_extract_metadata() {
-        let pdf = b"%PDF-1.4\n/Title (My Document)\n/Author (John Doe)\n/Type /Page\n(content) Tj\n";
+        let pdf =
+            b"%PDF-1.4\n/Title (My Document)\n/Author (John Doe)\n/Type /Page\n(content) Tj\n";
         let doc = PdfMediaExtractor::parse_pdf_document(pdf);
         assert_eq!(doc.title.as_deref(), Some("My Document"));
         assert_eq!(doc.author.as_deref(), Some("John Doe"));
@@ -385,12 +420,16 @@ mod tests {
             pages: vec![PdfPage {
                 page_number: 1,
                 text_lines: vec!["Line 1".into(), "Line 2".into()],
-                width: 612.0, height: 792.0,
-                fonts: vec![], has_compressed_streams: false,
+                width: 612.0,
+                height: 792.0,
+                fonts: vec![],
+                has_compressed_streams: false,
             }],
             title: Some("Test".into()),
-            author: None, creator: None,
-            page_count: 1, encrypted: false,
+            author: None,
+            creator: None,
+            page_count: 1,
+            encrypted: false,
         };
         let triples = PdfMediaExtractor::export_pdf_nda("sess1", &doc);
         assert!(triples.len() >= 3); // 2 text lines + 1 title

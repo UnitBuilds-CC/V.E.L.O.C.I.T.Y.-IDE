@@ -54,7 +54,12 @@ pub enum WindowOperation {
     /// Resize window to (width, height).
     Resize { width: u32, height: u32 },
     /// Move and resize simultaneously.
-    MoveResize { x: i32, y: i32, width: u32, height: u32 },
+    MoveResize {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
     /// Minimize the window.
     Minimize,
     /// Maximize the window.
@@ -132,7 +137,9 @@ impl WindowManager {
 
     /// Get the currently foreground/active window.
     pub fn get_foreground_window() -> Option<WindowInfo> {
-        Self::enumerate_windows().into_iter().find(|w| w.is_foreground)
+        Self::enumerate_windows()
+            .into_iter()
+            .find(|w| w.is_foreground)
     }
 
     /// Apply an operation to a window identified by HWND.
@@ -154,7 +161,11 @@ impl WindowManager {
     }
 
     /// Tile windows side by side on the primary monitor.
-    pub fn tile_windows(hwnds: &[u64], monitor_width: u32, monitor_height: u32) -> Vec<WindowOpResult> {
+    pub fn tile_windows(
+        hwnds: &[u64],
+        monitor_width: u32,
+        monitor_height: u32,
+    ) -> Vec<WindowOpResult> {
         if hwnds.is_empty() {
             return Vec::new();
         }
@@ -183,7 +194,12 @@ impl WindowManager {
     }
 
     /// Cascade windows with offset.
-    pub fn cascade_windows(hwnds: &[u64], start_x: i32, start_y: i32, offset: i32) -> Vec<WindowOpResult> {
+    pub fn cascade_windows(
+        hwnds: &[u64],
+        start_x: i32,
+        start_y: i32,
+        offset: i32,
+    ) -> Vec<WindowOpResult> {
         hwnds
             .iter()
             .enumerate()
@@ -207,8 +223,16 @@ mod native {
     /// Enumerate all visible top-level windows using EnumWindows.
     pub fn enumerate_windows_native() -> Vec<WindowInfo> {
         let mut windows: Vec<WindowInfo> = Vec::new();
+        // SAFETY: GetForegroundWindow is a pure query with no pointer requirements;
+        // it simply returns the handle of the foreground window (or null).
         let fg_hwnd = unsafe { GetForegroundWindow() };
 
+        // SAFETY: EnumWindows takes a callback function pointer and an LPARAM.
+        // We pass `&mut windows as *mut Vec<WindowInfo> as isize` as the LPARAM.
+        // The pointer is valid for the duration of the EnumWindows call because
+        // `windows` is a local variable that outlives the call. The callback
+        // (enum_windows_callback) casts it back to `&mut Vec<WindowInfo>`, which
+        // is sound because EnumWindows is synchronous and single-threaded.
         unsafe {
             let _ = EnumWindows(
                 Some(enum_windows_callback),
@@ -225,6 +249,13 @@ mod native {
         windows
     }
 
+    // SAFETY: This is a Win32 callback invoked by EnumWindows. The `lparam` is a pointer
+    // to `Vec<WindowInfo>` that was passed by `enumerate_windows_native`. It is valid
+    // for the duration of the enumeration because the Vec outlives the EnumWindows call.
+    // All Win32 API calls (IsWindowVisible, GetWindowTextLengthW, GetWindowTextW,
+    // GetClassNameW, GetWindowThreadProcessId, GetWindowRect, IsIconic, IsZoomed)
+    // take a valid HWND from the enumeration callback and operate on it safely.
+    // GetWindowTextW and GetClassNameW write into pre-allocated buffers of sufficient size.
     unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let windows = &mut *(lparam.0 as *mut Vec<WindowInfo>);
 
@@ -274,8 +305,8 @@ mod native {
             rect: WindowRect {
                 x: rect.left,
                 y: rect.top,
-                width: (rect.right - rect.left) as u32,
-                height: (rect.bottom - rect.top) as u32,
+                width: (rect.right - rect.left).max(0) as u32,
+                height: (rect.bottom - rect.top).max(0) as u32,
             },
             state,
             is_foreground: false, // Set later
@@ -290,64 +321,120 @@ mod native {
         let hwnd = HWND(hwnd_val as *mut _);
         let op_name = format!("{:?}", op);
 
+        // SAFETY: All Win32 calls in this block take `hwnd` constructed from the caller's
+        // `hwnd_val: u64`. If the value is an invalid HWND, the Win32 calls will simply
+        // fail gracefully (return false/Err). Each call is documented:
+        // - GetWindowRect: writes into a stack-allocated RECT, valid for the call.
+        // - MoveWindow: takes position/size integers; no pointer requirements.
+        // - ShowWindow: takes an HWND and a show command; no pointer requirements.
+        // - SendMessageW: sends WM_CLOSE with zeroed WPARAM/LPARAM.
+        // - SetForegroundWindow: takes an HWND.
+        // - SetWindowPos: takes an HWND, insertion order, and integers.
+        // - GetWindowLongW/SetWindowLongW: read/modify extended window styles.
+        // - SetLayeredWindowAttributes: takes an HWND, color key, alpha byte, and flags.
         let success = unsafe {
             match op {
                 WindowOperation::Move { x, y } => {
                     let mut rect = RECT::default();
                     let _ = GetWindowRect(hwnd, &mut rect);
-                    MoveWindow(hwnd, *x, *y, rect.right - rect.left, rect.bottom - rect.top, true).is_ok()
+                    MoveWindow(
+                        hwnd,
+                        *x,
+                        *y,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        true,
+                    )
+                    .is_ok()
                 }
                 WindowOperation::Resize { width, height } => {
                     let mut rect = RECT::default();
                     let _ = GetWindowRect(hwnd, &mut rect);
-                    MoveWindow(hwnd, rect.left, rect.top, *width as i32, *height as i32, true).is_ok()
+                    MoveWindow(
+                        hwnd,
+                        rect.left,
+                        rect.top,
+                        *width as i32,
+                        *height as i32,
+                        true,
+                    )
+                    .is_ok()
                 }
-                WindowOperation::MoveResize { x, y, width, height } => {
-                    MoveWindow(hwnd, *x, *y, *width as i32, *height as i32, true).is_ok()
-                }
-                WindowOperation::Minimize => {
-                    ShowWindow(hwnd, SW_MINIMIZE).as_bool()
-                }
-                WindowOperation::Maximize => {
-                    ShowWindow(hwnd, SW_MAXIMIZE).as_bool()
-                }
-                WindowOperation::Restore => {
-                    ShowWindow(hwnd, SW_RESTORE).as_bool()
-                }
+                WindowOperation::MoveResize {
+                    x,
+                    y,
+                    width,
+                    height,
+                } => MoveWindow(hwnd, *x, *y, *width as i32, *height as i32, true).is_ok(),
+                WindowOperation::Minimize => ShowWindow(hwnd, SW_MINIMIZE).as_bool(),
+                WindowOperation::Maximize => ShowWindow(hwnd, SW_MAXIMIZE).as_bool(),
+                WindowOperation::Restore => ShowWindow(hwnd, SW_RESTORE).as_bool(),
                 WindowOperation::Close => {
-                    let _ = SendMessageW(hwnd, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+                    let _ = SendMessageW(
+                        hwnd,
+                        WM_CLOSE,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
                     true
                 }
-                WindowOperation::BringToFront => {
-                    SetForegroundWindow(hwnd).as_bool()
-                }
-                WindowOperation::SendToBack => {
-                    SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok()
-                }
-                WindowOperation::SetTopMost(true) => {
-                    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok()
-                }
-                WindowOperation::SetTopMost(false) => {
-                    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok()
-                }
+                WindowOperation::BringToFront => SetForegroundWindow(hwnd).as_bool(),
+                WindowOperation::SendToBack => SetWindowPos(
+                    hwnd,
+                    HWND_BOTTOM,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .is_ok(),
+                WindowOperation::SetTopMost(true) => SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .is_ok(),
+                WindowOperation::SetTopMost(false) => SetWindowPos(
+                    hwnd,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .is_ok(),
                 WindowOperation::SetOpacity(alpha) => {
                     // Set WS_EX_LAYERED style
                     let style = GetWindowLongW(hwnd, GWL_EXSTYLE);
                     SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED.0 as i32);
-                    SetLayeredWindowAttributes(hwnd, windows::Win32::Foundation::COLORREF(0), *alpha, LWA_ALPHA).is_ok()
+                    SetLayeredWindowAttributes(
+                        hwnd,
+                        windows::Win32::Foundation::COLORREF(0),
+                        *alpha,
+                        LWA_ALPHA,
+                    )
+                    .is_ok()
                 }
             }
         };
 
         // Get new rect after operation
+        // SAFETY: GetWindowRect writes into a stack-allocated RECT. The `hwnd` may be
+        // invalid, in which case GetWindowRect returns Err and we produce None.
         let new_rect = unsafe {
             let mut rect = RECT::default();
             if GetWindowRect(hwnd, &mut rect).is_ok() {
                 Some(WindowRect {
                     x: rect.left,
                     y: rect.top,
-                    width: (rect.right - rect.left) as u32,
-                    height: (rect.bottom - rect.top) as u32,
+                    width: (rect.right - rect.left).max(0) as u32,
+                    height: (rect.bottom - rect.top).max(0) as u32,
                 })
             } else {
                 None
@@ -393,7 +480,12 @@ mod tests {
             process_id: 1000,
             title: "Test Window".to_string(),
             class_name: "TestClass".to_string(),
-            rect: WindowRect { x: 0, y: 0, width: 800, height: 600 },
+            rect: WindowRect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
             state: WindowState::Normal,
             is_foreground: true,
             is_top_level: true,
@@ -406,8 +498,16 @@ mod tests {
     fn window_operation_variants() {
         let ops = vec![
             WindowOperation::Move { x: 100, y: 200 },
-            WindowOperation::Resize { width: 800, height: 600 },
-            WindowOperation::MoveResize { x: 0, y: 0, width: 1920, height: 1080 },
+            WindowOperation::Resize {
+                width: 800,
+                height: 600,
+            },
+            WindowOperation::MoveResize {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
             WindowOperation::Minimize,
             WindowOperation::Maximize,
             WindowOperation::Restore,
@@ -429,7 +529,10 @@ mod tests {
         let result = WindowManager::apply_operation(0, &WindowOperation::Move { x: 10, y: 10 });
         assert_eq!(result.hwnd, 0);
         assert!(result.operation.contains("Move"));
-        assert!(!result.success, "operation on a null hwnd should not succeed");
+        assert!(
+            !result.success,
+            "operation on a null hwnd should not succeed"
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

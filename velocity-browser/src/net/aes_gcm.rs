@@ -469,7 +469,6 @@ pub fn aes256_gcm_decrypt(
     aes256_gcm_decrypt_impl(&backend, nonce, aad, ciphertext, tag)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,11 +483,9 @@ mod tests {
     #[test]
     fn aes256_block_matches_fips197_c3() {
         // FIPS-197 Appendix C.3 known-answer test for AES-256.
-        let key: [u8; 32] = hex(
-            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        )
-        .try_into()
-        .unwrap();
+        let key: [u8; 32] = hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+            .try_into()
+            .unwrap();
         let pt: [u8; 16] = hex("00112233445566778899aabbccddeeff").try_into().unwrap();
         let expected: [u8; 16] = hex("8ea2b7ca516745bfeafc49904b496089").try_into().unwrap();
         let k = Aes256Key::new(&key);
@@ -519,11 +516,9 @@ mod tests {
     #[test]
     fn gcm_nist_test_case_15_with_aad() {
         // NIST GCM spec Test Case 15 (AES-256, 60-byte plaintext, 20-byte AAD).
-        let key: [u8; 32] = hex(
-            "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308",
-        )
-        .try_into()
-        .unwrap();
+        let key: [u8; 32] = hex("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
+            .try_into()
+            .unwrap();
         let nonce: [u8; 12] = hex("cafebabefacedbaddecaf888").try_into().unwrap();
         let pt = hex(
             "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72\
@@ -588,8 +583,7 @@ mod tests {
             assert_eq!(c1, c2, "ciphertext differs at len {len}");
             assert_eq!(t1, t2, "tag differs at len {len}");
             // And the dispatched backend must round-trip its own output.
-            let opened =
-                aes256_gcm_decrypt_impl(&dispatched, &nonce, &aad, &c2, &t2).unwrap();
+            let opened = aes256_gcm_decrypt_impl(&dispatched, &nonce, &aad, &c2, &t2).unwrap();
             assert_eq!(opened, pt);
         }
     }

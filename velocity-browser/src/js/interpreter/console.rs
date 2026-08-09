@@ -33,12 +33,18 @@ thread_local! {
 use std::cell::RefCell;
 
 pub fn perf_now() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as f64).unwrap_or(0.0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
 }
 
 pub(super) fn push_console(level: &str, args: Vec<JsValue>) {
-    let rec = ConsoleRecord { level: level.to_string(), args, timestamp: perf_now() };
+    let rec = ConsoleRecord {
+        level: level.to_string(),
+        args,
+        timestamp: perf_now(),
+    };
     CONSOLE_OUTPUT.with(|o| o.borrow_mut().push(rec));
 }
 
@@ -90,7 +96,9 @@ pub(super) fn console_time(label: &str) {
 
 pub(super) fn console_time_end(label: &str) -> Option<f64> {
     let now = perf_now();
-    CONSOLE_TIMERS.with(|t| t.borrow_mut().remove(label)).map(|start| now - start)
+    CONSOLE_TIMERS
+        .with(|t| t.borrow_mut().remove(label))
+        .map(|start| now - start)
 }
 
 pub(super) fn console_count(label: &str) -> u64 {
@@ -103,7 +111,9 @@ pub(super) fn console_count(label: &str) -> u64 {
 }
 
 pub(super) fn console_count_reset(label: &str) {
-    CONSOLE_COUNTS.with(|c| { c.borrow_mut().insert(label.to_string(), 0); });
+    CONSOLE_COUNTS.with(|c| {
+        c.borrow_mut().insert(label.to_string(), 0);
+    });
 }
 
 /// Render a value as a Markdown table for `console.table`.
@@ -113,14 +123,18 @@ pub(super) fn console_count_reset(label: &str) {
 /// objects (key/value rows). Anything else falls back to string coercion.
 pub(super) fn console_table_text(value: &JsValue) -> String {
     fn cell(v: &JsValue) -> String {
-        super::coercion::to_string(v).replace('|', "\\|").replace('\n', " ")
+        super::coercion::to_string(v)
+            .replace('|', "\\|")
+            .replace('\n', " ")
     }
     fn render(headers: &[String], rows: &[Vec<String>]) -> String {
         let mut out = String::new();
         out.push_str("| ");
         out.push_str(&headers.join(" | "));
         out.push_str(" |\n|");
-        for _ in headers { out.push_str(" --- |"); }
+        for _ in headers {
+            out.push_str(" --- |");
+        }
         out.push('\n');
         for row in rows {
             out.push_str("| ");
@@ -137,41 +151,68 @@ pub(super) fn console_table_text(value: &JsValue) -> String {
                 let mut headers: Vec<String> = vec!["(index)".to_string()];
                 for item in items {
                     if let JsValue::Object(map) = item {
-                        let mut keys: Vec<&String> = map.keys().filter(|k| !k.starts_with("__")).collect();
+                        let mut keys: Vec<&String> =
+                            map.keys().filter(|k| !k.starts_with("__")).collect();
                         keys.sort();
                         for k in keys {
-                            if !headers.iter().any(|h| h == k) { headers.push(k.clone()); }
+                            if !headers.iter().any(|h| h == k) {
+                                headers.push(k.clone());
+                            }
                         }
                     }
                 }
-                let rows: Vec<Vec<String>> = items.iter().enumerate().map(|(i, item)| {
-                    let mut row = vec![i.to_string()];
-                    if let JsValue::Object(map) = item {
-                        for h in &headers[1..] {
-                            row.push(map.get(h).map(cell).unwrap_or_default());
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| {
+                        let mut row = vec![i.to_string()];
+                        if let JsValue::Object(map) = item {
+                            for h in &headers[1..] {
+                                row.push(map.get(h).map(cell).unwrap_or_default());
+                            }
                         }
-                    }
-                    row
-                }).collect();
+                        row
+                    })
+                    .collect();
                 return render(&headers, &rows);
             }
             // Array of arrays → numbered columns.
             if items.iter().all(|i| matches!(i, JsValue::Array(_))) {
-                let width = items.iter().map(|i| if let JsValue::Array(a) = i { a.len() } else { 0 }).max().unwrap_or(0);
+                let width = items
+                    .iter()
+                    .map(|i| {
+                        if let JsValue::Array(a) = i {
+                            a.len()
+                        } else {
+                            0
+                        }
+                    })
+                    .max()
+                    .unwrap_or(0);
                 let mut headers = vec!["(index)".to_string()];
-                for c in 0..width { headers.push(c.to_string()); }
-                let rows: Vec<Vec<String>> = items.iter().enumerate().map(|(i, item)| {
-                    let mut row = vec![i.to_string()];
-                    if let JsValue::Array(a) = item {
-                        for c in 0..width { row.push(a.get(c).map(cell).unwrap_or_default()); }
-                    }
-                    row
-                }).collect();
+                for c in 0..width {
+                    headers.push(c.to_string());
+                }
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| {
+                        let mut row = vec![i.to_string()];
+                        if let JsValue::Array(a) = item {
+                            for c in 0..width {
+                                row.push(a.get(c).map(cell).unwrap_or_default());
+                            }
+                        }
+                        row
+                    })
+                    .collect();
                 return render(&headers, &rows);
             }
             // Array of primitives → single Values column.
             let headers = vec!["(index)".to_string(), "Values".to_string()];
-            let rows: Vec<Vec<String>> = items.iter().enumerate()
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .enumerate()
                 .map(|(i, item)| vec![i.to_string(), cell(item)])
                 .collect();
             render(&headers, &rows)
@@ -180,7 +221,8 @@ pub(super) fn console_table_text(value: &JsValue) -> String {
             let headers = vec!["(index)".to_string(), "Values".to_string()];
             let mut keys: Vec<&String> = map.keys().filter(|k| !k.starts_with("__")).collect();
             keys.sort();
-            let rows: Vec<Vec<String>> = keys.into_iter()
+            let rows: Vec<Vec<String>> = keys
+                .into_iter()
                 .map(|k| vec![k.clone(), map.get(k).map(cell).unwrap_or_default()])
                 .collect();
             render(&headers, &rows)
@@ -199,7 +241,9 @@ pub fn console_output_text() -> String {
         out.push_str(": ");
         let mut first = true;
         for arg in &rec.args {
-            if !first { out.push(' '); }
+            if !first {
+                out.push(' ');
+            }
             out.push_str(&super::coercion::to_string(arg));
             first = false;
         }
@@ -227,7 +271,10 @@ mod tests {
 
     #[test]
     fn capture_stack_trace_with_message() {
-        assert_eq!(capture_stack_trace("TypeError", "x is not a function"), "TypeError: x is not a function");
+        assert_eq!(
+            capture_stack_trace("TypeError", "x is not a function"),
+            "TypeError: x is not a function"
+        );
     }
 
     #[test]
@@ -331,6 +378,9 @@ mod tests {
     #[test]
     fn perf_now_returns_positive() {
         let t = perf_now();
-        assert!(t > 0.0, "perf_now should return a positive epoch millis value");
+        assert!(
+            t > 0.0,
+            "perf_now should return a positive epoch millis value"
+        );
     }
 }

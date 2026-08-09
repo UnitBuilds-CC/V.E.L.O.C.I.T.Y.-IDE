@@ -6,7 +6,10 @@
 #[test]
 fn tool_registry_lists_available_tools() {
     let tools = velocity_mcp::registry::get_tools();
-    assert!(!tools.is_empty(), "Tool registry should have at least one tool");
+    assert!(
+        !tools.is_empty(),
+        "Tool registry should have at least one tool"
+    );
 }
 
 /// Test that the site map can be opened and basic operations work.
@@ -86,7 +89,10 @@ fn crypto_different_labels_produce_different_ciphertext() {
         .expect("seal with label_b");
 
     // Different labels derive different subkeys, so ciphertexts differ
-    assert_ne!(sealed_a, sealed_b, "different labels should produce different ciphertext");
+    assert_ne!(
+        sealed_a, sealed_b,
+        "different labels should produce different ciphertext"
+    );
 
     // Each can only be opened with its own label
     let opened_a = velocity_mcp::agent::crypto::open(tmp.path(), b"label_a", &sealed_a);
@@ -109,7 +115,8 @@ fn shmem_buffer_read_write_roundtrip() {
     let path = tmp.path().join("test_shmem.bin");
 
     let mut buf = SharedMemoryBuffer::create_or_open(&path).expect("create shmem");
-    buf.write_input("test request payload").expect("write input");
+    buf.write_input("test request payload")
+        .expect("write input");
 
     let read_back = buf.read_input().expect("read input");
     assert_eq!(read_back, "test request payload");

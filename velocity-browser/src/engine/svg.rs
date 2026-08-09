@@ -8,39 +8,96 @@ pub struct SvgPathCommand {
 /// SVG shape primitives.
 #[derive(Debug, Clone)]
 pub enum SvgShape {
-    Rect { x: f32, y: f32, width: f32, height: f32, rx: f32, ry: f32 },
-    Circle { cx: f32, cy: f32, r: f32 },
-    Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
-    Line { x1: f32, y1: f32, x2: f32, y2: f32 },
-    Polyline { points: Vec<(f32, f32)>, closed: bool },
-    Path { commands: Vec<SvgPathCommand> },
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        rx: f32,
+        ry: f32,
+    },
+    Circle {
+        cx: f32,
+        cy: f32,
+        r: f32,
+    },
+    Ellipse {
+        cx: f32,
+        cy: f32,
+        rx: f32,
+        ry: f32,
+    },
+    Line {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+    },
+    Polyline {
+        points: Vec<(f32, f32)>,
+        closed: bool,
+    },
+    Path {
+        commands: Vec<SvgPathCommand>,
+    },
 }
 
 /// 2D affine transform for SVG elements.
 #[derive(Debug, Clone, Copy)]
 pub struct SvgTransform {
-    pub a: f32, pub b: f32,
-    pub c: f32, pub d: f32,
-    pub e: f32, pub f: f32,
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub d: f32,
+    pub e: f32,
+    pub f: f32,
 }
 
 impl SvgTransform {
     pub fn identity() -> Self {
-        Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 }
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     pub fn translate(tx: f32, ty: f32) -> Self {
-        Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: tx, f: ty }
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: tx,
+            f: ty,
+        }
     }
 
     pub fn scale(sx: f32, sy: f32) -> Self {
-        Self { a: sx, b: 0.0, c: 0.0, d: sy, e: 0.0, f: 0.0 }
+        Self {
+            a: sx,
+            b: 0.0,
+            c: 0.0,
+            d: sy,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     pub fn rotate(angle_rad: f32) -> Self {
         let cos = angle_rad.cos();
         let sin = angle_rad.sin();
-        Self { a: cos, b: sin, c: -sin, d: cos, e: 0.0, f: 0.0 }
+        Self {
+            a: cos,
+            b: sin,
+            c: -sin,
+            d: cos,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     pub fn multiply(&self, other: &SvgTransform) -> SvgTransform {
@@ -55,7 +112,10 @@ impl SvgTransform {
     }
 
     pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
-        (self.a * x + self.c * y + self.e, self.b * x + self.d * y + self.f)
+        (
+            self.a * x + self.c * y + self.e,
+            self.b * x + self.d * y + self.f,
+        )
     }
 }
 
@@ -72,60 +132,115 @@ impl Default for SvgPathBuilder {
 
 impl SvgPathBuilder {
     pub fn new() -> Self {
-        Self { commands: Vec::new() }
+        Self {
+            commands: Vec::new(),
+        }
     }
 
     pub fn move_to(mut self, x: f32, y: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'M', args: vec![x, y], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'M',
+            args: vec![x, y],
+            relative: false,
+        });
         self
     }
 
     pub fn move_to_rel(mut self, dx: f32, dy: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'm', args: vec![dx, dy], relative: true });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'm',
+            args: vec![dx, dy],
+            relative: true,
+        });
         self
     }
 
     pub fn line_to(mut self, x: f32, y: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'L', args: vec![x, y], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'L',
+            args: vec![x, y],
+            relative: false,
+        });
         self
     }
 
     pub fn line_to_rel(mut self, dx: f32, dy: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'l', args: vec![dx, dy], relative: true });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'l',
+            args: vec![dx, dy],
+            relative: true,
+        });
         self
     }
 
     pub fn horizontal(mut self, x: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'H', args: vec![x], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'H',
+            args: vec![x],
+            relative: false,
+        });
         self
     }
 
     pub fn vertical(mut self, y: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'V', args: vec![y], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'V',
+            args: vec![y],
+            relative: false,
+        });
         self
     }
 
     pub fn cubic_to(mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'C', args: vec![x1, y1, x2, y2, x, y], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'C',
+            args: vec![x1, y1, x2, y2, x, y],
+            relative: false,
+        });
         self
     }
 
     pub fn quad_to(mut self, x1: f32, y1: f32, x: f32, y: f32) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'Q', args: vec![x1, y1, x, y], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'Q',
+            args: vec![x1, y1, x, y],
+            relative: false,
+        });
         self
     }
 
-    pub fn arc(mut self, rx: f32, ry: f32, x_rotation: f32, large_arc: bool, sweep: bool, x: f32, y: f32) -> Self {
+    pub fn arc(
+        mut self,
+        rx: f32,
+        ry: f32,
+        x_rotation: f32,
+        large_arc: bool,
+        sweep: bool,
+        x: f32,
+        y: f32,
+    ) -> Self {
         self.commands.push(SvgPathCommand {
             cmd_type: 'A',
-            args: vec![rx, ry, x_rotation, if large_arc { 1.0 } else { 0.0 }, if sweep { 1.0 } else { 0.0 }, x, y],
+            args: vec![
+                rx,
+                ry,
+                x_rotation,
+                if large_arc { 1.0 } else { 0.0 },
+                if sweep { 1.0 } else { 0.0 },
+                x,
+                y,
+            ],
             relative: false,
         });
         self
     }
 
     pub fn close(mut self) -> Self {
-        self.commands.push(SvgPathCommand { cmd_type: 'Z', args: vec![], relative: false });
+        self.commands.push(SvgPathCommand {
+            cmd_type: 'Z',
+            args: vec![],
+            relative: false,
+        });
         self
     }
 
@@ -139,7 +254,9 @@ impl SvgPathBuilder {
         for cmd in commands {
             let mut s = cmd.cmd_type.to_string();
             for (i, arg) in cmd.args.iter().enumerate() {
-                if i > 0 { s.push(' '); }
+                if i > 0 {
+                    s.push(' ');
+                }
                 // Format: remove trailing zeros
                 if *arg == arg.round() {
                     s.push_str(&format!("{}", *arg as i32));
@@ -227,12 +344,22 @@ impl SvgVectorEngine {
     /// Flatten a shape into a series of line segments (for rasterization).
     pub fn flatten_shape(shape: &SvgShape, tolerance: f32) -> Vec<(f32, f32)> {
         match shape {
-            SvgShape::Rect { x, y, width, height, .. } => {
-                vec![(*x, *y), (*x + width, *y), (*x + width, *y + height), (*x, *y + height), (*x, *y)]
+            SvgShape::Rect {
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => {
+                vec![
+                    (*x, *y),
+                    (*x + width, *y),
+                    (*x + width, *y + height),
+                    (*x, *y + height),
+                    (*x, *y),
+                ]
             }
-            SvgShape::Circle { cx, cy, r } => {
-                Self::flatten_circle(*cx, *cy, *r, tolerance)
-            }
+            SvgShape::Circle { cx, cy, r } => Self::flatten_circle(*cx, *cy, *r, tolerance),
             SvgShape::Ellipse { cx, cy, rx, ry } => {
                 Self::flatten_ellipse(*cx, *cy, *rx, *ry, tolerance)
             }
@@ -246,9 +373,7 @@ impl SvgVectorEngine {
                 }
                 pts
             }
-            SvgShape::Path { commands } => {
-                Self::flatten_path(commands, tolerance)
-            }
+            SvgShape::Path { commands } => Self::flatten_path(commands, tolerance),
         }
     }
 
@@ -258,7 +383,9 @@ impl SvgVectorEngine {
 
     fn flatten_ellipse(cx: f32, cy: f32, rx: f32, ry: f32, tolerance: f32) -> Vec<(f32, f32)> {
         let max_r = rx.max(ry);
-        let segments = ((std::f32::consts::TAU * max_r) / tolerance).ceil().max(8.0) as usize;
+        let segments = ((std::f32::consts::TAU * max_r) / tolerance)
+            .ceil()
+            .max(8.0) as usize;
         let mut points = Vec::with_capacity(segments + 1);
         for i in 0..=segments {
             let angle = std::f32::consts::TAU * i as f32 / segments as f32;
@@ -294,11 +421,19 @@ impl SvgVectorEngine {
                     points.push((cur_x, cur_y));
                 }
                 'H' if !cmd.args.is_empty() => {
-                    if cmd.relative { cur_x += cmd.args[0]; } else { cur_x = cmd.args[0]; }
+                    if cmd.relative {
+                        cur_x += cmd.args[0];
+                    } else {
+                        cur_x = cmd.args[0];
+                    }
                     points.push((cur_x, cur_y));
                 }
                 'V' if !cmd.args.is_empty() => {
-                    if cmd.relative { cur_y += cmd.args[0]; } else { cur_y = cmd.args[0]; }
+                    if cmd.relative {
+                        cur_y += cmd.args[0];
+                    } else {
+                        cur_y = cmd.args[0];
+                    }
                     points.push((cur_x, cur_y));
                 }
                 'C' if cmd.args.len() >= 6 => {
@@ -337,7 +472,14 @@ impl SvgVectorEngine {
 
     /// Create a rect shape.
     pub fn make_rect(x: f32, y: f32, w: f32, h: f32) -> SvgShape {
-        SvgShape::Rect { x, y, width: w, height: h, rx: 0.0, ry: 0.0 }
+        SvgShape::Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+            rx: 0.0,
+            ry: 0.0,
+        }
     }
 
     /// Create a circle shape.

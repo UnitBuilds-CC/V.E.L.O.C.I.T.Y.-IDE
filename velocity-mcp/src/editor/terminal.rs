@@ -4,10 +4,10 @@
 //! Provides a real pseudo-terminal (conpty on Windows, pty on Unix) for
 //! interactive shell sessions within the IDE.
 
+use eframe::egui;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
-use eframe::egui;
 
 /// Terminal cell character attributes.
 #[derive(Debug, Clone, Copy, Default)]
@@ -45,7 +45,16 @@ pub struct TerminalBuffer {
 
 impl TerminalBuffer {
     pub fn new(cols: usize, rows: usize) -> Self {
-        let cells = vec![vec![Cell { ch: ' ', attrs: CellAttrs::default() }; cols]; rows];
+        let cells = vec![
+            vec![
+                Cell {
+                    ch: ' ',
+                    attrs: CellAttrs::default()
+                };
+                cols
+            ];
+            rows
+        ];
         Self {
             cols,
             rows,
@@ -103,7 +112,13 @@ impl TerminalBuffer {
         if self.scrollback.len() > self.scrollback_limit {
             self.scrollback.pop_front();
         }
-        self.cells.push(vec![Cell { ch: ' ', attrs: CellAttrs::default() }; self.cols]);
+        self.cells.push(vec![
+            Cell {
+                ch: ' ',
+                attrs: CellAttrs::default()
+            };
+            self.cols
+        ]);
     }
 
     /// Clear the entire screen.
@@ -151,11 +166,19 @@ impl TerminalBuffer {
         match cmd {
             'H' | 'f' => {
                 // Cursor position: ESC[row;colH
-                let parts: Vec<usize> = params.split(';')
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
-                self.cursor_row = parts.first().copied().unwrap_or(1).saturating_sub(1).min(self.rows - 1);
-                self.cursor_col = parts.get(1).copied().unwrap_or(1).saturating_sub(1).min(self.cols - 1);
+                let parts: Vec<usize> = params.split(';').filter_map(|s| s.parse().ok()).collect();
+                self.cursor_row = parts
+                    .first()
+                    .copied()
+                    .unwrap_or(1)
+                    .saturating_sub(1)
+                    .min(self.rows - 1);
+                self.cursor_col = parts
+                    .get(1)
+                    .copied()
+                    .unwrap_or(1)
+                    .saturating_sub(1)
+                    .min(self.cols - 1);
             }
             'J' => {
                 // Erase display
@@ -260,9 +283,16 @@ impl TerminalBuffer {
 
     /// Render terminal content as text lines (for egui display).
     pub fn render_lines(&self) -> Vec<String> {
-        self.cells.iter().map(|row| {
-            row.iter().map(|c| c.ch).collect::<String>().trim_end().to_string()
-        }).collect()
+        self.cells
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|c| c.ch)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
     }
 }
 
@@ -325,7 +355,11 @@ impl TerminalState {
     pub fn history_up(&mut self) {
         if self.history_idx > 0 {
             self.history_idx -= 1;
-            self.input_line = self.history.get(self.history_idx).cloned().unwrap_or_default();
+            self.input_line = self
+                .history
+                .get(self.history_idx)
+                .cloned()
+                .unwrap_or_default();
         }
     }
 
@@ -333,7 +367,11 @@ impl TerminalState {
     pub fn history_down(&mut self) {
         if self.history_idx < self.history.len() {
             self.history_idx += 1;
-            self.input_line = self.history.get(self.history_idx).cloned().unwrap_or_default();
+            self.input_line = self
+                .history
+                .get(self.history_idx)
+                .cloned()
+                .unwrap_or_default();
         }
     }
 
@@ -436,11 +474,7 @@ impl TerminalState {
                             .unwrap_or(0);
                         let mut job = LayoutJob::default();
                         for cell in &row[..last] {
-                            let color = cell
-                                .attrs
-                                .fg_color
-                                .map(ansi_color)
-                                .unwrap_or(palette.text);
+                            let color = cell.attrs.fg_color.map(ansi_color).unwrap_or(palette.text);
                             let mut fmt = TextFormat {
                                 font_id: code_font.clone(),
                                 color,
@@ -481,7 +515,7 @@ impl TerminalState {
                 egui::TextEdit::singleline(&mut self.input_line)
                     .font(code_font)
                     .desired_width(f32::INFINITY)
-                    .hint_text("Enter command...")
+                    .hint_text("Enter command..."),
             );
             if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 let cmd = self.input_line.clone();

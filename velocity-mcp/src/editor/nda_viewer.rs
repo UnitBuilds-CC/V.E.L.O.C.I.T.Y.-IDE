@@ -12,8 +12,7 @@
 
 /// Standard base64 (with padding) — avoids pulling an external crate.
 pub fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -254,7 +253,11 @@ pub fn self_contained_html(nda_bytes: &[u8], title: &str) -> String {
          loadBytes(b64dec(EMBEDDED).buffer);",
         b64 = b64,
     );
-    let doc_title = if title.is_empty() { "NDA Document" } else { title };
+    let doc_title = if title.is_empty() {
+        "NDA Document"
+    } else {
+        title
+    };
     shell(&format!("NDA · {doc_title}"), "", &onload)
 }
 
@@ -316,7 +319,10 @@ mod tests {
     fn viewer_shows_revision_content_delta_badge() {
         let html = pwa_viewer_html();
         assert!(html.contains("delta same"), "same-content badge class");
-        assert!(html.contains("content changed"), "changed-content badge text");
+        assert!(
+            html.contains("content changed"),
+            "changed-content badge text"
+        );
         assert!(html.contains(".delta.changed"), "delta CSS present");
     }
 }

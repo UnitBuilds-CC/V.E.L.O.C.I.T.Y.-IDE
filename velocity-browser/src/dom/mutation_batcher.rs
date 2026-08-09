@@ -86,7 +86,8 @@ impl MutationBatcher {
 
     /// Record an old attribute value before mutation.
     pub fn record_old_attribute_value(&mut self, node_id: usize, attr_name: &str, old_value: &str) {
-        self.old_values.insert((node_id, attr_name.to_string()), old_value.to_string());
+        self.old_values
+            .insert((node_id, attr_name.to_string()), old_value.to_string());
     }
 
     /// Flush the batch, returning all pending mutations and clearing internal state.

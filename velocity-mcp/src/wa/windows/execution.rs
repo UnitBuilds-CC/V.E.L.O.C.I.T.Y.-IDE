@@ -38,7 +38,9 @@ pub fn capture_windows_snapshot_report(
         .env("WA_CAPTURE_MAX_CHILDREN", max_children_per_node.to_string())
         .env(
             "WA_CAPTURE_PROCESS_ID",
-            process_id.map(|value| value.to_string()).unwrap_or_default(),
+            process_id
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
         )
         .env(
             "WA_CAPTURE_WINDOW_NAME_CONTAINS",
@@ -62,10 +64,9 @@ pub fn capture_windows_snapshot_report(
         } else {
             stderr.trim().to_string()
         };
-        return Err(IoError::other(
-            format!("Windows UIAutomation capture failed: {detail}"),
-        )
-        .into());
+        return Err(
+            IoError::other(format!("Windows UIAutomation capture failed: {detail}")).into(),
+        );
     }
 
     let payload = parse_capture_payload(&String::from_utf8_lossy(&output.stdout))?;
@@ -117,7 +118,9 @@ pub fn execute_windows_action_report(
         ])
         .env(
             "WA_ACTION_PROCESS_ID",
-            process_id.map(|value| value.to_string()).unwrap_or_default(),
+            process_id
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
         )
         .env("WA_ACTION_WINDOW_NAME_CONTAINS", snapshot.title.clone())
         .env("WA_ACTION_NODE_ID", plan.matched.id.clone())
@@ -141,9 +144,9 @@ pub fn execute_windows_action_report(
         } else {
             stderr.trim().to_string()
         };
-        return Err(IoError::other(
-            format!("Windows UIAutomation action execution failed: {detail}"),
-        )
+        return Err(IoError::other(format!(
+            "Windows UIAutomation action execution failed: {detail}"
+        ))
         .into());
     }
 
@@ -181,15 +184,8 @@ pub fn wait_for_windows_condition_report(
         .into());
     }
 
-    let resolve = crate::wa::resolve_selector(
-        root,
-        session_id,
-        snapshot_name,
-        node_id,
-        role,
-        name,
-        None,
-    )?;
+    let resolve =
+        crate::wa::resolve_selector(root, session_id, snapshot_name, node_id, role, name, None)?;
     let snapshot = crate::wa::load_snapshot(root, session_id, &resolve.snapshot_name)?;
     let process_id = snapshot
         .url
@@ -207,7 +203,9 @@ pub fn wait_for_windows_condition_report(
         ])
         .env(
             "WA_WAIT_PROCESS_ID",
-            process_id.map(|value| value.to_string()).unwrap_or_default(),
+            process_id
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
         )
         .env("WA_WAIT_WINDOW_NAME_CONTAINS", snapshot.title.clone())
         .env("WA_WAIT_NODE_ID", resolve.matched.id.clone())
@@ -233,10 +231,7 @@ pub fn wait_for_windows_condition_report(
         } else {
             stderr.trim().to_string()
         };
-        return Err(IoError::other(
-            format!("Windows UIAutomation wait failed: {detail}"),
-        )
-        .into());
+        return Err(IoError::other(format!("Windows UIAutomation wait failed: {detail}")).into());
     }
 
     let payload = parse_wait_payload(&String::from_utf8_lossy(&output.stdout))?;

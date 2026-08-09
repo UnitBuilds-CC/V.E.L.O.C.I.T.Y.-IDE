@@ -215,7 +215,9 @@ impl AiProvider {
             "ollama" | "local" | "localollama" => Some(AiProvider::LocalOllama),
             "openai" | "openai_direct" => Some(AiProvider::OpenAI),
             "anthropic" | "claude" => Some(AiProvider::Anthropic),
-            "vertex" | "googlevertex" | "google_vertex" | "google" => Some(AiProvider::GoogleVertex),
+            "vertex" | "googlevertex" | "google_vertex" | "google" => {
+                Some(AiProvider::GoogleVertex)
+            }
             "deepseek" => Some(AiProvider::Deepseek),
             "alibaba" | "qwen" | "dashscope" | "alibaba_qwen" => Some(AiProvider::AlibabaQwen),
             "bedrock" | "awsbedrock" | "aws_bedrock" | "aws" => Some(AiProvider::AwsBedrock),
@@ -272,20 +274,38 @@ mod tests {
 
     #[test]
     fn new_provider_from_slug_roundtrip() {
-        assert_eq!(AiProvider::from_slug("deepseek"), Some(AiProvider::Deepseek));
-        assert_eq!(AiProvider::from_slug("alibaba"), Some(AiProvider::AlibabaQwen));
+        assert_eq!(
+            AiProvider::from_slug("deepseek"),
+            Some(AiProvider::Deepseek)
+        );
+        assert_eq!(
+            AiProvider::from_slug("alibaba"),
+            Some(AiProvider::AlibabaQwen)
+        );
         assert_eq!(AiProvider::from_slug("qwen"), Some(AiProvider::AlibabaQwen));
-        assert_eq!(AiProvider::from_slug("dashscope"), Some(AiProvider::AlibabaQwen));
-        assert_eq!(AiProvider::from_slug("bedrock"), Some(AiProvider::AwsBedrock));
+        assert_eq!(
+            AiProvider::from_slug("dashscope"),
+            Some(AiProvider::AlibabaQwen)
+        );
+        assert_eq!(
+            AiProvider::from_slug("bedrock"),
+            Some(AiProvider::AwsBedrock)
+        );
         assert_eq!(AiProvider::from_slug("aws"), Some(AiProvider::AwsBedrock));
         assert_eq!(AiProvider::from_slug("groq"), Some(AiProvider::Groq));
         assert_eq!(AiProvider::from_slug("mistral"), Some(AiProvider::Mistral));
-        assert_eq!(AiProvider::from_slug("mistralai"), Some(AiProvider::Mistral));
+        assert_eq!(
+            AiProvider::from_slug("mistralai"),
+            Some(AiProvider::Mistral)
+        );
     }
 
     #[test]
     fn new_provider_from_slug_case_insensitive() {
-        assert_eq!(AiProvider::from_slug("DEEPSEEK"), Some(AiProvider::Deepseek));
+        assert_eq!(
+            AiProvider::from_slug("DEEPSEEK"),
+            Some(AiProvider::Deepseek)
+        );
         assert_eq!(AiProvider::from_slug("Groq"), Some(AiProvider::Groq));
         assert_eq!(AiProvider::from_slug("MISTRAL"), Some(AiProvider::Mistral));
     }

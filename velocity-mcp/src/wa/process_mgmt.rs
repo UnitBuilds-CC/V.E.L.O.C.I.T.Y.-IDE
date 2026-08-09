@@ -125,9 +125,15 @@ pub enum ProcessWaitCondition {
     /// Wait until a window with the given title appears.
     WindowAppears { title_contains: String },
     /// Wait until the process is idle (CPU < threshold for N seconds).
-    Idle { cpu_threshold: f32, stable_seconds: u32 },
+    Idle {
+        cpu_threshold: f32,
+        stable_seconds: u32,
+    },
     /// Wait until memory usage stabilizes.
-    MemoryStable { tolerance_bytes: u64, stable_seconds: u32 },
+    MemoryStable {
+        tolerance_bytes: u64,
+        stable_seconds: u32,
+    },
 }
 
 /// Result of waiting on a process condition.
@@ -177,7 +183,10 @@ impl ProcessManager {
             .filter(|p| {
                 p.main_window_title
                     .as_deref()
-                    .map(|t| t.to_ascii_lowercase().contains(&title_contains.to_ascii_lowercase()))
+                    .map(|t| {
+                        t.to_ascii_lowercase()
+                            .contains(&title_contains.to_ascii_lowercase())
+                    })
                     .unwrap_or(false)
             })
             .collect()
@@ -243,11 +252,7 @@ impl ProcessManager {
     }
 
     /// Wait for a condition on a process.
-    pub fn wait_for(
-        pid: u32,
-        condition: &ProcessWaitCondition,
-        timeout: Duration,
-    ) -> WaitResult {
+    pub fn wait_for(pid: u32, condition: &ProcessWaitCondition, timeout: Duration) -> WaitResult {
         let start = Instant::now();
 
         #[cfg(target_os = "windows")]
@@ -303,6 +308,15 @@ mod native {
     pub fn enumerate_processes_native() -> Vec<ProcessInfo> {
         let mut processes = Vec::new();
 
+        // SAFETY: Win32 process enumeration via ToolHelp API.
+        // - CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) creates a snapshot handle.
+        //   On failure we return an empty vec immediately.
+        // - PROCESSENTRY32W.dwSize is set to `size_of::<PROCESSENTRY32W>()` as required
+        //   by the API before calling Process32FirstW/Process32NextW.
+        // - Process32FirstW/Process32NextW fill the entry struct; we read fields that
+        //   are always initialized (th32ProcessID, th32ParentProcessID, szExeFile).
+        // - szExeFile is scanned for the NUL terminator to avoid reading uninitialized
+        //   trailing bytes. CloseHandle releases the snapshot at the end.
         unsafe {
             let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
                 Ok(h) => h,
@@ -314,7 +328,11 @@ mod native {
 
             if Process32FirstW(snapshot, &mut entry).is_ok() {
                 loop {
-                    let name_end = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                    let name_end = entry
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExeFile.len());
                     let name = String::from_utf16_lossy(&entry.szExeFile[..name_end]);
 
                     processes.push(ProcessInfo {
@@ -351,6 +369,14 @@ mod native {
     /// actually running.
     pub fn is_process_running_native(pid: u32) -> bool {
         const STILL_ACTIVE: u32 = 259;
+        // SAFETY: Win32 process handle lifecycle for exit-code query.
+        // - OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, ...) opens a handle with
+        //   minimal access. On failure (e.g., access denied, invalid pid) returns false.
+        // - GetExitCodeProcess writes into a stack-allocated u32. The handle is valid
+        //   because OpenProcess succeeded.
+        // - CloseHandle always runs after the query, preventing handle leaks.
+        // - A running process has exit_code == STILL_ACTIVE (259); a terminated one
+        //   has its actual exit code.
         unsafe {
             match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
                 Ok(handle) => {
@@ -431,6 +457,13 @@ mod native {
 
     /// Terminate a process gracefully, then force-kill if needed.
     pub fn terminate_process_native(pid: u32, grace_timeout: Duration) -> bool {
+        // SAFETY: Win32 process termination sequence.
+        // - OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, ...) opens a handle with
+        //   terminate + wait rights. On failure returns false.
+        // - WaitForSingleObject waits up to `grace_timeout` for the process to exit
+        //   on its own. The handle is valid (OpenProcess succeeded).
+        // - If the process hasn't exited, TerminateProcess force-kills it.
+        // - CloseHandle always runs, preventing handle leaks on all code paths.
         unsafe {
             let handle = match OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, false, pid) {
                 Ok(h) => h,
@@ -438,7 +471,7 @@ mod native {
             };
 
             // Wait for graceful exit
-            let wait_ms = grace_timeout.as_millis() as u32;
+            let wait_ms = grace_timeout.as_millis().min(u32::MAX as u128) as u32;
             let wait_result = WaitForSingleObject(handle, wait_ms);
 
             if wait_result == WAIT_OBJECT_0 {
@@ -455,6 +488,12 @@ mod native {
 
     /// Force-kill a process immediately.
     pub fn kill_process_native(pid: u32) -> bool {
+        // SAFETY: Win32 force-kill sequence.
+        // - OpenProcess(PROCESS_TERMINATE, ...) opens a handle with terminate access.
+        //   On failure returns false.
+        // - TerminateProcess(handle, 1) force-kills the process. The handle is valid
+        //   because OpenProcess succeeded.
+        // - CloseHandle always runs, preventing handle leaks.
         unsafe {
             let handle = match OpenProcess(PROCESS_TERMINATE, false, pid) {
                 Ok(h) => h,
@@ -475,8 +514,20 @@ mod native {
     ) -> WaitResult {
         match condition {
             ProcessWaitCondition::Exit => {
+                // SAFETY: Win32 process wait-for-exit sequence.
+                // - OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, ...)
+                //   opens a handle with wait + query access. On failure returns early.
+                // - WaitForSingleObject blocks up to `timeout` for the process to exit.
+                //   The handle is valid because OpenProcess succeeded.
+                // - GetExitCodeProcess writes into a stack-allocated u32; the handle is
+                //   still valid at this point.
+                // - CloseHandle always runs, preventing handle leaks.
                 unsafe {
-                    let handle = match OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                    let handle = match OpenProcess(
+                        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        false,
+                        pid,
+                    ) {
                         Ok(h) => h,
                         Err(e) => {
                             return WaitResult {
@@ -488,7 +539,7 @@ mod native {
                         }
                     };
 
-                    let wait_ms = timeout.as_millis() as u32;
+                    let wait_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
                     let result = WaitForSingleObject(handle, wait_ms);
 
                     let mut exit_code: u32 = 0;
@@ -525,7 +576,10 @@ mod native {
                                 return WaitResult {
                                     condition_met: true,
                                     elapsed: start.elapsed(),
-                                    detail: format!("window appeared: {}", found[0].main_window_title.as_deref().unwrap_or("")),
+                                    detail: format!(
+                                        "window appeared: {}",
+                                        found[0].main_window_title.as_deref().unwrap_or("")
+                                    ),
                                     exit_code: None,
                                 };
                             }
@@ -613,9 +667,17 @@ mod tests {
     fn wait_condition_variants() {
         let conditions = [
             ProcessWaitCondition::Exit,
-            ProcessWaitCondition::WindowAppears { title_contains: "test".to_string() },
-            ProcessWaitCondition::Idle { cpu_threshold: 5.0, stable_seconds: 3 },
-            ProcessWaitCondition::MemoryStable { tolerance_bytes: 1024, stable_seconds: 5 },
+            ProcessWaitCondition::WindowAppears {
+                title_contains: "test".to_string(),
+            },
+            ProcessWaitCondition::Idle {
+                cpu_threshold: 5.0,
+                stable_seconds: 3,
+            },
+            ProcessWaitCondition::MemoryStable {
+                tolerance_bytes: 1024,
+                stable_seconds: 5,
+            },
         ];
         assert_eq!(conditions.len(), 4);
     }
@@ -655,11 +717,12 @@ mod tests {
         assert!(result.success, "launch failed: {}", result.detail);
         let pid = result.pid.expect("launched pid");
 
-        let wait = ProcessManager::wait_for(
-            pid,
-            &ProcessWaitCondition::Exit,
-            Duration::from_secs(5),
+        let wait =
+            ProcessManager::wait_for(pid, &ProcessWaitCondition::Exit, Duration::from_secs(5));
+        assert!(
+            wait.condition_met,
+            "exit should be detected: {}",
+            wait.detail
         );
-        assert!(wait.condition_met, "exit should be detected: {}", wait.detail);
     }
 }

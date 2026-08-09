@@ -1,7 +1,7 @@
 #![allow(dead_code)]
-use crate::editor::orchestrator_panel::OrchestratorTaskSnapshot;
-use crate::automation::AgentTaskKind;
 use super::types::*;
+use crate::automation::AgentTaskKind;
+use crate::editor::orchestrator_panel::OrchestratorTaskSnapshot;
 use std::collections::BTreeMap;
 
 pub fn desktop_automation_evidence_state(
@@ -50,7 +50,10 @@ pub fn task_matches_desktop_automation_lane(
 
 pub fn desktop_automation_evidence_lines(task: &OrchestratorTaskSnapshot) -> Vec<String> {
     let state = desktop_automation_evidence_state(task);
-    let mut lines = vec![format!("Evidence state: {}", state.label()), state.detail().to_string()];
+    let mut lines = vec![
+        format!("Evidence state: {}", state.label()),
+        state.detail().to_string(),
+    ];
     if let Some(path) = &task.wa_run_path {
         lines.push(format!("WA run artifact: {path}"));
     }
@@ -80,7 +83,9 @@ pub fn desktop_automation_evidence_lines(task: &OrchestratorTaskSnapshot) -> Vec
             })
             .count();
         if evidence_event_count > 0 {
-            lines.push(format!("Live worker evidence updates: {evidence_event_count}"));
+            lines.push(format!(
+                "Live worker evidence updates: {evidence_event_count}"
+            ));
         }
         if !thread.changed_files.is_empty() {
             lines.push(format!(
@@ -165,7 +170,10 @@ pub fn desktop_automation_selected_task_cues(
         artifact_lines.push(format!("NDA facts ready: {path}"));
     }
     if !task.outputs.is_empty() {
-        artifact_lines.push(format!("Reported outputs ready: {}", task.outputs.join(", ")));
+        artifact_lines.push(format!(
+            "Reported outputs ready: {}",
+            task.outputs.join(", ")
+        ));
     }
     if let Some(thread) = &task.live_thread {
         if !thread.changed_files.is_empty() {

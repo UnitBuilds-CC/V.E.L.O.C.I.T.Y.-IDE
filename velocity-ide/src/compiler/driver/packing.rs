@@ -63,11 +63,7 @@ pub fn pack_inputs_nda(inputs_ternary_u32: &[u32]) -> (Vec<u32>, Vec<u32>) {
     (active, pos)
 }
 
-pub fn pack_weights_nda(
-    weights_ternary_bytes: &[u8],
-    k: usize,
-    n: usize,
-) -> (Vec<u8>, Vec<u8>) {
+pub fn pack_weights_nda(weights_ternary_bytes: &[u8], k: usize, n: usize) -> (Vec<u8>, Vec<u8>) {
     let src_u32 = unsafe {
         std::slice::from_raw_parts(
             weights_ternary_bytes.as_ptr() as *const u32,
@@ -122,8 +118,7 @@ pub fn pack_weights_nda(
     let act_bytes = unsafe {
         std::slice::from_raw_parts(active.as_ptr() as *const u8, active.len() * 4).to_vec()
     };
-    let pos_bytes = unsafe {
-        std::slice::from_raw_parts(pos.as_ptr() as *const u8, pos.len() * 4).to_vec()
-    };
+    let pos_bytes =
+        unsafe { std::slice::from_raw_parts(pos.as_ptr() as *const u8, pos.len() * 4).to_vec() };
     (act_bytes, pos_bytes)
 }

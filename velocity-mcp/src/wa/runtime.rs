@@ -41,7 +41,9 @@ fn verification_plan(step: &WaScriptStep) -> Option<(&'static str, Option<&str>)
     if step.action.eq_ignore_ascii_case("focus") {
         Some(("focused", None))
     } else if step.action.eq_ignore_ascii_case("type") {
-        step.value.as_deref().map(|value| ("value_equals", Some(value)))
+        step.value
+            .as_deref()
+            .map(|value| ("value_equals", Some(value)))
     } else {
         None
     }
@@ -290,7 +292,10 @@ pub fn render_script_run_report(report: &WaScriptRunReport) -> String {
     lines.push(format!("Run id: {}", report.run_id));
     lines.push(format!(
         "Succeeded: {} ({}/{} executed, {} verified)",
-        report.succeeded, report.completed_step_count, report.step_count, report.verified_step_count
+        report.succeeded,
+        report.completed_step_count,
+        report.step_count,
+        report.verified_step_count
     ));
     if report.start_step_index > 0 {
         lines.push(format!("Started at step: {}", report.start_step_index + 1));
@@ -428,7 +433,8 @@ mod tests {
             ],
         )
         .unwrap();
-        let script = crate::wa::read_script_report(&root, &root.join(saved.relative_file_path)).unwrap();
+        let script =
+            crate::wa::read_script_report(&root, &root.join(saved.relative_file_path)).unwrap();
 
         let report = build_script_run_report(
             &root,
@@ -471,7 +477,8 @@ mod tests {
                         timeout_ms: 1500,
                         poll_interval_ms: 100,
                         detail: "condition satisfied".to_string(),
-                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda".to_string(),
+                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda"
+                            .to_string(),
                     })
                 } else if step.action == "focus" {
                     Some(crate::wa::WaWindowsWaitReport {
@@ -500,7 +507,8 @@ mod tests {
                         timeout_ms: 1500,
                         poll_interval_ms: 100,
                         detail: "condition satisfied".to_string(),
-                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda".to_string(),
+                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda"
+                            .to_string(),
                     })
                 } else {
                     None
@@ -570,7 +578,8 @@ mod tests {
             ],
         )
         .unwrap();
-        let script = crate::wa::read_script_report(&root, &root.join(saved.relative_file_path)).unwrap();
+        let script =
+            crate::wa::read_script_report(&root, &root.join(saved.relative_file_path)).unwrap();
 
         let report = build_script_run_report(
             &root,
@@ -606,8 +615,10 @@ mod tests {
                         elapsed_ms: 1500,
                         timeout_ms: 1500,
                         poll_interval_ms: 100,
-                        detail: "condition not yet satisfied (observed 'wrong@example.com')".to_string(),
-                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda".to_string(),
+                        detail: "condition not yet satisfied (observed 'wrong@example.com')"
+                            .to_string(),
+                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda"
+                            .to_string(),
                     }))
                 } else {
                     Ok(None)
@@ -622,7 +633,10 @@ mod tests {
         assert_eq!(report.stopped_at_step_index, Some(0));
         assert_eq!(report.steps.len(), 1);
         assert_eq!(report.steps[0].status, "verification_failed");
-        assert_eq!(report.steps[0].verification_status.as_deref(), Some("verification_failed"));
+        assert_eq!(
+            report.steps[0].verification_status.as_deref(),
+            Some("verification_failed")
+        );
     }
 
     #[test]
@@ -683,7 +697,8 @@ mod tests {
             ],
         )
         .unwrap();
-        let script = crate::wa::read_script_report(&root, &root.join(saved.relative_file_path)).unwrap();
+        let script =
+            crate::wa::read_script_report(&root, &root.join(saved.relative_file_path)).unwrap();
 
         let report = build_script_run_report(
             &root,
@@ -726,7 +741,8 @@ mod tests {
                         timeout_ms: 1500,
                         poll_interval_ms: 100,
                         detail: "condition satisfied".to_string(),
-                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda".to_string(),
+                        snapshot_nda_path: ".velocity/wa-snapshots/desktop-auth--login-form.nda"
+                            .to_string(),
                     }))
                 } else {
                     Ok(None)

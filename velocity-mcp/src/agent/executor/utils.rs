@@ -349,7 +349,11 @@ pub fn compress_history(messages: &[ChatMessage], supports_tools: bool) -> Vec<C
                         // Track tool usage
                         if let Some(arr) = m.tool_calls.as_ref().and_then(|v| v.as_array()) {
                             for tc in arr {
-                                if let Some(name) = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()) {
+                                if let Some(name) = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                {
                                     tool_uses.insert(name.to_string());
                                 }
                             }
@@ -488,4 +492,3 @@ pub fn sanitize_chat_token(s: &str) -> String {
     }
     result
 }
-

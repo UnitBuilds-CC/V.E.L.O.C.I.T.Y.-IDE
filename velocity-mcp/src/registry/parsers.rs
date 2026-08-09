@@ -1,6 +1,6 @@
+use crate::wa::{WaNode, WaScriptStep};
 use serde_json::Value;
 use std::error::Error;
-use crate::wa::{WaNode, WaScriptStep};
 
 pub fn parse_wa_nodes(nodes: &[Value]) -> Result<Vec<WaNode>, Box<dyn Error>> {
     let mut parsed_nodes = Vec::with_capacity(nodes.len());
@@ -15,7 +15,10 @@ pub fn parse_wa_nodes(nodes: &[Value]) -> Result<Vec<WaNode>, Box<dyn Error>> {
             })
             .unwrap_or_default();
         parsed_nodes.push(WaNode {
-            id: node["id"].as_str().ok_or("WA node id is required")?.to_string(),
+            id: node["id"]
+                .as_str()
+                .ok_or("WA node id is required")?
+                .to_string(),
             role: node["role"]
                 .as_str()
                 .ok_or("WA node role is required")?

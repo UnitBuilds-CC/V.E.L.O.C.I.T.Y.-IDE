@@ -6,7 +6,11 @@ pub enum LifecycleCallback {
     ConnectedCallback,
     DisconnectedCallback,
     AdoptedCallback,
-    AttributeChangedCallback { name: String, old_value: Option<String>, new_value: Option<String> },
+    AttributeChangedCallback {
+        name: String,
+        old_value: Option<String>,
+        new_value: Option<String>,
+    },
 }
 
 /// A custom element definition with lifecycle callbacks.
@@ -47,29 +51,47 @@ impl CustomElementRegistry {
     }
 
     /// Define a new custom element.
-    pub fn define(&mut self, name: &str, class_name: &str, extends_tag: Option<&str>) -> Result<(), String> {
+    pub fn define(
+        &mut self,
+        name: &str,
+        class_name: &str,
+        extends_tag: Option<&str>,
+    ) -> Result<(), String> {
         if !name.contains('-') {
-            return Err("CustomElementError: Custom element tag name must contain a hyphen".to_string());
+            return Err(
+                "CustomElementError: Custom element tag name must contain a hyphen".to_string(),
+            );
         }
         if self.definitions.contains_key(name) {
             return Err(format!("CustomElementError: '{}' is already defined", name));
         }
         // Reserved names
-        let reserved = ["annotation-xml", "color-profile", "font-face", "font-face-src",
-            "font-face-uri", "font-face-format", "font-face-name", "missing-glyph"];
+        let reserved = [
+            "annotation-xml",
+            "color-profile",
+            "font-face",
+            "font-face-src",
+            "font-face-uri",
+            "font-face-format",
+            "font-face-name",
+            "missing-glyph",
+        ];
         if reserved.contains(&name.to_lowercase().as_str()) {
             return Err(format!("CustomElementError: '{}' is a reserved name", name));
         }
 
-        self.definitions.insert(name.to_string(), CustomElementDefinition {
-            name: name.to_string(),
-            class_name: class_name.to_string(),
-            extends_tag: extends_tag.map(|s| s.to_string()),
-            observed_attributes: Vec::new(),
-            is_constructed: false,
-            pending_callbacks: Vec::new(),
-            shadow_root_mode: None,
-        });
+        self.definitions.insert(
+            name.to_string(),
+            CustomElementDefinition {
+                name: name.to_string(),
+                class_name: class_name.to_string(),
+                extends_tag: extends_tag.map(|s| s.to_string()),
+                observed_attributes: Vec::new(),
+                is_constructed: false,
+                pending_callbacks: Vec::new(),
+                shadow_root_mode: None,
+            },
+        );
 
         // Resolve any whenDefined promises
         if let Some(resolves) = self.when_defined.remove(name) {
@@ -85,8 +107,14 @@ impl CustomElementRegistry {
     }
 
     /// Set observed attributes for a custom element.
-    pub fn set_observed_attributes(&mut self, name: &str, attrs: Vec<String>) -> Result<(), String> {
-        let def = self.definitions.get_mut(name)
+    pub fn set_observed_attributes(
+        &mut self,
+        name: &str,
+        attrs: Vec<String>,
+    ) -> Result<(), String> {
+        let def = self
+            .definitions
+            .get_mut(name)
             .ok_or_else(|| format!("CustomElementError: '{}' not defined", name))?;
         def.observed_attributes = attrs;
         Ok(())
@@ -94,17 +122,23 @@ impl CustomElementRegistry {
 
     /// Queue a connectedCallback for an element.
     pub fn enqueue_connected(&mut self, name: &str) -> Result<(), String> {
-        let def = self.definitions.get_mut(name)
+        let def = self
+            .definitions
+            .get_mut(name)
             .ok_or_else(|| format!("CustomElementError: '{}' not defined", name))?;
-        def.pending_callbacks.push(LifecycleCallback::ConnectedCallback);
+        def.pending_callbacks
+            .push(LifecycleCallback::ConnectedCallback);
         Ok(())
     }
 
     /// Queue a disconnectedCallback for an element.
     pub fn enqueue_disconnected(&mut self, name: &str) -> Result<(), String> {
-        let def = self.definitions.get_mut(name)
+        let def = self
+            .definitions
+            .get_mut(name)
             .ok_or_else(|| format!("CustomElementError: '{}' not defined", name))?;
-        def.pending_callbacks.push(LifecycleCallback::DisconnectedCallback);
+        def.pending_callbacks
+            .push(LifecycleCallback::DisconnectedCallback);
         Ok(())
     }
 
@@ -116,22 +150,26 @@ impl CustomElementRegistry {
         old_value: Option<&str>,
         new_value: Option<&str>,
     ) -> Result<(), String> {
-        let def = self.definitions.get_mut(name)
+        let def = self
+            .definitions
+            .get_mut(name)
             .ok_or_else(|| format!("CustomElementError: '{}' not defined", name))?;
         if !def.observed_attributes.contains(&attr_name.to_string()) {
             return Ok(()); // Not observed, skip
         }
-        def.pending_callbacks.push(LifecycleCallback::AttributeChangedCallback {
-            name: attr_name.to_string(),
-            old_value: old_value.map(|s| s.to_string()),
-            new_value: new_value.map(|s| s.to_string()),
-        });
+        def.pending_callbacks
+            .push(LifecycleCallback::AttributeChangedCallback {
+                name: attr_name.to_string(),
+                old_value: old_value.map(|s| s.to_string()),
+                new_value: new_value.map(|s| s.to_string()),
+            });
         Ok(())
     }
 
     /// Drain and return pending lifecycle callbacks for an element.
     pub fn drain_callbacks(&mut self, name: &str) -> Vec<LifecycleCallback> {
-        self.definitions.get_mut(name)
+        self.definitions
+            .get_mut(name)
             .map(|def| std::mem::take(&mut def.pending_callbacks))
             .unwrap_or_default()
     }
@@ -162,7 +200,8 @@ impl CustomElementRegistry {
             return Ok(false); // Already upgraded
         }
         def.is_constructed = true;
-        def.pending_callbacks.push(LifecycleCallback::ConnectedCallback);
+        def.pending_callbacks
+            .push(LifecycleCallback::ConnectedCallback);
         Ok(true)
     }
 
@@ -206,7 +245,8 @@ mod tests {
     fn test_observed_attributes() {
         let mut reg = CustomElementRegistry::new();
         reg.define("my-el", "MyEl", None).unwrap();
-        reg.set_observed_attributes("my-el", vec!["color".to_string(), "size".to_string()]).unwrap();
+        reg.set_observed_attributes("my-el", vec!["color".to_string(), "size".to_string()])
+            .unwrap();
         let def = reg.get("my-el").unwrap();
         assert_eq!(def.observed_attributes, vec!["color", "size"]);
     }
@@ -227,12 +267,18 @@ mod tests {
     fn test_attribute_changed_observed() {
         let mut reg = CustomElementRegistry::new();
         reg.define("my-el", "MyEl", None).unwrap();
-        reg.set_observed_attributes("my-el", vec!["color".to_string()]).unwrap();
-        reg.enqueue_attribute_changed("my-el", "color", Some("red"), Some("blue")).unwrap();
+        reg.set_observed_attributes("my-el", vec!["color".to_string()])
+            .unwrap();
+        reg.enqueue_attribute_changed("my-el", "color", Some("red"), Some("blue"))
+            .unwrap();
         let callbacks = reg.drain_callbacks("my-el");
         assert_eq!(callbacks.len(), 1);
         match &callbacks[0] {
-            LifecycleCallback::AttributeChangedCallback { name, old_value, new_value } => {
+            LifecycleCallback::AttributeChangedCallback {
+                name,
+                old_value,
+                new_value,
+            } => {
                 assert_eq!(name, "color");
                 assert_eq!(old_value.as_deref(), Some("red"));
                 assert_eq!(new_value.as_deref(), Some("blue"));
@@ -245,8 +291,10 @@ mod tests {
     fn test_attribute_changed_not_observed() {
         let mut reg = CustomElementRegistry::new();
         reg.define("my-el", "MyEl", None).unwrap();
-        reg.set_observed_attributes("my-el", vec!["color".to_string()]).unwrap();
-        reg.enqueue_attribute_changed("my-el", "size", None, Some("large")).unwrap();
+        reg.set_observed_attributes("my-el", vec!["color".to_string()])
+            .unwrap();
+        reg.enqueue_attribute_changed("my-el", "size", None, Some("large"))
+            .unwrap();
         let callbacks = reg.drain_callbacks("my-el");
         assert_eq!(callbacks.len(), 0); // 'size' not observed
     }

@@ -24,14 +24,12 @@ pub struct SemanticHit {
 }
 
 /// TF-IDF semantic search index for a workspace.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SemanticIndex {
     documents: Vec<Document>,
     idf: HashMap<String, f32>,
     total_docs: usize,
 }
-
 
 impl SemanticIndex {
     pub fn new() -> Self {
@@ -251,9 +249,9 @@ fn walk_index(root: &Path, dir: &Path, files: &mut Vec<PathBuf>) {
 /// Check if a file is worth indexing by extension.
 fn is_indexable(name: &str) -> bool {
     const EXTENSIONS: &[&str] = &[
-        "rs", "py", "js", "ts", "tsx", "jsx", "go", "java", "c", "cpp", "h",
-        "hpp", "cs", "rb", "swift", "kt", "scala", "toml", "yaml", "yml",
-        "json", "md", "txt", "sql", "sh", "bash", "zsh", "html", "css",
+        "rs", "py", "js", "ts", "tsx", "jsx", "go", "java", "c", "cpp", "h", "hpp", "cs", "rb",
+        "swift", "kt", "scala", "toml", "yaml", "yml", "json", "md", "txt", "sql", "sh", "bash",
+        "zsh", "html", "css",
     ];
     name.rsplit('.')
         .next()
@@ -287,16 +285,24 @@ mod tests {
             documents: vec![
                 Document {
                     path: PathBuf::from("auth.rs"),
-                    terms: [("auth".into(), 3.0), ("login".into(), 2.0), ("token".into(), 1.5)]
-                        .into_iter()
-                        .collect(),
+                    terms: [
+                        ("auth".into(), 3.0),
+                        ("login".into(), 2.0),
+                        ("token".into(), 1.5),
+                    ]
+                    .into_iter()
+                    .collect(),
                     magnitude: 4.0,
                 },
                 Document {
                     path: PathBuf::from("db.rs"),
-                    terms: [("database".into(), 3.0), ("query".into(), 2.0), ("pool".into(), 1.5)]
-                        .into_iter()
-                        .collect(),
+                    terms: [
+                        ("database".into(), 3.0),
+                        ("query".into(), 2.0),
+                        ("pool".into(), 1.5),
+                    ]
+                    .into_iter()
+                    .collect(),
                     magnitude: 4.0,
                 },
             ],

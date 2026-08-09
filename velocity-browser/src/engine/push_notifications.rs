@@ -80,7 +80,11 @@ impl PushNotificationManager {
 
     /// Unsubscribe a push subscription by endpoint.
     pub fn unsubscribe(&mut self, endpoint: &str) -> bool {
-        if let Some(sub) = self.subscriptions.iter_mut().find(|s| s.endpoint == endpoint) {
+        if let Some(sub) = self
+            .subscriptions
+            .iter_mut()
+            .find(|s| s.endpoint == endpoint)
+        {
             sub.active = false;
             true
         } else {
@@ -110,7 +114,14 @@ impl PushNotificationManager {
     }
 
     /// Show a notification.
-    pub fn show_notification(&mut self, title: &str, body: &str, icon: Option<&str>, tag: Option<&str>, require_interaction: bool) -> u32 {
+    pub fn show_notification(
+        &mut self,
+        title: &str,
+        body: &str,
+        icon: Option<&str>,
+        tag: Option<&str>,
+        require_interaction: bool,
+    ) -> u32 {
         let id = self.next_notification_id;
         self.next_notification_id += 1;
         let now = std::time::SystemTime::now()
@@ -160,7 +171,10 @@ impl PushNotificationManager {
     /// Decrypt a push message payload using the subscription's auth secret.
     /// Uses HMAC-SHA256 from the crypto engine for authentication.
     pub fn decrypt_push_payload(&self, endpoint: &str, encrypted_data: &[u8]) -> Option<Vec<u8>> {
-        let sub = self.subscriptions.iter().find(|s| s.endpoint == endpoint && s.active)?;
+        let sub = self
+            .subscriptions
+            .iter()
+            .find(|s| s.endpoint == endpoint && s.active)?;
         let key = sub.auth_secret.as_bytes();
         // Simple authenticated decryption: verify HMAC then XOR-decrypt
         if encrypted_data.len() < 32 {
@@ -216,7 +230,11 @@ mod tests {
     fn test_subscribe_and_active() {
         let mut mgr = PushNotificationManager::new();
         mgr.subscribe("https://push.example.com/sub1", "p256dh_key", "auth_secret");
-        mgr.subscribe("https://push.example.com/sub2", "p256dh_key2", "auth_secret2");
+        mgr.subscribe(
+            "https://push.example.com/sub2",
+            "p256dh_key2",
+            "auth_secret2",
+        );
         assert_eq!(mgr.active_subscriptions().len(), 2);
         mgr.unsubscribe("https://push.example.com/sub1");
         assert_eq!(mgr.active_subscriptions().len(), 1);
@@ -225,7 +243,13 @@ mod tests {
     #[test]
     fn test_show_and_dismiss_notification() {
         let mut mgr = PushNotificationManager::new();
-        let id1 = mgr.show_notification("Alert", "Something happened", None, Some("alert-tag"), false);
+        let id1 = mgr.show_notification(
+            "Alert",
+            "Something happened",
+            None,
+            Some("alert-tag"),
+            false,
+        );
         let id2 = mgr.show_notification("Info", "FYI", Some("/icon.png"), None, true);
         assert_eq!(mgr.active_notifications().len(), 2);
         mgr.dismiss_notification(id1);

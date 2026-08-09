@@ -1,8 +1,8 @@
+use crate::agent::nda::{decode_nda_text, encode_nda_text};
+use crate::agent::AiProvider;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
-use crate::agent::AiProvider;
-use crate::agent::nda::{decode_nda_text, encode_nda_text};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExpertMember {
@@ -69,7 +69,11 @@ impl ExpertMember {
             .max()
     }
 
-    pub fn resolve_effective_provider_and_model(&self, default_provider: AiProvider, default_model: &str) -> (AiProvider, String) {
+    pub fn resolve_effective_provider_and_model(
+        &self,
+        default_provider: AiProvider,
+        default_model: &str,
+    ) -> (AiProvider, String) {
         if self.model_id.trim().is_empty() {
             (default_provider, default_model.to_string())
         } else {
@@ -88,7 +92,13 @@ pub struct ExpertTeam {
 }
 
 impl ExpertTeam {
-    pub fn new(id: &str, name: &str, description: &str, members: Vec<ExpertMember>, is_preset: bool) -> Self {
+    pub fn new(
+        id: &str,
+        name: &str,
+        description: &str,
+        members: Vec<ExpertMember>,
+        is_preset: bool,
+    ) -> Self {
         Self {
             id: id.to_string(),
             name: name.to_string(),
@@ -114,7 +124,9 @@ impl ExpertTeam {
         let goal_lower = goal.to_lowercase();
         if let Some(member) = self.members.iter().find(|m| {
             goal_lower.contains(&m.role.to_lowercase())
-                || m.scope_patterns.iter().any(|p| goal_lower.contains(&p.to_lowercase()))
+                || m.scope_patterns
+                    .iter()
+                    .any(|p| goal_lower.contains(&p.to_lowercase()))
         }) {
             return Some(member);
         }
@@ -340,19 +352,47 @@ pub fn serialize_expert_teams_nda(teams: &[ExpertTeam]) -> String {
     ];
     for (ti, team) in teams.iter().enumerate() {
         lines.push(format!("team\t{}\tid\t{}", ti, encode_nda_text(&team.id)));
-        lines.push(format!("team\t{}\tname\t{}", ti, encode_nda_text(&team.name)));
+        lines.push(format!(
+            "team\t{}\tname\t{}",
+            ti,
+            encode_nda_text(&team.name)
+        ));
         lines.push(format!(
             "team\t{}\tdescription\t{}",
             ti,
             encode_nda_text(&team.description)
         ));
         lines.push(format!("team\t{}\tis_preset\t{}", ti, team.is_preset));
-        lines.push(format!("team\t{}\tmember_count\t{}", ti, team.members.len()));
+        lines.push(format!(
+            "team\t{}\tmember_count\t{}",
+            ti,
+            team.members.len()
+        ));
         for (mi, m) in team.members.iter().enumerate() {
-            lines.push(format!("member\t{}\t{}\tid\t{}", ti, mi, encode_nda_text(&m.id)));
-            lines.push(format!("member\t{}\t{}\tname\t{}", ti, mi, encode_nda_text(&m.name)));
-            lines.push(format!("member\t{}\t{}\trole\t{}", ti, mi, encode_nda_text(&m.role)));
-            lines.push(format!("member\t{}\t{}\tprovider\t{}", ti, mi, m.provider.slug()));
+            lines.push(format!(
+                "member\t{}\t{}\tid\t{}",
+                ti,
+                mi,
+                encode_nda_text(&m.id)
+            ));
+            lines.push(format!(
+                "member\t{}\t{}\tname\t{}",
+                ti,
+                mi,
+                encode_nda_text(&m.name)
+            ));
+            lines.push(format!(
+                "member\t{}\t{}\trole\t{}",
+                ti,
+                mi,
+                encode_nda_text(&m.role)
+            ));
+            lines.push(format!(
+                "member\t{}\t{}\tprovider\t{}",
+                ti,
+                mi,
+                m.provider.slug()
+            ));
             lines.push(format!(
                 "member\t{}\t{}\tmodel_id\t{}",
                 ti,
@@ -421,14 +461,17 @@ pub fn parse_expert_teams_nda(text: &str) -> Vec<ExpertTeam> {
     if !text.trim_start().starts_with("expert-teams version 1") {
         return Vec::new();
     }
-    let mut teams: std::collections::BTreeMap<usize, TeamBuilder> = std::collections::BTreeMap::new();
+    let mut teams: std::collections::BTreeMap<usize, TeamBuilder> =
+        std::collections::BTreeMap::new();
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("team\t") {
             let parts: Vec<&str> = rest.splitn(3, '\t').collect();
             if parts.len() != 3 {
                 continue;
             }
-            let Ok(ti) = parts[0].parse::<usize>() else { continue };
+            let Ok(ti) = parts[0].parse::<usize>() else {
+                continue;
+            };
             let field = parts[1];
             let value = parts[2];
             let team = teams.entry(ti).or_default();
@@ -446,8 +489,12 @@ pub fn parse_expert_teams_nda(text: &str) -> Vec<ExpertTeam> {
             if parts.len() != 4 {
                 continue;
             }
-            let Ok(ti) = parts[0].parse::<usize>() else { continue };
-            let Ok(mi) = parts[1].parse::<usize>() else { continue };
+            let Ok(ti) = parts[0].parse::<usize>() else {
+                continue;
+            };
+            let Ok(mi) = parts[1].parse::<usize>() else {
+                continue;
+            };
             let field = parts[2];
             let value = parts[3];
             let member = teams.entry(ti).or_default().members.entry(mi).or_default();
@@ -467,8 +514,12 @@ pub fn parse_expert_teams_nda(text: &str) -> Vec<ExpertTeam> {
             if parts.len() != 4 {
                 continue;
             }
-            let Ok(ti) = parts[0].parse::<usize>() else { continue };
-            let Ok(mi) = parts[1].parse::<usize>() else { continue };
+            let Ok(ti) = parts[0].parse::<usize>() else {
+                continue;
+            };
+            let Ok(mi) = parts[1].parse::<usize>() else {
+                continue;
+            };
             let field = parts[2];
             let value = decode_nda_text(parts[3]);
             let member = teams.entry(ti).or_default().members.entry(mi).or_default();

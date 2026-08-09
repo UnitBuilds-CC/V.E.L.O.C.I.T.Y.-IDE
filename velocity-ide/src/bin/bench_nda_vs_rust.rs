@@ -14,12 +14,12 @@
 
 #![allow(warnings)]
 
-use std::time::{Duration, Instant};
 use std::hint::black_box;
+use std::time::{Duration, Instant};
 
 // We reference the main crate as a library
-use velocity_ide::nda::{NdaMatrix, NDA_V2_QUAD, quantize_activations_v2_quad};
-use velocity_ide::nda_int::{NdaVec, nda_gemv_nda_to_nda, rms_norm_nda, combine_log2_scales};
+use velocity_ide::nda::{quantize_activations_v2_quad, NdaMatrix, NDA_V2_QUAD};
+use velocity_ide::nda_int::{combine_log2_scales, nda_gemv_nda_to_nda, rms_norm_nda, NdaVec};
 use velocity_ide::sandbox::NdaSandbox;
 use velocity_ide::site_map::{NdaNode, SiteMap};
 
@@ -61,7 +61,9 @@ fn bench_1_counting_loop() {
     // ── Rust: Native loop ────────────────────────────────────────────────────
     // Warmup
     let mut sum: u64 = 0;
-    for i in 0..n { sum = sum.wrapping_add(i); }
+    for i in 0..n {
+        sum = sum.wrapping_add(i);
+    }
     black_box(sum);
 
     let t0 = Instant::now();
@@ -78,7 +80,7 @@ fn bench_1_counting_loop() {
     // NDA's "loop iteration" = one vector residual add per step.
     // We do N/128 iterations of 128-wide vector ops to process N elements.
     let vec_width = 128usize;
-    let nda_iters_count = n as usize / vec_width;  // ~7812 iterations
+    let nda_iters_count = n as usize / vec_width; // ~7812 iterations
 
     let mut acc_vec = NdaVec::zeros(vec_width, 0);
     let delta = NdaVec::from_i32_slice(&vec![1i32; vec_width], 0);
@@ -99,10 +101,19 @@ fn bench_1_counting_loop() {
     let nda_dur = t1.elapsed() / iters;
 
     println!("│                                                                 │");
-    println!("│  Rust native loop (u64 add)  : {:>12?}                     │", rust_dur);
-    println!("│  NDA vector-add equiv        : {:>12?}                     │", nda_dur);
+    println!(
+        "│  Rust native loop (u64 add)  : {:>12?}                     │",
+        rust_dur
+    );
+    println!(
+        "│  NDA vector-add equiv        : {:>12?}                     │",
+        nda_dur
+    );
     let ratio = nda_dur.as_nanos() as f64 / rust_dur.as_nanos().max(1) as f64;
-    println!("│  Ratio (NDA / Rust)          : {:>8.1}x slower               │", ratio);
+    println!(
+        "│  Ratio (NDA / Rust)          : {:>8.1}x slower               │",
+        ratio
+    );
     println!("│                                                                 │");
     println!("│  ⚠ NDA is NOT designed for scalar loops — it's a vector engine │");
     println!("│    This shows the overhead of NDA's encode/decode per step.     │");
@@ -126,7 +137,9 @@ fn bench_2_vector_accumulation() {
     let rust_delta: Vec<f32> = (0..width).map(|i| (i as f32) * 0.001).collect();
     let mut rust_acc = vec![0.0f32; width];
     for _ in 0..steps {
-        for j in 0..width { rust_acc[j] += rust_delta[j]; }
+        for j in 0..width {
+            rust_acc[j] += rust_delta[j];
+        }
     }
     black_box(&rust_acc);
 
@@ -134,7 +147,9 @@ fn bench_2_vector_accumulation() {
     for _ in 0..iters {
         let mut acc = vec![0.0f32; width];
         for _ in 0..steps {
-            for j in 0..width { acc[j] += rust_delta[j]; }
+            for j in 0..width {
+                acc[j] += rust_delta[j];
+            }
         }
         black_box(&acc);
     }
@@ -159,13 +174,25 @@ fn bench_2_vector_accumulation() {
     let nda_dur = t1.elapsed() / iters;
 
     println!("│                                                                 │");
-    println!("│  Rust f32 vector add         : {:>12?}                     │", rust_dur);
-    println!("│  NDA vector add (2-bit)      : {:>12?}                     │", nda_dur);
+    println!(
+        "│  Rust f32 vector add         : {:>12?}                     │",
+        rust_dur
+    );
+    println!(
+        "│  NDA vector add (2-bit)      : {:>12?}                     │",
+        nda_dur
+    );
     let ratio = nda_dur.as_nanos() as f64 / rust_dur.as_nanos().max(1) as f64;
     if ratio > 1.0 {
-        println!("│  Ratio                       : {:>8.1}x slower               │", ratio);
+        println!(
+            "│  Ratio                       : {:>8.1}x slower               │",
+            ratio
+        );
     } else {
-        println!("│  Ratio                       : {:>8.1}x FASTER               │", 1.0/ratio);
+        println!(
+            "│  Ratio                       : {:>8.1}x FASTER               │",
+            1.0 / ratio
+        );
     }
     println!("│                                                                 │");
     println!("│  NDA trades precision for throughput: 2 bits vs 32 bits.        │");
@@ -187,24 +214,25 @@ fn bench_3_matrix_chain() {
     // Build 24-layer shapes: 896→128, 22×(128→128), 128→896
     let mut shapes: Vec<(usize, usize)> = Vec::new();
     shapes.push((128, 896));
-    for _ in 0..22 { shapes.push((128, 128)); }
+    for _ in 0..22 {
+        shapes.push((128, 128));
+    }
     shapes.push((896, 128));
 
     // ── NDA: Native GEMV chain (popcount kernel) ─────────────────────────────
-    let nda_mats: Vec<NdaMatrix> = shapes.iter().map(|&(r, c)| {
-        let bm = r * ((c + 7) / 8);
-        NdaMatrix::new_quad(
-            r,
-            c,
-            1.0,
-            vec![0xAA; bm],
-            vec![0x55; bm],
-        )
-    }).collect();
+    let nda_mats: Vec<NdaMatrix> = shapes
+        .iter()
+        .map(|&(r, c)| {
+            let bm = r * ((c + 7) / 8);
+            NdaMatrix::new_quad(r, c, 1.0, vec![0xAA; bm], vec![0x55; bm])
+        })
+        .collect();
 
     // Warmup
     let mut v = NdaVec::from_f32_slice(&input);
-    for mat in &nda_mats { v = nda_gemv_nda_to_nda(mat, &v); }
+    for mat in &nda_mats {
+        v = nda_gemv_nda_to_nda(mat, &v);
+    }
     black_box(&v);
 
     let t0 = Instant::now();
@@ -228,7 +256,9 @@ fn bench_3_matrix_chain() {
         for row in 0..r {
             let mut sum = 0.0f32;
             let base = row * c;
-            for col in 0..c { sum += mat[base + col] * fv[col]; }
+            for col in 0..c {
+                sum += mat[base + col] * fv[col];
+            }
             out[row] = sum;
         }
         fv = out;
@@ -244,7 +274,9 @@ fn bench_3_matrix_chain() {
             for row in 0..r {
                 let mut sum = 0.0f32;
                 let base = row * c;
-                for col in 0..c { sum += mat[base + col] * vec[col]; }
+                for col in 0..c {
+                    sum += mat[base + col] * vec[col];
+                }
                 out[row] = sum;
             }
             vec = out;
@@ -254,22 +286,43 @@ fn bench_3_matrix_chain() {
     let f32_dur = t1.elapsed() / iters;
 
     println!("│                                                                 │");
-    println!("│  NDA popcount GEMV (2-bit)   : {:>12?}                     │", nda_dur);
-    println!("│  Rust f32 scalar GEMV        : {:>12?}                     │", f32_dur);
+    println!(
+        "│  NDA popcount GEMV (2-bit)   : {:>12?}                     │",
+        nda_dur
+    );
+    println!(
+        "│  Rust f32 scalar GEMV        : {:>12?}                     │",
+        f32_dur
+    );
     let speedup = f32_dur.as_nanos() as f64 / nda_dur.as_nanos().max(1) as f64;
     if speedup >= 1.0 {
-        println!("│  NDA Speedup vs Rust f32     : {:>8.1}x FASTER ★            │", speedup);
+        println!(
+            "│  NDA Speedup vs Rust f32     : {:>8.1}x FASTER ★            │",
+            speedup
+        );
     } else {
-        println!("│  NDA vs Rust f32             : {:>8.1}x slower               │", 1.0/speedup);
+        println!(
+            "│  NDA vs Rust f32             : {:>8.1}x slower               │",
+            1.0 / speedup
+        );
     }
     println!("│                                                                 │");
 
     // Memory comparison
     let nda_bytes: usize = nda_mats.iter().map(|m| m.sign.len() + m.extra.len()).sum();
     let f32_bytes: usize = f32_mats.iter().map(|m| m.len() * 4).sum();
-    println!("│  NDA memory (2-bit weights)  : {:>8.1} KB                     │", nda_bytes as f64 / 1024.0);
-    println!("│  Rust f32 memory             : {:>8.1} KB                     │", f32_bytes as f64 / 1024.0);
-    println!("│  Memory savings              : {:>8.1}x                       │", f32_bytes as f64 / nda_bytes.max(1) as f64);
+    println!(
+        "│  NDA memory (2-bit weights)  : {:>8.1} KB                     │",
+        nda_bytes as f64 / 1024.0
+    );
+    println!(
+        "│  Rust f32 memory             : {:>8.1} KB                     │",
+        f32_bytes as f64 / 1024.0
+    );
+    println!(
+        "│  Memory savings              : {:>8.1}x                       │",
+        f32_bytes as f64 / nda_bytes.max(1) as f64
+    );
     println!("│                                                                 │");
     println!("│  ★ NDA trades precision for speed: 2 bits = no multiplications │");
     println!("│    GEMV becomes XOR + popcount — pure integer, SIMD-friendly.  │");
@@ -293,7 +346,9 @@ fn bench_4_popcount_throughput() {
 
     // ── NDA-style: XOR + popcount (this is the core GEMV kernel) ─────────────
     let mut total_pop = 0u64;
-    for i in 0..n_bytes { total_pop += (data_a[i] ^ data_b[i]).count_ones() as u64; }
+    for i in 0..n_bytes {
+        total_pop += (data_a[i] ^ data_b[i]).count_ones() as u64;
+    }
     black_box(total_pop);
 
     let t0 = Instant::now();
@@ -305,30 +360,43 @@ fn bench_4_popcount_throughput() {
         black_box(pop);
     }
     let pop_dur = t0.elapsed() / iters;
-    let pop_gops = (n_bytes * 8) as f64 / pop_dur.as_nanos() as f64;  // bits/ns = Gbps
+    let pop_gops = (n_bytes * 8) as f64 / pop_dur.as_nanos() as f64; // bits/ns = Gbps
 
     // ── Rust f32: Multiply-add (equivalent dense operation) ──────────────────
     let fa: Vec<f32> = (0..n_bytes).map(|i| (i as f32) * 0.001).collect();
     let fb: Vec<f32> = (0..n_bytes).map(|i| (i as f32) * 0.002).collect();
 
     let mut fma_sum = 0.0f32;
-    for i in 0..n_bytes { fma_sum += fa[i] * fb[i]; }
+    for i in 0..n_bytes {
+        fma_sum += fa[i] * fb[i];
+    }
     black_box(fma_sum);
 
     let t1 = Instant::now();
     for _ in 0..iters {
         let mut s = 0.0f32;
-        for i in 0..n_bytes { s += fa[i] * fb[i]; }
+        for i in 0..n_bytes {
+            s += fa[i] * fb[i];
+        }
         black_box(s);
     }
     let fma_dur = t1.elapsed() / iters;
-    let fma_gops = n_bytes as f64 / fma_dur.as_nanos() as f64;  // ops/ns = Gops
+    let fma_gops = n_bytes as f64 / fma_dur.as_nanos() as f64; // ops/ns = Gops
 
     println!("│                                                                 │");
-    println!("│  XOR + popcount (1M bytes)   : {:>12?}  ({:.1} Gbit/s)  │", pop_dur, pop_gops);
-    println!("│  f32 multiply-add (1M elems) : {:>12?}  ({:.1} Gflop/s) │", fma_dur, fma_gops);
+    println!(
+        "│  XOR + popcount (1M bytes)   : {:>12?}  ({:.1} Gbit/s)  │",
+        pop_dur, pop_gops
+    );
+    println!(
+        "│  f32 multiply-add (1M elems) : {:>12?}  ({:.1} Gflop/s) │",
+        fma_dur, fma_gops
+    );
     let speedup = fma_dur.as_nanos() as f64 / pop_dur.as_nanos().max(1) as f64;
-    println!("│  Popcount throughput advantage: {:>8.1}x                       │", speedup);
+    println!(
+        "│  Popcount throughput advantage: {:>8.1}x                       │",
+        speedup
+    );
     println!("│                                                                 │");
     println!("│  Each NDA byte processes 8 elements simultaneously.            │");
     println!("│  Popcount is a single CPU instruction (POPCNT) on x86.         │");
@@ -352,13 +420,19 @@ fn bench_5_sandbox_vs_direct() {
     // Build a small 4-layer program
     let shapes = vec![(128usize, 896usize), (128, 128), (128, 128), (896, 128)];
 
-    let nodes: Vec<NdaNode> = shapes.iter().map(|&(r, c)| {
-        let bm = r * ((c + 7) / 8);
-        NdaNode::Matrix {
-            rows: r as u16, cols: c as u16, scale: 0,
-            sign: vec![0xAA; bm], extra: vec![0x55; bm],
-        }
-    }).collect();
+    let nodes: Vec<NdaNode> = shapes
+        .iter()
+        .map(|&(r, c)| {
+            let bm = r * ((c + 7) / 8);
+            NdaNode::Matrix {
+                rows: r as u16,
+                cols: c as u16,
+                scale: 0,
+                sign: vec![0xAA; bm],
+                extra: vec![0x55; bm],
+            }
+        })
+        .collect();
 
     // Warmup
     let _ = NdaSandbox::run(&nodes, &input, &site_map);
@@ -372,19 +446,18 @@ fn bench_5_sandbox_vs_direct() {
     let sandbox_dur = t0.elapsed() / iters;
 
     // ── Direct Rust calls (same NDA kernels, no interpreter) ─────────────────
-    let nda_mats: Vec<NdaMatrix> = shapes.iter().map(|&(r, c)| {
-        let bm = r * ((c + 7) / 8);
-        NdaMatrix::new_quad(
-            r,
-            c,
-            1.0,
-            vec![0xAA; bm],
-            vec![0x55; bm],
-        )
-    }).collect();
+    let nda_mats: Vec<NdaMatrix> = shapes
+        .iter()
+        .map(|&(r, c)| {
+            let bm = r * ((c + 7) / 8);
+            NdaMatrix::new_quad(r, c, 1.0, vec![0xAA; bm], vec![0x55; bm])
+        })
+        .collect();
 
     let mut v = NdaVec::from_f32_slice(&input);
-    for mat in &nda_mats { v = nda_gemv_nda_to_nda(mat, &v); }
+    for mat in &nda_mats {
+        v = nda_gemv_nda_to_nda(mat, &v);
+    }
     black_box(&v);
 
     let t1 = Instant::now();
@@ -397,12 +470,22 @@ fn bench_5_sandbox_vs_direct() {
     }
     let direct_dur = t1.elapsed() / iters;
 
-    let overhead = (sandbox_dur.as_nanos() as f64 / direct_dur.as_nanos().max(1) as f64 - 1.0) * 100.0;
+    let overhead =
+        (sandbox_dur.as_nanos() as f64 / direct_dur.as_nanos().max(1) as f64 - 1.0) * 100.0;
 
     println!("│                                                                 │");
-    println!("│  NDA Sandbox (interpreted)   : {:>12?}                     │", sandbox_dur);
-    println!("│  NDA Direct Rust calls       : {:>12?}                     │", direct_dur);
-    println!("│  Sandbox overhead            : {:>8.1}%                       │", overhead);
+    println!(
+        "│  NDA Sandbox (interpreted)   : {:>12?}                     │",
+        sandbox_dur
+    );
+    println!(
+        "│  NDA Direct Rust calls       : {:>12?}                     │",
+        direct_dur
+    );
+    println!(
+        "│  Sandbox overhead            : {:>8.1}%                       │",
+        overhead
+    );
     println!("│                                                                 │");
     println!("│  The sandbox adds catch_unwind + node dispatch overhead.       │");
     println!("│  Core NDA kernels run at the same speed in both paths.         │");
@@ -423,25 +506,31 @@ fn bench_5_sandbox_vs_direct() {
 // We report: compile time (once), per-execution time, and break-even point.
 
 fn bench_6_jit_vs_rust() {
-    use velocity_ide::compiler::nda_jit;
     use std::sync::Arc;
+    use velocity_ide::compiler::nda_jit;
 
     println!("┌─────────────────────────────────────────────────────────────────┐");
     println!("│  Benchmark 6: JIT vs Interpreter vs Native Rust (4-Layer GEMV) │");
     println!("├─────────────────────────────────────────────────────────────────┤");
 
-    let iters   = 200usize;
-    let input   = vec![1.0f32; 896];
-    let shapes  = vec![(128usize, 896usize), (128, 128), (128, 128), (896, 128)];
+    let iters = 200usize;
+    let input = vec![1.0f32; 896];
+    let shapes = vec![(128usize, 896usize), (128, 128), (128, 128), (896, 128)];
 
     // ── Build shared NDA node list ──────────────────────────────────────────
-    let nodes: Vec<NdaNode> = shapes.iter().map(|&(r, c)| {
-        let bm = r * ((c + 7) / 8);
-        NdaNode::Matrix {
-            rows: r as u16, cols: c as u16, scale: 0,
-            sign: vec![0xAA; bm], extra: vec![0x55; bm],
-        }
-    }).collect();
+    let nodes: Vec<NdaNode> = shapes
+        .iter()
+        .map(|&(r, c)| {
+            let bm = r * ((c + 7) / 8);
+            NdaNode::Matrix {
+                rows: r as u16,
+                cols: c as u16,
+                scale: 0,
+                sign: vec![0xAA; bm],
+                extra: vec![0x55; bm],
+            }
+        })
+        .collect();
 
     let sm_dir = std::env::temp_dir().join("bench6_sm");
     let sm = SiteMap::open(&sm_dir, 0).unwrap();
@@ -450,7 +539,7 @@ fn bench_6_jit_vs_rust() {
     // A) NDA JIT — compile phase
     // ══════════════════════════════════════════════════════════════════════
     let t_compile = Instant::now();
-    let jit_prog  = nda_jit::compile(&nodes);
+    let jit_prog = nda_jit::compile(&nodes);
     let compile_us = t_compile.elapsed().as_micros() as u64;
 
     // Warmup
@@ -481,20 +570,27 @@ fn bench_6_jit_vs_rust() {
     // ══════════════════════════════════════════════════════════════════════
     // C) Direct NDA kernel calls (no interpreter, no JIT wrapper)
     // ══════════════════════════════════════════════════════════════════════
-    let nda_mats: Vec<NdaMatrix> = shapes.iter().map(|&(r, c)| {
-        let bm = r * ((c + 7) / 8);
-        NdaMatrix::new_quad(r, c, 1.0, vec![0xAA; bm], vec![0x55; bm])
-    }).collect();
+    let nda_mats: Vec<NdaMatrix> = shapes
+        .iter()
+        .map(|&(r, c)| {
+            let bm = r * ((c + 7) / 8);
+            NdaMatrix::new_quad(r, c, 1.0, vec![0xAA; bm], vec![0x55; bm])
+        })
+        .collect();
 
     // Warmup
     let mut wv = NdaVec::from_f32_slice(&input);
-    for m in &nda_mats { wv = nda_gemv_nda_to_nda(m, &wv); }
+    for m in &nda_mats {
+        wv = nda_gemv_nda_to_nda(m, &wv);
+    }
     black_box(&wv);
 
     let t2 = Instant::now();
     for _ in 0..iters {
         let mut v = NdaVec::from_f32_slice(&input);
-        for m in &nda_mats { v = nda_gemv_nda_to_nda(m, &v); }
+        for m in &nda_mats {
+            v = nda_gemv_nda_to_nda(m, &v);
+        }
         black_box(&v);
     }
     let direct_nda_dur = t2.elapsed() / iters as u32;
@@ -502,9 +598,7 @@ fn bench_6_jit_vs_rust() {
     // ══════════════════════════════════════════════════════════════════════
     // D) Rust f32 scalar GEMV (same layers, 32-bit weights)
     // ══════════════════════════════════════════════════════════════════════
-    let f32_mats: Vec<Vec<f32>> = shapes.iter()
-        .map(|&(r, c)| vec![0.5f32; r * c])
-        .collect();
+    let f32_mats: Vec<Vec<f32>> = shapes.iter().map(|&(r, c)| vec![0.5f32; r * c]).collect();
 
     // Warmup
     let mut fv = input.clone();
@@ -513,7 +607,9 @@ fn bench_6_jit_vs_rust() {
         for row in 0..r {
             let base = row * c;
             let mut s = 0.0f32;
-            for col in 0..c { s += f32_mats[i][base + col] * fv[col]; }
+            for col in 0..c {
+                s += f32_mats[i][base + col] * fv[col];
+            }
             out[row] = s;
         }
         fv = out;
@@ -528,7 +624,9 @@ fn bench_6_jit_vs_rust() {
             for row in 0..r {
                 let base = row * c;
                 let mut s = 0.0f32;
-                for col in 0..c { s += f32_mats[i][base + col] * v[col]; }
+                for col in 0..c {
+                    s += f32_mats[i][base + col] * v[col];
+                }
                 out[row] = s;
             }
             v = out;
@@ -569,55 +667,106 @@ fn bench_6_jit_vs_rust() {
     // Results
     // ══════════════════════════════════════════════════════════════════════
     println!("│                                                                 │");
-    println!("│  [A] NDA JIT (closure + AVX2)   : {:>12?}                │", jit_dur);
-    println!("│  [B] NDA Sandbox (interpreted)  : {:>12?}                │", sandbox_dur);
-    println!("│  [C] NDA direct kernel calls    : {:>12?}                │", direct_nda_dur);
-    println!("│  [D] Rust f32 scalar GEMV       : {:>12?}                │", rust_f32_dur);
-    println!("│  [E] JIT Sandbox (Compile+Run)  : {:>12?}                │", jit_sb_comp_dur);
-    println!("│  [F] JIT Sandbox (Run only)     : {:>12?}                │", jit_sb_run_dur);
+    println!(
+        "│  [A] NDA JIT (closure + AVX2)   : {:>12?}                │",
+        jit_dur
+    );
+    println!(
+        "│  [B] NDA Sandbox (interpreted)  : {:>12?}                │",
+        sandbox_dur
+    );
+    println!(
+        "│  [C] NDA direct kernel calls    : {:>12?}                │",
+        direct_nda_dur
+    );
+    println!(
+        "│  [D] Rust f32 scalar GEMV       : {:>12?}                │",
+        rust_f32_dur
+    );
+    println!(
+        "│  [E] JIT Sandbox (Compile+Run)  : {:>12?}                │",
+        jit_sb_comp_dur
+    );
+    println!(
+        "│  [F] JIT Sandbox (Run only)     : {:>12?}                │",
+        jit_sb_run_dur
+    );
     println!("│                                                                 │");
-    println!("│  JIT compile time (once)        : {:>9} µs                │", compile_us);
+    println!(
+        "│  JIT compile time (once)        : {:>9} µs                │",
+        compile_us
+    );
     println!("│                                                                 │");
 
     // JIT vs Sandbox
     let jit_vs_sb = sandbox_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_sb >= 1.0 {
-        println!("│  JIT speedup vs Interpreter     : {:>8.1}x FASTER             │", jit_vs_sb);
+        println!(
+            "│  JIT speedup vs Interpreter     : {:>8.1}x FASTER             │",
+            jit_vs_sb
+        );
     } else {
-        println!("│  JIT vs Interpreter             : {:>8.1}x slower              │", 1.0/jit_vs_sb);
+        println!(
+            "│  JIT vs Interpreter             : {:>8.1}x slower              │",
+            1.0 / jit_vs_sb
+        );
     }
 
     // JIT Sandbox vs Interpreter Sandbox
     let jit_sb_vs_sb = sandbox_dur.as_nanos() as f64 / jit_sb_comp_dur.as_nanos().max(1) as f64;
     if jit_sb_vs_sb >= 1.0 {
-        println!("│  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (on-the-fly)   │", jit_sb_vs_sb);
+        println!(
+            "│  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (on-the-fly)   │",
+            jit_sb_vs_sb
+        );
     } else {
-        println!("│  JIT Sandbox vs Interp.         : {:>8.1}x slower (on-the-fly)   │", 1.0/jit_sb_vs_sb);
+        println!(
+            "│  JIT Sandbox vs Interp.         : {:>8.1}x slower (on-the-fly)   │",
+            1.0 / jit_sb_vs_sb
+        );
     }
 
     // JIT Sandbox (Run only) vs Interpreter Sandbox
     let jit_sb_run_vs_sb = sandbox_dur.as_nanos() as f64 / jit_sb_run_dur.as_nanos().max(1) as f64;
     if jit_sb_run_vs_sb >= 1.0 {
-        println!("│  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (run only)     │", jit_sb_run_vs_sb);
+        println!(
+            "│  JIT Sandbox speedup vs Interp. : {:>8.1}x FASTER (run only)     │",
+            jit_sb_run_vs_sb
+        );
     } else {
-        println!("│  JIT Sandbox vs Interp.         : {:>8.1}x slower (run only)     │", 1.0/jit_sb_run_vs_sb);
+        println!(
+            "│  JIT Sandbox vs Interp.         : {:>8.1}x slower (run only)     │",
+            1.0 / jit_sb_run_vs_sb
+        );
     }
 
     // JIT vs Direct NDA
     let jit_vs_direct = direct_nda_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_direct >= 1.0 {
-        println!("│  JIT speedup vs Direct NDA      : {:>8.1}x FASTER             │", jit_vs_direct);
+        println!(
+            "│  JIT speedup vs Direct NDA      : {:>8.1}x FASTER             │",
+            jit_vs_direct
+        );
     } else {
-        let overhead = (1.0/jit_vs_direct - 1.0) * 100.0;
-        println!("│  JIT overhead vs Direct NDA     : {:>8.1}% (closure wrap cost) │", overhead);
+        let overhead = (1.0 / jit_vs_direct - 1.0) * 100.0;
+        println!(
+            "│  JIT overhead vs Direct NDA     : {:>8.1}% (closure wrap cost) │",
+            overhead
+        );
     }
 
     // JIT vs Rust f32
     let jit_vs_f32 = rust_f32_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_f32 >= 1.0 {
-        println!("│  JIT speedup vs Rust f32 GEMV   : {:>8.1}x FASTER ★           │", jit_vs_f32);
+        println!(
+            "│  JIT speedup vs Rust f32 GEMV   : {:>8.1}x FASTER ★           │",
+            jit_vs_f32
+        );
     } else {
-        println!("│  JIT vs Rust f32 GEMV           : {:>8.1}x slower              │", 1.0/jit_vs_f32);
+        println!(
+            "│  JIT vs Rust f32 GEMV           : {:>8.1}x slower              │",
+            1.0 / jit_vs_f32
+        );
     }
 
     // Break-even: how many JIT runs to amortise compile cost?
@@ -625,8 +774,12 @@ fn bench_6_jit_vs_rust() {
         let savings_per_run_ns = sandbox_dur.as_nanos().saturating_sub(jit_dur.as_nanos());
         if savings_per_run_ns > 0 {
             (compile_us as u128 * 1000) / savings_per_run_ns + 1
-        } else { 0 }
-    } else { u128::MAX };
+        } else {
+            0
+        }
+    } else {
+        u128::MAX
+    };
 
     println!("│                                                                 │");
     if break_even_runs == u128::MAX {
@@ -634,18 +787,33 @@ fn bench_6_jit_vs_rust() {
     } else if break_even_runs == 0 {
         println!("│  Break-even (compile amort.)    : immediate                    │");
     } else {
-        println!("│  Break-even (compile amort.)    : after {:>4} executions         │", break_even_runs);
+        println!(
+            "│  Break-even (compile amort.)    : after {:>4} executions         │",
+            break_even_runs
+        );
     }
 
     // Memory footprint comparison
     let nda_weight_bytes: usize = nda_mats.iter().map(|m| m.sign.len() + m.extra.len()).sum();
     let f32_weight_bytes: usize = f32_mats.iter().map(|m| m.len() * 4).sum();
     println!("│                                                                 │");
-    println!("│  NDA weight memory (2-bit)      : {:>9.1} KB               │", nda_weight_bytes as f64 / 1024.0);
-    println!("│  Rust f32 weight memory         : {:>9.1} KB               │", f32_weight_bytes as f64 / 1024.0);
-    println!("│  Memory ratio                   : {:>9.1}x smaller          │", f32_weight_bytes as f64 / nda_weight_bytes.max(1) as f64);
+    println!(
+        "│  NDA weight memory (2-bit)      : {:>9.1} KB               │",
+        nda_weight_bytes as f64 / 1024.0
+    );
+    println!(
+        "│  Rust f32 weight memory         : {:>9.1} KB               │",
+        f32_weight_bytes as f64 / 1024.0
+    );
+    println!(
+        "│  Memory ratio                   : {:>9.1}x smaller          │",
+        f32_weight_bytes as f64 / nda_weight_bytes.max(1) as f64
+    );
     println!("│                                                                 │");
-    println!("│  Platform                       : {}   │", nda_jit::jit_tier_info());
+    println!(
+        "│  Platform                       : {}   │",
+        nda_jit::jit_tier_info()
+    );
     println!("└─────────────────────────────────────────────────────────────────┘");
     println!();
 }
@@ -674,8 +842,14 @@ fn bench_7_scalar_loop_jit() {
     // }
     // load sum
     let nodes = vec![
-        NdaNode::Let { name_hash: sum_h, init: Box::new(NdaNode::Int { value: 0 }) },
-        NdaNode::Let { name_hash: i_h, init: Box::new(NdaNode::Int { value: 0 }) },
+        NdaNode::Let {
+            name_hash: sum_h,
+            init: Box::new(NdaNode::Int { value: 0 }),
+        },
+        NdaNode::Let {
+            name_hash: i_h,
+            init: Box::new(NdaNode::Int { value: 0 }),
+        },
         NdaNode::Loop {
             count: loop_count as u32,
             body: vec![
@@ -705,7 +879,7 @@ fn bench_7_scalar_loop_jit() {
     // A) NDA JIT — compile phase
     // ══════════════════════════════════════════════════════════════════════
     let t_compile = Instant::now();
-    let jit_prog  = nda_jit::compile(&nodes);
+    let jit_prog = nda_jit::compile(&nodes);
     let compile_us = t_compile.elapsed().as_micros() as u64;
 
     // Warmup JIT
@@ -726,7 +900,11 @@ fn bench_7_scalar_loop_jit() {
     let sm_plain = SiteMap::open(&std::env::temp_dir().join("bench7_sm2"), 0).unwrap();
     // Warmup Interpreter
     let r_interp = NdaSandbox::run(&nodes, &input, &sm_plain);
-    assert!(r_interp.error.is_none(), "Interpreter error: {:?}", r_interp.error);
+    assert!(
+        r_interp.error.is_none(),
+        "Interpreter error: {:?}",
+        r_interp.error
+    );
 
     let t1 = Instant::now();
     for _ in 0..iters {
@@ -761,27 +939,51 @@ fn bench_7_scalar_loop_jit() {
 
     // Results
     println!("│                                                                 │");
-    println!("│  [A] NDA JIT (native scalar loop) : {:>12?}                │", jit_dur);
-    println!("│  [B] NDA Sandbox (interpreted)    : {:>12?}                │", sandbox_dur);
-    println!("│  [C] Rust Native scalar loop      : {:>12?}                │", rust_dur);
+    println!(
+        "│  [A] NDA JIT (native scalar loop) : {:>12?}                │",
+        jit_dur
+    );
+    println!(
+        "│  [B] NDA Sandbox (interpreted)    : {:>12?}                │",
+        sandbox_dur
+    );
+    println!(
+        "│  [C] Rust Native scalar loop      : {:>12?}                │",
+        rust_dur
+    );
     println!("│                                                                 │");
-    println!("│  JIT compile time (once)          : {:>9} µs                │", compile_us);
+    println!(
+        "│  JIT compile time (once)          : {:>9} µs                │",
+        compile_us
+    );
     println!("│                                                                 │");
 
     // JIT vs Sandbox
     let jit_vs_sb = sandbox_dur.as_nanos() as f64 / jit_dur.as_nanos().max(1) as f64;
     if jit_vs_sb >= 1.0 {
-        println!("│  JIT speedup vs Interpreter       : {:>8.1}x FASTER             │", jit_vs_sb);
+        println!(
+            "│  JIT speedup vs Interpreter       : {:>8.1}x FASTER             │",
+            jit_vs_sb
+        );
     } else {
-        println!("│  JIT vs Interpreter               : {:>8.1}x slower              │", 1.0/jit_vs_sb);
+        println!(
+            "│  JIT vs Interpreter               : {:>8.1}x slower              │",
+            1.0 / jit_vs_sb
+        );
     }
 
     // JIT vs Rust
     let jit_vs_rust = jit_dur.as_nanos() as f64 / rust_dur.as_nanos().max(1) as f64;
     if jit_vs_rust <= 1.0 {
-        println!("│  JIT vs Rust Native               : {:>8.1}x FASTER ★           │", 1.0/jit_vs_rust);
+        println!(
+            "│  JIT vs Rust Native               : {:>8.1}x FASTER ★           │",
+            1.0 / jit_vs_rust
+        );
     } else {
-        println!("│  JIT vs Rust Native               : {:>8.1}x slower              │", jit_vs_rust);
+        println!(
+            "│  JIT vs Rust Native               : {:>8.1}x slower              │",
+            jit_vs_rust
+        );
     }
     println!("└─────────────────────────────────────────────────────────────────┘");
     println!();

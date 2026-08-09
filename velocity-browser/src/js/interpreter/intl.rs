@@ -1,61 +1,104 @@
-use super::signal::*;
 use super::coercion::*;
 use super::core_methods::is_leap_year;
+use super::signal::*;
 use crate::js::vm::JsValue;
 use std::collections::HashMap;
 
 // ── Intl.* support ───────────────────────────────────────────────────────────
 
-pub(super) fn call_segmenter_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_segmenter_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "segment" => {
             let s = args.first().map(to_string).unwrap_or_default();
-            let _locale = map.get("locale").map(to_string).unwrap_or_else(|| "en".into());
-            let granularity = map.get("granularity").map(to_string).unwrap_or_else(|| "grapheme".into());
+            let _locale = map
+                .get("locale")
+                .map(to_string)
+                .unwrap_or_else(|| "en".into());
+            let granularity = map
+                .get("granularity")
+                .map(to_string)
+                .unwrap_or_else(|| "grapheme".into());
             let segments: Vec<JsValue> = if granularity == "word" {
-                s.split_whitespace().map(|w| {
-                    let mut seg = HashMap::new();
-                    seg.insert("segment".to_string(), JsValue::String(w.to_string()));
-                    seg.insert("isWordLike".to_string(), JsValue::Boolean(true));
-                    JsValue::Object(seg)
-                }).collect()
+                s.split_whitespace()
+                    .map(|w| {
+                        let mut seg = HashMap::new();
+                        seg.insert("segment".to_string(), JsValue::String(w.to_string()));
+                        seg.insert("isWordLike".to_string(), JsValue::Boolean(true));
+                        JsValue::Object(seg)
+                    })
+                    .collect()
             } else if granularity == "sentence" {
-                s.split(['.', '!', '?']).filter(|s| !s.trim().is_empty()).map(|sent| {
-                    let mut seg = HashMap::new();
-                    seg.insert("segment".to_string(), JsValue::String(sent.trim().to_string()));
-                    seg.insert("isWordLike".to_string(), JsValue::Boolean(false));
-                    JsValue::Object(seg)
-                }).collect()
+                s.split(['.', '!', '?'])
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|sent| {
+                        let mut seg = HashMap::new();
+                        seg.insert(
+                            "segment".to_string(),
+                            JsValue::String(sent.trim().to_string()),
+                        );
+                        seg.insert("isWordLike".to_string(), JsValue::Boolean(false));
+                        JsValue::Object(seg)
+                    })
+                    .collect()
             } else {
-                s.chars().map(|c| {
-                    let mut seg = HashMap::new();
-                    seg.insert("segment".to_string(), JsValue::String(c.to_string()));
-                    seg.insert("isWordLike".to_string(), JsValue::Boolean(c.is_alphanumeric()));
-                    JsValue::Object(seg)
-                }).collect()
+                s.chars()
+                    .map(|c| {
+                        let mut seg = HashMap::new();
+                        seg.insert("segment".to_string(), JsValue::String(c.to_string()));
+                        seg.insert(
+                            "isWordLike".to_string(),
+                            JsValue::Boolean(c.is_alphanumeric()),
+                        );
+                        JsValue::Object(seg)
+                    })
+                    .collect()
             };
             let mut result = HashMap::new();
-            result.insert("__type__".to_string(), JsValue::String("Segments".to_string()));
+            result.insert(
+                "__type__".to_string(),
+                JsValue::String("Segments".to_string()),
+            );
             result.insert("__segments__".to_string(), JsValue::Array(segments));
             result.insert("__index__".to_string(), JsValue::Number(0.0));
             JsValue::Object(result)
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
-            opts.insert("granularity".to_string(), map.get("granularity").cloned().unwrap_or(JsValue::String("grapheme".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
+            opts.insert(
+                "granularity".to_string(),
+                map.get("granularity")
+                    .cloned()
+                    .unwrap_or(JsValue::String("grapheme".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_collator_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_collator_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "compare" => {
             let a = args.first().map(to_string).unwrap_or_default();
             let b = args.get(1).map(to_string).unwrap_or_default();
-            let sensitivity = map.get("sensitivity").map(to_string).unwrap_or_else(|| "variant".into());
+            let sensitivity = map
+                .get("sensitivity")
+                .map(to_string)
+                .unwrap_or_else(|| "variant".into());
             let cmp = if sensitivity == "base" {
                 a.to_lowercase().cmp(&b.to_lowercase())
             } else {
@@ -69,26 +112,63 @@ pub(super) fn call_collator_method(map: &HashMap<String, JsValue>, method: &str,
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
-            opts.insert("sensitivity".to_string(), map.get("sensitivity").cloned().unwrap_or(JsValue::String("variant".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
+            opts.insert(
+                "sensitivity".to_string(),
+                map.get("sensitivity")
+                    .cloned()
+                    .unwrap_or(JsValue::String("variant".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_number_format_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_number_format_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "format" => {
             let n = args.first().map(to_number).unwrap_or(0.0);
-            let _locale = map.get("locale").map(to_string).unwrap_or_else(|| "en-US".into());
-            let style = map.get("style").map(to_string).unwrap_or_else(|| "decimal".into());
-            let currency = map.get("currency").map(to_string).unwrap_or_else(|| "USD".into());
-            let _minimum_fraction_digits = map.get("minimumFractionDigits").map(|v| to_number(v) as usize).unwrap_or(0);
-            let maximum_fraction_digits = map.get("maximumFractionDigits").map(|v| to_number(v) as usize).unwrap_or(3);
-            
+            let _locale = map
+                .get("locale")
+                .map(to_string)
+                .unwrap_or_else(|| "en-US".into());
+            let style = map
+                .get("style")
+                .map(to_string)
+                .unwrap_or_else(|| "decimal".into());
+            let currency = map
+                .get("currency")
+                .map(to_string)
+                .unwrap_or_else(|| "USD".into());
+            let _minimum_fraction_digits = map
+                .get("minimumFractionDigits")
+                .map(|v| to_number(v) as usize)
+                .unwrap_or(0);
+            let maximum_fraction_digits = map
+                .get("maximumFractionDigits")
+                .map(|v| to_number(v) as usize)
+                .unwrap_or(3);
+
             let formatted = if style == "currency" {
-                let symbol = if currency == "USD" { "$" } else if currency == "EUR" { "€" } else if currency == "GBP" { "£" } else { &currency };
+                let symbol = if currency == "USD" {
+                    "$"
+                } else if currency == "EUR" {
+                    "€"
+                } else if currency == "GBP" {
+                    "£"
+                } else {
+                    &currency
+                };
                 format!("{}{:.*}", symbol, maximum_fraction_digits, n)
             } else if style == "percent" {
                 format!("{:.*}%", maximum_fraction_digits, n * 100.0)
@@ -102,21 +182,38 @@ pub(super) fn call_number_format_method(map: &HashMap<String, JsValue>, method: 
             let mut parts = Vec::new();
             let mut part = HashMap::new();
             part.insert("type".to_string(), JsValue::String("integer".to_string()));
-            part.insert("value".to_string(), JsValue::String(format!("{}", n as i64)));
+            part.insert(
+                "value".to_string(),
+                JsValue::String(format!("{}", n as i64)),
+            );
             parts.push(JsValue::Object(part));
             JsValue::Array(parts)
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en-US".into())));
-            opts.insert("style".to_string(), map.get("style").cloned().unwrap_or(JsValue::String("decimal".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en-US".into())),
+            );
+            opts.insert(
+                "style".to_string(),
+                map.get("style")
+                    .cloned()
+                    .unwrap_or(JsValue::String("decimal".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_datetime_format_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_datetime_format_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "format" => {
             let ts = args.first().map(to_number).unwrap_or(0.0);
@@ -126,12 +223,14 @@ pub(super) fn call_datetime_format_method(map: &HashMap<String, JsValue>, method
             let hours = day_secs / 3600;
             let minutes = (day_secs % 3600) / 60;
             let seconds = day_secs % 60;
-            
+
             let mut y = 1970;
             let mut remaining_days = days;
             loop {
                 let days_in_year = if is_leap_year(y) { 366 } else { 365 };
-                if remaining_days < days_in_year { break; }
+                if remaining_days < days_in_year {
+                    break;
+                }
                 remaining_days -= days_in_year;
                 y += 1;
             }
@@ -142,19 +241,52 @@ pub(super) fn call_datetime_format_method(map: &HashMap<String, JsValue>, method
             };
             let mut m = 0;
             for (i, &md) in month_days.iter().enumerate() {
-                if remaining_days < md { m = i; break; }
+                if remaining_days < md {
+                    m = i;
+                    break;
+                }
                 remaining_days -= md;
             }
             let d = remaining_days + 1;
-            
-            let _date_style = map.get("dateStyle").map(to_string).unwrap_or_else(|| "full".into());
-            let _time_style = map.get("timeStyle").map(to_string).unwrap_or_else(|| "full".into());
-            
-            let month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-            let day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+            let _date_style = map
+                .get("dateStyle")
+                .map(to_string)
+                .unwrap_or_else(|| "full".into());
+            let _time_style = map
+                .get("timeStyle")
+                .map(to_string)
+                .unwrap_or_else(|| "full".into());
+
+            let month_names = [
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+            ];
+            let day_names = [
+                "Sunday",
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+            ];
             let dow = ((days % 7) + 4) % 7;
-            
-            let date_part = format!("{}, {} {}, {}", day_names[dow as usize], month_names[m], d, y);
+
+            let date_part = format!(
+                "{}, {} {}, {}",
+                day_names[dow as usize], month_names[m], d, y
+            );
             let time_part = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
             JsValue::String(format!("{} at {}", date_part, time_part))
         }
@@ -168,20 +300,42 @@ pub(super) fn call_datetime_format_method(map: &HashMap<String, JsValue>, method
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en-US".into())));
-            opts.insert("dateStyle".to_string(), map.get("dateStyle").cloned().unwrap_or(JsValue::String("full".into())));
-            opts.insert("timeStyle".to_string(), map.get("timeStyle").cloned().unwrap_or(JsValue::String("full".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en-US".into())),
+            );
+            opts.insert(
+                "dateStyle".to_string(),
+                map.get("dateStyle")
+                    .cloned()
+                    .unwrap_or(JsValue::String("full".into())),
+            );
+            opts.insert(
+                "timeStyle".to_string(),
+                map.get("timeStyle")
+                    .cloned()
+                    .unwrap_or(JsValue::String("full".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_plural_rules_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_plural_rules_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "select" => {
             let n = args.first().map(to_number).unwrap_or(0.0).abs();
-            let _locale = map.get("locale").map(to_string).unwrap_or_else(|| "en".into());
+            let _locale = map
+                .get("locale")
+                .map(to_string)
+                .unwrap_or_else(|| "en".into());
             let category = if n == 1.0 { "one" } else { "other" };
             JsValue::String(category.to_string())
         }
@@ -194,32 +348,65 @@ pub(super) fn call_plural_rules_method(map: &HashMap<String, JsValue>, method: &
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
-            opts.insert("type".to_string(), map.get("type").cloned().unwrap_or(JsValue::String("cardinal".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
+            opts.insert(
+                "type".to_string(),
+                map.get("type")
+                    .cloned()
+                    .unwrap_or(JsValue::String("cardinal".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_relative_time_format_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_relative_time_format_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "format" => {
             let value = args.first().map(to_number).unwrap_or(0.0);
-            let unit = args.get(1).map(to_string).unwrap_or_else(|| "second".into());
-            let _locale = map.get("locale").map(to_string).unwrap_or_else(|| "en".into());
-            let numeric = map.get("numeric").map(to_string).unwrap_or_else(|| "always".into());
-            
+            let unit = args
+                .get(1)
+                .map(to_string)
+                .unwrap_or_else(|| "second".into());
+            let _locale = map
+                .get("locale")
+                .map(to_string)
+                .unwrap_or_else(|| "en".into());
+            let numeric = map
+                .get("numeric")
+                .map(to_string)
+                .unwrap_or_else(|| "always".into());
+
             let abs_val = value.abs();
-            let unit_str = if abs_val == 1.0 { &unit[..unit.len()-1] } else { &unit };
+            let unit_str = if abs_val == 1.0 {
+                &unit[..unit.len() - 1]
+            } else {
+                &unit
+            };
             let direction = if value < 0.0 { "ago" } else { "from now" };
-            
+
             if numeric == "auto" && abs_val <= 1.0 && unit == "day" {
-                if value == -1.0 { return Ok(JsValue::String("yesterday".to_string())); }
-                if value == 0.0 { return Ok(JsValue::String("today".to_string())); }
-                if value == 1.0 { return Ok(JsValue::String("tomorrow".to_string())); }
+                if value == -1.0 {
+                    return Ok(JsValue::String("yesterday".to_string()));
+                }
+                if value == 0.0 {
+                    return Ok(JsValue::String("today".to_string()));
+                }
+                if value == 1.0 {
+                    return Ok(JsValue::String("tomorrow".to_string()));
+                }
             }
-            
+
             JsValue::String(format!("in {:.0} {} {}", abs_val, unit_str, direction))
         }
         "formatToParts" => {
@@ -232,15 +419,29 @@ pub(super) fn call_relative_time_format_method(map: &HashMap<String, JsValue>, m
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
-            opts.insert("numeric".to_string(), map.get("numeric").cloned().unwrap_or(JsValue::String("always".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
+            opts.insert(
+                "numeric".to_string(),
+                map.get("numeric")
+                    .cloned()
+                    .unwrap_or(JsValue::String("always".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_duration_format_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_duration_format_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "format" => {
             let duration = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -251,15 +452,27 @@ pub(super) fn call_duration_format_method(map: &HashMap<String, JsValue>, method
                 let hours = dur_map.get("hours").map(to_number).unwrap_or(0.0) as i64;
                 let minutes = dur_map.get("minutes").map(to_number).unwrap_or(0.0) as i64;
                 let seconds = dur_map.get("seconds").map(to_number).unwrap_or(0.0) as i64;
-                
+
                 let mut parts = Vec::new();
-                if years > 0 { parts.push(format!("{}y", years)); }
-                if months > 0 { parts.push(format!("{}m", months)); }
-                if days > 0 { parts.push(format!("{}d", days)); }
-                if hours > 0 { parts.push(format!("{}h", hours)); }
-                if minutes > 0 { parts.push(format!("{}min", minutes)); }
-                if seconds > 0 { parts.push(format!("{}s", seconds)); }
-                
+                if years > 0 {
+                    parts.push(format!("{}y", years));
+                }
+                if months > 0 {
+                    parts.push(format!("{}m", months));
+                }
+                if days > 0 {
+                    parts.push(format!("{}d", days));
+                }
+                if hours > 0 {
+                    parts.push(format!("{}h", hours));
+                }
+                if minutes > 0 {
+                    parts.push(format!("{}min", minutes));
+                }
+                if seconds > 0 {
+                    parts.push(format!("{}s", seconds));
+                }
+
                 JsValue::String(parts.join(" "))
             } else {
                 JsValue::String(String::new())
@@ -267,29 +480,45 @@ pub(super) fn call_duration_format_method(map: &HashMap<String, JsValue>, method
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_list_format_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_list_format_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "format" => {
             let list = match args.first() {
                 Some(JsValue::Array(arr)) => arr.iter().map(to_string).collect::<Vec<_>>(),
                 _ => Vec::new(),
             };
-            let list_type = map.get("type").map(to_string).unwrap_or_else(|| "conjunction".into());
-            
+            let list_type = map
+                .get("type")
+                .map(to_string)
+                .unwrap_or_else(|| "conjunction".into());
+
             if list.is_empty() {
                 JsValue::String(String::new())
             } else if list.len() == 1 {
                 JsValue::String(list[0].clone())
             } else {
-                let conjunction = if list_type == "disjunction" { "or" } else { "and" };
-                let mut result = list[..list.len()-1].join(", ");
+                let conjunction = if list_type == "disjunction" {
+                    "or"
+                } else {
+                    "and"
+                };
+                let mut result = list[..list.len() - 1].join(", ");
                 result.push_str(&format!(" {} {}", conjunction, list.last().unwrap()));
                 JsValue::String(result)
             }
@@ -304,21 +533,41 @@ pub(super) fn call_list_format_method(map: &HashMap<String, JsValue>, method: &s
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
-            opts.insert("type".to_string(), map.get("type").cloned().unwrap_or(JsValue::String("conjunction".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
+            opts.insert(
+                "type".to_string(),
+                map.get("type")
+                    .cloned()
+                    .unwrap_or(JsValue::String("conjunction".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
     })
 }
 
-pub(super) fn call_display_names_method(map: &HashMap<String, JsValue>, method: &str, args: &[JsValue]) -> EvalResult {
+pub(super) fn call_display_names_method(
+    map: &HashMap<String, JsValue>,
+    method: &str,
+    args: &[JsValue],
+) -> EvalResult {
     Ok(match method {
         "of" => {
             let code = args.first().map(to_string).unwrap_or_default();
-            let display_type = map.get("type").map(to_string).unwrap_or_else(|| "language".into());
-            let _locale = map.get("locale").map(to_string).unwrap_or_else(|| "en".into());
-            
+            let display_type = map
+                .get("type")
+                .map(to_string)
+                .unwrap_or_else(|| "language".into());
+            let _locale = map
+                .get("locale")
+                .map(to_string)
+                .unwrap_or_else(|| "en".into());
+
             // Simple mapping for common codes
             let display = if display_type == "language" {
                 match code.as_str() {
@@ -360,13 +609,23 @@ pub(super) fn call_display_names_method(map: &HashMap<String, JsValue>, method: 
             } else {
                 &code
             };
-            
+
             JsValue::String(display.to_string())
         }
         "resolvedOptions" => {
             let mut opts = HashMap::new();
-            opts.insert("locale".to_string(), map.get("locale").cloned().unwrap_or(JsValue::String("en".into())));
-            opts.insert("type".to_string(), map.get("type").cloned().unwrap_or(JsValue::String("language".into())));
+            opts.insert(
+                "locale".to_string(),
+                map.get("locale")
+                    .cloned()
+                    .unwrap_or(JsValue::String("en".into())),
+            );
+            opts.insert(
+                "type".to_string(),
+                map.get("type")
+                    .cloned()
+                    .unwrap_or(JsValue::String("language".into())),
+            );
             JsValue::Object(opts)
         }
         _ => JsValue::Undefined,
@@ -409,7 +668,10 @@ pub(super) fn get_canonical_locales(args: &[JsValue]) -> EvalResult {
     let mut out: Vec<JsValue> = Vec::new();
     for tag in tags {
         let canon = canonicalize_tag(&tag);
-        if !out.iter().any(|v| matches!(v, JsValue::String(s) if *s == canon)) {
+        if !out
+            .iter()
+            .any(|v| matches!(v, JsValue::String(s) if *s == canon))
+        {
             out.push(JsValue::String(canon));
         }
     }
@@ -421,7 +683,10 @@ pub(super) fn get_canonical_locales(args: &[JsValue]) -> EvalResult {
 pub(super) fn make_intl_locale(args: &[JsValue]) -> JsValue {
     let tag = canonicalize_tag(&args.first().map(to_string).unwrap_or_default());
     let mut map = HashMap::new();
-    map.insert("__type__".to_string(), JsValue::String("Intl.Locale".to_string()));
+    map.insert(
+        "__type__".to_string(),
+        JsValue::String("Intl.Locale".to_string()),
+    );
     let mut language = String::new();
     let mut script = JsValue::Undefined;
     let mut region = JsValue::Undefined;
@@ -436,13 +701,25 @@ pub(super) fn make_intl_locale(args: &[JsValue]) -> JsValue {
     }
     // Options override subtags parsed from the tag.
     if let Some(JsValue::Object(opts)) = args.get(1) {
-        if let Some(l) = opts.get("language") { language = to_string(l).to_lowercase(); }
-        if let Some(s) = opts.get("script") { script = JsValue::String(to_string(s)); }
-        if let Some(r) = opts.get("region") { region = JsValue::String(to_string(r).to_uppercase()); }
+        if let Some(l) = opts.get("language") {
+            language = to_string(l).to_lowercase();
+        }
+        if let Some(s) = opts.get("script") {
+            script = JsValue::String(to_string(s));
+        }
+        if let Some(r) = opts.get("region") {
+            region = JsValue::String(to_string(r).to_uppercase());
+        }
     }
     let mut base_name = language.clone();
-    if let JsValue::String(s) = &script { base_name.push('-'); base_name.push_str(s); }
-    if let JsValue::String(r) = &region { base_name.push('-'); base_name.push_str(r); }
+    if let JsValue::String(s) = &script {
+        base_name.push('-');
+        base_name.push_str(s);
+    }
+    if let JsValue::String(r) = &region {
+        base_name.push('-');
+        base_name.push_str(r);
+    }
     map.insert("language".to_string(), JsValue::String(language));
     map.insert("script".to_string(), script);
     map.insert("region".to_string(), region);
@@ -452,7 +729,10 @@ pub(super) fn make_intl_locale(args: &[JsValue]) -> JsValue {
 
 pub(super) fn call_locale_method(map: &HashMap<String, JsValue>, method: &str) -> EvalResult {
     Ok(match method {
-        "toString" => map.get("baseName").cloned().unwrap_or(JsValue::String(String::new())),
+        "toString" => map
+            .get("baseName")
+            .cloned()
+            .unwrap_or(JsValue::String(String::new())),
         // maximize(): fill in likely script/region for a few common languages.
         "maximize" => {
             let language = map.get("language").map(to_string).unwrap_or_default();
@@ -470,19 +750,38 @@ pub(super) fn call_locale_method(map: &HashMap<String, JsValue>, method: &str) -
                 "ar" => ("Arab", "EG"),
                 _ => ("Latn", "US"),
             };
-            let script = match map.get("script") { Some(JsValue::String(s)) => s.clone(), _ => likely_script.to_string() };
-            let region = match map.get("region") { Some(JsValue::String(r)) => r.clone(), _ => likely_region.to_string() };
+            let script = match map.get("script") {
+                Some(JsValue::String(s)) => s.clone(),
+                _ => likely_script.to_string(),
+            };
+            let region = match map.get("region") {
+                Some(JsValue::String(r)) => r.clone(),
+                _ => likely_region.to_string(),
+            };
             let mut out = map.clone();
             out.insert("script".to_string(), JsValue::String(script.clone()));
             out.insert("region".to_string(), JsValue::String(region.clone()));
-            out.insert("baseName".to_string(), JsValue::String(format!("{}-{}-{}", map.get("language").map(to_string).unwrap_or_default(), script, region)));
+            out.insert(
+                "baseName".to_string(),
+                JsValue::String(format!(
+                    "{}-{}-{}",
+                    map.get("language").map(to_string).unwrap_or_default(),
+                    script,
+                    region
+                )),
+            );
             JsValue::Object(out)
         }
         "minimize" => {
             let mut out = map.clone();
             out.insert("script".to_string(), JsValue::Undefined);
             out.insert("region".to_string(), JsValue::Undefined);
-            out.insert("baseName".to_string(), map.get("language").cloned().unwrap_or(JsValue::String(String::new())));
+            out.insert(
+                "baseName".to_string(),
+                map.get("language")
+                    .cloned()
+                    .unwrap_or(JsValue::String(String::new())),
+            );
             JsValue::Object(out)
         }
         _ => JsValue::Undefined,
@@ -516,10 +815,16 @@ mod tests {
 
     #[test]
     fn canonical_locales_array() {
-        let r = get_canonical_locales(&[JsValue::Array(vec![JsValue::String("en-us".into()), JsValue::String("FR".into())])]).unwrap();
+        let r = get_canonical_locales(&[JsValue::Array(vec![
+            JsValue::String("en-us".into()),
+            JsValue::String("FR".into()),
+        ])])
+        .unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 2);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
@@ -527,15 +832,23 @@ mod tests {
         let r = get_canonical_locales(&[JsValue::String("en-US".into())]).unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1);
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     #[test]
     fn canonical_locales_dedup() {
-        let r = get_canonical_locales(&[JsValue::Array(vec![JsValue::String("en-us".into()), JsValue::String("en-US".into())])]).unwrap();
+        let r = get_canonical_locales(&[JsValue::Array(vec![
+            JsValue::String("en-us".into()),
+            JsValue::String("en-US".into()),
+        ])])
+        .unwrap();
         if let JsValue::Array(arr) = r {
             assert_eq!(arr.len(), 1); // deduplicated after canonicalization
-        } else { panic!("expected Array"); }
+        } else {
+            panic!("expected Array");
+        }
     }
 
     // ── make_intl_locale ───────────────────────────────────────────────
@@ -545,7 +858,9 @@ mod tests {
         let r = make_intl_locale(&[JsValue::String("en".into())]);
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("language").unwrap(), &JsValue::String("en".into()));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
@@ -554,7 +869,9 @@ mod tests {
         if let JsValue::Object(m) = r {
             assert_eq!(m.get("language").unwrap(), &JsValue::String("en".into()));
             assert_eq!(m.get("region").unwrap(), &JsValue::String("US".into()));
-        } else { panic!("expected Object"); }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     // ── call_segmenter_method ──────────────────────────────────────────
@@ -562,25 +879,37 @@ mod tests {
     #[test]
     fn segmenter_grapheme() {
         let mut m = HashMap::new();
-        m.insert("granularity".to_string(), JsValue::String("grapheme".into()));
+        m.insert(
+            "granularity".to_string(),
+            JsValue::String("grapheme".into()),
+        );
         let r = call_segmenter_method(&m, "segment", &[JsValue::String("abc".into())]).unwrap();
         if let JsValue::Object(result) = r {
             if let Some(JsValue::Array(segs)) = result.get("__segments__") {
                 assert_eq!(segs.len(), 3); // one per char
-            } else { panic!("expected segments array"); }
-        } else { panic!("expected Object"); }
+            } else {
+                panic!("expected segments array");
+            }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     #[test]
     fn segmenter_word() {
         let mut m = HashMap::new();
         m.insert("granularity".to_string(), JsValue::String("word".into()));
-        let r = call_segmenter_method(&m, "segment", &[JsValue::String("hello world".into())]).unwrap();
+        let r =
+            call_segmenter_method(&m, "segment", &[JsValue::String("hello world".into())]).unwrap();
         if let JsValue::Object(result) = r {
             if let Some(JsValue::Array(segs)) = result.get("__segments__") {
                 assert_eq!(segs.len(), 2); // two words
-            } else { panic!("expected segments array"); }
-        } else { panic!("expected Object"); }
+            } else {
+                panic!("expected segments array");
+            }
+        } else {
+            panic!("expected Object");
+        }
     }
 
     // ── call_collator_method ───────────────────────────────────────────
@@ -588,14 +917,24 @@ mod tests {
     #[test]
     fn collator_compare_equal() {
         let m = HashMap::new();
-        let r = call_collator_method(&m, "compare", &[JsValue::String("abc".into()), JsValue::String("abc".into())]).unwrap();
+        let r = call_collator_method(
+            &m,
+            "compare",
+            &[JsValue::String("abc".into()), JsValue::String("abc".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::Number(0.0));
     }
 
     #[test]
     fn collator_compare_less() {
         let m = HashMap::new();
-        let r = call_collator_method(&m, "compare", &[JsValue::String("a".into()), JsValue::String("b".into())]).unwrap();
+        let r = call_collator_method(
+            &m,
+            "compare",
+            &[JsValue::String("a".into()), JsValue::String("b".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::Number(-1.0));
     }
 
@@ -607,7 +946,9 @@ mod tests {
         let r = call_number_format_method(&m, "format", &[JsValue::Number(1234.5)]).unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains("1234"), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
@@ -618,7 +959,9 @@ mod tests {
         let r = call_number_format_method(&m, "format", &[JsValue::Number(42.0)]).unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains('$'), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
@@ -628,7 +971,9 @@ mod tests {
         let r = call_number_format_method(&m, "format", &[JsValue::Number(0.5)]).unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains('%'), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     // ── call_plural_rules_method ───────────────────────────────────────
@@ -652,22 +997,33 @@ mod tests {
     #[test]
     fn list_format_conjunction() {
         let m = HashMap::new();
-        let list = JsValue::Array(vec![JsValue::String("a".into()), JsValue::String("b".into()), JsValue::String("c".into())]);
+        let list = JsValue::Array(vec![
+            JsValue::String("a".into()),
+            JsValue::String("b".into()),
+            JsValue::String("c".into()),
+        ]);
         let r = call_list_format_method(&m, "format", &[list]).unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains("and"), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
     fn list_format_disjunction() {
         let mut m = HashMap::new();
         m.insert("type".to_string(), JsValue::String("disjunction".into()));
-        let list = JsValue::Array(vec![JsValue::String("x".into()), JsValue::String("y".into())]);
+        let list = JsValue::Array(vec![
+            JsValue::String("x".into()),
+            JsValue::String("y".into()),
+        ]);
         let r = call_list_format_method(&m, "format", &[list]).unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains("or"), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
@@ -725,26 +1081,45 @@ mod tests {
     #[test]
     fn relative_time_future() {
         let m = HashMap::new();
-        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(3.0), JsValue::String("day".into())]).unwrap();
+        let r = call_relative_time_format_method(
+            &m,
+            "format",
+            &[JsValue::Number(3.0), JsValue::String("day".into())],
+        )
+        .unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains("from now"), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
     fn relative_time_past() {
         let m = HashMap::new();
-        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(-2.0), JsValue::String("hour".into())]).unwrap();
+        let r = call_relative_time_format_method(
+            &m,
+            "format",
+            &[JsValue::Number(-2.0), JsValue::String("hour".into())],
+        )
+        .unwrap();
         if let JsValue::String(s) = r {
             assert!(s.contains("ago"), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]
     fn relative_time_auto_yesterday() {
         let mut m = HashMap::new();
         m.insert("numeric".to_string(), JsValue::String("auto".into()));
-        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(-1.0), JsValue::String("day".into())]).unwrap();
+        let r = call_relative_time_format_method(
+            &m,
+            "format",
+            &[JsValue::Number(-1.0), JsValue::String("day".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::String("yesterday".into()));
     }
 
@@ -752,7 +1127,12 @@ mod tests {
     fn relative_time_auto_tomorrow() {
         let mut m = HashMap::new();
         m.insert("numeric".to_string(), JsValue::String("auto".into()));
-        let r = call_relative_time_format_method(&m, "format", &[JsValue::Number(1.0), JsValue::String("day".into())]).unwrap();
+        let r = call_relative_time_format_method(
+            &m,
+            "format",
+            &[JsValue::Number(1.0), JsValue::String("day".into())],
+        )
+        .unwrap();
         assert_eq!(r, JsValue::String("tomorrow".into()));
     }
 
@@ -768,7 +1148,9 @@ mod tests {
         if let JsValue::String(s) = r {
             assert!(s.contains("2h"), "got: {}", s);
             assert!(s.contains("30min"), "got: {}", s);
-        } else { panic!("expected String"); }
+        } else {
+            panic!("expected String");
+        }
     }
 
     #[test]

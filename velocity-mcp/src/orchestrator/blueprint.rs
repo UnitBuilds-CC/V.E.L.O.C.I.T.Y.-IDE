@@ -205,8 +205,22 @@ mod tests {
         let mut g = TaskGraph::default();
         g.root = TaskId(1);
         g.add(TaskId(1), "Root", "root task", vec![], vec![], None);
-        g.add(TaskId(2), "Child A", "first child", vec!["a.rs".into()], vec![TaskId(1)], None);
-        g.add(TaskId(3), "Child B", "second child", vec!["b.rs".into()], vec![TaskId(1)], None);
+        g.add(
+            TaskId(2),
+            "Child A",
+            "first child",
+            vec!["a.rs".into()],
+            vec![TaskId(1)],
+            None,
+        );
+        g.add(
+            TaskId(3),
+            "Child B",
+            "second child",
+            vec!["b.rs".into()],
+            vec![TaskId(1)],
+            None,
+        );
         g.add(
             TaskId(4),
             "Grandchild",

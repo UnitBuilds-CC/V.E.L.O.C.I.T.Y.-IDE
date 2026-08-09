@@ -26,11 +26,17 @@ impl Default for ShapeMatcher {
 
 impl ShapeMatcher {
     pub fn new() -> Self {
-        Self { tolerance: 0.85, profile_weight: 0.8 }
+        Self {
+            tolerance: 0.85,
+            profile_weight: 0.8,
+        }
     }
 
     pub fn with_tolerance(tolerance: f32) -> Self {
-        Self { tolerance: tolerance.clamp(0.0, 1.0), profile_weight: 0.8 }
+        Self {
+            tolerance: tolerance.clamp(0.0, 1.0),
+            profile_weight: 0.8,
+        }
     }
 
     /// Similarity in [0, 1]. `1.0` means identical shape up to rotation & scale.
@@ -142,7 +148,11 @@ mod tests {
         let m = ShapeMatcher::new();
         let rot = m.best_rotation(&a, &b);
         // 9/36 of a full turn ≈ π/2.
-        assert!((rot - std::f32::consts::FRAC_PI_2).abs() < 0.2, "rot = {}", rot);
+        assert!(
+            (rot - std::f32::consts::FRAC_PI_2).abs() < 0.2,
+            "rot = {}",
+            rot
+        );
     }
 
     #[test]
@@ -160,7 +170,11 @@ mod tests {
         let disc = sig_from_profile(vec![1.0; RADIAL_BINS], 1.0);
         let spiky = sig_from_profile(lobed_profile(0), 0.4);
         let m = ShapeMatcher::new();
-        assert!(!m.is_match(&disc, &spiky), "sim = {}", m.similarity(&disc, &spiky));
+        assert!(
+            !m.is_match(&disc, &spiky),
+            "sim = {}",
+            m.similarity(&disc, &spiky)
+        );
     }
 
     #[test]

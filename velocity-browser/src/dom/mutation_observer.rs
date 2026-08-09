@@ -1,5 +1,5 @@
-use crate::nda::NdaTriple;
 use crate::js::vm::JsValue;
+use crate::nda::NdaTriple;
 use std::collections::HashMap;
 
 /// Types of mutation observed per the MutationObserver API.
@@ -24,16 +24,25 @@ impl MutationRecord {
     /// Convert to a JsValue object matching the Web API MutationRecord interface.
     pub fn to_js_value(&self) -> JsValue {
         let mut map = HashMap::new();
-        map.insert("type".to_string(), JsValue::String(match self.mutation_type {
-            MutationType::Attributes => "attributes".to_string(),
-            MutationType::ChildList => "childList".to_string(),
-            MutationType::CharacterData => "characterData".to_string(),
-        }));
-        map.insert("target".to_string(), JsValue::Object({
-            let mut t = HashMap::new();
-            t.insert("__node_id__".to_string(), JsValue::Number(self.target_node_id as f64));
-            t
-        }));
+        map.insert(
+            "type".to_string(),
+            JsValue::String(match self.mutation_type {
+                MutationType::Attributes => "attributes".to_string(),
+                MutationType::ChildList => "childList".to_string(),
+                MutationType::CharacterData => "characterData".to_string(),
+            }),
+        );
+        map.insert(
+            "target".to_string(),
+            JsValue::Object({
+                let mut t = HashMap::new();
+                t.insert(
+                    "__node_id__".to_string(),
+                    JsValue::Number(self.target_node_id as f64),
+                );
+                t
+            }),
+        );
         if let Some(attr) = &self.attribute_name {
             map.insert("attributeName".to_string(), JsValue::String(attr.clone()));
         } else {
@@ -44,12 +53,24 @@ impl MutationRecord {
         } else {
             map.insert("oldValue".to_string(), JsValue::Null);
         }
-        map.insert("addedNodes".to_string(), JsValue::Array(
-            self.added_nodes.iter().map(|id| JsValue::Number(*id as f64)).collect()
-        ));
-        map.insert("removedNodes".to_string(), JsValue::Array(
-            self.removed_nodes.iter().map(|id| JsValue::Number(*id as f64)).collect()
-        ));
+        map.insert(
+            "addedNodes".to_string(),
+            JsValue::Array(
+                self.added_nodes
+                    .iter()
+                    .map(|id| JsValue::Number(*id as f64))
+                    .collect(),
+            ),
+        );
+        map.insert(
+            "removedNodes".to_string(),
+            JsValue::Array(
+                self.removed_nodes
+                    .iter()
+                    .map(|id| JsValue::Number(*id as f64))
+                    .collect(),
+            ),
+        );
         JsValue::Object(map)
     }
 }
@@ -127,7 +148,12 @@ impl NativeMutationObserver {
     }
 
     /// Record an attribute mutation with old value.
-    pub fn observe_attribute_change_with_old(&mut self, target_node_id: usize, attr_name: &str, old_value: Option<String>) {
+    pub fn observe_attribute_change_with_old(
+        &mut self,
+        target_node_id: usize,
+        attr_name: &str,
+        old_value: Option<String>,
+    ) {
         self.records.push(MutationRecord {
             mutation_type: MutationType::Attributes,
             target_node_id,
@@ -139,7 +165,12 @@ impl NativeMutationObserver {
     }
 
     /// Record child list changes.
-    pub fn observe_child_list_change(&mut self, target_node_id: usize, added: Vec<usize>, removed: Vec<usize>) {
+    pub fn observe_child_list_change(
+        &mut self,
+        target_node_id: usize,
+        added: Vec<usize>,
+        removed: Vec<usize>,
+    ) {
         self.records.push(MutationRecord {
             mutation_type: MutationType::ChildList,
             target_node_id,
@@ -151,7 +182,11 @@ impl NativeMutationObserver {
     }
 
     /// Record character data change.
-    pub fn observe_character_data_change(&mut self, target_node_id: usize, old_value: Option<String>) {
+    pub fn observe_character_data_change(
+        &mut self,
+        target_node_id: usize,
+        old_value: Option<String>,
+    ) {
         self.records.push(MutationRecord {
             mutation_type: MutationType::CharacterData,
             target_node_id,
@@ -201,9 +236,18 @@ mod tests {
         };
         let js = record.to_js_value();
         if let JsValue::Object(map) = &js {
-            assert_eq!(map.get("type"), Some(&JsValue::String("attributes".to_string())));
-            assert_eq!(map.get("attributeName"), Some(&JsValue::String("class".to_string())));
-            assert_eq!(map.get("oldValue"), Some(&JsValue::String("old-class".to_string())));
+            assert_eq!(
+                map.get("type"),
+                Some(&JsValue::String("attributes".to_string()))
+            );
+            assert_eq!(
+                map.get("attributeName"),
+                Some(&JsValue::String("class".to_string()))
+            );
+            assert_eq!(
+                map.get("oldValue"),
+                Some(&JsValue::String("old-class".to_string()))
+            );
         } else {
             panic!("Expected Object");
         }
@@ -226,7 +270,10 @@ mod tests {
         observer.observe_child_list_change(1, vec![10, 11], vec![5]);
         let js = observer.records[0].to_js_value();
         if let JsValue::Object(map) = &js {
-            assert_eq!(map.get("type"), Some(&JsValue::String("childList".to_string())));
+            assert_eq!(
+                map.get("type"),
+                Some(&JsValue::String("childList".to_string()))
+            );
             if let Some(JsValue::Array(added)) = map.get("addedNodes") {
                 assert_eq!(added.len(), 2);
             } else {
@@ -239,13 +286,15 @@ mod tests {
 
     #[test]
     fn flush_to_callback_returns_none_when_empty() {
-        let mut observer = NativeMutationObserver::with_callback(JsValue::NativeFunction("__noop__".to_string()));
+        let mut observer =
+            NativeMutationObserver::with_callback(JsValue::NativeFunction("__noop__".to_string()));
         assert!(observer.flush_to_callback().is_none());
     }
 
     #[test]
     fn flush_to_callback_returns_records() {
-        let mut observer = NativeMutationObserver::with_callback(JsValue::NativeFunction("test_cb".to_string()));
+        let mut observer =
+            NativeMutationObserver::with_callback(JsValue::NativeFunction("test_cb".to_string()));
         observer.observe_attribute_change(3, "style");
         let result = observer.flush_to_callback();
         assert!(result.is_some());
@@ -264,7 +313,13 @@ mod tests {
     fn observe_and_disconnect_clears_targets() {
         let mut observer = NativeMutationObserver::new();
         observer.observe(1, MutationObserverInit::default());
-        observer.observe(2, MutationObserverInit { child_list: true, ..Default::default() });
+        observer.observe(
+            2,
+            MutationObserverInit {
+                child_list: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(observer.observed_targets.len(), 2);
         observer.disconnect();
         assert!(observer.observed_targets.is_empty());
@@ -277,8 +332,14 @@ mod tests {
         assert_eq!(observer.records.len(), 1);
         let js = observer.records[0].to_js_value();
         if let JsValue::Object(map) = &js {
-            assert_eq!(map.get("type"), Some(&JsValue::String("characterData".to_string())));
-            assert_eq!(map.get("oldValue"), Some(&JsValue::String("old text".to_string())));
+            assert_eq!(
+                map.get("type"),
+                Some(&JsValue::String("characterData".to_string()))
+            );
+            assert_eq!(
+                map.get("oldValue"),
+                Some(&JsValue::String("old text".to_string()))
+            );
         } else {
             panic!("Expected Object");
         }
@@ -302,7 +363,10 @@ mod tests {
         observer.observe_attribute_change_with_old(5, "class", Some("old-class".to_string()));
         let js = observer.records[0].to_js_value();
         if let JsValue::Object(map) = &js {
-            assert_eq!(map.get("oldValue"), Some(&JsValue::String("old-class".to_string())));
+            assert_eq!(
+                map.get("oldValue"),
+                Some(&JsValue::String("old-class".to_string()))
+            );
         } else {
             panic!("Expected Object");
         }
@@ -357,10 +421,14 @@ mod tests {
         if let JsValue::Object(map) = &js {
             if let Some(JsValue::Array(added)) = map.get("addedNodes") {
                 assert_eq!(added.len(), 3);
-            } else { panic!("Expected addedNodes"); }
+            } else {
+                panic!("Expected addedNodes");
+            }
             if let Some(JsValue::Array(removed)) = map.get("removedNodes") {
                 assert_eq!(removed.len(), 2);
-            } else { panic!("Expected removedNodes"); }
+            } else {
+                panic!("Expected removedNodes");
+            }
         } else {
             panic!("Expected Object");
         }
