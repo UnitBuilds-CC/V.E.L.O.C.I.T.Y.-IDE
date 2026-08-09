@@ -1,5 +1,7 @@
 pub mod background_agents;
 pub mod checkpoint;
+pub mod collaboration;
+pub mod conflict_resolution;
 pub mod coordination;
 pub mod crypto;
 pub mod executor;
@@ -10,6 +12,7 @@ pub mod planning;
 pub mod provider;
 pub mod reasoning;
 pub mod self_improve;
+pub mod shared_memory;
 
 #[cfg(test)]
 mod tests;
