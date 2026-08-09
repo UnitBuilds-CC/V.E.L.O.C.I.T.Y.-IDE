@@ -1,3 +1,17 @@
+//! Vulkan NDA (Nested Dissection Architecture) GEMV compute kernel dispatch.
+//!
+//! # Safety Invariants
+//!
+//! All `unsafe` blocks in this module wrap Vulkan API calls via the `ash` crate.
+//! The following invariants are maintained throughout:
+//! - `Device`, `Instance`, `Queue`, and all handle fields are valid and initialized in `new()`.
+//! - Buffers are created via `create_coherent_buffer` / `create_device_local_buffer` which
+//!   guarantee valid buffer+memory+pointer triples.
+//! - Descriptor sets are allocated from a pool with sufficient capacity (5 storage buffers).
+//! - Command buffers are recorded within a valid recording scope and submitted to the
+//!   correct queue family. Fences synchronize completion before host reads.
+//! - The `Drop` impl tears down resources in reverse dependency order.
+
 use super::packing::*;
 use super::vulkan_init::*;
 use ash::vk;
@@ -44,6 +58,10 @@ pub struct VulkanNdaGemv {
 
 impl VulkanNdaGemv {
     pub fn record_dispatch(&self, cmd: vk::CommandBuffer) {
+        // SAFETY: All unsafe calls below are Vulkan command-buffer recording functions.
+        // `cmd` is a valid command buffer in recording state. Pipeline, descriptor set,
+        // and pipeline layout handles are valid from new(). Push constants are 8 bytes
+        // (k, n as u32), matching the pipeline layout's push constant range.
         unsafe {
             self.device.cmd_bind_pipeline(
                 cmd,
@@ -87,6 +105,7 @@ impl VulkanNdaGemv {
 
         let shader_info =
             vk::ShaderModuleCreateInfo::builder().code(crate::compiler::shaders::NDA_SPV);
+        // SAFETY: create_shader_module with valid NDA SPIR-V bytecode.
         let shader_module = unsafe { device.create_shader_module(&shader_info, None)? };
 
         let bindings = [
@@ -122,6 +141,7 @@ impl VulkanNdaGemv {
                 .build(),
         ];
         let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+        // SAFETY: create_descriptor_set_layout with 5 storage buffer bindings.
         let desc_set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
 
         let push_constant_ranges = [vk::PushConstantRange::builder()
@@ -133,6 +153,7 @@ impl VulkanNdaGemv {
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&layouts)
             .push_constant_ranges(&push_constant_ranges);
+        // SAFETY: create_pipeline_layout with one descriptor set layout and 8-byte push constants.
         let pipeline_layout =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
 
@@ -144,6 +165,7 @@ impl VulkanNdaGemv {
         let pipeline_create_info = vk::ComputePipelineCreateInfo::builder()
             .stage(stage_info.build())
             .layout(pipeline_layout);
+        // SAFETY: create_compute_pipelines with valid shader module and pipeline layout.
         let compute_pipelines = unsafe {
             device
                 .create_compute_pipelines(
@@ -206,8 +228,10 @@ impl VulkanNdaGemv {
         let pool_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(1)
             .pool_sizes(&pool_sizes);
+        // SAFETY: create_descriptor_pool with capacity for 1 set of 5 storage buffers.
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
+        // SAFETY: allocate_descriptor_sets allocates one set from the pool with the layout.
         let desc_set = unsafe {
             device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
@@ -275,12 +299,16 @@ impl VulkanNdaGemv {
                 .buffer_info(&buffer_infos[4..5])
                 .build(),
         ];
+        // SAFETY: update_descriptor_sets writes buffer bindings to the descriptor set.
+        // All buffer handles and ranges are valid from the create_coherent/device_local calls.
         unsafe { device.update_descriptor_sets(&writes, &[]) };
 
         let command_pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(driver.queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        // SAFETY: create_command_pool for the compute queue family with RESET flag.
         let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
+        // SAFETY: allocate_command_buffers allocates one primary command buffer.
         let command_buffers = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
@@ -293,6 +321,8 @@ impl VulkanNdaGemv {
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+        // SAFETY: Record compute dispatch: bind pipeline, descriptor set, push constants,
+        // dispatch workgroups, end recording. All handles are valid.
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info)?;
             device.cmd_bind_pipeline(
@@ -325,6 +355,7 @@ impl VulkanNdaGemv {
         }
 
         let fence_info = vk::FenceCreateInfo::builder();
+        // SAFETY: create_fence for synchronizing dispatch completion.
         let fence = unsafe { device.create_fence(&fence_info, None)? };
 
         Ok(Self {
@@ -443,6 +474,7 @@ impl VulkanNdaGemv {
             ]
         };
         let layout_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+        // SAFETY: create_descriptor_set_layout with 5 storage buffer bindings.
         let desc_set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
 
         let push_constant_ranges = [vk::PushConstantRange::builder()
@@ -454,6 +486,7 @@ impl VulkanNdaGemv {
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&layouts)
             .push_constant_ranges(&push_constant_ranges);
+        // SAFETY: create_pipeline_layout with one descriptor set layout and 8-byte push constants.
         let pipeline_layout =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
 
@@ -465,6 +498,7 @@ impl VulkanNdaGemv {
         let pipeline_create_info = vk::ComputePipelineCreateInfo::builder()
             .stage(stage_info.build())
             .layout(pipeline_layout);
+        // SAFETY: create_compute_pipelines with valid shader module and pipeline layout.
         let compute_pipelines = unsafe {
             device
                 .create_compute_pipelines(
@@ -550,8 +584,10 @@ impl VulkanNdaGemv {
         let pool_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(1)
             .pool_sizes(&pool_sizes);
+        // SAFETY: create_descriptor_pool with capacity for 1 set of 5 storage buffers.
         let desc_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
+        // SAFETY: allocate_descriptor_sets allocates one set from the pool with the layout.
         let desc_set = unsafe {
             device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
@@ -642,6 +678,8 @@ impl VulkanNdaGemv {
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+        // SAFETY: Record compute dispatch: bind pipeline, descriptor set, push constants,
+        // dispatch workgroups, end recording. All handles are valid.
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info)?;
             device.cmd_bind_pipeline(
@@ -674,6 +712,7 @@ impl VulkanNdaGemv {
         }
 
         let fence_info = vk::FenceCreateInfo::builder();
+        // SAFETY: create_fence for synchronizing dispatch completion.
         let fence = unsafe { device.create_fence(&fence_info, None)? };
 
         Ok(Self {
@@ -712,6 +751,8 @@ impl VulkanNdaGemv {
         input_floats: &[f32],
         output_floats: &mut [f32],
     ) -> Result<f64, Box<dyn std::error::Error>> {
+        // SAFETY: Copy input floats into the HOST_VISIBLE mapped input buffers.
+        // Pointers are valid from create_coherent_buffer; lengths fit within buffer sizes.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 input_floats.as_ptr(),
@@ -721,6 +762,8 @@ impl VulkanNdaGemv {
         }
 
         let start = Instant::now();
+        // SAFETY: Reset fence, submit command buffer to compute queue, wait for completion.
+        // The command buffer was recorded in new() with SIMULTANEOUS_USE flag.
         unsafe {
             self.device.reset_fences(&[self.fence])?;
             self.device.queue_submit(
@@ -734,6 +777,8 @@ impl VulkanNdaGemv {
         }
         let duration_us = start.elapsed().as_micros() as f64;
 
+        // SAFETY: Copy output floats from the HOST_VISIBLE mapped output buffer.
+        // Pointer is valid from create_coherent_buffer; length fits within buffer size.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.output_ptr as *const f32,
@@ -837,6 +882,8 @@ impl VulkanNdaGemv {
         input_pos: &[u8],
         output_floats: &mut [f32],
     ) -> Result<f64, Box<dyn std::error::Error>> {
+        // SAFETY: Copy packed input bytes into HOST_VISIBLE mapped buffers.
+        // Pointers are valid from create_coherent_buffer; lengths fit within buffer sizes.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 input_active.as_ptr(),
@@ -851,6 +898,7 @@ impl VulkanNdaGemv {
         }
 
         let start = Instant::now();
+        // SAFETY: Reset fence, submit command buffer, wait for GPU completion.
         unsafe {
             self.device.reset_fences(&[self.fence])?;
             self.device.queue_submit(
@@ -864,6 +912,7 @@ impl VulkanNdaGemv {
         }
         let duration_us = start.elapsed().as_micros() as f64;
 
+        // SAFETY: Copy output floats from HOST_VISIBLE mapped output buffer.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.output_ptr as *const f32,
@@ -878,6 +927,11 @@ impl VulkanNdaGemv {
 
 impl Drop for VulkanNdaGemv {
     fn drop(&mut self) {
+        // SAFETY: Vulkan resource teardown in correct dependency order:
+        // wait_idle → destroy fence → destroy command pool → destroy descriptor pool →
+        // destroy buffers/memory → destroy pipeline → destroy pipeline layout →
+        // destroy descriptor set layout → destroy shader module.
+        // All handles are valid and owned by this struct.
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_fence(self.fence, None);
