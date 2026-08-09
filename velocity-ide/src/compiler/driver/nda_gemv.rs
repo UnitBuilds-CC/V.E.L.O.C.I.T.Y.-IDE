@@ -410,6 +410,7 @@ impl VulkanNdaGemv {
             _ => crate::compiler::shaders::NDA_SPV,
         };
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(spv_code);
+        // SAFETY: Create shader module from valid NDA SPIR-V bytecode.
         let shader_module = unsafe { device.create_shader_module(&shader_info, None)? };
 
         let bindings = if is_float_act {
@@ -660,12 +661,15 @@ impl VulkanNdaGemv {
                     .build(),
             );
         }
+        // SAFETY: Update descriptor sets with NDA buffer bindings. All handles valid.
         unsafe { device.update_descriptor_sets(&writes, &[]) };
 
         let command_pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(driver.queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        // SAFETY: Create command pool for NDA dispatch recording.
         let command_pool = unsafe { device.create_command_pool(&command_pool_info, None)? };
+        // SAFETY: Allocate primary command buffer from pool.
         let command_buffers = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
@@ -794,6 +798,8 @@ impl VulkanNdaGemv {
         &self,
         input_floats: &[f32],
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // SAFETY: Copy input floats to GPU-mapped buffer, reset fence, and submit dispatch.
+        // `input_active_ptr` is a valid mapped pointer from create_coherent_buffer.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 input_floats.as_ptr(),
@@ -817,11 +823,14 @@ impl VulkanNdaGemv {
         output_floats: &mut [f32],
     ) -> Result<f64, Box<dyn std::error::Error>> {
         let start = Instant::now();
+        // SAFETY: Wait for fence to signal GPU completion.
         unsafe {
             self.device.wait_for_fences(&[self.fence], true, u64::MAX)?;
         }
         let duration_us = start.elapsed().as_micros() as f64;
 
+        // SAFETY: Copy output floats from GPU-mapped buffer to caller slice.
+        // `output_ptr` is a valid mapped pointer from create_coherent_buffer.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.output_ptr as *const f32,
@@ -834,6 +843,7 @@ impl VulkanNdaGemv {
     }
 
     pub fn submit_async_float_no_copy(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // SAFETY: Reset fence and submit NDA dispatch command buffer (no-copy variant).
         unsafe {
             self.device.reset_fences(&[self.fence])?;
             self.device.queue_submit(
@@ -852,6 +862,7 @@ impl VulkanNdaGemv {
         output_floats: &mut [f32],
     ) -> Result<f64, Box<dyn std::error::Error>> {
         let start = Instant::now();
+        // SAFETY: Reset fence, submit dispatch, and wait for fence completion.
         unsafe {
             self.device.reset_fences(&[self.fence])?;
             self.device.queue_submit(
@@ -865,6 +876,7 @@ impl VulkanNdaGemv {
         }
         let duration_us = start.elapsed().as_micros() as f64;
 
+        // SAFETY: Copy output floats from GPU-mapped buffer to caller slice.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.output_ptr as *const f32,

@@ -226,6 +226,7 @@ impl VulkanNdaBitNetLayer {
         let pipeline_layout_info_act = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&layouts_act)
             .push_constant_ranges(&push_constant_ranges);
+        // SAFETY: Create pipeline layout for activation shader with desc layout and push constants.
         let pipeline_layout_act =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info_act, None)? };
 
@@ -714,6 +715,7 @@ impl VulkanNdaBitNetLayer {
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
+        // SAFETY: Record all NDA dispatches into command buffer: begin, bind, dispatch, end.
         unsafe {
             device.begin_command_buffer(command_buffer, &begin_info)?;
 
@@ -776,6 +778,7 @@ impl VulkanNdaBitNetLayer {
         }
 
         let fence_info = vk::FenceCreateInfo::builder();
+        // SAFETY: Create fence for NDA layer GPU synchronization.
         let fence = unsafe { device.create_fence(&fence_info, None)? };
 
         Ok(Self {
@@ -857,6 +860,8 @@ impl VulkanNdaBitNetLayer {
         inputs_pos_bytes: &[u8],
         output_floats: &mut [f32],
     ) -> Result<f64, Box<dyn std::error::Error>> {
+        // SAFETY: Copy packed input bytes into HOST_VISIBLE mapped buffers.
+        // `inputs_3200_active_ptr` and `inputs_3200_pos_ptr` are valid from create_coherent_buffer.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 inputs_active_bytes.as_ptr(),
@@ -873,6 +878,7 @@ impl VulkanNdaBitNetLayer {
         let start = Instant::now();
         let command_buffers = [self.command_buffer];
         let submit_info = vk::SubmitInfo::builder().command_buffers(&command_buffers);
+        // SAFETY: Reset fence, submit NDA dispatch, wait for completion.
         unsafe {
             self.device.reset_fences(&[self.fence])?;
             self.device
@@ -881,6 +887,8 @@ impl VulkanNdaBitNetLayer {
         }
         let duration_us = start.elapsed().as_micros() as f64;
 
+        // SAFETY: Copy output floats from GPU-mapped buffer to caller slice.
+        // `out_3200_down_ptr` is a valid mapped pointer from create_coherent_buffer.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.out_3200_down_ptr as *const f32,
