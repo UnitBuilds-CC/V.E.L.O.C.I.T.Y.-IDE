@@ -200,6 +200,10 @@ mod aesni {
     }
 
     /// Expand a 256-bit key into 15 round keys using AES-NI.
+    ///
+    /// SAFETY: Caller must ensure AES-NI is available (checked via `is_x86_feature_detected!("aes")`).
+    /// The key pointer is valid for 32 bytes (guaranteed by `&[u8; 32]`).
+    /// All `_mm_*` intrinsics operate on `__m128i` values which are naturally aligned.
     #[target_feature(enable = "aes")]
     pub unsafe fn expand_key_256(key: &[u8; 32]) -> [[u8; 16]; 15] {
         let mut rks = [[0u8; 16]; 15];
@@ -230,6 +234,9 @@ mod aesni {
     }
 
     /// Encrypt one block with AES-NI given expanded round keys.
+    ///
+    /// SAFETY: Caller must ensure AES-NI is available. The round keys `rks` must have
+    /// been produced by `expand_key_256`. The block pointer is valid for 16 bytes.
     #[target_feature(enable = "aes")]
     pub unsafe fn encrypt_block(rks: &[[u8; 16]; 15], block: &[u8; 16]) -> [u8; 16] {
         let load = |b: &[u8; 16]| _mm_loadu_si128(b.as_ptr() as *const __m128i);
@@ -260,7 +267,8 @@ impl AesBackend {
         #[cfg(target_arch = "x86_64")]
         {
             if std::arch::is_x86_feature_detected!("aes") {
-                // SAFETY: guarded by runtime AES-NI detection.
+                // SAFETY: Runtime AES-NI detection guarantees the CPU supports AES intrinsics.
+                // The `key` parameter is `&[u8; 32]`, a valid 32-byte pointer.
                 let rks = unsafe { aesni::expand_key_256(key) };
                 return AesBackend::Hardware(rks);
             }
@@ -272,6 +280,8 @@ impl AesBackend {
     fn encrypt_block(&self, block: &[u8; 16]) -> [u8; 16] {
         match self {
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: Hardware variant is only constructed when AES-NI is detected at runtime.
+            // The round keys were produced by expand_key_256, and block is a valid 16-byte pointer.
             AesBackend::Hardware(rks) => unsafe { aesni::encrypt_block(rks, block) },
             AesBackend::Software(k) => aes256_encrypt_block_sw(k, block),
         }
