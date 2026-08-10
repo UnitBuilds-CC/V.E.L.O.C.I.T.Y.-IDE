@@ -864,6 +864,10 @@ impl eframe::App for VelocityApp {
                         self.toggle_panel(TabKind::Voice);
                         ui.close();
                     }
+                    if ui.button("Test Generator").clicked() {
+                        self.toggle_panel(TabKind::TestGenerator);
+                        ui.close();
+                    }
                     if ui.button("Knowledge Base").clicked() {
                         self.toggle_panel(TabKind::Knowledge);
                         ui.close();

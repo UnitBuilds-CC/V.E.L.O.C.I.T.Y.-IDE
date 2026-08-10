@@ -51,6 +51,7 @@ impl Tab {
             TabKind::Coverage => "Coverage".into(),
             TabKind::Pipeline => "Pipeline".into(),
             TabKind::Voice => "Voice".into(),
+            TabKind::TestGenerator => "Test Gen".into(),
             TabKind::Knowledge => "Knowledge".into(),
             TabKind::Triggers => "Triggers".into(),
             TabKind::Workflows => "Workflows".into(),
@@ -109,6 +110,7 @@ pub enum TabKind {
     Coverage,
     Pipeline,
     Voice,
+    TestGenerator,
     // Knowledge / RAG panel
     Knowledge,
     // Unattended execution triggers

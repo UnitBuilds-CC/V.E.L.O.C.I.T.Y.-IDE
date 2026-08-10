@@ -236,6 +236,11 @@ impl VelocityApp {
         self.toggle_panel(TabKind::Voice);
     }
 
+    /// Open the Test Generator panel.
+    pub fn toggle_test_generator(&mut self) {
+        self.toggle_panel(TabKind::TestGenerator);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);

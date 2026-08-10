@@ -251,6 +251,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Voice => {
                 self.app.render_voice_panel(ui);
             }
+            TabKind::TestGenerator => {
+                self.app.render_test_generator_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }

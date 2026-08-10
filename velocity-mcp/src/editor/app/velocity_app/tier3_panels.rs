@@ -1166,6 +1166,214 @@ impl VelocityApp {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test Generator — coverage analysis and test generation
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_test_generator_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let total = self.test_generator.analysis.total_functions;
+        let tested = self.test_generator.analysis.tested_functions;
+        let coverage = self.test_generator.analysis.coverage_percent;
+
+        Self::tier3_header(
+            ui,
+            "Test Generator",
+            &format!(
+                "{}/{} functions tested · {:.1}% coverage",
+                tested, total, coverage
+            ),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Controls
+        let mut analyze = false;
+        let mut generate = false;
+        ui.horizontal(|ui| {
+            if ui
+                .button(RichText::new("🔍 Analyze Coverage").size(10.0))
+                .clicked()
+            {
+                analyze = true;
+            }
+            if ui
+                .button(RichText::new("✨ Generate Tests").size(10.0))
+                .clicked()
+            {
+                generate = true;
+            }
+            ui.label(
+                RichText::new(format!(
+                    "{} test(s) generated",
+                    self.test_generator.generated_tests.len()
+                ))
+                .size(9.0)
+                .color(palette.text_muted),
+            );
+        });
+        ui.add_space(6.0);
+
+        // Configuration
+        egui::CollapsingHeader::new(RichText::new("Configuration").size(10.0).strong())
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Max tests per run:").size(9.0));
+                    ui.add(
+                        egui::DragValue::new(&mut self.test_generator.config.max_tests_per_run)
+                            .range(1..=100)
+                            .speed(1),
+                    );
+                });
+                ui.checkbox(
+                    &mut self.test_generator.config.public_only,
+                    "Public functions only",
+                );
+                ui.checkbox(
+                    &mut self.test_generator.config.include_assertions,
+                    "Include assertion placeholders",
+                );
+            });
+        ui.add_space(6.0);
+
+        // Untested functions list
+        if !self.test_generator.analysis.untested_functions.is_empty() {
+            ui.label(
+                RichText::new("UNTESTED FUNCTIONS")
+                    .small()
+                    .strong()
+                    .color(palette.warning),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("test_gen_untested_scroll")
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for func in &self.test_generator.analysis.untested_functions {
+                        let vis_badge = match func.visibility {
+                            crate::editor::test_generator::Visibility::Public => ("pub", palette.success),
+                            crate::editor::test_generator::Visibility::Private => ("priv", palette.text_muted),
+                            crate::editor::test_generator::Visibility::CrateLocal => ("crate", palette.text_muted),
+                        };
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(vis_badge.0)
+                                            .size(8.0)
+                                            .monospace()
+                                            .color(vis_badge.1),
+                                    );
+                                    ui.label(
+                                        RichText::new(&func.name)
+                                            .size(10.0)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "{}:{}",
+                                                    func.file.display(),
+                                                    func.line
+                                                ))
+                                                .size(8.0)
+                                                .color(palette.text_muted),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(&func.signature)
+                                        .size(8.0)
+                                        .monospace()
+                                        .color(palette.text_muted),
+                                );
+                            });
+                        ui.add_space(3.0);
+                    }
+                });
+        }
+
+        // Generated tests preview
+        if !self.test_generator.generated_tests.is_empty() {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("GENERATED TESTS")
+                    .small()
+                    .strong()
+                    .color(palette.success),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("test_gen_results_scroll")
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for test in &self.test_generator.generated_tests {
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&test.test_name)
+                                            .size(10.0)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "{:.0}% confidence",
+                                                    test.confidence * 100.0
+                                                ))
+                                                .size(8.0)
+                                                .color(palette.text_muted),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(format!("for {}", test.function_name))
+                                        .size(8.0)
+                                        .color(palette.text_muted),
+                                );
+                                if ui
+                                    .small_button(RichText::new("View code").size(8.0))
+                                    .clicked()
+                                {
+                                    // Could open in editor or show modal
+                                }
+                            });
+                        ui.add_space(3.0);
+                    }
+                });
+        }
+
+        if analyze {
+            let ws = self.workspace_root.clone();
+            self.test_generator.analyze_coverage(&ws);
+            self.toasts.push(crate::editor::toast::Toast::success(format!(
+                "Coverage analysis complete: {:.1}%",
+                self.test_generator.analysis.coverage_percent
+            )));
+        }
+        if generate {
+            let tests = self.test_generator.generate_tests();
+            self.test_generator.generated_tests = tests;
+            self.toasts.push(crate::editor::toast::Toast::success(format!(
+                "Generated {} test(s)",
+                self.test_generator.generated_tests.len()
+            )));
+        }
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {
