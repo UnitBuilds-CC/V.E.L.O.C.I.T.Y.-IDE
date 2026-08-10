@@ -1,0 +1,26 @@
+[package]
+name = "velocity-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+velocity-ide = { path = "../velocity-ide" }
+velocity-browser = { path = "../velocity-browser" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_nda_lexer"
+path = "fuzz_targets/fuzz_nda_lexer.rs"
+
+[[bin]]
+name = "fuzz_nda_parser"
+path = "fuzz_targets/fuzz_nda_parser.rs"
+
+[[bin]]
+name = "fuzz_html_parser"
+path = "fuzz_targets/fuzz_html_parser.rs"
+
+[[bin]]
+name = "fuzz_wasm_runner"
+path = "fuzz_targets/fuzz_wasm_runner.rs"
