@@ -1,0 +1,17 @@
+[package]
+name = "velocity-e2e"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# E2E tests are integration tests that spawn actual binaries.
+# They live in tests/ and are run via `cargo test`.
+
+[dependencies]
+serde_json = "1"
+tempfile = "3"
+
+# These deps ensure the binaries are built before E2E tests run.
+velocity-ide = { path = "../velocity-ide" }
+velocity-browser = { path = "../velocity-browser" }
+velocity_mcp = { path = "../velocity-mcp" }

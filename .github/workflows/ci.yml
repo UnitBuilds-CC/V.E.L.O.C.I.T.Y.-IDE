@@ -67,3 +67,23 @@ jobs:
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
       - run: rustup component add clippy
       - run: cargo clippy --workspace -- -D warnings
+
+  e2e:
+    name: E2E Tests
+    runs-on: windows-latest
+    needs: [check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+      # Build all binaries first so E2E can spawn them
+      - run: cargo build --workspace
+      # Run E2E tests (spawns actual binaries over stdio)
+      - run: cargo test -p velocity-e2e --no-fail-fast

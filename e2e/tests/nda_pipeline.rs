@@ -1,0 +1,102 @@
+//! E2E test: NDA compiler pipeline (source → compile → execute).
+//!
+//! Spawns the actual `run_nda` binary with a test .nda file and
+//! verifies the full pipeline: lex → parse → JIT/interpret → output.
+
+use std::process::Command;
+
+/// Write a minimal valid NDA program to a temp file.
+fn write_test_nda(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("test_main.nda");
+    let source = r#"
+fn main() {
+    let x = 42;
+    return 0;
+}
+"#;
+    std::fs::write(&path, source).unwrap();
+    path
+}
+
+#[test]
+fn run_nda_compiles_and_executes() {
+    let dir = tempfile::tempdir().unwrap();
+    let nda_file = write_test_nda(dir.path());
+    let binary = velocity_e2e::workspace_binary("run_nda");
+
+    let output = Command::new(&binary)
+        .arg(nda_file.to_str().unwrap())
+        .arg("--sandbox") // Use interpreter (more portable, no JIT platform deps)
+        .arg("--dim")
+        .arg("8")
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run run_nda at '{}': {}", binary, e));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "run_nda should exit 0.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+
+    // Verify key pipeline stages appear in output
+    assert!(stdout.contains("Compiling"), "should show compilation step");
+    assert!(
+        stdout.contains("Registered"),
+        "should register functions in site map"
+    );
+    assert!(
+        stdout.contains("Execution completed") || stdout.contains("Output"),
+        "should show execution result"
+    );
+}
+
+#[test]
+fn run_nda_missing_file_exits_nonzero() {
+    let binary = velocity_e2e::workspace_binary("run_nda");
+
+    let output = Command::new(&binary)
+        .arg("/nonexistent/path/to/file.nda")
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run run_nda: {}", e));
+
+    assert!(
+        !output.status.success(),
+        "run_nda should exit non-zero for missing file"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Error") || stderr.contains("error") || stderr.contains("No such"),
+        "stderr should mention the error, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn run_nda_no_main_function_exits_nonzero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no_main.nda");
+    // A program with no main function
+    std::fs::write(&path, "fn helper() {\n    let x = 1;\n    return 0;\n}\n").unwrap();
+    let binary = velocity_e2e::workspace_binary("run_nda");
+
+    let output = Command::new(&binary)
+        .arg(path.to_str().unwrap())
+        .arg("--sandbox")
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run run_nda: {}", e));
+
+    assert!(
+        !output.status.success(),
+        "run_nda should exit non-zero when no main function"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("main") || stderr.contains("Error"),
+        "stderr should mention missing main, got: {}",
+        stderr
+    );
+}

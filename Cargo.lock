@@ -4130,6 +4130,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "velocity-e2e"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "velocity-browser",
+ "velocity-ide",
+ "velocity_mcp",
+]
+
+[[package]]
 name = "velocity-ide"
 version = "0.1.0"
 dependencies = [

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["velocity-mcp", "velocity-ide", "velocity-browser", "drone"]
+members = ["velocity-mcp", "velocity-ide", "velocity-browser", "drone", "e2e"]
 
 # Exclude archived & legacy dirs that are not Rust packages
 exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz"]
