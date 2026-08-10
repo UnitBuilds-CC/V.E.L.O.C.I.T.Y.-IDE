@@ -401,6 +401,16 @@ pub struct VelocityApp {
     pub peer_chat_selected: Option<String>,
     /// Transient status line for the peer panel.
     pub peer_status: String,
+
+    // ─── Remaining Module State ──────────────────────────────────────────────
+    /// Multimodal attachments for chat.
+    pub multimodal_attachments: Vec<crate::editor::multimodal::Attachment>,
+    /// Continuation ledger for cross-model context handoff.
+    pub continuation_ledger: Option<crate::editor::continuation_ledger::ContinuationLedger>,
+    /// Plugin registry (distinct from extension registry).
+    pub plugin_registry: crate::editor::plugin_registry::PluginRegistry,
+    /// Agent skill file definitions.
+    pub skill_files: Vec<crate::editor::skill_file::SkillFile>,
 }
 
 impl VelocityApp {
@@ -988,6 +998,11 @@ impl VelocityApp {
             peer_chat_message: String::new(),
             peer_chat_selected: None,
             peer_status: String::new(),
+            // Remaining Module State
+            multimodal_attachments: Vec::new(),
+            continuation_ledger: None,
+            plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
+            skill_files: Vec::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);

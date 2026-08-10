@@ -1933,6 +1933,511 @@ impl VelocityApp {
             });
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Speculative Precomputation — cache status and contents
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_precomp_cache_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Precomputation Cache",
+            "Speculative context pre-indexing",
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("The precomputation cache pre-indexes scoped files before agent workers spawn,")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("providing warm context caches that accelerate agent execution.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        ui.label(
+            RichText::new("CACHE STATUS")
+                .small()
+                .strong()
+                .color(palette.accent),
+        );
+        ui.label(
+            RichText::new("  • Automatic: runs before each agent task")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("  • Background: does not block UI")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("  • Per-task: keyed by task ID")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        ui.label(
+            RichText::new("Each cached entry contains:")
+                .size(9.0)
+                .strong()
+                .color(palette.text_muted),
+        );
+        ui.label(RichText::new("  • File paths and line counts").size(9.0).color(palette.text));
+        ui.label(RichText::new("  • Symbol outlines").size(9.0).color(palette.text));
+        ui.label(RichText::new("  • Import lists").size(9.0).color(palette.text));
+        ui.label(RichText::new("  • Top-level summaries").size(9.0).color(palette.text));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Multimodal Attachments
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_multimodal_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Multimodal Attachments",
+            &format!("{} file(s) attached", self.multimodal_attachments.len()),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Attach images, documents, or audio files to chat turns. Images are")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("encoded as data: URLs for vision models; documents use OCR fallback.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if self.multimodal_attachments.is_empty() {
+            ui.label(
+                RichText::new("No attachments yet. Use the Chat panel to attach files.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            for (i, att) in self.multimodal_attachments.iter().enumerate() {
+                let kind_color = match att.kind {
+                    crate::editor::multimodal::AttachmentKind::Image => palette.success,
+                    crate::editor::multimodal::AttachmentKind::Document => palette.accent,
+                    crate::editor::multimodal::AttachmentKind::Audio => palette.warning,
+                };
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("●").color(kind_color));
+                            ui.label(
+                                RichText::new(att.kind.label())
+                                    .small()
+                                    .strong()
+                                    .color(kind_color),
+                            );
+                            ui.label(
+                                RichText::new(&att.mime).small().color(palette.text_muted),
+                            );
+                        });
+                        ui.label(
+                            RichText::new(att.path.display().to_string())
+                                .size(9.0)
+                                .color(palette.text),
+                        );
+                        ui.label(
+                            RichText::new(format!("{} bytes", att.data.len()))
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    });
+                ui.add_space(3.0);
+                let _ = i;
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Continuation Ledger
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_continuation_ledger_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Continuation Ledger",
+            "Cross-model context handoff",
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("The continuation ledger captures mission state, edit journals, and")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("model provenance so a different AI model can seamlessly resume work.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        match &self.continuation_ledger {
+            None => {
+                ui.label(
+                    RichText::new("No active continuation ledger.")
+                        .size(10.0)
+                        .color(palette.text_muted),
+                );
+                ui.label(
+                    RichText::new("A ledger is created when handing off context between models.")
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+            }
+            Some(ledger) => {
+                egui::Frame::new()
+                    .fill(palette.bg_secondary)
+                    .corner_radius(4.0)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("Ledger: {}", ledger.id))
+                                .strong()
+                                .color(palette.accent),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(format!("Mission: {}", ledger.mission.goal))
+                                .size(9.0)
+                                .color(palette.text),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "Scoped files: {}",
+                                ledger.environment.scoped_files.len()
+                            ))
+                            .size(9.0)
+                            .color(palette.text),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "Edit journal: {} entries",
+                                ledger.journal.completed_edits.len()
+                            ))
+                            .size(9.0)
+                            .color(palette.text),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "Progress: {}/{} steps done",
+                                ledger.progress.steps.iter().filter(|s| matches!(s.status, crate::editor::continuation_ledger::StepStatus::Done)).count(),
+                                ledger.progress.steps.len()
+                            ))
+                            .size(9.0)
+                            .color(palette.success),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "Provenance: {} model attempt(s)",
+                                ledger.provenance.len()
+                            ))
+                            .size(9.0)
+                            .color(palette.text_muted),
+                        );
+                    });
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Plugin Registry
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_plugin_registry_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let plugin_count = self.plugin_registry.count();
+        let plugins = self.plugin_registry.list();
+        let all_tools = self.plugin_registry.all_tools();
+
+        Self::tier3_header(
+            ui,
+            "Plugin Registry",
+            &format!("{plugin_count} plugin(s) · {} tool(s)", all_tools.len()),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Plugins extend the IDE with additional tools and capabilities.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if plugins.is_empty() {
+            ui.label(
+                RichText::new("No plugins loaded. Place plugin crates in the workspace to discover them.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            for info in &plugins {
+                let status_color = if info.enabled { palette.success } else { palette.text_muted };
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("●").color(status_color));
+                            ui.label(
+                                RichText::new(&info.name).strong().color(palette.text),
+                            );
+                            ui.label(
+                                RichText::new(format!("v{}", info.version))
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        });
+                        ui.label(
+                            RichText::new(&info.description)
+                                .size(9.0)
+                                .color(palette.text),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{} tool(s): {}",
+                                info.tool_count,
+                                info.tool_names.join(", ")
+                            ))
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                    });
+                ui.add_space(3.0);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Skill Files
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_skill_files_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Skill Files",
+            &format!("{} skill(s) loaded", self.skill_files.len()),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Skills are reusable capability definitions injected into agent")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("system prompts when tasks are routed to team members.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if self.skill_files.is_empty() {
+            ui.label(
+                RichText::new("No skill files loaded. Skills are loaded from .velocity/skills/.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            for skill in &self.skill_files {
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(&skill.name).strong().color(palette.accent),
+                            );
+                            ui.label(
+                                RichText::new(format!("[{}]", skill.id))
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                        });
+                        ui.label(
+                            RichText::new(&skill.description)
+                                .size(9.0)
+                                .color(palette.text),
+                        );
+                        // Show first 120 chars of body as preview
+                        let preview: String = skill.body.chars().take(120).collect();
+                        if preview.len() < skill.body.len() {
+                            ui.label(
+                                RichText::new(format!("{preview}…"))
+                                    .small()
+                                    .monospace()
+                                    .color(palette.text_muted),
+                            );
+                        }
+                    });
+                ui.add_space(3.0);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Inline Suggestions
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_inline_suggestions_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        let enabled = self.inline_suggestions.config.enabled;
+        let total_shown = self.inline_suggestions.total_shown;
+        let total_accepted = self.inline_suggestions.total_accepted;
+        let total_dismissed = self.inline_suggestions.total_dismissed;
+        let cache_entries = self.inline_suggestions.suggestion_cache.len();
+        let recent_count = self.inline_suggestions.recent_suggestions.len();
+        let has_current = self.inline_suggestions.current_suggestion.is_some();
+
+        Self::tier3_header(
+            ui,
+            "Inline Suggestions",
+            if enabled { "enabled" } else { "disabled" },
+            if enabled { palette.success } else { palette.text_muted },
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Ghost-text suggestions that appear inline as you type, powered by")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("the completion engine. Press Tab to accept, Escape to dismiss.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        // Configuration
+        ui.label(
+            RichText::new("CONFIGURATION")
+                .small()
+                .strong()
+                .color(palette.accent),
+        );
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Enabled:").size(9.0).color(palette.text_muted));
+            if ui
+                .checkbox(&mut self.inline_suggestions.config.enabled, "")
+                .changed()
+            {
+                // config updated
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Trigger delay:").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new(format!("{}ms", self.inline_suggestions.config.trigger_delay_ms))
+                    .size(9.0)
+                    .color(palette.text),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Max chars:").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new(format!("{}", self.inline_suggestions.config.max_suggestion_chars))
+                    .size(9.0)
+                    .color(palette.text),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Min confidence:").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new(format!(
+                    "{:.0}%",
+                    self.inline_suggestions.config.min_confidence * 100.0
+                ))
+                .size(9.0)
+                .color(palette.text),
+            );
+        });
+        ui.add_space(6.0);
+
+        // Statistics
+        ui.label(
+            RichText::new("STATISTICS")
+                .small()
+                .strong()
+                .color(palette.accent),
+        );
+        ui.label(
+            RichText::new(format!("  • Shown: {total_shown}"))
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new(format!("  • Accepted: {total_accepted}"))
+                .size(9.0)
+                .color(palette.success),
+        );
+        ui.label(
+            RichText::new(format!("  • Dismissed: {total_dismissed}"))
+                .size(9.0)
+                .color(palette.warning),
+        );
+        let accept_rate = if total_shown > 0 {
+            (total_accepted as f32 / total_shown as f32) * 100.0
+        } else {
+            0.0
+        };
+        ui.label(
+            RichText::new(format!("  • Accept rate: {accept_rate:.1}%"))
+                .size(9.0)
+                .color(palette.accent),
+        );
+        ui.add_space(4.0);
+
+        // Cache info
+        ui.label(
+            RichText::new("CACHE")
+                .small()
+                .strong()
+                .color(palette.accent),
+        );
+        ui.label(
+            RichText::new(format!("  • Reuse cache: {cache_entries} entries"))
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new(format!("  • Recent: {recent_count} entries"))
+                .size(9.0)
+                .color(palette.text),
+        );
+        let status = if has_current {
+            ("Pending suggestion", palette.warning)
+        } else {
+            ("Idle — waiting for trigger", palette.text_muted)
+        };
+        ui.label(RichText::new(format!("  • Status: {}", status.0)).size(9.0).color(status.1));
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {

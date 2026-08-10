@@ -271,6 +271,36 @@ impl VelocityApp {
         self.toggle_panel(TabKind::Debugger);
     }
 
+    /// Open the Precomputation Cache panel.
+    pub fn toggle_precomp_cache(&mut self) {
+        self.toggle_panel(TabKind::PrecompCache);
+    }
+
+    /// Open the Multimodal Attachments panel.
+    pub fn toggle_multimodal(&mut self) {
+        self.toggle_panel(TabKind::Multimodal);
+    }
+
+    /// Open the Continuation Ledger panel.
+    pub fn toggle_continuation_ledger(&mut self) {
+        self.toggle_panel(TabKind::ContinuationLedger);
+    }
+
+    /// Open the Plugin Registry panel.
+    pub fn toggle_plugin_registry(&mut self) {
+        self.toggle_panel(TabKind::PluginRegistry);
+    }
+
+    /// Open the Skill Files panel.
+    pub fn toggle_skill_files(&mut self) {
+        self.toggle_panel(TabKind::SkillFiles);
+    }
+
+    /// Open the Inline Suggestions panel.
+    pub fn toggle_inline_suggestions(&mut self) {
+        self.toggle_panel(TabKind::InlineSuggestions);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);

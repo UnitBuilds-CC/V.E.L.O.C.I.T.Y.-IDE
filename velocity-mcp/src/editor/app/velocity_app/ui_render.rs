@@ -892,6 +892,31 @@ impl eframe::App for VelocityApp {
                         self.toggle_panel(TabKind::Debugger);
                         ui.close();
                     }
+                    ui.separator();
+                    if ui.button("Precomp Cache").clicked() {
+                        self.toggle_panel(TabKind::PrecompCache);
+                        ui.close();
+                    }
+                    if ui.button("Multimodal").clicked() {
+                        self.toggle_panel(TabKind::Multimodal);
+                        ui.close();
+                    }
+                    if ui.button("Continuation Ledger").clicked() {
+                        self.toggle_panel(TabKind::ContinuationLedger);
+                        ui.close();
+                    }
+                    if ui.button("Plugin Registry").clicked() {
+                        self.toggle_panel(TabKind::PluginRegistry);
+                        ui.close();
+                    }
+                    if ui.button("Skill Files").clicked() {
+                        self.toggle_panel(TabKind::SkillFiles);
+                        ui.close();
+                    }
+                    if ui.button("Inline Suggestions").clicked() {
+                        self.toggle_panel(TabKind::InlineSuggestions);
+                        ui.close();
+                    }
                     if ui.button("Knowledge Base").clicked() {
                         self.toggle_panel(TabKind::Knowledge);
                         ui.close();

@@ -272,6 +272,24 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Debugger => {
                 self.app.render_debugger_panel(ui);
             }
+            TabKind::PrecompCache => {
+                self.app.render_precomp_cache_panel(ui);
+            }
+            TabKind::Multimodal => {
+                self.app.render_multimodal_panel(ui);
+            }
+            TabKind::ContinuationLedger => {
+                self.app.render_continuation_ledger_panel(ui);
+            }
+            TabKind::PluginRegistry => {
+                self.app.render_plugin_registry_panel(ui);
+            }
+            TabKind::SkillFiles => {
+                self.app.render_skill_files_panel(ui);
+            }
+            TabKind::InlineSuggestions => {
+                self.app.render_inline_suggestions_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }
