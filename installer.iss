@@ -58,15 +58,15 @@ Source: "dist\LICENSE.txt";  DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\README.md";    DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; IDE Chat — opens a terminal with the interactive chat session
-Name: "{group}\{#MyAppFullName}"; Filename: "cmd.exe"; Parameters: "/k ""{app}\bin\{#MyAppExeName}"" chat"; WorkingDir: "{app}\bin"
-; MCP Server — stdio JSON-RPC server (used by IDEs/editors, not launched directly)
+; IDE — launches the GUI directly
+Name: "{group}\{#MyAppFullName}"; Filename: "{app}\bin\{#MyAppExeName}"
+; MCP Server — stdio JSON-RPC server (used by IDEs/editors)
 Name: "{group}\VELOCITY. MCP Server"; Filename: "cmd.exe"; Parameters: "/k ""{app}\bin\velocity_mcp.exe"""; WorkingDir: "{app}\bin"
 Name: "{group}\{cm:UninstallProgram,{#MyAppFullName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppFullName}"; Filename: "cmd.exe"; Parameters: "/k ""{app}\bin\{#MyAppExeName}"" chat"; WorkingDir: "{app}\bin"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppFullName}"; Filename: "{app}\bin\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "cmd.exe"; Parameters: "/k ""{app}\bin\{#MyAppExeName}"" chat"; WorkingDir: "{app}\bin"; Description: "Launch {#MyAppFullName} Chat"; Flags: postinstall skipifsilent
+Filename: "{app}\bin\{#MyAppExeName}"; Description: "Launch {#MyAppFullName}"; Flags: nowait postinstall skipifsilent
 
 [Registry]
 ; Store install path for other tools to discover

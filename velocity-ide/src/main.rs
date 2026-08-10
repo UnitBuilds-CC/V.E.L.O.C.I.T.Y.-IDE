@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 mod compiler;
+mod gui;
 mod model;
 mod nda;
 mod nda_int;
@@ -154,6 +155,11 @@ struct ChatArgs {
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    // If no subcommand is given, launch the GUI
+    if std::env::args().len() < 2 {
+        return gui::app::launch();
+    }
 
     let cli = Cli::parse();
     match cli.command {
