@@ -42,6 +42,7 @@ velocity-ide = { path = "../velocity-ide" }
 velocity-browser = { path = "../velocity-browser" }
 ctrlc = "3.4"
 thiserror = "2"
+dirs = "5"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

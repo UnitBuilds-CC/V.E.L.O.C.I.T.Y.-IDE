@@ -241,8 +241,38 @@ fn main() {
 
         let (ui_tx, agent_rx) = crossbeam_channel::unbounded();
         let (agent_tx, ui_rx) = crossbeam_channel::unbounded();
-        let workspace_root =
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+        // Determine workspace root:
+        // 1. Command line argument if provided
+        // 2. Current directory if writable
+        // 3. User's home directory as fallback
+        let workspace_root = if std::env::args().len() > 1 {
+            std::path::PathBuf::from(std::env::args().nth(1).unwrap())
+        } else {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            // Check if we can write to the current directory
+            let test_file = cwd.join(".velocity_write_test");
+            if std::fs::write(&test_file, "test").is_ok() {
+                let _ = std::fs::remove_file(test_file);
+                cwd
+            } else {
+                // Fall back to user's home directory
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("V.E.L.O.C.I.T.Y. Workspace")
+            }
+        };
+
+        // Ensure workspace directory exists
+        if let Err(err) = std::fs::create_dir_all(&workspace_root) {
+            eprintln!(
+                "Failed to create workspace directory {}: {}",
+                workspace_root.display(),
+                err
+            );
+            process::exit(1);
+        }
+
         let workspace_root_agent = workspace_root.clone();
 
         // Ensure the .velocity folder exists
