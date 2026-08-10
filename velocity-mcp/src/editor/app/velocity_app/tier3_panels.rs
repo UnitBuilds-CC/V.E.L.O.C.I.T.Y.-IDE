@@ -1251,9 +1251,15 @@ impl VelocityApp {
                 .show(ui, |ui| {
                     for func in &self.test_generator.analysis.untested_functions {
                         let vis_badge = match func.visibility {
-                            crate::editor::test_generator::Visibility::Public => ("pub", palette.success),
-                            crate::editor::test_generator::Visibility::Private => ("priv", palette.text_muted),
-                            crate::editor::test_generator::Visibility::CrateLocal => ("crate", palette.text_muted),
+                            crate::editor::test_generator::Visibility::Public => {
+                                ("pub", palette.success)
+                            }
+                            crate::editor::test_generator::Visibility::Private => {
+                                ("priv", palette.text_muted)
+                            }
+                            crate::editor::test_generator::Visibility::CrateLocal => {
+                                ("crate", palette.text_muted)
+                            }
                         };
                         egui::Frame::new()
                             .fill(palette.bg_secondary)
@@ -1360,18 +1366,20 @@ impl VelocityApp {
         if analyze {
             let ws = self.workspace_root.clone();
             self.test_generator.analyze_coverage(&ws);
-            self.toasts.push(crate::editor::toast::Toast::success(format!(
-                "Coverage analysis complete: {:.1}%",
-                self.test_generator.analysis.coverage_percent
-            )));
+            self.toasts
+                .push(crate::editor::toast::Toast::success(format!(
+                    "Coverage analysis complete: {:.1}%",
+                    self.test_generator.analysis.coverage_percent
+                )));
         }
         if generate {
             let tests = self.test_generator.generate_tests();
             self.test_generator.generated_tests = tests;
-            self.toasts.push(crate::editor::toast::Toast::success(format!(
-                "Generated {} test(s)",
-                self.test_generator.generated_tests.len()
-            )));
+            self.toasts
+                .push(crate::editor::toast::Toast::success(format!(
+                    "Generated {} test(s)",
+                    self.test_generator.generated_tests.len()
+                )));
         }
     }
 
@@ -1380,7 +1388,12 @@ impl VelocityApp {
     // ═══════════════════════════════════════════════════════════════════════
     pub fn render_agent_memory_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
-        let total_memories: usize = self.agent_memory.stores.iter().map(|s| s.memories.len()).sum();
+        let total_memories: usize = self
+            .agent_memory
+            .stores
+            .iter()
+            .map(|s| s.memories.len())
+            .sum();
         let member_count = self.agent_memory.stores.len();
 
         Self::tier3_header(
@@ -1415,9 +1428,11 @@ impl VelocityApp {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
                 ui.label(
-                    RichText::new("No agent memories yet. Memories are created during agent execution.")
-                        .size(10.0)
-                        .color(palette.text_muted),
+                    RichText::new(
+                        "No agent memories yet. Memories are created during agent execution.",
+                    )
+                    .size(10.0)
+                    .color(palette.text_muted),
                 );
             });
         } else {
@@ -1491,10 +1506,11 @@ impl VelocityApp {
 
         if load {
             self.agent_memory.load_all();
-            self.toasts.push(crate::editor::toast::Toast::success(format!(
-                "Loaded {} member store(s)",
-                self.agent_memory.stores.len()
-            )));
+            self.toasts
+                .push(crate::editor::toast::Toast::success(format!(
+                    "Loaded {} member store(s)",
+                    self.agent_memory.stores.len()
+                )));
         }
         if save {
             self.agent_memory.save_all();
@@ -1532,9 +1548,12 @@ impl VelocityApp {
                     .color(palette.text_muted),
             );
             ui.label(
-                RichText::new(format!("{} tokens", self.live_orchestration.total_tokens_used))
-                    .size(9.0)
-                    .color(palette.text_muted),
+                RichText::new(format!(
+                    "{} tokens",
+                    self.live_orchestration.total_tokens_used
+                ))
+                .size(9.0)
+                .color(palette.text_muted),
             );
             let elapsed = self.live_orchestration.session_start.elapsed();
             ui.label(
@@ -1592,8 +1611,8 @@ impl VelocityApp {
                                 });
                                 ui.label(
                                     RichText::new(&worker.title)
-                                    .size(9.0)
-                                    .color(palette.text_muted),
+                                        .size(9.0)
+                                        .color(palette.text_muted),
                                 );
                                 if !worker.status_text.is_empty() {
                                     ui.label(
@@ -1685,7 +1704,10 @@ impl VelocityApp {
         // Controls
         let mut build_index = false;
         ui.horizontal(|ui| {
-            if ui.button(RichText::new("🔨 Build Index").size(10.0)).clicked() {
+            if ui
+                .button(RichText::new("🔨 Build Index").size(10.0))
+                .clicked()
+            {
                 build_index = true;
             }
             if ui.button(RichText::new("🔄 Rebuild").size(10.0)).clicked() {
@@ -1704,16 +1726,20 @@ impl VelocityApp {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
                 ui.label(
-                    RichText::new("Semantic index not built. Click 'Build Index' to enable semantic search.")
-                        .size(10.0)
-                        .color(palette.text_muted),
+                    RichText::new(
+                        "Semantic index not built. Click 'Build Index' to enable semantic search.",
+                    )
+                    .size(10.0)
+                    .color(palette.text_muted),
                 );
             });
         } else {
             ui.label(
-                RichText::new("Semantic search is active. Use the Search panel with semantic mode enabled.")
-                    .size(9.0)
-                    .color(palette.text),
+                RichText::new(
+                    "Semantic search is active. Use the Search panel with semantic mode enabled.",
+                )
+                .size(9.0)
+                .color(palette.text),
             );
         }
 
@@ -1757,9 +1783,11 @@ impl VelocityApp {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
                 ui.label(
-                    RichText::new("No snippets loaded. Snippets are loaded from .velocity/snippets.json")
-                        .size(10.0)
-                        .color(palette.text_muted),
+                    RichText::new(
+                        "No snippets loaded. Snippets are loaded from .velocity/snippets.json",
+                    )
+                    .size(10.0)
+                    .color(palette.text_muted),
                 );
             });
         } else {
@@ -1810,9 +1838,7 @@ impl VelocityApp {
                                 );
                                 if let Some(desc) = &snippet.description {
                                     ui.label(
-                                        RichText::new(desc)
-                                            .size(8.0)
-                                            .color(palette.text_muted),
+                                        RichText::new(desc).size(8.0).color(palette.text_muted),
                                     );
                                 }
                             });
@@ -1863,11 +1889,31 @@ impl VelocityApp {
                     .strong()
                     .color(palette.text_muted),
             );
-            ui.label(RichText::new("  • Real-time diagnostics").size(9.0).color(palette.text));
-            ui.label(RichText::new("  • Code completions").size(9.0).color(palette.text));
-            ui.label(RichText::new("  • Go to definition").size(9.0).color(palette.text));
-            ui.label(RichText::new("  • Find references").size(9.0).color(palette.text));
-            ui.label(RichText::new("  • Hover information").size(9.0).color(palette.text));
+            ui.label(
+                RichText::new("  • Real-time diagnostics")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new("  • Code completions")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new("  • Go to definition")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new("  • Find references")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new("  • Hover information")
+                    .size(9.0)
+                    .color(palette.text),
+            );
         }
     }
 
@@ -1949,9 +1995,11 @@ impl VelocityApp {
         );
 
         ui.label(
-            RichText::new("The precomputation cache pre-indexes scoped files before agent workers spawn,")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "The precomputation cache pre-indexes scoped files before agent workers spawn,",
+            )
+            .size(9.0)
+            .color(palette.text),
         );
         ui.label(
             RichText::new("providing warm context caches that accelerate agent execution.")
@@ -1989,10 +2037,26 @@ impl VelocityApp {
                 .strong()
                 .color(palette.text_muted),
         );
-        ui.label(RichText::new("  • File paths and line counts").size(9.0).color(palette.text));
-        ui.label(RichText::new("  • Symbol outlines").size(9.0).color(palette.text));
-        ui.label(RichText::new("  • Import lists").size(9.0).color(palette.text));
-        ui.label(RichText::new("  • Top-level summaries").size(9.0).color(palette.text));
+        ui.label(
+            RichText::new("  • File paths and line counts")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("  • Symbol outlines")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("  • Import lists")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("  • Top-level summaries")
+                .size(9.0)
+                .color(palette.text),
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2047,9 +2111,7 @@ impl VelocityApp {
                                     .strong()
                                     .color(kind_color),
                             );
-                            ui.label(
-                                RichText::new(&att.mime).small().color(palette.text_muted),
-                            );
+                            ui.label(RichText::new(&att.mime).small().color(palette.text_muted));
                         });
                         ui.label(
                             RichText::new(att.path.display().to_string())
@@ -2143,7 +2205,15 @@ impl VelocityApp {
                         ui.label(
                             RichText::new(format!(
                                 "Progress: {}/{} steps done",
-                                ledger.progress.steps.iter().filter(|s| matches!(s.status, crate::editor::continuation_ledger::StepStatus::Done)).count(),
+                                ledger
+                                    .progress
+                                    .steps
+                                    .iter()
+                                    .filter(|s| matches!(
+                                        s.status,
+                                        crate::editor::continuation_ledger::StepStatus::Done
+                                    ))
+                                    .count(),
                                 ledger.progress.steps.len()
                             ))
                             .size(9.0)
@@ -2188,13 +2258,19 @@ impl VelocityApp {
 
         if plugins.is_empty() {
             ui.label(
-                RichText::new("No plugins loaded. Place plugin crates in the workspace to discover them.")
-                    .size(10.0)
-                    .color(palette.text_muted),
+                RichText::new(
+                    "No plugins loaded. Place plugin crates in the workspace to discover them.",
+                )
+                .size(10.0)
+                .color(palette.text_muted),
             );
         } else {
             for info in &plugins {
-                let status_color = if info.enabled { palette.success } else { palette.text_muted };
+                let status_color = if info.enabled {
+                    palette.success
+                } else {
+                    palette.text_muted
+                };
                 egui::Frame::new()
                     .fill(palette.bg_tertiary)
                     .corner_radius(4.0)
@@ -2202,9 +2278,7 @@ impl VelocityApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("●").color(status_color));
-                            ui.label(
-                                RichText::new(&info.name).strong().color(palette.text),
-                            );
+                            ui.label(RichText::new(&info.name).strong().color(palette.text));
                             ui.label(
                                 RichText::new(format!("v{}", info.version))
                                     .small()
@@ -2271,9 +2345,7 @@ impl VelocityApp {
                     .inner_margin(6.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(&skill.name).strong().color(palette.accent),
-                            );
+                            ui.label(RichText::new(&skill.name).strong().color(palette.accent));
                             ui.label(
                                 RichText::new(format!("[{}]", skill.id))
                                     .small()
@@ -2319,7 +2391,11 @@ impl VelocityApp {
             ui,
             "Inline Suggestions",
             if enabled { "enabled" } else { "disabled" },
-            if enabled { palette.success } else { palette.text_muted },
+            if enabled {
+                palette.success
+            } else {
+                palette.text_muted
+            },
             palette.text_muted,
         );
 
@@ -2343,7 +2419,11 @@ impl VelocityApp {
                 .color(palette.accent),
         );
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Enabled:").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new("Enabled:")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
             if ui
                 .checkbox(&mut self.inline_suggestions.config.enabled, "")
                 .changed()
@@ -2352,23 +2432,41 @@ impl VelocityApp {
             }
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Trigger delay:").size(9.0).color(palette.text_muted));
             ui.label(
-                RichText::new(format!("{}ms", self.inline_suggestions.config.trigger_delay_ms))
+                RichText::new("Trigger delay:")
                     .size(9.0)
-                    .color(palette.text),
+                    .color(palette.text_muted),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "{}ms",
+                    self.inline_suggestions.config.trigger_delay_ms
+                ))
+                .size(9.0)
+                .color(palette.text),
             );
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Max chars:").size(9.0).color(palette.text_muted));
             ui.label(
-                RichText::new(format!("{}", self.inline_suggestions.config.max_suggestion_chars))
+                RichText::new("Max chars:")
                     .size(9.0)
-                    .color(palette.text),
+                    .color(palette.text_muted),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "{}",
+                    self.inline_suggestions.config.max_suggestion_chars
+                ))
+                .size(9.0)
+                .color(palette.text),
             );
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Min confidence:").size(9.0).color(palette.text_muted));
+            ui.label(
+                RichText::new("Min confidence:")
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
             ui.label(
                 RichText::new(format!(
                     "{:.0}%",
@@ -2436,7 +2534,11 @@ impl VelocityApp {
         } else {
             ("Idle — waiting for trigger", palette.text_muted)
         };
-        ui.label(RichText::new(format!("  • Status: {}", status.0)).size(9.0).color(status.1));
+        ui.label(
+            RichText::new(format!("  • Status: {}", status.0))
+                .size(9.0)
+                .color(status.1),
+        );
     }
 }
 
