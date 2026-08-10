@@ -72,20 +72,45 @@ Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; ValueType: string
 Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"
 
 [Code]
-// ── Set environment variables on install ──────────────────────────────
+// ── Set system environment variables on install ───────────────────────
+// These are written to the actual system Environment registry key so
+// std::env::var() in the Rust binaries picks them up.
+const
+  EnvironmentKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+
 procedure SetEnvVars();
 var
   BinDir: string;
+  SandboxDll: string;
 begin
   BinDir := ExpandConstant('{app}\bin');
+  SandboxDll := ExpandConstant('{commonappdata}\WUIAS\wuias_shield.dll');
 
   // VELOCITY_MCP_SERVER — point to the installed MCP server
-  RegWriteStringValue(HKLM, 'Software\{#MyAppPublisher}\{#MyAppName}\Env',
-    'VELOCITY_MCP_SERVER', BinDir + '\velocity_mcp.exe');
+  RegWriteStringValue(HKLM, EnvironmentKey, 'VELOCITY_MCP_SERVER', BinDir + '\velocity_mcp.exe');
 
   // WUIAS_SHIELD_DLL — default sandbox DLL location
-  RegWriteStringValue(HKLM, 'Software\{#MyAppPublisher}\{#MyAppName}\Env',
-    'WUIAS_SHIELD_DLL', ExpandConstant('{commonappdata}\WUIAS\wuias_shield.dll'));
+  RegWriteStringValue(HKLM, EnvironmentKey, 'WUIAS_SHIELD_DLL', SandboxDll);
+
+  // Notify running processes (Explorer, taskbar, etc.) of the change
+  // Broadcast is done in CurStepChanged after all env/PATH writes complete.
+end;
+
+// ── Remove environment variables on uninstall ─────────────────────────
+procedure RemoveEnvVars();
+begin
+  RegDeleteValue(HKLM, EnvironmentKey, 'VELOCITY_MCP_SERVER');
+  RegDeleteValue(HKLM, EnvironmentKey, 'WUIAS_SHIELD_DLL');
+  // Broadcast is done in CurUninstallStepChanged after all env/PATH writes.
+end;
+
+// ── Broadcast WM_SETTINGCHANGE so apps pick up env changes ────────────
+procedure SendBroadcastMessage();
+var
+  MsgResult: Cardinal;
+begin
+  SendMessageTimeout($FFFF, $001A, 0,
+    Ord(PChar('Environment')), 2, 5000, MsgResult);
 end;
 
 // ── Add bin directory to system PATH ──────────────────────────────────
@@ -95,7 +120,7 @@ var
   BinDir: string;
 begin
   BinDir := ExpandConstant('{app}\bin');
-  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+  if RegQueryStringValue(HKLM, EnvironmentKey,
     'Path', CurrentPath) then
   begin
     if Pos(Uppercase(BinDir), Uppercase(CurrentPath)) = 0 then
@@ -103,7 +128,7 @@ begin
       if CurrentPath <> '' then
         CurrentPath := CurrentPath + ';';
       CurrentPath := CurrentPath + BinDir;
-      RegWriteStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+      RegWriteStringValue(HKLM, EnvironmentKey,
         'Path', CurrentPath);
     end;
   end;
@@ -118,7 +143,7 @@ var
   Pos1, Pos2: Integer;
 begin
   BinDir := ExpandConstant('{app}\bin');
-  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+  if RegQueryStringValue(HKLM, EnvironmentKey,
     'Path', CurrentPath) then
   begin
     Pos1 := Pos(Uppercase(BinDir), Uppercase(CurrentPath));
@@ -137,7 +162,7 @@ begin
         Inc(Pos1); // skip the semicolon
 
       NewPath := Copy(CurrentPath, 1, Pos2 - 1) + Copy(CurrentPath, Pos1, MaxInt);
-      RegWriteStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+      RegWriteStringValue(HKLM, EnvironmentKey,
         'Path', NewPath);
     end;
   end;
@@ -150,6 +175,8 @@ begin
     SetEnvVars();
     if WizardIsTaskSelected('addtopath') then
       AddToPath();
+    // Broadcast once after all env + PATH changes
+    SendBroadcastMessage();
   end;
 end;
 
@@ -157,8 +184,11 @@ procedure CurUninstallStepChanged(CurUninstallStep: TCurUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
   begin
+    RemoveEnvVars();
     RemoveFromPath();
-    // Clean up registry keys
+    // Broadcast once after all env + PATH cleanup
+    SendBroadcastMessage();
+    // Clean up app registry keys
     RegDeleteKeyIncludingSubkeys(HKLM, 'Software\{#MyAppPublisher}\{#MyAppName}');
   end;
 end;
