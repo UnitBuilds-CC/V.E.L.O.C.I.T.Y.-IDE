@@ -123,6 +123,10 @@ fn main() {
     // Install global panic hook for crash diagnostics
     install_panic_hook();
 
+    // Initialise structured logging (defaults to stderr, safe for stdio JSON-RPC).
+    // Control verbosity via RUST_LOG env var, e.g. RUST_LOG=info or RUST_LOG=debug.
+    env_logger::init();
+
     // Install graceful shutdown handlers early
     let _shutdown_flag = shutdown::install_shutdown_handlers();
 

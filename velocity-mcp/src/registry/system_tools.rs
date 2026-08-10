@@ -903,9 +903,10 @@ fn native_read_nda(root: &Path, arguments: &Value) -> Result<String, Box<dyn Err
 }
 
 fn execute_csharp_mcp_tool(tool_name: &str, arguments: &Value) -> Result<String, Box<dyn Error>> {
-    let exe_path = "C:\\WUIAS\\velocity_nda\\VelocityMcpServer.exe";
+    let exe_path = std::env::var("VELOCITY_MCP_SERVER")
+        .unwrap_or_else(|_| r"C:\WUIAS\velocity_nda\VelocityMcpServer.exe".to_string());
 
-    if !Path::new(exe_path).exists() {
+    if !Path::new(&exe_path).exists() {
         return execute_rust_fallback_tool(tool_name, arguments);
     }
 
@@ -1142,13 +1143,14 @@ fn execute_rust_fallback_tool(
 
             final_args.extend(args_vec);
 
-            let dll_path = "C:\\WUIAS\\wuias_shield\\wuias_shield.dll";
-            let use_sandbox = Path::new(dll_path).exists() && cfg!(target_os = "windows");
+            let dll_path = std::env::var("WUIAS_SHIELD_DLL")
+                .unwrap_or_else(|_| r"C:\WUIAS\wuias_shield\wuias_shield.dll".to_string());
+            let use_sandbox = Path::new(&dll_path).exists() && cfg!(target_os = "windows");
 
             let output = if use_sandbox {
                 #[cfg(target_os = "windows")]
                 {
-                    run_in_dll_sandbox(&shell_cmd, &final_args, dll_path)?
+                    run_in_dll_sandbox(&shell_cmd, &final_args, &dll_path)?
                 }
                 #[cfg(not(target_os = "windows"))]
                 {

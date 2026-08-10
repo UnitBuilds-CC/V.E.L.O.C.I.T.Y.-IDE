@@ -894,16 +894,28 @@ pub fn write_workspace_transcript_nda(workspace_root: &std::path::Path, content:
 }
 
 pub fn convert_jsonl_to_nda(workspace_root: &std::path::Path) {
-    let conv_id = "17bd30f6-be7a-4829-b5b9-023fa4dd8c59";
-    let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\visse".to_string());
-    let transcript_path = std::path::Path::new(&home)
-        .join(".gemini")
-        .join("antigravity")
-        .join("brain")
-        .join(conv_id)
-        .join(".system_generated")
-        .join("logs")
-        .join("transcript.jsonl");
+    let conv_id = std::env::var("VELOCITY_CONVERSATION_ID")
+        .unwrap_or_else(|_| "17bd30f6-be7a-4829-b5b9-023fa4dd8c59".to_string());
+    let transcript_dir = std::env::var("VELOCITY_TRANSCRIPT_DIR");
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| String::new());
+    let transcript_path = if let Ok(dir) = transcript_dir {
+        std::path::PathBuf::from(dir)
+            .join(&conv_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl")
+    } else {
+        std::path::Path::new(&home)
+            .join(".gemini")
+            .join("antigravity")
+            .join("brain")
+            .join(&conv_id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl")
+    };
 
     if let Ok(content) = std::fs::read(&transcript_path) {
         let nda_payload = pack_ndav("transcript.txt", &content);

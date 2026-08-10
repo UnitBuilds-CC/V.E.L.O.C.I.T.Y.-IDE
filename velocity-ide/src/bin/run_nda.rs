@@ -69,18 +69,28 @@ fn main() {
     if sm_dir.exists() {
         let _ = fs::remove_dir_all(&sm_dir);
     }
-    let mut site_map = SiteMap::open(&sm_dir, 0).expect("Failed to initialise SiteMap");
+    let mut site_map = match SiteMap::open(&sm_dir, 0) {
+        Ok(sm) => sm,
+        Err(e) => {
+            eprintln!("Runtime Error: failed to initialise SiteMap: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     let mut func_count = 0;
     if let NdaNode::Scope { children } = &program {
         for func in children {
-            site_map
-                .put_program(func)
-                .expect("Failed to register function");
+            if let Err(e) = site_map.put_program(func) {
+                eprintln!("Runtime Error: failed to register function: {}", e);
+                std::process::exit(1);
+            }
             func_count += 1;
         }
     }
-    site_map.flush().expect("Failed to flush site map");
+    if let Err(e) = site_map.flush() {
+        eprintln!("Runtime Error: failed to flush site map: {}", e);
+        std::process::exit(1);
+    }
     println!(
         "[compiler] Registered {} function(s) in Merkle site map.",
         func_count
@@ -95,9 +105,16 @@ fn main() {
         }
     };
 
-    let main_node = site_map
-        .get_node(main_hash)
-        .expect("Failed to retrieve main node");
+    let main_node = match site_map.get_node(main_hash) {
+        Some(node) => node,
+        None => {
+            eprintln!(
+                "Runtime Error: failed to retrieve main node (hash {:016x})",
+                main_hash
+            );
+            std::process::exit(1);
+        }
+    };
     let nodes = match &main_node {
         NdaNode::Scope { children } => children.clone(),
         _ => {

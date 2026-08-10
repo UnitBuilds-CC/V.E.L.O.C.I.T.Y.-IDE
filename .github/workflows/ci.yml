@@ -87,3 +87,20 @@ jobs:
       - run: cargo build --workspace
       # Run E2E tests (spawns actual binaries over stdio)
       - run: cargo test -p velocity-e2e --no-fail-fast
+
+  audit:
+    name: Security Audit
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
