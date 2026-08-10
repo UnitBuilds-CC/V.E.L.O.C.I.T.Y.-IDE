@@ -704,10 +704,10 @@ impl eframe::App for VelocityApp {
         // Sync terminal output
         self.bottom_panel_state.terminal_output = self.command_output.clone();
 
-        // Poll open buffers for external on-disk changes (throttled ~2s).
+        // Poll open buffers for external on-disk changes (throttled ~5s).
         let external_due = self
             .last_external_check
-            .map(|at| at.elapsed() >= std::time::Duration::from_secs(2))
+            .map(|at| at.elapsed() >= std::time::Duration::from_secs(5))
             .unwrap_or(true);
         if external_due {
             self.last_external_check = Some(std::time::Instant::now());
@@ -716,14 +716,15 @@ impl eframe::App for VelocityApp {
 
         let now = std::time::Instant::now();
         // Only re-walk the workspace when its top-level mtime changes (a file/dir was
-        // added/removed) or, as a safety net for nested changes, every 3 seconds.
+        // added/removed) or, as a safety net for nested changes, every 30 seconds.
+        // This reduces UI stutter from constant directory walking.
         let root_mtime = std::fs::metadata(&self.workspace_root)
             .and_then(|m| m.modified())
             .ok();
         let mtime_changed = root_mtime != self.last_tree_mtime;
         if self.file_tree.is_none()
             || mtime_changed
-            || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(3)
+            || now.duration_since(self.last_tree_update) > std::time::Duration::from_secs(30)
         {
             self.file_tree = Some(build_file_tree(&self.workspace_root));
             self.last_tree_update = now;
