@@ -9,6 +9,14 @@ pub enum Provider {
     OpenAI,
     Anthropic,
     Cloudflare,
+    OpenRouter,
+    Moonshot,
+    Alibaba,
+    Google,
+    Mistral,
+    Groq,
+    Together,
+    DeepSeek,
     Custom(String),
 }
 
@@ -18,8 +26,59 @@ impl std::fmt::Display for Provider {
             Provider::OpenAI => write!(f, "OpenAI"),
             Provider::Anthropic => write!(f, "Anthropic"),
             Provider::Cloudflare => write!(f, "Cloudflare Workers AI"),
+            Provider::OpenRouter => write!(f, "OpenRouter"),
+            Provider::Moonshot => write!(f, "Moonshot (Kimi)"),
+            Provider::Alibaba => write!(f, "Alibaba (Qwen / DashScope)"),
+            Provider::Google => write!(f, "Google Gemini"),
+            Provider::Mistral => write!(f, "Mistral"),
+            Provider::Groq => write!(f, "Groq"),
+            Provider::Together => write!(f, "Together AI"),
+            Provider::DeepSeek => write!(f, "DeepSeek"),
             Provider::Custom(name) => write!(f, "{}", name),
         }
+    }
+}
+
+impl Provider {
+    /// Default base URL for each provider.
+    pub fn default_base_url(&self) -> Option<&'static str> {
+        match self {
+            Provider::OpenAI => Some("https://api.openai.com/v1"),
+            Provider::Anthropic => Some("https://api.anthropic.com/v1"),
+            Provider::Cloudflare => None, // requires account_id
+            Provider::OpenRouter => Some("https://openrouter.ai/api/v1"),
+            Provider::Moonshot => Some("https://api.moonshot.cn/v1"),
+            Provider::Alibaba => Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            Provider::Google => Some("https://generativelanguage.googleapis.com/v1beta"),
+            Provider::Mistral => Some("https://api.mistral.ai/v1"),
+            Provider::Groq => Some("https://api.groq.com/openai/v1"),
+            Provider::Together => Some("https://api.together.xyz/v1"),
+            Provider::DeepSeek => Some("https://api.deepseek.com/v1"),
+            Provider::Custom(_) => None,
+        }
+    }
+
+    /// Whether this provider uses the Anthropic messages API format.
+    pub fn is_anthropic_format(&self) -> bool {
+        matches!(self, Provider::Anthropic)
+    }
+
+    /// Whether this provider uses the Cloudflare Workers AI format.
+    pub fn is_cloudflare_format(&self) -> bool {
+        matches!(self, Provider::Cloudflare)
+    }
+
+    /// Whether this provider uses the Google Gemini format.
+    pub fn is_google_format(&self) -> bool {
+        matches!(self, Provider::Google)
+    }
+
+    /// Whether this provider uses OpenAI-compatible chat completions.
+    pub fn is_openai_compatible(&self) -> bool {
+        !self.is_anthropic_format()
+            && !self.is_cloudflare_format()
+            && !self.is_google_format()
+            && !matches!(self, Provider::Custom(_))
     }
 }
 

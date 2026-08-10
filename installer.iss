@@ -34,7 +34,14 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\velocity_ide.exe
+UninstallDisplayName={#MyAppFullName}
 SetupIconFile=compiler:SetupClassicIcon.ico
+
+; Detect and reuse previous install directory
+UsePreviousAppDir=yes
+; Close running app processes before replacing files
+CloseApplications=yes
+RestartApplications=no
 
 ; Minimum Windows 10
 MinVersion=10.0
@@ -74,6 +81,35 @@ Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; ValueType: string
 Root: HKLM; Subkey: "Software\{#MyAppPublisher}\{#MyAppName}"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"
 
 [Code]
+// ── Detect and remove previous installation before upgrading ──────────
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  UninstallStr: String;
+  UninstallExe: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  // Check if a previous version is installed via the registry
+  if RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A7B3C9D1-4E5F-6A7B-8C9D-0E1F2A3B4C5D}_is1',
+    'UninstallString', UninstallStr) then
+  begin
+    UninstallExe := RemoveQuotes(UninstallStr);
+    if FileExists(UninstallExe) then
+    begin
+      Log('Previous installation detected. Running uninstaller: ' + UninstallExe);
+      // Run the old uninstaller silently and wait for it to finish
+      if Exec(UninstallExe, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      begin
+        Log('Previous version removed successfully.');
+      end
+      else
+      begin
+        Log('Warning: Previous uninstaller returned code ' + IntToStr(ResultCode));
+      end;
+    end;
+  end;
+end;
+
 // ── Set system environment variables on install ───────────────────────
 // These are written to the actual system Environment registry key so
 // std::env::var() in the Rust binaries picks them up.

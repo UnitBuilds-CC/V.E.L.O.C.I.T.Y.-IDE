@@ -19,10 +19,10 @@ pub fn chat_completion(config: &AppConfig, messages: &[ChatMessage]) -> Result<S
         .context("No active provider configured")?;
 
     match &provider_cfg.provider {
-        Provider::OpenAI => openai_request(provider_cfg, messages),
-        Provider::Anthropic => anthropic_request(provider_cfg, messages),
-        Provider::Cloudflare => cloudflare_request(provider_cfg, messages),
-        Provider::Custom(_) => custom_request(provider_cfg, messages),
+        p if p.is_anthropic_format() => anthropic_request(provider_cfg, messages),
+        p if p.is_cloudflare_format() => cloudflare_request(provider_cfg, messages),
+        p if p.is_google_format() => google_request(provider_cfg, messages),
+        _ => openai_compatible_request(provider_cfg, messages),
     }
 }
 
@@ -37,21 +37,22 @@ pub fn chat_completion_stream(
         .context("No active provider configured")?;
 
     let full = match &provider_cfg.provider {
-        Provider::OpenAI => openai_stream(provider_cfg, messages, &mut on_chunk)?,
-        Provider::Anthropic => anthropic_stream(provider_cfg, messages, &mut on_chunk)?,
-        Provider::Cloudflare => cloudflare_stream(provider_cfg, messages, &mut on_chunk)?,
-        Provider::Custom(_) => custom_stream(provider_cfg, messages, &mut on_chunk)?,
+        p if p.is_anthropic_format() => anthropic_stream(provider_cfg, messages, &mut on_chunk)?,
+        p if p.is_cloudflare_format() => cloudflare_stream(provider_cfg, messages, &mut on_chunk)?,
+        p if p.is_google_format() => google_request(provider_cfg, messages)?,
+        _ => openai_compatible_stream(provider_cfg, messages, &mut on_chunk)?,
     };
     Ok(full)
 }
 
-// ─── OpenAI ────────────────────────────────────────────────────────────────
+// ─── OpenAI-compatible (OpenAI, OpenRouter, Moonshot, Alibaba, Mistral, Groq, Together, DeepSeek)
 
-fn openai_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<String> {
+fn openai_compatible_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<String> {
     let base = cfg
         .base_url
         .as_deref()
-        .unwrap_or("https://api.openai.com/v1");
+        .or_else(|| cfg.provider.default_base_url())
+        .context("No base URL configured for this provider")?;
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let body = serde_json::json!({
@@ -64,17 +65,17 @@ fn openai_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<Stri
         .set("Authorization", &format!("Bearer {}", cfg.api_key))
         .set("Content-Type", "application/json")
         .send_json(&body)
-        .context("OpenAI API request failed")?
+        .context("API request failed")?
         .into_json()
-        .context("Failed to parse OpenAI response")?;
+        .context("Failed to parse API response")?;
 
     resp["choices"][0]["message"]["content"]
         .as_str()
         .map(|s| s.to_string())
-        .context("Missing content in OpenAI response")
+        .context("Missing content in API response")
 }
 
-fn openai_stream(
+fn openai_compatible_stream(
     cfg: &ProviderConfig,
     messages: &[ChatMessage],
     on_chunk: &mut dyn FnMut(&str),
@@ -82,7 +83,8 @@ fn openai_stream(
     let base = cfg
         .base_url
         .as_deref()
-        .unwrap_or("https://api.openai.com/v1");
+        .or_else(|| cfg.provider.default_base_url())
+        .context("No base URL configured for this provider")?;
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let body = serde_json::json!({
@@ -95,7 +97,7 @@ fn openai_stream(
         .set("Authorization", &format!("Bearer {}", cfg.api_key))
         .set("Content-Type", "application/json")
         .send_json(&body)
-        .context("OpenAI streaming request failed")?;
+        .context("Streaming request failed")?;
 
     parse_sse_stream(resp, on_chunk, |val| {
         val["choices"]
@@ -242,42 +244,53 @@ fn cloudflare_stream(
     })
 }
 
-// ─── Custom endpoint ───────────────────────────────────────────────────────
+// ─── Google Gemini ──────────────────────────────────────────────────────
 
-fn custom_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<String> {
+fn google_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<String> {
     let base = cfg
         .base_url
         .as_deref()
-        .context("Custom provider requires a base URL")?;
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+        .or_else(|| cfg.provider.default_base_url())
+        .context("No base URL configured for Google Gemini")?;
+    let url = format!(
+        "{}/models/{}:generateContent?key={}",
+        base.trim_end_matches('/'),
+        cfg.model,
+        cfg.api_key
+    );
 
-    let body = serde_json::json!({
-        "model": cfg.model,
-        "messages": messages,
-        "stream": false,
-    });
+    // Convert messages to Gemini format
+    let contents: Vec<serde_json::Value> = messages
+        .iter()
+        .filter(|m| m.role != "system")
+        .map(|m| {
+            serde_json::json!({
+                "role": if m.role == "assistant" { "model" } else { "user" },
+                "parts": [{ "text": m.content }]
+            })
+        })
+        .collect();
+
+    let mut body = serde_json::json!({ "contents": contents });
+
+    // Add system instruction if present
+    if let Some(sys) = messages.iter().find(|m| m.role == "system") {
+        body["systemInstruction"] = serde_json::json!({
+            "parts": [{ "text": sys.content }]
+        });
+    }
 
     let resp: serde_json::Value = ureq::post(&url)
-        .set("Authorization", &format!("Bearer {}", cfg.api_key))
         .set("Content-Type", "application/json")
         .send_json(&body)
-        .context("Custom API request failed")?
+        .context("Google Gemini API request failed")?
         .into_json()
-        .context("Failed to parse custom API response")?;
+        .context("Failed to parse Google Gemini response")?;
 
-    resp["choices"][0]["message"]["content"]
+    resp["candidates"][0]["content"]["parts"][0]["text"]
         .as_str()
         .map(|s| s.to_string())
-        .context("Missing content in custom API response")
-}
-
-fn custom_stream(
-    cfg: &ProviderConfig,
-    messages: &[ChatMessage],
-    on_chunk: &mut dyn FnMut(&str),
-) -> Result<String> {
-    // Fall back to non-streaming for custom endpoints
-    custom_request(cfg, messages)
+        .context("Missing content in Google Gemini response")
 }
 
 // ─── SSE stream parser ─────────────────────────────────────────────────────

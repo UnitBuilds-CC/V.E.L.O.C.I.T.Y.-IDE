@@ -38,7 +38,23 @@ struct VelocityApp {
     wizard_error: Option<String>,
 }
 
-const PROVIDER_OPTIONS: &[&str] = &["OpenAI", "Anthropic", "Cloudflare Workers AI", "Custom"];
+const PROVIDER_OPTIONS: &[&str] = &[
+    "OpenAI",
+    "Anthropic",
+    "Cloudflare Workers AI",
+    "OpenRouter",
+    "Moonshot (Kimi)",
+    "Alibaba (Qwen)",
+    "Google Gemini",
+    "Mistral",
+    "Groq",
+    "Together AI",
+    "DeepSeek",
+    "Custom",
+];
+
+const CLOUDFLARE_IDX: usize = 2;
+const CUSTOM_IDX: usize = 11;
 
 impl VelocityApp {
     fn new(config: AppConfig) -> Self {
@@ -75,6 +91,14 @@ impl VelocityApp {
             0 => "gpt-4o-mini",
             1 => "claude-sonnet-4-20250514",
             2 => "@cf/moonshotai/kimi-k2.7-code",
+            3 => "openai/gpt-4o",
+            4 => "moonshot-v1-8k",
+            5 => "qwen-plus",
+            6 => "gemini-2.0-flash",
+            7 => "mistral-large-latest",
+            8 => "llama-3.3-70b-versatile",
+            9 => "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            10 => "deepseek-chat",
             _ => "",
         }
     }
@@ -137,10 +161,10 @@ impl VelocityApp {
                     if ui.selectable_label(selected, *name).clicked() {
                         self.wizard_provider = i;
                         self.wizard_model = Self::default_model_for_provider(i).to_string();
-                        if i != 2 {
+                        if i != CLOUDFLARE_IDX {
                             self.wizard_account_id.clear();
                         }
-                        if i != 3 {
+                        if i != CUSTOM_IDX {
                             self.wizard_base_url.clear();
                         }
                     }
@@ -152,7 +176,7 @@ impl VelocityApp {
         ui.add_space(12.0);
 
         // Custom provider fields
-        if self.wizard_provider == 3 {
+        if self.wizard_provider == CUSTOM_IDX {
             ui.label("Provider Name:");
             ui.text_edit_singleline(&mut self.wizard_custom_name);
             ui.add_space(8.0);
@@ -177,7 +201,7 @@ impl VelocityApp {
             self.wizard_model = Self::default_model_for_provider(self.wizard_provider).to_string();
         }
 
-        if self.wizard_provider < 3 {
+        if self.wizard_provider < CUSTOM_IDX {
             let presets: &[&str] = match self.wizard_provider {
                 0 => &["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini"],
                 1 => &[
@@ -189,6 +213,32 @@ impl VelocityApp {
                     "@cf/moonshotai/kimi-k2.7-code",
                     "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
                 ],
+                3 => &[
+                    "openai/gpt-4o",
+                    "anthropic/claude-sonnet-4-20250514",
+                    "google/gemini-2.0-flash-exp:free",
+                    "meta-llama/llama-3.3-70b-instruct",
+                    "deepseek/deepseek-r1",
+                ],
+                4 => &["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+                5 => &["qwen-plus", "qwen-turbo", "qwen-max"],
+                6 => &["gemini-2.0-flash", "gemini-2.0-pro-exp", "gemini-1.5-pro"],
+                7 => &[
+                    "mistral-large-latest",
+                    "mistral-small-latest",
+                    "codestral-latest",
+                ],
+                8 => &[
+                    "llama-3.3-70b-versatile",
+                    "llama-3.1-8b-instant",
+                    "gemma2-9b-it",
+                ],
+                9 => &[
+                    "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+                    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+                    "Qwen/Qwen2.5-72B-Instruct-Turbo",
+                ],
+                10 => &["deepseek-chat", "deepseek-reasoner"],
                 _ => &[],
             };
             egui::ComboBox::from_id_salt("model_combo")
@@ -209,14 +259,14 @@ impl VelocityApp {
         ui.add_space(8.0);
 
         // Cloudflare Account ID
-        if self.wizard_provider == 2 {
+        if self.wizard_provider == CLOUDFLARE_IDX {
             ui.label("Cloudflare Account ID:");
             ui.text_edit_singleline(&mut self.wizard_account_id);
             ui.add_space(8.0);
         }
 
-        // Optional base URL override
-        if self.wizard_provider != 3 {
+        // Optional base URL override (for non-custom providers)
+        if self.wizard_provider != CUSTOM_IDX {
             ui.label("Base URL (optional override):");
             ui.text_edit_singleline(&mut self.wizard_base_url);
             ui.add_space(8.0);
@@ -258,15 +308,15 @@ impl VelocityApp {
             self.wizard_error = Some("Model name is required.".to_string());
             return;
         }
-        if self.wizard_provider == 3 && self.wizard_custom_name.trim().is_empty() {
+        if self.wizard_provider == CUSTOM_IDX && self.wizard_custom_name.trim().is_empty() {
             self.wizard_error = Some("Provider name is required for custom providers.".to_string());
             return;
         }
-        if self.wizard_provider == 3 && self.wizard_base_url.trim().is_empty() {
+        if self.wizard_provider == CUSTOM_IDX && self.wizard_base_url.trim().is_empty() {
             self.wizard_error = Some("Base URL is required for custom providers.".to_string());
             return;
         }
-        if self.wizard_provider == 2 && self.wizard_account_id.trim().is_empty() {
+        if self.wizard_provider == CLOUDFLARE_IDX && self.wizard_account_id.trim().is_empty() {
             self.wizard_error = Some("Account ID is required for Cloudflare.".to_string());
             return;
         }
@@ -275,8 +325,15 @@ impl VelocityApp {
             0 => Provider::OpenAI,
             1 => Provider::Anthropic,
             2 => Provider::Cloudflare,
-            3 => Provider::Custom(self.wizard_custom_name.trim().to_string()),
-            _ => Provider::OpenAI,
+            3 => Provider::OpenRouter,
+            4 => Provider::Moonshot,
+            5 => Provider::Alibaba,
+            6 => Provider::Google,
+            7 => Provider::Mistral,
+            8 => Provider::Groq,
+            9 => Provider::Together,
+            10 => Provider::DeepSeek,
+            _ => Provider::Custom(self.wizard_custom_name.trim().to_string()),
         };
 
         let base_url = if self.wizard_base_url.trim().is_empty() {
@@ -285,7 +342,7 @@ impl VelocityApp {
             Some(self.wizard_base_url.trim().to_string())
         };
 
-        let account_id = if self.wizard_provider == 2 {
+        let account_id = if self.wizard_provider == CLOUDFLARE_IDX {
             Some(self.wizard_account_id.trim().to_string())
         } else {
             None
@@ -342,9 +399,17 @@ impl VelocityApp {
                                 Provider::OpenAI => 0,
                                 Provider::Anthropic => 1,
                                 Provider::Cloudflare => 2,
+                                Provider::OpenRouter => 3,
+                                Provider::Moonshot => 4,
+                                Provider::Alibaba => 5,
+                                Provider::Google => 6,
+                                Provider::Mistral => 7,
+                                Provider::Groq => 8,
+                                Provider::Together => 9,
+                                Provider::DeepSeek => 10,
                                 Provider::Custom(name) => {
                                     self.wizard_custom_name = name.clone();
-                                    3
+                                    CUSTOM_IDX
                                 }
                             };
                         }
