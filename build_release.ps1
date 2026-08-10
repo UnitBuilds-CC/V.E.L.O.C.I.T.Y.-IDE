@@ -97,9 +97,13 @@ if ($ArchiveOnly) {
 # ── Optional: Inno Setup installer ────────────────────────────────────
 $issPath = Join-Path $RepoRoot "installer.iss"
 if ((-not $ArchiveOnly) -and (Test-Path $issPath)) {
-    $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-    if (-not (Test-Path $iscc)) {
-        $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe"
+    $iscc = $null
+    foreach ($ver in @('7', '6')) {
+        foreach ($base in @("${env:ProgramFiles(x86)}", $env:ProgramFiles)) {
+            $candidate = Join-Path $base "Inno Setup $ver\ISCC.exe"
+            if (Test-Path $candidate) { $iscc = $candidate; break }
+        }
+        if ($iscc) { break }
     }
     if (Test-Path $iscc) {
         Write-Host "`n==> Building installer with Inno Setup..." -ForegroundColor Yellow

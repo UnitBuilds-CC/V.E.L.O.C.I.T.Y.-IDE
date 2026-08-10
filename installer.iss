@@ -32,7 +32,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\velocity_ide.exe
 SetupIconFile=compiler:SetupClassicIcon.ico
 
@@ -44,7 +44,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "addtopath"; Description: "Add to system PATH"; GroupDescription: "Environment:"; Flags: checked
+Name: "addtopath"; Description: "Add to system PATH"; GroupDescription: "Environment:"
 
 [Files]
 ; Main binaries
@@ -104,13 +104,18 @@ begin
   // Broadcast is done in CurUninstallStepChanged after all env/PATH writes.
 end;
 
-// ── Broadcast WM_SETTINGCHANGE so apps pick up env changes ────────────
+// ── Notify system of environment changes ──────────────────────────────
+// Broadcasts WM_SETTINGCHANGE so running apps (Explorer, terminals) pick
+// up the new environment variables immediately.
+function SendMessageTimeout(hWnd: LongInt; Msg: Cardinal; wParam: LongInt;
+  lParam: String; fuFlags: Cardinal; uTimeout: Cardinal; var lpdwResult: LongInt): LongInt;
+  external 'SendMessageTimeoutW@user32.dll stdcall';
+
 procedure SendBroadcastMessage();
 var
-  MsgResult: Cardinal;
+  dwResult: LongInt;
 begin
-  SendMessageTimeout($FFFF, $001A, 0,
-    Ord(PChar('Environment')), 2, 5000, MsgResult);
+  SendMessageTimeout($FFFF, $001A, 0, 'Environment', 2, 5000, dwResult);
 end;
 
 // ── Add bin directory to system PATH ──────────────────────────────────
@@ -168,7 +173,7 @@ begin
   end;
 end;
 
-procedure CurStepChanged(CurStep: TCurStep);
+procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
@@ -180,7 +185,7 @@ begin
   end;
 end;
 
-procedure CurUninstallStepChanged(CurUninstallStep: TCurUninstallStep);
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
   begin
