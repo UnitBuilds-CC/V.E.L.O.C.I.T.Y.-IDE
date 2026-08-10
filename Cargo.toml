@@ -8,3 +8,9 @@ exclude = ["archive", "bin", "scratch", "memory", ".velocity", "browsing", "fuzz
 [profile.dev]
 debug = 1 # Generates minimal line-table debug symbols, saving massive disk space and preventing MSVC linker errors
 
+[profile.release]
+strip = true      # Strip debug symbols from release binaries
+lto = "thin"      # Thin LTO: good size reduction without excessive compile times
+opt-level = "s"   # Optimize for size over speed
+codegen-units = 16 # Parallel codegen for faster release builds
+

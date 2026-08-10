@@ -1,3 +1,25 @@
+# Rust build artifacts
+target/
+**/*.exe
+**/*.pdb
+**/*.d
+
+# Installer build artifacts (staged binaries and compiled installers)
+/dist/
+/output/
+
+# Release archives
+*.zip
+*.msi
+
+# Local agent runtime state and logs
+.velocity/
+velocity-mcp/.velocity/
+
+# Build/test output logs (never tracked; regenerable artifacts)
+*.log
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -7,22 +29,18 @@ venv/
 ENV/
 .env
 .env.local
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Memory (local agent state)
 memory/.account_state.json
 memory/session.jsonl
 memory/summaries/
 memory/snapshots/
 
-# Rust build artifacts
-target/
-**/*.exe
-**/*.pdb
-**/*.d
-
-# Local agent runtime state and logs
-.velocity/
-velocity-mcp/.velocity/
-
-# Build/test output logs (never tracked; regenerable artifacts)
-*.log
-
+# IDE
+.vscode/
+.idea/
+*.swp
