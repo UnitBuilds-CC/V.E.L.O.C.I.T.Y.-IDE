@@ -1502,6 +1502,167 @@ impl VelocityApp {
                 .push(crate::editor::toast::Toast::success("All memories saved"));
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Live Orchestration — real-time multi-agent activity dashboard
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_live_orchestration_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let completed = self.live_orchestration.total_tasks_completed;
+        let failed = self.live_orchestration.total_tasks_failed;
+        let active_workers = self.live_orchestration.worker_progress.len();
+        let events = self.live_orchestration.activity_feed.len();
+
+        Self::tier3_header(
+            ui,
+            "Live Orchestration",
+            &format!(
+                "{} active · {} completed · {} failed",
+                active_workers, completed, failed
+            ),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Stats
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{} events", events))
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
+            ui.label(
+                RichText::new(format!("{} tokens", self.live_orchestration.total_tokens_used))
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
+            let elapsed = self.live_orchestration.session_start.elapsed();
+            ui.label(
+                RichText::new(format!("{}s elapsed", elapsed.as_secs()))
+                    .size(9.0)
+                    .color(palette.text_muted),
+            );
+        });
+        ui.add_space(6.0);
+
+        // Active workers
+        if !self.live_orchestration.worker_progress.is_empty() {
+            ui.label(
+                RichText::new("ACTIVE WORKERS")
+                    .small()
+                    .strong()
+                    .color(palette.success),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("orchestration_workers_scroll")
+                .max_height(150.0)
+                .show(ui, |ui| {
+                    for worker in &self.live_orchestration.worker_progress {
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("Task #{}", worker.task_id))
+                                            .size(10.0)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.label(
+                                        RichText::new(&worker.model_label)
+                                            .size(8.0)
+                                            .monospace()
+                                            .color(palette.accent),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(format!(
+                                                    "{} files, {} events",
+                                                    worker.files_changed, worker.events_count
+                                                ))
+                                                .size(8.0)
+                                                .color(palette.text_muted),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(&worker.title)
+                                    .size(9.0)
+                                    .color(palette.text_muted),
+                                );
+                                if !worker.status_text.is_empty() {
+                                    ui.label(
+                                        RichText::new(&worker.status_text)
+                                            .size(8.0)
+                                            .color(palette.text_muted),
+                                    );
+                                }
+                            });
+                        ui.add_space(3.0);
+                    }
+                });
+            ui.add_space(6.0);
+        }
+
+        // Activity feed
+        ui.label(
+            RichText::new("ACTIVITY FEED")
+                .small()
+                .strong()
+                .color(palette.accent),
+        );
+        egui::ScrollArea::vertical()
+            .id_salt("orchestration_activity_scroll")
+            .max_height(250.0)
+            .show(ui, |ui| {
+                if self.live_orchestration.activity_feed.is_empty() {
+                    ui.label(
+                        RichText::new("No activity yet. Activity appears when agents are running.")
+                            .size(9.0)
+                            .color(palette.text_muted),
+                    );
+                } else {
+                    for event in self.live_orchestration.activity_feed.iter().rev() {
+                        let color = match event.kind {
+                            crate::editor::live_orchestration::ActivityEventKind::WorkerCompleted => {
+                                palette.success
+                            }
+                            crate::editor::live_orchestration::ActivityEventKind::WorkerFailed => {
+                                palette.error
+                            }
+                            crate::editor::live_orchestration::ActivityEventKind::WorkerBlocked
+                            | crate::editor::live_orchestration::ActivityEventKind::InterventionQueued => {
+                                palette.warning
+                            }
+                            _ => palette.text_muted,
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(event.kind.icon())
+                                    .size(10.0)
+                                    .color(color),
+                            );
+                            ui.label(
+                                RichText::new(event.kind.label())
+                                    .size(8.0)
+                                    .monospace()
+                                    .color(color),
+                            );
+                            ui.label(
+                                RichText::new(&event.message)
+                                    .size(9.0)
+                                    .color(palette.text),
+                            );
+                        });
+                    }
+                }
+            });
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {

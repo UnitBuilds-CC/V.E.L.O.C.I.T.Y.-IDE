@@ -53,6 +53,7 @@ impl Tab {
             TabKind::Voice => "Voice".into(),
             TabKind::TestGenerator => "Test Gen".into(),
             TabKind::AgentMemory => "Memory".into(),
+            TabKind::LiveOrchestration => "Orchestration".into(),
             TabKind::Knowledge => "Knowledge".into(),
             TabKind::Triggers => "Triggers".into(),
             TabKind::Workflows => "Workflows".into(),
@@ -113,6 +114,7 @@ pub enum TabKind {
     Voice,
     TestGenerator,
     AgentMemory,
+    LiveOrchestration,
     // Knowledge / RAG panel
     Knowledge,
     // Unattended execution triggers

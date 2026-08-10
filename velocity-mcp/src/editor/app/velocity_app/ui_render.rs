@@ -872,6 +872,10 @@ impl eframe::App for VelocityApp {
                         self.toggle_panel(TabKind::AgentMemory);
                         ui.close();
                     }
+                    if ui.button("Live Orchestration").clicked() {
+                        self.toggle_panel(TabKind::LiveOrchestration);
+                        ui.close();
+                    }
                     if ui.button("Knowledge Base").clicked() {
                         self.toggle_panel(TabKind::Knowledge);
                         ui.close();

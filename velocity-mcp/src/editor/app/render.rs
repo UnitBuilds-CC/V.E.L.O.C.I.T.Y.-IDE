@@ -257,6 +257,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::AgentMemory => {
                 self.app.render_agent_memory_panel(ui);
             }
+            TabKind::LiveOrchestration => {
+                self.app.render_live_orchestration_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }

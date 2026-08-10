@@ -246,6 +246,11 @@ impl VelocityApp {
         self.toggle_panel(TabKind::AgentMemory);
     }
 
+    /// Open the Live Orchestration panel.
+    pub fn toggle_live_orchestration(&mut self) {
+        self.toggle_panel(TabKind::LiveOrchestration);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);
