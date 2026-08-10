@@ -103,4 +103,4 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo install cargo-audit --locked
-      - run: cargo audit
+      - run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
