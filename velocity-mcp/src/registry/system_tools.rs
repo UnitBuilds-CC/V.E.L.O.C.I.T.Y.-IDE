@@ -1276,7 +1276,9 @@ fn run_in_dll_sandbox(
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs()
     );
-    let redirect_dir = format!("C:\\WUIAS\\sandbox\\redirect\\{}", session_id);
+    let sandbox_base = std::env::var("WUIAS_SANDBOX_REDIRECT")
+        .unwrap_or_else(|_| r"C:\WUIAS\sandbox\redirect".to_string());
+    let redirect_dir = format!("{}\\{}", sandbox_base, session_id);
     fs::create_dir_all(&redirect_dir)?;
 
     let w_dll_path = to_wstring(dll_path);
