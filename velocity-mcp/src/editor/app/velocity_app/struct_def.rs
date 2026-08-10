@@ -411,6 +411,10 @@ pub struct VelocityApp {
     pub plugin_registry: crate::editor::plugin_registry::PluginRegistry,
     /// Agent skill file definitions.
     pub skill_files: Vec<crate::editor::skill_file::SkillFile>,
+    /// Target URLs for the Targets dock panel.
+    pub target_entries: Vec<crate::editor::sidebar_tabs::TargetEntry>,
+    /// WCAG accessibility audit findings for the Audit dock panel.
+    pub audit_findings: Vec<crate::editor::sidebar_tabs::AuditFinding>,
 }
 
 impl VelocityApp {
@@ -1003,6 +1007,8 @@ impl VelocityApp {
             continuation_ledger: None,
             plugin_registry: crate::editor::plugin_registry::PluginRegistry::new(&workspace_root),
             skill_files: Vec::new(),
+            target_entries: Vec::new(),
+            audit_findings: Vec::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);

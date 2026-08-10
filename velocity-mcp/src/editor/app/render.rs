@@ -565,6 +565,66 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                             );
                         });
                     }
+                    TabKind::Favorites => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(4.0);
+                            let clicked = crate::editor::sidebar_tabs::render_favorites_content(
+                                ui,
+                                &self.app.favorite_files,
+                                &self.app.workspace_root,
+                                palette,
+                            );
+                            if let Some(path) = clicked {
+                                self.app.open_editor(Some(path));
+                            }
+                        });
+                    }
+                    TabKind::Bookmarks => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(4.0);
+                            let jump = crate::editor::sidebar_tabs::render_bookmarks_content(
+                                ui,
+                                &self.app.bookmarks,
+                                &self.app.workspace_root,
+                                palette,
+                            );
+                            if let Some((path, line)) = jump {
+                                self.app.push_nav_location();
+                                self.app.pending_cursor_line = Some(line);
+                                self.app.open_editor(Some(path));
+                            }
+                        });
+                    }
+                    TabKind::Recordings => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(4.0);
+                            crate::editor::sidebar_tabs::render_recordings_content(
+                                ui,
+                                &self.app.recordings,
+                                palette,
+                            );
+                        });
+                    }
+                    TabKind::Targets => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(4.0);
+                            crate::editor::sidebar_tabs::render_targets_content(
+                                ui,
+                                &self.app.target_entries,
+                                palette,
+                            );
+                        });
+                    }
+                    TabKind::AccessibilityAudit => {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.add_space(4.0);
+                            crate::editor::sidebar_tabs::render_audit_content(
+                                ui,
+                                &self.app.audit_findings,
+                                palette,
+                            );
+                        });
+                    }
                     _ => {
                         ui.vertical_centered(|ui| {
                             ui.add_space(32.0);

@@ -938,6 +938,27 @@ impl eframe::App for VelocityApp {
                         ui.close();
                     }
                     ui.separator();
+                    if ui.button("Favorites").clicked() {
+                        self.toggle_panel(TabKind::Favorites);
+                        ui.close();
+                    }
+                    if ui.button("Bookmarks").clicked() {
+                        self.toggle_panel(TabKind::Bookmarks);
+                        ui.close();
+                    }
+                    if ui.button("Recordings").clicked() {
+                        self.toggle_panel(TabKind::Recordings);
+                        ui.close();
+                    }
+                    if ui.button("Targets").clicked() {
+                        self.toggle_panel(TabKind::Targets);
+                        ui.close();
+                    }
+                    if ui.button("Accessibility Audit").clicked() {
+                        self.toggle_panel(TabKind::AccessibilityAudit);
+                        ui.close();
+                    }
+                    ui.separator();
                     if ui.button("Settings").clicked() {
                         self.toggle_panel(TabKind::Settings);
                         ui.close();

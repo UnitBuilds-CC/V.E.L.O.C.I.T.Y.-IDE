@@ -301,6 +301,31 @@ impl VelocityApp {
         self.toggle_panel(TabKind::InlineSuggestions);
     }
 
+    /// Open the Favorites panel.
+    pub fn toggle_favorites(&mut self) {
+        self.toggle_panel(TabKind::Favorites);
+    }
+
+    /// Open the Bookmarks panel.
+    pub fn toggle_bookmarks(&mut self) {
+        self.toggle_panel(TabKind::Bookmarks);
+    }
+
+    /// Open the Recordings panel.
+    pub fn toggle_recordings(&mut self) {
+        self.toggle_panel(TabKind::Recordings);
+    }
+
+    /// Open the Targets panel.
+    pub fn toggle_targets(&mut self) {
+        self.toggle_panel(TabKind::Targets);
+    }
+
+    /// Open the Accessibility Audit panel.
+    pub fn toggle_accessibility_audit(&mut self) {
+        self.toggle_panel(TabKind::AccessibilityAudit);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);
