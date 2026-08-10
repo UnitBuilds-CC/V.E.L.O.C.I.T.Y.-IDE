@@ -56,6 +56,8 @@ impl Tab {
             TabKind::LiveOrchestration => "Orchestration".into(),
             TabKind::SemanticSearch => "Semantic".into(),
             TabKind::Snippets => "Snippets".into(),
+            TabKind::LanguageServers => "LSP".into(),
+            TabKind::Debugger => "Debugger".into(),
             TabKind::Knowledge => "Knowledge".into(),
             TabKind::Triggers => "Triggers".into(),
             TabKind::Workflows => "Workflows".into(),
@@ -119,6 +121,8 @@ pub enum TabKind {
     LiveOrchestration,
     SemanticSearch,
     Snippets,
+    LanguageServers,
+    Debugger,
     // Knowledge / RAG panel
     Knowledge,
     // Unattended execution triggers

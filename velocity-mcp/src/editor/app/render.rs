@@ -266,6 +266,12 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::Snippets => {
                 self.app.render_snippets_panel(ui);
             }
+            TabKind::LanguageServers => {
+                self.app.render_lsp_panel(ui);
+            }
+            TabKind::Debugger => {
+                self.app.render_debugger_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }

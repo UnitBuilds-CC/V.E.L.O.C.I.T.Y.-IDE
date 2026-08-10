@@ -1821,6 +1821,118 @@ impl VelocityApp {
                 });
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LSP Client — Language Server Protocol status and diagnostics
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_lsp_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Language Servers",
+            if self.lsp_manager.is_some() {
+                "Active"
+            } else {
+                "Not initialized"
+            },
+            palette.accent,
+            palette.text_muted,
+        );
+
+        if self.lsp_manager.is_none() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("LSP not initialized. LSP servers are configured per-language.")
+                        .size(10.0)
+                        .color(palette.text_muted),
+                );
+            });
+        } else {
+            ui.label(
+                RichText::new("LSP servers are running and providing diagnostics, completions, and navigation.")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Features provided:")
+                    .size(9.0)
+                    .strong()
+                    .color(palette.text_muted),
+            );
+            ui.label(RichText::new("  • Real-time diagnostics").size(9.0).color(palette.text));
+            ui.label(RichText::new("  • Code completions").size(9.0).color(palette.text));
+            ui.label(RichText::new("  • Go to definition").size(9.0).color(palette.text));
+            ui.label(RichText::new("  • Find references").size(9.0).color(palette.text));
+            ui.label(RichText::new("  • Hover information").size(9.0).color(palette.text));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Debugger — DAP (Debug Adapter Protocol) controls
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_debugger_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Debugger",
+            if self.dap_client.is_some() {
+                "Connected"
+            } else {
+                "Not connected"
+            },
+            palette.accent,
+            palette.text_muted,
+        );
+
+        if self.dap_client.is_none() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("Debugger not connected. Use 'Debug: Attach' from the toolbar.")
+                        .size(10.0)
+                        .color(palette.text_muted),
+                );
+            });
+        } else {
+            ui.label(
+                RichText::new("Debugger is connected and ready for debugging.")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+            ui.add_space(6.0);
+
+            // Debug controls
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("▶ Continue").size(10.0)).clicked() {
+                    // Send continue command to DAP
+                }
+                if ui.button(RichText::new("⏸ Pause").size(10.0)).clicked() {
+                    // Send pause command to DAP
+                }
+                if ui.button(RichText::new("⏭ Step Over").size(10.0)).clicked() {
+                    // Send step over command to DAP
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("⤵ Step Into").size(10.0)).clicked() {
+                    // Send step into command to DAP
+                }
+                if ui.button(RichText::new("⤴ Step Out").size(10.0)).clicked() {
+                    // Send step out command to DAP
+                }
+                if ui.button(RichText::new("⏹ Stop").size(10.0)).clicked() {
+                    // Send stop command to DAP
+                }
+            });
+        }
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {

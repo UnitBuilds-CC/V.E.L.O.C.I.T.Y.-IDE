@@ -884,6 +884,14 @@ impl eframe::App for VelocityApp {
                         self.toggle_panel(TabKind::Snippets);
                         ui.close();
                     }
+                    if ui.button("Language Servers").clicked() {
+                        self.toggle_panel(TabKind::LanguageServers);
+                        ui.close();
+                    }
+                    if ui.button("Debugger").clicked() {
+                        self.toggle_panel(TabKind::Debugger);
+                        ui.close();
+                    }
                     if ui.button("Knowledge Base").clicked() {
                         self.toggle_panel(TabKind::Knowledge);
                         ui.close();

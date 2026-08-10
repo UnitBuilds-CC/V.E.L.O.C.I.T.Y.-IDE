@@ -261,6 +261,16 @@ impl VelocityApp {
         self.toggle_panel(TabKind::Snippets);
     }
 
+    /// Open the Language Servers panel.
+    pub fn toggle_language_servers(&mut self) {
+        self.toggle_panel(TabKind::LanguageServers);
+    }
+
+    /// Open the Debugger panel.
+    pub fn toggle_debugger(&mut self) {
+        self.toggle_panel(TabKind::Debugger);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);
