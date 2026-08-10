@@ -1663,6 +1663,67 @@ impl VelocityApp {
                 }
             });
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Semantic Search — TF-IDF based code search
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_semantic_search_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+
+        Self::tier3_header(
+            ui,
+            "Semantic Search",
+            if self.semantic_index.is_some() {
+                "Index built"
+            } else {
+                "Not indexed"
+            },
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Controls
+        let mut build_index = false;
+        ui.horizontal(|ui| {
+            if ui.button(RichText::new("🔨 Build Index").size(10.0)).clicked() {
+                build_index = true;
+            }
+            if ui.button(RichText::new("🔄 Rebuild").size(10.0)).clicked() {
+                build_index = true;
+            }
+            ui.label(
+                RichText::new("TF-IDF semantic search")
+                    .size(8.0)
+                    .color(palette.text_muted),
+            );
+        });
+        ui.add_space(6.0);
+
+        if self.semantic_index.is_none() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("Semantic index not built. Click 'Build Index' to enable semantic search.")
+                        .size(10.0)
+                        .color(palette.text_muted),
+                );
+            });
+        } else {
+            ui.label(
+                RichText::new("Semantic search is active. Use the Search panel with semantic mode enabled.")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+        }
+
+        if build_index {
+            let ws = self.workspace_root.clone();
+            self.semantic_index = Some(crate::editor::semantic_search::SemanticIndex::build(&ws));
+            self.toasts
+                .push(crate::editor::toast::Toast::success("Semantic index built"));
+        }
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {

@@ -251,6 +251,11 @@ impl VelocityApp {
         self.toggle_panel(TabKind::LiveOrchestration);
     }
 
+    /// Open the Semantic Search panel.
+    pub fn toggle_semantic_search(&mut self) {
+        self.toggle_panel(TabKind::SemanticSearch);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);

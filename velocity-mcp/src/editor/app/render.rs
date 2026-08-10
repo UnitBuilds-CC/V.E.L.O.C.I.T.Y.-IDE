@@ -260,6 +260,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::LiveOrchestration => {
                 self.app.render_live_orchestration_panel(ui);
             }
+            TabKind::SemanticSearch => {
+                self.app.render_semantic_search_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }
