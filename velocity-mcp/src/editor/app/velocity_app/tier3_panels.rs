@@ -1374,6 +1374,134 @@ impl VelocityApp {
             )));
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Agent Memory — persistent per-member knowledge store
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_agent_memory_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let total_memories: usize = self.agent_memory.stores.iter().map(|s| s.memories.len()).sum();
+        let member_count = self.agent_memory.stores.len();
+
+        Self::tier3_header(
+            ui,
+            "Agent Memory",
+            &format!("{} member(s) · {} memories", member_count, total_memories),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Controls
+        let mut load = false;
+        let mut save = false;
+        ui.horizontal(|ui| {
+            if ui.button(RichText::new("🔄 Load All").size(10.0)).clicked() {
+                load = true;
+            }
+            if ui.button(RichText::new("💾 Save All").size(10.0)).clicked() {
+                save = true;
+            }
+            ui.label(
+                RichText::new("Encrypted with NDA")
+                    .size(8.0)
+                    .color(palette.text_muted),
+            );
+        });
+        ui.add_space(6.0);
+
+        // Member stores
+        if self.agent_memory.stores.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("No agent memories yet. Memories are created during agent execution.")
+                        .size(10.0)
+                        .color(palette.text_muted),
+                );
+            });
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt("agent_memory_scroll")
+                .show(ui, |ui| {
+                    for store in &self.agent_memory.stores {
+                        egui::CollapsingHeader::new(
+                            RichText::new(format!(
+                                "👤 {} ({} memories)",
+                                store.member_id,
+                                store.memories.len()
+                            ))
+                            .size(11.0)
+                            .strong(),
+                        )
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            for mem in &store.memories {
+                                egui::Frame::new()
+                                    .fill(palette.bg_secondary)
+                                    .corner_radius(4.0)
+                                    .inner_margin(6.0)
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(&mem.title)
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(palette.text),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.label(
+                                                        RichText::new(&mem.category)
+                                                            .size(8.0)
+                                                            .monospace()
+                                                            .color(palette.accent),
+                                                    );
+                                                },
+                                            );
+                                        });
+                                        ui.label(
+                                            RichText::new(&mem.content)
+                                                .size(9.0)
+                                                .color(palette.text_muted),
+                                        );
+                                        if !mem.keywords.is_empty() {
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    RichText::new("Keywords:")
+                                                        .size(8.0)
+                                                        .color(palette.text_muted),
+                                                );
+                                                ui.label(
+                                                    RichText::new(mem.keywords.join(", "))
+                                                        .size(8.0)
+                                                        .color(palette.text_muted),
+                                                );
+                                            });
+                                        }
+                                    });
+                                ui.add_space(3.0);
+                            }
+                        });
+                        ui.add_space(4.0);
+                    }
+                });
+        }
+
+        if load {
+            self.agent_memory.load_all();
+            self.toasts.push(crate::editor::toast::Toast::success(format!(
+                "Loaded {} member store(s)",
+                self.agent_memory.stores.len()
+            )));
+        }
+        if save {
+            self.agent_memory.save_all();
+            self.toasts
+                .push(crate::editor::toast::Toast::success("All memories saved"));
+        }
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {

@@ -241,6 +241,11 @@ impl VelocityApp {
         self.toggle_panel(TabKind::TestGenerator);
     }
 
+    /// Open the Agent Memory panel.
+    pub fn toggle_agent_memory(&mut self) {
+        self.toggle_panel(TabKind::AgentMemory);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);

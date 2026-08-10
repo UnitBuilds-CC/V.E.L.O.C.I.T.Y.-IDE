@@ -254,6 +254,9 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::TestGenerator => {
                 self.app.render_test_generator_panel(ui);
             }
+            TabKind::AgentMemory => {
+                self.app.render_agent_memory_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }
