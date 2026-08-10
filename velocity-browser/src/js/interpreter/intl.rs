@@ -519,7 +519,9 @@ pub(super) fn call_list_format_method(
                     "and"
                 };
                 let mut result = list[..list.len() - 1].join(", ");
-                result.push_str(&format!(" {} {}", conjunction, list.last().unwrap()));
+                if let Some(last) = list.last() {
+                    result.push_str(&format!(" {} {}", conjunction, last));
+                }
                 JsValue::String(result)
             }
         }

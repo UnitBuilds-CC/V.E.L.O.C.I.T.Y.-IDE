@@ -478,11 +478,12 @@ fn extract_obj_string(obj: &str, key: &str) -> Option<String> {
     for pat in &patterns {
         if let Some(pos) = obj.find(pat.as_str()) {
             let after = obj[pos + pat.len()..].trim();
-            if after.starts_with('\'') || after.starts_with('"') {
-                let quote = after.chars().next().unwrap();
-                let inner = &after[1..];
-                if let Some(end) = inner.find(quote) {
-                    return Some(inner[..end].to_string());
+            if let Some(quote) = after.chars().next() {
+                if quote == '\'' || quote == '"' {
+                    let inner = &after[1..];
+                    if let Some(end) = inner.find(quote) {
+                        return Some(inner[..end].to_string());
+                    }
                 }
             }
         }

@@ -174,11 +174,10 @@ pub(super) fn get_interactive_elements() -> Vec<InteractiveElement> {
             continue;
         }
 
-        let role = element_role(snap);
-        if role.is_none() {
-            continue;
-        }
-        let role = role.unwrap();
+        let role = match element_role(snap) {
+            Some(r) => r,
+            None => continue,
+        };
 
         let name = accessible_name(snap, &snaps);
         let value = snap.attributes.get("value").cloned().unwrap_or_default();

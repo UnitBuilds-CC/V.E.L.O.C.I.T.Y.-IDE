@@ -565,7 +565,9 @@ impl Tls13Handshake {
                 HANDSHAKE_FINISHED => {
                     // Verify server Finished: verify_data = HMAC(finished_key, transcript_hash)
                     let finished_key = crate::net::tls13::hkdf_expand_label(
-                        self.server_handshake_secret.as_ref().unwrap(),
+                        self.server_handshake_secret
+                            .as_ref()
+                            .ok_or("missing server handshake secret")?,
                         "finished",
                         &[],
                         32,
@@ -645,12 +647,14 @@ impl Tls13Handshake {
 
     /// Build the client Finished message (encrypted).
     pub fn build_client_finished(&mut self) -> Vec<u8> {
-        let finished_key = crate::net::tls13::hkdf_expand_label(
-            self.client_handshake_secret.as_ref().unwrap(),
-            "finished",
-            &[],
-            32,
-        );
+        let client_secret = match self.client_handshake_secret.as_ref() {
+            Some(s) => s,
+            None => {
+                log::error!("build_client_finished: missing client handshake secret");
+                return Vec::new();
+            }
+        };
+        let finished_key = crate::net::tls13::hkdf_expand_label(client_secret, "finished", &[], 32);
         let transcript_hash = sha256(&self.transcript);
         let verify_data = hmac_sha256(&finished_key, &transcript_hash);
 

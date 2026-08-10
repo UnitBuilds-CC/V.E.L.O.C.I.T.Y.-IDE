@@ -477,7 +477,7 @@ pub fn open_bytes(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, &'static str>
     if bytes[0..4] != NDA_MAGIC {
         return Err("bad NDA magic");
     }
-    let flags = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let flags = u32::from_le_bytes(bytes[4..8].try_into().unwrap_or([0; 4]));
     if flags & NDA_FLAG_ENCRYPTED == 0 {
         return Err("NDA envelope is not encrypted");
     }
@@ -486,7 +486,7 @@ pub fn open_bytes(key: &[u8; 32], bytes: &[u8]) -> Result<Vec<u8>, &'static str>
     }
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&bytes[8..40]);
-    let payload_len = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
+    let payload_len = u32::from_le_bytes(bytes[40..44].try_into().unwrap_or([0; 4])) as usize;
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&bytes[44..NDA_HEADER_LEN]);
 

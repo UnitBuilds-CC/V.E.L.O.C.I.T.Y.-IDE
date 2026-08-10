@@ -222,7 +222,7 @@ impl HtmlParser {
         for tok in &tokens {
             match tok.kind {
                 TokenKind::StartTag => {
-                    let parent = *stack.last().unwrap();
+                    let parent = *stack.last().unwrap_or(&0);
                     let node_id = nodes.len();
                     nodes.push(DomNode {
                         id: node_id,
@@ -248,7 +248,7 @@ impl HtmlParser {
                     }
                 }
                 TokenKind::Character => {
-                    let parent = *stack.last().unwrap();
+                    let parent = *stack.last().unwrap_or(&0);
                     let node_id = nodes.len();
                     nodes.push(DomNode {
                         id: node_id,

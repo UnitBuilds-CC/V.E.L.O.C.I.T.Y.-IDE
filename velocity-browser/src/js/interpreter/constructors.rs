@@ -134,7 +134,7 @@ pub(super) fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalRe
             map.insert("message".to_string(), JsValue::String(msg));
             map.insert(
                 "name".to_string(),
-                JsValue::String(name.unwrap().to_string()),
+                JsValue::String(name.unwrap_or("Error").to_string()),
             );
             Ok(JsValue::Object(map))
         }
@@ -345,7 +345,7 @@ pub(super) fn eval_new(callee: &Expr, args: &[Expr], scope: &ScopeRef) -> EvalRe
         | Some("Float64Array")
         | Some("Uint8ClampedArray") => {
             let mut map = HashMap::new();
-            let type_name = name.unwrap();
+            let type_name = name.unwrap_or("TypedArray");
             map.insert(
                 "__type__".to_string(),
                 JsValue::String(type_name.to_string()),

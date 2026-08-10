@@ -1077,7 +1077,10 @@ pub(super) fn to_precision_js(n: f64, p: usize) -> String {
         };
     }
     let sci = format!("{:e}", a);
-    let e_pos = sci.find('e').unwrap();
+    let e_pos = match sci.find('e') {
+        Some(p) => p,
+        None => return format!("{}0", prefix),
+    };
     let sig = &sci[..e_pos];
     let rust_exp: i64 = sci[e_pos + 1..].parse().unwrap_or(0);
     let mut digits: Vec<u8> = sig
@@ -1165,7 +1168,10 @@ pub(super) fn to_exponential_js(n: f64, frac: Option<usize>) -> String {
         return format!("{}e+0", mantissa);
     }
     let sci = format!("{:e}", a);
-    let e_pos = sci.find('e').unwrap();
+    let e_pos = match sci.find('e') {
+        Some(p) => p,
+        None => return format!("{}e+0", a),
+    };
     let sig = &sci[..e_pos];
     let exp: i64 = sci[e_pos + 1..].parse().unwrap_or(0);
     let mut digits: String = sig.chars().filter(|c| *c != '.').collect();
