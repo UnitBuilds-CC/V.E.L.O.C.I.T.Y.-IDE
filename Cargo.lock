@@ -4105,6 +4105,7 @@ dependencies = [
 name = "velocity-browser"
 version = "0.1.0"
 dependencies = [
+ "log",
  "regex",
  "ring",
  "rustls",
@@ -4112,6 +4113,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "velocity-ide",
  "webpki-roots 0.26.11",
 ]
@@ -4146,6 +4148,7 @@ dependencies = [
  "sha2",
  "syn",
  "tempfile",
+ "thiserror 2.0.18",
  "ureq",
 ]
 
@@ -4174,6 +4177,7 @@ dependencies = [
  "sha2",
  "syntect",
  "tempfile",
+ "thiserror 2.0.18",
  "tree-sitter",
  "ureq",
  "velocity-browser",

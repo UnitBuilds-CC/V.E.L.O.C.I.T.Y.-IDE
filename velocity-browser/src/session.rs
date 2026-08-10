@@ -233,10 +233,20 @@ impl BrowserSession {
         &mut self,
         url: &str,
     ) -> Result<Vec<NdaTriple>, Box<dyn std::error::Error + Send + Sync>> {
+        log::info!("fetch_and_load: GET {}", url);
         if let Err(e) = self.tab_sandbox.check_network_access(url) {
+            log::warn!("fetch_and_load: network access denied for {}: {}", url, e);
             return Err(e.into());
         }
-        let resp = self.http_client.get(url)?;
+        let resp = self.http_client.get(url).map_err(|e| {
+            log::error!("fetch_and_load: HTTP GET {} failed: {}", url, e);
+            e
+        })?;
+        log::info!(
+            "fetch_and_load: {} returned status {}",
+            url,
+            resp.status_code
+        );
         self.network_tracker
             .record_request(url, "GET", resp.status_code, "document");
         Ok(self.load_html(url, &resp.body))

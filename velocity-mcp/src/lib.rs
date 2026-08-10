@@ -34,6 +34,7 @@ pub mod benchmark;
 pub mod compiler;
 pub mod connectors;
 pub mod editor;
+pub mod errors;
 pub mod ipc;
 pub mod orchestrator;
 pub mod protocol;

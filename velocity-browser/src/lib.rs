@@ -23,6 +23,7 @@ pub mod agentic;
 pub mod aom;
 pub mod dom;
 pub mod engine;
+pub mod errors;
 pub mod js;
 pub mod layout;
 pub mod nda;

@@ -2,6 +2,7 @@
 // Re-exports modules so that binaries in src/bin/ can use `velocity_ide::*`.
 
 pub mod compiler;
+pub mod errors;
 pub mod model;
 pub mod nda;
 pub mod nda_int;

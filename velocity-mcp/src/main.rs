@@ -34,6 +34,7 @@ mod benchmark;
 mod compiler;
 mod connectors;
 mod editor;
+mod errors;
 mod ipc;
 mod orchestrator;
 mod protocol;

@@ -36,6 +36,7 @@ gpu-allocator = "0.25.0"
 syn        = { version = "2.0", features = ["full", "visit"] }
 ureq       = { version = "2.9", features = ["json"] }
 dotenvy    = "0.15"
+thiserror  = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -16,6 +16,7 @@ use velocity_ide::sandbox::NdaSandbox;
 use velocity_ide::site_map::{NdaNode, SiteMap};
 
 fn main() {
+    env_logger::init();
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run --bin run_nda -- <file.nda> [--sandbox] [--dim N]");
@@ -23,6 +24,7 @@ fn main() {
     }
 
     let file_path = &args[1];
+    log::info!("run_nda: loading '{}'", file_path);
 
     // Parse flags.
     let use_sandbox = args.iter().any(|a| a == "--sandbox");
@@ -39,16 +41,22 @@ fn main() {
     let source = match fs::read_to_string(file_path) {
         Ok(s) => s,
         Err(e) => {
+            log::error!("Failed to read '{}': {}", file_path, e);
             eprintln!("Error reading '{}': {}", file_path, e);
             std::process::exit(1);
         }
     };
+    log::info!("run_nda: source loaded ({} bytes)", source.len());
 
     println!("[compiler] Compiling '{}' → NDA AST ...", file_path);
 
     let (program, final_hashes) = match compile(&source) {
-        Ok(r) => r,
+        Ok(r) => {
+            log::info!("run_nda: compilation successful");
+            r
+        }
         Err(e) => {
+            log::error!("Compilation failed: {}", e);
             eprintln!("Compilation Error: {}", e);
             std::process::exit(1);
         }
