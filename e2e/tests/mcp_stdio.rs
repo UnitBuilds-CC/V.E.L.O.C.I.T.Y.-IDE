@@ -138,8 +138,7 @@ fn mcp_invalid_json_returns_parse_error() {
     stdin.flush().unwrap();
 
     // Skip startup banner lines, then read the parse error response
-    let mut resp = serde_json::Value::Null;
-    loop {
+    let resp = loop {
         let mut response_line = String::new();
         reader.read_line(&mut response_line).unwrap();
         let trimmed = response_line.trim();
@@ -147,10 +146,9 @@ fn mcp_invalid_json_returns_parse_error() {
             continue;
         }
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            resp = val;
-            break;
+            break val;
         }
-    }
+    };
 
     assert_eq!(resp["jsonrpc"], "2.0");
     assert_eq!(resp["error"]["code"], -32700);
