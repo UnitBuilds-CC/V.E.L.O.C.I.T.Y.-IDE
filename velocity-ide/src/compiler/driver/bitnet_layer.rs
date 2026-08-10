@@ -553,6 +553,9 @@ impl VulkanBitNetLayer {
 
 impl Drop for VulkanBitNetLayer {
     fn drop(&mut self) {
+        // SAFETY: All Vulkan handles were created by `self` in `new()` and are valid.
+        // device_wait_idle ensures no GPU work is in flight. Resources destroyed in
+        // reverse dependency order: fence/pool → unmap+free+destroy buffers.
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_fence(self.fence, None);

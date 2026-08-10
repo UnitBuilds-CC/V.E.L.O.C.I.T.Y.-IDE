@@ -469,6 +469,8 @@ pub fn record_and_execute_token(
         cmd_compute_barrier(device, cmd);
     }
 
+    // SAFETY: Record final RMS norm dispatch — bind pipeline, descriptor sets, push constants.
+    // All handles (pipeline, layout, desc_set_final_norm) are valid from pipeline initialization.
     unsafe {
         device.cmd_bind_pipeline(
             cmd,
@@ -496,10 +498,13 @@ pub fn record_and_execute_token(
     }
     cmd_compute_to_host_barrier(device, cmd);
 
+    // SAFETY: `cmd` is a valid recording command buffer; end_command_buffer finishes recording.
     unsafe {
         device.end_command_buffer(cmd)?;
     }
 
+    // SAFETY: `pipeline.fence`, `pipeline.queue` are valid handles from initialization.
+    // reset_fences/queue_submit/wait_for_fences are standard Vulkan synchronization operations.
     unsafe {
         device.reset_fences(&[pipeline.fence])?;
         device.queue_submit(

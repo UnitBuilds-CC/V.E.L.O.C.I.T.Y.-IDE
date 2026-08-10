@@ -69,6 +69,8 @@ impl BitNet3BGpuLayerData {
 
         let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
             let byte_len = slice.len().checked_mul(4).expect("gpu slice overflow");
+            // SAFETY: `slice` is a valid &[u32] borrow; `as_ptr()` is a valid aligned pointer
+            // to `slice.len()` u32 elements (= byte_len bytes). Lifetime tied to `slice` borrow.
             unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
         };
 
@@ -113,14 +115,17 @@ impl BitNet3BGpuNdaLayerData {
 
         let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
             let byte_len = slice.len().checked_mul(4).expect("gpu nda slice overflow");
+            // SAFETY: `slice` is a valid &[u32] borrow; pointer valid for byte_len bytes.
             unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
         };
 
         let (in_act, in_pos) = velocity_ide::compiler::driver::pack_inputs_nda(&inputs_3200);
+        // SAFETY: `in_act` is a valid &[u32] from pack_inputs_nda; pointer valid for byte_len bytes.
         let inputs_active = unsafe {
             let byte_len = in_act.len().checked_mul(4).expect("in_act overflow");
             std::slice::from_raw_parts(in_act.as_ptr() as *const u8, byte_len).to_vec()
         };
+        // SAFETY: `in_pos` is a valid &[u32] from pack_inputs_nda; pointer valid for byte_len bytes.
         let inputs_pos = unsafe {
             let byte_len = in_pos.len().checked_mul(4).expect("in_pos overflow");
             std::slice::from_raw_parts(in_pos.as_ptr() as *const u8, byte_len).to_vec()
@@ -151,6 +156,7 @@ pub fn bench_qwen_3b_layer_gpu(
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let to_bytes_f32 = |slice: &[f32]| -> &[u8] {
         let byte_len = slice.len().checked_mul(4).expect("qwen bench overflow");
+        // SAFETY: `slice` is a valid &[f32] borrow; pointer valid for byte_len bytes.
         unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
     };
     data.layer
@@ -162,6 +168,7 @@ pub fn bench_bitnet_3b_layer_gpu(
 ) -> Result<f64, Box<dyn std::error::Error>> {
     let to_bytes_u32 = |slice: &[u32]| -> &[u8] {
         let byte_len = slice.len().checked_mul(4).expect("bitnet bench overflow");
+        // SAFETY: `slice` is a valid &[u32] borrow; pointer valid for byte_len bytes.
         unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, byte_len) }
     };
     data.layer

@@ -587,12 +587,14 @@ fn com_element_to_cached(
     // - Is safe to call on any valid element, even if the property is unsupported
     //   (returns an error that we handle with unwrap_or_default/unwrap_or)
     // The element reference remains valid for the duration of this function call.
+    // SAFETY: COM property getters on valid `elem` — see function-level preamble above.
     let automation_id = unsafe { elem.CurrentAutomationId() }
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();
     let name = unsafe { elem.CurrentName() }
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();
+    // SAFETY: COM property getters on valid `elem`.
     let class_name = unsafe { elem.CurrentClassName() }
         .map(|s| bstr_to_string(&s))
         .unwrap_or_default();
@@ -615,6 +617,7 @@ fn com_element_to_cached(
             height: 0.0,
         });
 
+    // SAFETY: COM property getters on valid `elem`.
     let is_enabled = unsafe { elem.CurrentIsEnabled() }
         .map(|b| b.as_bool())
         .unwrap_or(false);
@@ -630,6 +633,7 @@ fn com_element_to_cached(
         UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
         UIA_TogglePatternId, UIA_ValuePatternId,
     };
+    // SAFETY: GetCurrentPattern calls on valid `elem` — return Ok with pattern or Err if unsupported.
     if unsafe { elem.GetCurrentPattern(UIA_InvokePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::Invoke);
     }
@@ -645,6 +649,7 @@ fn com_element_to_cached(
     if unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::SelectionItem);
     }
+    // SAFETY: GetCurrentPattern calls on valid `elem`.
     if unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) }.is_ok() {
         supported_patterns.push(UiaPattern::ExpandCollapse);
     }
@@ -764,6 +769,7 @@ fn build_tree_com(
         unsafe { auto.GetRootElement() }.map_err(|e| format!("GetRootElement failed: {:?}", e))?;
 
     // Create a content view walker via true condition
+    // SAFETY: COM tree walker calls on valid `auto` and `walker` from CoCreateInstance.
     let true_cond = unsafe { auto.CreateTrueCondition() }
         .map_err(|e| format!("CreateTrueCondition failed: {:?}", e))?;
     let walker = unsafe { auto.CreateTreeWalker(&true_cond) }
@@ -771,6 +777,7 @@ fn build_tree_com(
 
     // Find the target process's top-level window
     let mut target_window = None;
+    // SAFETY: COM walker calls on valid `walker` and `desktop`/`current` elements.
     let mut current = unsafe { walker.GetFirstChildElement(&desktop) }
         .map_err(|e| format!("GetFirstChildElement failed: {:?}", e))?;
 
@@ -814,6 +821,7 @@ fn walk_element_com(
 
     if depth < max_depth {
         let mut child_count = 0u32;
+        // SAFETY: COM walker calls on valid `walker` and `elem`.
         if let Ok(first_child) = unsafe { walker.GetFirstChildElement(elem) } {
             let mut child_elem = first_child;
             loop {
@@ -830,6 +838,7 @@ fn walk_element_com(
                 );
                 cached.children.push(child_cached);
                 child_count += 1;
+                // SAFETY: COM walker call on valid `walker` and `child_elem`.
                 match unsafe { walker.GetNextSiblingElement(&child_elem) } {
                     Ok(next) => child_elem = next,
                     Err(_) => break,
@@ -870,6 +879,7 @@ fn invoke_pattern_com(
     // GetCurrentPattern on valid elements. All COM pointers have proper refcounting
     // via the `windows` crate RAII wrappers.
     // Find the element via COM using its automation ID or name
+    // SAFETY: COM method calls on valid `auto`, `desktop`, `com_elem`, and pattern objects.
     let desktop =
         unsafe { auto.GetRootElement() }.map_err(|e| format!("GetRootElement: {:?}", e))?;
 
@@ -888,6 +898,7 @@ fn invoke_pattern_com(
         .map_err(|e| format!("FindFirst: {:?}", e))?;
 
     match pattern {
+        // SAFETY: GetCurrentPattern + cast + invoke on valid `com_elem`.
         UiaPattern::Invoke => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_InvokePatternId) }
                 .map_err(|e| format!("GetInvokePattern: {:?}", e))?;
@@ -896,6 +907,7 @@ fn invoke_pattern_com(
                 .map_err(|e| format!("Cast InvokePattern: {:?}", e))?;
             unsafe { invoke.Invoke() }.map_err(|e| format!("Invoke: {:?}", e))?;
         }
+        // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::Value => {
             let val = value.unwrap_or("");
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ValuePatternId) }
@@ -906,6 +918,7 @@ fn invoke_pattern_com(
             unsafe { value_pattern.SetValue(&BSTR::from(val)) }
                 .map_err(|e| format!("SetValue: {:?}", e))?;
         }
+        // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::Toggle => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TogglePatternId) }
                 .map_err(|e| format!("GetTogglePattern: {:?}", e))?;
@@ -914,6 +927,7 @@ fn invoke_pattern_com(
                 .map_err(|e| format!("Cast TogglePattern: {:?}", e))?;
             unsafe { toggle.Toggle() }.map_err(|e| format!("Toggle: {:?}", e))?;
         }
+        // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::ExpandCollapse => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) }
                 .map_err(|e| format!("GetExpandCollapsePattern: {:?}", e))?;
@@ -925,6 +939,7 @@ fn invoke_pattern_com(
                 _ => unsafe { ec.Expand() }.map_err(|e| format!("Expand: {:?}", e))?,
             }
         }
+        // SAFETY: GetCurrentPattern + cast + method call on valid `com_elem`.
         UiaPattern::SelectionItem => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_SelectionItemPatternId) }
                 .map_err(|e| format!("GetSelectionItemPattern: {:?}", e))?;
@@ -939,6 +954,9 @@ fn invoke_pattern_com(
                 _ => unsafe { si.Select() }.map_err(|e| format!("Select: {:?}", e))?,
             }
         }
+        // SAFETY (continued): Same invariants as above — GetCurrentPattern on `com_elem` (a valid
+        // IUIAutomationElement from FindFirst), then COM method calls on the cast pattern objects.
+        // All pattern objects are valid COM interfaces with proper refcounting via `windows` crate.
         UiaPattern::RangeValue => {
             let val: f64 = value.unwrap_or("50").parse().unwrap_or(50.0);
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_RangeValuePatternId) }
@@ -948,6 +966,7 @@ fn invoke_pattern_com(
                 .map_err(|e| format!("Cast RangeValuePattern: {:?}", e))?;
             unsafe { rv.SetValue(val) }.map_err(|e| format!("SetRangeValue: {:?}", e))?;
         }
+        // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::Scroll => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollPatternId) }
                 .map_err(|e| format!("GetScrollPattern: {:?}", e))?;
@@ -964,6 +983,7 @@ fn invoke_pattern_com(
             };
             unsafe { scroll.Scroll(h, v) }.map_err(|e| format!("Scroll: {:?}", e))?;
         }
+        // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::Transform => {
             let spec = value.unwrap_or("");
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_TransformPatternId) }
@@ -981,6 +1001,7 @@ fn invoke_pattern_com(
                         .ok_or_else(|| "Transform move expects 'X,Y'".to_string())?;
                     let x: f64 = x.trim().parse().map_err(|_| "invalid move X".to_string())?;
                     let y: f64 = y.trim().parse().map_err(|_| "invalid move Y".to_string())?;
+                    // SAFETY: COM Transform method calls on valid `tf`.
                     unsafe { tf.Move(x, y) }.map_err(|e| format!("Move: {:?}", e))?;
                 }
                 "resize" => {
@@ -995,6 +1016,7 @@ fn invoke_pattern_com(
                         .trim()
                         .parse()
                         .map_err(|_| "invalid resize H".to_string())?;
+                    // SAFETY: COM Transform method calls on valid `tf`.
                     unsafe { tf.Resize(w, h) }.map_err(|e| format!("Resize: {:?}", e))?;
                 }
                 "rotate" => {
@@ -1002,11 +1024,13 @@ fn invoke_pattern_com(
                         .trim()
                         .parse()
                         .map_err(|_| "invalid rotate degrees".to_string())?;
+                    // SAFETY: COM Transform method calls on valid `tf`.
                     unsafe { tf.Rotate(deg) }.map_err(|e| format!("Rotate: {:?}", e))?;
                 }
                 other => return Err(format!("unknown Transform op '{other}'")),
             }
         }
+        // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::ScrollItem => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_ScrollItemPatternId) }
                 .map_err(|e| format!("GetScrollItemPattern: {:?}", e))?;
@@ -1015,6 +1039,7 @@ fn invoke_pattern_com(
                 .map_err(|e| format!("Cast ScrollItemPattern: {:?}", e))?;
             unsafe { si.ScrollIntoView() }.map_err(|e| format!("ScrollIntoView: {:?}", e))?;
         }
+        // SAFETY: COM pattern calls on valid `com_elem`.
         UiaPattern::Window => {
             let pattern_obj = unsafe { com_elem.GetCurrentPattern(UIA_WindowPatternId) }
                 .map_err(|e| format!("GetWindowPattern: {:?}", e))?;

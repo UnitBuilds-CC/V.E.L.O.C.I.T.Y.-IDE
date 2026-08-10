@@ -322,6 +322,9 @@ impl VulkanGemv {
         input_bytes: &[u8],
         output_floats: &mut [f32],
     ) -> Result<f64, Box<dyn std::error::Error>> {
+        // SAFETY: `input_bytes.as_ptr()` is valid for `input_bytes.len()` bytes.
+        // `self.input_ptr` was mapped from a Vulkan buffer of sufficient size during `new()`.
+        // Both pointers are properly aligned and non-overlapping (host vs GPU memory).
         unsafe {
             std::ptr::copy_nonoverlapping(
                 input_bytes.as_ptr(),
@@ -333,6 +336,8 @@ impl VulkanGemv {
         let start = Instant::now();
         let command_buffers = [self.command_buffer];
         let submit_info = vk::SubmitInfo::builder().command_buffers(&command_buffers);
+        // SAFETY: `self.fence`, `self.queue`, `self.device` are all valid handles from `new()`.
+        // reset_fences/queue_submit/wait_for_fences are standard Vulkan queue operations.
         unsafe {
             self.device.reset_fences(&[self.fence])?;
             self.device
@@ -341,6 +346,9 @@ impl VulkanGemv {
         }
         let duration_us = start.elapsed().as_micros() as f64;
 
+        // SAFETY: `self.output_ptr` was mapped from a Vulkan buffer of sufficient size.
+        // `output_floats.as_mut_ptr()` is valid for `output_floats.len()` f32 elements.
+        // Non-overlapping: GPU-mapped memory vs host slice.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 self.output_ptr as *const f32,
@@ -355,6 +363,8 @@ impl VulkanGemv {
 
 impl Drop for VulkanGemv {
     fn drop(&mut self) {
+        // SAFETY: All Vulkan handles were created by `self` in `new()` and are valid.
+        // device_wait_idle ensures no GPU work in flight before resource destruction.
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_fence(self.fence, None);

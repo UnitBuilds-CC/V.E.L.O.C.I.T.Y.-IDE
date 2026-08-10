@@ -545,6 +545,10 @@ impl VulkanQwenLayer {
 
 impl Drop for VulkanQwenLayer {
     fn drop(&mut self) {
+        // SAFETY: All Vulkan handles (fence, command_pool, desc_pool, buffers, memories)
+        // were created by `self` in `new()` and are valid. device_wait_idle ensures no
+        // GPU work is in flight before destroying resources. Destruction order:
+        // wait → fence/pool → unmap+free+destroy buffers. Allocator is the same device.
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_fence(self.fence, None);
