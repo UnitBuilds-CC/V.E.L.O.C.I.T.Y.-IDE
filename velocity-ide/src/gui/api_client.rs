@@ -48,7 +48,10 @@ pub fn chat_completion_stream(
 // ─── OpenAI ────────────────────────────────────────────────────────────────
 
 fn openai_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<String> {
-    let base = cfg.base_url.as_deref().unwrap_or("https://api.openai.com/v1");
+    let base = cfg
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.openai.com/v1");
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let body = serde_json::json!({
@@ -76,7 +79,10 @@ fn openai_stream(
     messages: &[ChatMessage],
     on_chunk: &mut dyn FnMut(&str),
 ) -> Result<String> {
-    let base = cfg.base_url.as_deref().unwrap_or("https://api.openai.com/v1");
+    let base = cfg
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.openai.com/v1");
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let body = serde_json::json!({
@@ -243,10 +249,7 @@ fn custom_request(cfg: &ProviderConfig, messages: &[ChatMessage]) -> Result<Stri
         .base_url
         .as_deref()
         .context("Custom provider requires a base URL")?;
-    let url = format!(
-        "{}/chat/completions",
-        base.trim_end_matches('/')
-    );
+    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let body = serde_json::json!({
         "model": cfg.model,

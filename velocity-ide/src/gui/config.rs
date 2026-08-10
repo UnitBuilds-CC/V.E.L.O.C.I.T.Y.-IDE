@@ -44,8 +44,7 @@ pub struct AppConfig {
 impl AppConfig {
     /// Get the config file path.
     pub fn config_path() -> PathBuf {
-        let base = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."));
+        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         base.join("V.E.L.O.C.I.T.Y").join("config.json")
     }
 

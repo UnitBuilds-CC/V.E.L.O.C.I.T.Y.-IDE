@@ -129,24 +129,26 @@ impl VelocityApp {
         // Provider selection
         ui.label("AI Provider:");
         ui.add_space(4.0);
-        egui::Grid::new("provider_grid").num_columns(2).show(ui, |ui| {
-            for (i, name) in PROVIDER_OPTIONS.iter().enumerate() {
-                let selected = self.wizard_provider == i;
-                if ui.selectable_label(selected, *name).clicked() {
-                    self.wizard_provider = i;
-                    self.wizard_model = Self::default_model_for_provider(i).to_string();
-                    if i != 2 {
-                        self.wizard_account_id.clear();
+        egui::Grid::new("provider_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for (i, name) in PROVIDER_OPTIONS.iter().enumerate() {
+                    let selected = self.wizard_provider == i;
+                    if ui.selectable_label(selected, *name).clicked() {
+                        self.wizard_provider = i;
+                        self.wizard_model = Self::default_model_for_provider(i).to_string();
+                        if i != 2 {
+                            self.wizard_account_id.clear();
+                        }
+                        if i != 3 {
+                            self.wizard_base_url.clear();
+                        }
                     }
-                    if i != 3 {
-                        self.wizard_base_url.clear();
+                    if (i + 1) % 2 == 0 {
+                        ui.end_row();
                     }
                 }
-                if (i + 1) % 2 == 0 {
-                    ui.end_row();
-                }
-            }
-        });
+            });
         ui.add_space(12.0);
 
         // Custom provider fields
