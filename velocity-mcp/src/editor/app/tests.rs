@@ -530,6 +530,15 @@ fn mirror_worker_events_into_timeline_appends_only_new_events() {
         skill_files: Vec::new(),
         target_entries: Vec::new(),
         audit_findings: Vec::new(),
+        improvement_engine: {
+            let mem = crate::agent::memory_store::PersistentMemory::open(&PathBuf::from("."));
+            crate::agent::self_improve::ImprovementEngine::new(&mem)
+        },
+        shared_memory: crate::agent::shared_memory::SharedMemoryStore::new(),
+        background_agents: crate::agent::background_agents::BackgroundAgentRegistry::new(),
+        conflict_resolver: crate::agent::conflict_resolution::ConflictResolver::new(),
+        collaboration: crate::agent::collaboration::CollaborationManager::new(),
+        persistent_memory: crate::agent::memory_store::PersistentMemory::open(&PathBuf::from(".")),
     };
 
     app.mirror_worker_events_into_timeline(&first_snapshot);
@@ -785,6 +794,15 @@ fn clearing_worker_event_tracking_allows_replay_after_replan() {
         skill_files: Vec::new(),
         target_entries: Vec::new(),
         audit_findings: Vec::new(),
+        improvement_engine: {
+            let mem = crate::agent::memory_store::PersistentMemory::open(&PathBuf::from("."));
+            crate::agent::self_improve::ImprovementEngine::new(&mem)
+        },
+        shared_memory: crate::agent::shared_memory::SharedMemoryStore::new(),
+        background_agents: crate::agent::background_agents::BackgroundAgentRegistry::new(),
+        conflict_resolver: crate::agent::conflict_resolution::ConflictResolver::new(),
+        collaboration: crate::agent::collaboration::CollaborationManager::new(),
+        persistent_memory: crate::agent::memory_store::PersistentMemory::open(&PathBuf::from(".")),
     };
 
     app.mirror_worker_events_into_timeline(&snapshot);

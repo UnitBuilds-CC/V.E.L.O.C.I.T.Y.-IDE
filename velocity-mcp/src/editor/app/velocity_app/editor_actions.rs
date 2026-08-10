@@ -326,6 +326,36 @@ impl VelocityApp {
         self.toggle_panel(TabKind::AccessibilityAudit);
     }
 
+    /// Open the Improvement Engine panel.
+    pub fn toggle_improvement_engine(&mut self) {
+        self.toggle_panel(TabKind::ImprovementEngine);
+    }
+
+    /// Open the Shared Memory panel.
+    pub fn toggle_shared_memory(&mut self) {
+        self.toggle_panel(TabKind::SharedMemory);
+    }
+
+    /// Open the Background Agents panel.
+    pub fn toggle_background_agents(&mut self) {
+        self.toggle_panel(TabKind::BackgroundAgents);
+    }
+
+    /// Open the Conflict Resolver panel.
+    pub fn toggle_conflict_resolver(&mut self) {
+        self.toggle_panel(TabKind::ConflictResolver);
+    }
+
+    /// Open the Collaboration panel.
+    pub fn toggle_collaboration(&mut self) {
+        self.toggle_panel(TabKind::Collaboration);
+    }
+
+    /// Open the Persistent Memory panel.
+    pub fn toggle_persistent_memory(&mut self) {
+        self.toggle_panel(TabKind::PersistentMemory);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);

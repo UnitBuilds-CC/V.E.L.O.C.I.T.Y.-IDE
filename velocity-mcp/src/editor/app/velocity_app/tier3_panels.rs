@@ -2540,6 +2540,385 @@ impl VelocityApp {
                 .color(status.1),
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Agent Subsystem Panels
+    // ═══════════════════════════════════════════════════════════════════════
+
+    pub fn render_improvement_engine_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let failure_count = self.improvement_engine.failure_count();
+        let has_data = self.improvement_engine.has_data();
+        let directives = self.improvement_engine.analyze();
+
+        Self::tier3_header(
+            ui,
+            "Self-Improvement Engine",
+            &format!("{failure_count} failure(s) recorded"),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Tracks failures during agent execution, classifies them into")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new(
+                "categories, and generates prompt refinements to avoid repeating mistakes.",
+            )
+            .size(9.0)
+            .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if !has_data {
+            ui.label(
+                RichText::new("No failures recorded this session. The engine is idle.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            ui.label(
+                RichText::new(format!("Generated {} directive(s):", directives.len()))
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
+            for d in &directives {
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("{:?}", d.category))
+                                .small()
+                                .strong()
+                                .color(palette.warning),
+                        );
+                        ui.label(RichText::new(&d.directive).size(9.0).color(palette.text));
+                        ui.label(
+                            RichText::new(format!(
+                                "confidence: {:.0}% · {} occurrence(s)",
+                                d.confidence * 100.0,
+                                d.occurrences
+                            ))
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                    });
+                ui.add_space(3.0);
+            }
+        }
+    }
+
+    pub fn render_shared_memory_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let entry_count = self.shared_memory.entries.len();
+        let annotation_count = self.shared_memory.annotations.len();
+
+        Self::tier3_header(
+            ui,
+            "Shared Memory",
+            &format!("{entry_count} entries · {annotation_count} annotations"),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Shared knowledge base for multi-agent collaboration. Agents can")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("publish and query knowledge entries across team boundaries.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if entry_count == 0 {
+            ui.label(
+                RichText::new("No shared knowledge entries yet.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            for (id, entry) in self.shared_memory.entries.iter().take(20) {
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(&entry.title).strong().color(palette.text));
+                        ui.label(
+                            RichText::new(format!("[{id}] {:?}", entry.category))
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                        let preview: String = entry.content.chars().take(120).collect();
+                        ui.label(RichText::new(preview).size(9.0).color(palette.text));
+                    });
+                ui.add_space(3.0);
+            }
+        }
+    }
+
+    pub fn render_background_agents_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let agent_count = self.background_agents.agents.len();
+        let feed_len = self.background_agents.action_feed.len();
+
+        Self::tier3_header(
+            ui,
+            "Background Agents",
+            &format!("{agent_count} agent(s) · {feed_len} action(s)"),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Background agents run autonomous tasks without blocking the UI.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if agent_count == 0 {
+            ui.label(
+                RichText::new("No background agents registered.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            for (id, agent) in &self.background_agents.agents {
+                let status_color = if agent.enabled {
+                    palette.success
+                } else {
+                    palette.text_muted
+                };
+                egui::Frame::new()
+                    .fill(palette.bg_tertiary)
+                    .corner_radius(4.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("●").color(status_color));
+                            ui.label(RichText::new(&agent.id).strong().color(palette.text));
+                            ui.label(
+                                RichText::new(if agent.enabled { "active" } else { "disabled" })
+                                    .small()
+                                    .color(status_color),
+                            );
+                        });
+                        ui.label(RichText::new(&agent.name).size(9.0).color(palette.text));
+                    });
+                ui.add_space(3.0);
+                let _ = id;
+            }
+        }
+
+        if feed_len > 0 {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("RECENT ACTIONS")
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
+            for action in self.background_agents.action_feed.iter().rev().take(10) {
+                ui.label(
+                    RichText::new(format!("[{}] {}", action.id, action.title))
+                        .size(9.0)
+                        .color(palette.text),
+                );
+            }
+        }
+    }
+
+    pub fn render_conflict_resolver_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let lock_count = self.conflict_resolver.locks.len();
+        let conflict_count = self.conflict_resolver.conflicts.len();
+
+        Self::tier3_header(
+            ui,
+            "Conflict Resolver",
+            &format!("{lock_count} lock(s) · {conflict_count} conflict(s)"),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Manages resource contention between concurrent agent operations.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new(format!(
+                "Strategy: {:?} · Lock timeout: {}s",
+                self.conflict_resolver.default_resolution, self.conflict_resolver.lock_timeout_secs
+            ))
+            .size(9.0)
+            .color(palette.text_muted),
+        );
+        ui.add_space(6.0);
+
+        if lock_count == 0 && conflict_count == 0 {
+            ui.label(
+                RichText::new("No active locks or conflicts. All resources are free.")
+                    .size(10.0)
+                    .color(palette.success),
+            );
+        } else {
+            if lock_count > 0 {
+                ui.label(
+                    RichText::new("ACTIVE LOCKS")
+                        .small()
+                        .strong()
+                        .color(palette.warning),
+                );
+                for (resource, locks) in self.conflict_resolver.locks.iter() {
+                    ui.label(
+                        RichText::new(format!("  {} — {} holder(s)", resource, locks.len()))
+                            .size(9.0)
+                            .color(palette.text),
+                    );
+                }
+                ui.add_space(4.0);
+            }
+            if conflict_count > 0 {
+                ui.label(
+                    RichText::new("RECENT CONFLICTS")
+                        .small()
+                        .strong()
+                        .color(palette.error),
+                );
+                for c in self.conflict_resolver.conflicts.iter().rev().take(10) {
+                    ui.label(
+                        RichText::new(format!(
+                            "  {} vs {} on {}",
+                            c.op_a.actor_id, c.op_b.actor_id, c.resource
+                        ))
+                        .size(9.0)
+                        .color(palette.text),
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn render_collaboration_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let user_count = self.collaboration.users.len();
+        let session_count = self.collaboration.sessions.len();
+
+        Self::tier3_header(
+            ui,
+            "Collaboration",
+            &format!("{user_count} user(s) · {session_count} session(s)"),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Manages shared editing sessions, user presence, and real-time")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("collaboration between team members and remote agents.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        if user_count == 0 {
+            ui.label(
+                RichText::new("No users registered. Collaboration is idle.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            ui.label(
+                RichText::new("USERS")
+                    .small()
+                    .strong()
+                    .color(palette.accent),
+            );
+            for (id, user) in &self.collaboration.users {
+                let online = self
+                    .collaboration
+                    .presence
+                    .get(id)
+                    .map(|_| true)
+                    .unwrap_or(false);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(if online { "●" } else { "○" }).color(if online {
+                            palette.success
+                        } else {
+                            palette.text_muted
+                        }),
+                    );
+                    ui.label(RichText::new(&user.name).size(10.0).color(palette.text));
+                    ui.label(
+                        RichText::new(format!("[{id}]"))
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                });
+            }
+        }
+    }
+
+    pub fn render_persistent_memory_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let entry_count = self.persistent_memory.len();
+
+        Self::tier3_header(
+            ui,
+            "Persistent Memory",
+            &format!("{entry_count} entries · NDA-encrypted at rest"),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        ui.label(
+            RichText::new("Long-term memory store encrypted with NDA at rest. Agents can")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.label(
+            RichText::new("remember, recall, reinforce, and forget entries across sessions.")
+                .size(9.0)
+                .color(palette.text),
+        );
+        ui.add_space(6.0);
+
+        ui.label(
+            RichText::new(format!("Storage: {} / max entries", entry_count))
+                .size(9.0)
+                .color(palette.text_muted),
+        );
+        ui.add_space(4.0);
+
+        if entry_count == 0 {
+            ui.label(
+                RichText::new("Memory is empty. Agents will populate it during execution.")
+                    .size(10.0)
+                    .color(palette.text_muted),
+            );
+        } else {
+            ui.label(
+                RichText::new("Use the Knowledge panel to query persistent memory.")
+                    .size(9.0)
+                    .color(palette.text),
+            );
+        }
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {

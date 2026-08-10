@@ -917,6 +917,31 @@ impl eframe::App for VelocityApp {
                         self.toggle_panel(TabKind::InlineSuggestions);
                         ui.close();
                     }
+                    ui.separator();
+                    if ui.button("Improvement Engine").clicked() {
+                        self.toggle_panel(TabKind::ImprovementEngine);
+                        ui.close();
+                    }
+                    if ui.button("Shared Memory").clicked() {
+                        self.toggle_panel(TabKind::SharedMemory);
+                        ui.close();
+                    }
+                    if ui.button("Background Agents").clicked() {
+                        self.toggle_panel(TabKind::BackgroundAgents);
+                        ui.close();
+                    }
+                    if ui.button("Conflict Resolver").clicked() {
+                        self.toggle_panel(TabKind::ConflictResolver);
+                        ui.close();
+                    }
+                    if ui.button("Collaboration").clicked() {
+                        self.toggle_panel(TabKind::Collaboration);
+                        ui.close();
+                    }
+                    if ui.button("Persistent Memory").clicked() {
+                        self.toggle_panel(TabKind::PersistentMemory);
+                        ui.close();
+                    }
                     if ui.button("Knowledge Base").clicked() {
                         self.toggle_panel(TabKind::Knowledge);
                         ui.close();

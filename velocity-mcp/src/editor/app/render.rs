@@ -290,6 +290,24 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
             TabKind::InlineSuggestions => {
                 self.app.render_inline_suggestions_panel(ui);
             }
+            TabKind::ImprovementEngine => {
+                self.app.render_improvement_engine_panel(ui);
+            }
+            TabKind::SharedMemory => {
+                self.app.render_shared_memory_panel(ui);
+            }
+            TabKind::BackgroundAgents => {
+                self.app.render_background_agents_panel(ui);
+            }
+            TabKind::ConflictResolver => {
+                self.app.render_conflict_resolver_panel(ui);
+            }
+            TabKind::Collaboration => {
+                self.app.render_collaboration_panel(ui);
+            }
+            TabKind::PersistentMemory => {
+                self.app.render_persistent_memory_panel(ui);
+            }
             TabKind::Knowledge => {
                 self.app.render_knowledge_panel(ui);
             }

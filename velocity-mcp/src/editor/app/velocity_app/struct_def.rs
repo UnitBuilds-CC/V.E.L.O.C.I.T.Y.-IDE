@@ -415,6 +415,20 @@ pub struct VelocityApp {
     pub target_entries: Vec<crate::editor::sidebar_tabs::TargetEntry>,
     /// WCAG accessibility audit findings for the Audit dock panel.
     pub audit_findings: Vec<crate::editor::sidebar_tabs::AuditFinding>,
+
+    // ─── Agent Subsystem Panels ─────────────────────────────────────────────
+    /// Self-improvement engine tracking failures and generating refinements.
+    pub improvement_engine: crate::agent::self_improve::ImprovementEngine,
+    /// Shared knowledge store for multi-agent collaboration.
+    pub shared_memory: crate::agent::shared_memory::SharedMemoryStore,
+    /// Background agent registry for autonomous background tasks.
+    pub background_agents: crate::agent::background_agents::BackgroundAgentRegistry,
+    /// Multi-agent conflict resolver for resource contention.
+    pub conflict_resolver: crate::agent::conflict_resolution::ConflictResolver,
+    /// Collaboration manager for shared sessions and presence.
+    pub collaboration: crate::agent::collaboration::CollaborationManager,
+    /// Persistent memory store (NDA-encrypted at rest).
+    pub persistent_memory: crate::agent::memory_store::PersistentMemory,
 }
 
 impl VelocityApp {
@@ -1009,6 +1023,16 @@ impl VelocityApp {
             skill_files: Vec::new(),
             target_entries: Vec::new(),
             audit_findings: Vec::new(),
+            // Agent Subsystem Panels
+            persistent_memory: crate::agent::memory_store::PersistentMemory::open(&workspace_root),
+            improvement_engine: {
+                let mem = crate::agent::memory_store::PersistentMemory::open(&workspace_root);
+                crate::agent::self_improve::ImprovementEngine::new(&mem)
+            },
+            shared_memory: crate::agent::shared_memory::SharedMemoryStore::new(),
+            background_agents: crate::agent::background_agents::BackgroundAgentRegistry::new(),
+            conflict_resolver: crate::agent::conflict_resolution::ConflictResolver::new(),
+            collaboration: crate::agent::collaboration::CollaborationManager::new(),
         };
         app.open_editor(None);
         app.apply_workspace_profile(app.appearance.profile);
