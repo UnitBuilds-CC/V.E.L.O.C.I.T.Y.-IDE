@@ -58,7 +58,7 @@ fn run_nda_compiles_and_executes() {
         // Verify the failure is in the runtime stage (after compilation).
         assert!(
             stdout.contains("Registered"),
-                "compilation should have completed before runtime failure.\nstdout: {}\nstderr: {}",
+            "compilation should have completed before runtime failure.\nstdout: {}\nstderr: {}",
             stdout,
             stderr
         );
