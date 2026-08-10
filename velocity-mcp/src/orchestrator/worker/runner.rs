@@ -49,6 +49,10 @@ pub fn run_assignment(
 ) -> WorkerResult {
     let start = Instant::now();
     let task = assignment.task.clone();
+    log::info!(
+        "worker: starting assignment for task '{}'",
+        assignment.task.title
+    );
     let mut result = WorkerResult::new(&task);
     let run_dir = assignment
         .workspace_root

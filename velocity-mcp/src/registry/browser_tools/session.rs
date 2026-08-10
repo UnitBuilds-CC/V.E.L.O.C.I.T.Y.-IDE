@@ -7,6 +7,7 @@ pub fn handle_session_tool(
     name: &str,
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
+    log::debug!("browser_session_tool: {} called", name);
     let result = match name {
         "browser_create_session" => {
             let session_id = arguments["sessionId"]

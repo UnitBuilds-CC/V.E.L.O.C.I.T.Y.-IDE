@@ -349,7 +349,8 @@ fn attention_head(
             if t > 0 {
                 let prev_hash = kv_layer.blocks[t - 1].hash;
                 if block.prev_hash != prev_hash {
-                    panic!("Security Fault: Hash chain broken at block {}!", t);
+                    log::error!("Security Fault: Hash chain broken at block {}!", t);
+                    return 0.0; // safe default: zero attention score
                 }
             }
 

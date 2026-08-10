@@ -4,8 +4,10 @@ use serde_json::{json, Value};
 use std::error::Error;
 
 pub fn run_shmem_loop(buffer_path: &str) -> Result<(), Box<dyn Error>> {
+    log::info!("Initializing Shared Memory Buffer at: {}", buffer_path);
     println!("Initializing Shared Memory Buffer at: {}", buffer_path);
     let mut buffer = SharedMemoryBuffer::create_or_open(buffer_path)?;
+    log::info!("Shared Memory Server ready. Waiting for host requests...");
     println!("Shared Memory Server initialized. Waiting for host requests...");
 
     loop {

@@ -8,6 +8,7 @@ pub fn handle_wa_tool(
     name: &str,
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
+    log::debug!("wa_tool: {} called", name);
     let result = match name {
         "wa_create_session" => {
             let report = crate::wa::create_session_report(

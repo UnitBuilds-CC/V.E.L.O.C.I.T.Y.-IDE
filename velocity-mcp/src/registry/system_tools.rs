@@ -151,6 +151,7 @@ pub fn handle_system_tool(
     name: &str,
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
+    log::debug!("system_tool: {} called", name);
     let result = match name {
         // Native Rust NDA document path (portable NDA1 with in-file history).
         "convert_to_nda" => native_convert_to_nda(root, arguments)?,

@@ -7,9 +7,11 @@ pub fn handle_navigation_tool(
     name: &str,
     arguments: &Value,
 ) -> Result<Option<String>, Box<dyn Error>> {
+    log::debug!("browser_navigation_tool: {} called", name);
     let result = match name {
         "web_navigate" => {
             let url = arguments["url"].as_str().ok_or("url is required")?;
+            log::info!("navigating to: {}", url);
             let sitemap_path = root.join(".velocity").join("site_map");
             if arguments["compact"].as_bool().unwrap_or(false) {
                 let report =

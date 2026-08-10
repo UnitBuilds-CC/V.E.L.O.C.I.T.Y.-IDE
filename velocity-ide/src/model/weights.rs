@@ -182,10 +182,17 @@ pub struct ModelWeights {
 impl ModelWeights {
     /// Load all weight files from `nda_dir` (output of convert_to_nda.py).
     pub fn load(nda_dir: &Path, cfg: &ModelConfig) -> Result<Self> {
+        log::info!(
+            "Loading model weights from {:?} ({} layers)",
+            nda_dir,
+            cfg.n_layers
+        );
         let vulkan = VulkanDriver::init().ok();
         if vulkan.is_some() {
+            log::info!("Vulkan GPU Compute Driver (V-NCE) initialized successfully");
             println!("Vulkan GPU Compute Driver (V-NCE) initialized successfully!");
         } else {
+            log::warn!("Vulkan initialization skipped: using CPU fallback");
             println!("Vulkan initialization skipped: using CPU fallback.");
         }
 
