@@ -805,6 +805,92 @@ impl eframe::App for VelocityApp {
                     }
                 });
 
+                ui.menu_button("View", |ui| {
+                    ui.label(egui::RichText::new("Panels").small().strong());
+                    ui.separator();
+                    if ui.button("Command Palette (Ctrl+Shift+P)").clicked() {
+                        self.command_palette.open = true;
+                        self.command_palette.just_opened = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Chat").clicked() {
+                        self.toggle_panel(TabKind::Chat);
+                        ui.close();
+                    }
+                    if ui.button("Orchestrator").clicked() {
+                        self.toggle_panel(TabKind::Orchestrator);
+                        ui.close();
+                    }
+                    if ui.button("Mission Control").clicked() {
+                        self.toggle_panel(TabKind::MissionControl);
+                        ui.close();
+                    }
+                    if ui.button("Team Studio").clicked() {
+                        self.toggle_panel(TabKind::TeamStudio);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Search").clicked() {
+                        self.toggle_panel(TabKind::Search);
+                        ui.close();
+                    }
+                    if ui.button("Graph View").clicked() {
+                        self.toggle_panel(TabKind::Graph);
+                        ui.close();
+                    }
+                    if ui.button("Wiki").clicked() {
+                        self.toggle_panel(TabKind::Wiki);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Extensions").clicked() {
+                        self.toggle_panel(TabKind::Extensions);
+                        ui.close();
+                    }
+                    if ui.button("Activity").clicked() {
+                        self.toggle_panel(TabKind::Activity);
+                        ui.close();
+                    }
+                    if ui.button("Coverage").clicked() {
+                        self.toggle_panel(TabKind::Coverage);
+                        ui.close();
+                    }
+                    if ui.button("Pipeline").clicked() {
+                        self.toggle_panel(TabKind::Pipeline);
+                        ui.close();
+                    }
+                    if ui.button("Voice Commands").clicked() {
+                        self.toggle_panel(TabKind::Voice);
+                        ui.close();
+                    }
+                    if ui.button("Knowledge Base").clicked() {
+                        self.toggle_panel(TabKind::Knowledge);
+                        ui.close();
+                    }
+                    if ui.button("Triggers").clicked() {
+                        self.toggle_panel(TabKind::Triggers);
+                        ui.close();
+                    }
+                    if ui.button("Workflows").clicked() {
+                        self.toggle_panel(TabKind::Workflows);
+                        ui.close();
+                    }
+                    if ui.button("Governance").clicked() {
+                        self.toggle_panel(TabKind::Governance);
+                        ui.close();
+                    }
+                    if ui.button("Peers").clicked() {
+                        self.toggle_panel(TabKind::Peers);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Settings").clicked() {
+                        self.toggle_panel(TabKind::Settings);
+                        ui.close();
+                    }
+                });
+
                 ui.add_space(8.0);
 
                 // Mode-specific toolbar actions
