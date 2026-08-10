@@ -13,7 +13,7 @@
 #define MyAppFullName   "V.E.L.O.C.I.T.Y. Cognitive IDE"
 #define MyAppPublisher  "UnitBuilds-CC"
 #define MyAppURL        "https://github.com/UnitBuilds/Kimi-Code"
-#define MyAppExeName    "velocity_ide.exe"
+#define MyAppExeName    "velocity_mcp.exe"
 
 [Setup]
 AppId={{A7B3C9D1-4E5F-6A7B-8C9D-0E1F2A3B4C5D}
@@ -33,7 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\velocity_ide.exe
+UninstallDisplayIcon={app}\velocity_mcp.exe
 UninstallDisplayName={#MyAppFullName}
 SetupIconFile=compiler:SetupClassicIcon.ico
 
