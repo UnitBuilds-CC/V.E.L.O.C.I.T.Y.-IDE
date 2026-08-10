@@ -102,5 +102,10 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo install cargo-audit --locked
+      - shell: pwsh
+        run: |
+          $auditBin = Join-Path $env:USERPROFILE '.cargo' 'bin' 'cargo-audit.exe'
+          if (-not (Test-Path $auditBin)) {
+            cargo install cargo-audit --locked
+          }
       - run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
