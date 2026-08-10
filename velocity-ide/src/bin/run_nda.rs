@@ -63,7 +63,9 @@ fn main() {
     };
 
     // ── Build site map (Merkle KV store) ───────────────────────────────────────
-    let sm_dir = env::temp_dir().join("nda_run_sm");
+    // Use PID-unique temp dir to avoid races when multiple run_nda instances
+    // execute in parallel (e.g. E2E test suites).
+    let sm_dir = env::temp_dir().join(format!("nda_run_sm_{}", std::process::id()));
     if sm_dir.exists() {
         let _ = fs::remove_dir_all(&sm_dir);
     }
