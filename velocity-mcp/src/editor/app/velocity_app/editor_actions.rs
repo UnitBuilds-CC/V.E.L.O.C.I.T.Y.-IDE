@@ -256,6 +256,11 @@ impl VelocityApp {
         self.toggle_panel(TabKind::SemanticSearch);
     }
 
+    /// Open the Snippets panel.
+    pub fn toggle_snippets(&mut self) {
+        self.toggle_panel(TabKind::Snippets);
+    }
+
     /// Open the Knowledge / RAG panel.
     pub fn toggle_knowledge(&mut self) {
         self.toggle_panel(TabKind::Knowledge);

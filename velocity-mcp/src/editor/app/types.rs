@@ -55,6 +55,7 @@ impl Tab {
             TabKind::AgentMemory => "Memory".into(),
             TabKind::LiveOrchestration => "Orchestration".into(),
             TabKind::SemanticSearch => "Semantic".into(),
+            TabKind::Snippets => "Snippets".into(),
             TabKind::Knowledge => "Knowledge".into(),
             TabKind::Triggers => "Triggers".into(),
             TabKind::Workflows => "Workflows".into(),
@@ -117,6 +118,7 @@ pub enum TabKind {
     AgentMemory,
     LiveOrchestration,
     SemanticSearch,
+    Snippets,
     // Knowledge / RAG panel
     Knowledge,
     // Unattended execution triggers

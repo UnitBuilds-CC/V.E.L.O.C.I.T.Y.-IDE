@@ -880,6 +880,10 @@ impl eframe::App for VelocityApp {
                         self.toggle_panel(TabKind::SemanticSearch);
                         ui.close();
                     }
+                    if ui.button("Snippets").clicked() {
+                        self.toggle_panel(TabKind::Snippets);
+                        ui.close();
+                    }
                     if ui.button("Knowledge Base").clicked() {
                         self.toggle_panel(TabKind::Knowledge);
                         ui.close();

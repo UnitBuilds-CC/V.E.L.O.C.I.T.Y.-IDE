@@ -1724,6 +1724,103 @@ impl VelocityApp {
                 .push(crate::editor::toast::Toast::success("Semantic index built"));
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Snippets — code snippet library browser
+    // ═══════════════════════════════════════════════════════════════════════
+    pub fn render_snippets_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
+        let count = self.snippet_collection.snippets.len();
+
+        Self::tier3_header(
+            ui,
+            "Snippets",
+            &format!("{} snippet(s) loaded", count),
+            palette.accent,
+            palette.text_muted,
+        );
+
+        // Search box
+        let mut search_query = String::new();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Search:").size(9.0).color(palette.text_muted));
+            ui.add(
+                egui::TextEdit::singleline(&mut search_query)
+                    .hint_text("filter snippets...")
+                    .desired_width(ui.available_width() - 60.0),
+            );
+        });
+        ui.add_space(6.0);
+
+        if self.snippet_collection.snippets.is_empty() {
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("◇").size(26.0).color(palette.text_muted));
+                ui.label(
+                    RichText::new("No snippets loaded. Snippets are loaded from .velocity/snippets.json")
+                        .size(10.0)
+                        .color(palette.text_muted),
+                );
+            });
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt("snippets_scroll")
+                .show(ui, |ui| {
+                    let snippets_to_show: Vec<_> = if search_query.is_empty() {
+                        self.snippet_collection.snippets.iter().collect()
+                    } else {
+                        self.snippet_collection
+                            .matching(&search_query)
+                            .into_iter()
+                            .collect()
+                    };
+
+                    for snippet in snippets_to_show {
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&snippet.name)
+                                            .size(10.0)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if let Some(scope) = &snippet.scope {
+                                                ui.label(
+                                                    RichText::new(scope)
+                                                        .size(8.0)
+                                                        .monospace()
+                                                        .color(palette.accent),
+                                                );
+                                            }
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(format!("Prefix: {}", snippet.prefix))
+                                        .size(9.0)
+                                        .monospace()
+                                        .color(palette.text_muted),
+                                );
+                                if let Some(desc) = &snippet.description {
+                                    ui.label(
+                                        RichText::new(desc)
+                                            .size(8.0)
+                                            .color(palette.text_muted),
+                                    );
+                                }
+                            });
+                        ui.add_space(3.0);
+                    }
+                });
+        }
+    }
 }
 
 fn trigger_kind_label(kind: &crate::editor::triggers::TriggerKind) -> String {
