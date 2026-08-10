@@ -56,6 +56,15 @@ const PROVIDER_OPTIONS: &[&str] = &[
 const CLOUDFLARE_IDX: usize = 2;
 const CUSTOM_IDX: usize = 11;
 
+/// Accent colors
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(70, 130, 230);
+const ACCENT_HOVER: egui::Color32 = egui::Color32::from_rgb(90, 150, 250);
+const SURFACE: egui::Color32 = egui::Color32::from_rgb(30, 30, 34);
+const SURFACE_LIGHT: egui::Color32 = egui::Color32::from_rgb(38, 38, 44);
+const USER_BUBBLE: egui::Color32 = egui::Color32::from_rgb(50, 80, 140);
+const ASSIST_BUBBLE: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
+const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(160, 160, 170);
+
 impl VelocityApp {
     fn new(config: AppConfig) -> Self {
         let screen = if config.is_configured() {
@@ -131,34 +140,58 @@ impl VelocityApp {
     // ─── Setup Wizard ──────────────────────────────────────────────────
 
     fn show_setup_wizard(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(30.0);
-                ui.heading("Welcome to V.E.L.O.C.I.T.Y.");
-                ui.add_space(4.0);
-                ui.label("Configure your AI provider to get started.");
-                ui.add_space(16.0);
-            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(ctx.style().visuals.panel_fill))
+            .show(ctx, |ui| {
+                // Centered card layout
+                ui.vertical_centered(|ui| {
+                    ui.add_space(24.0);
 
-            ui.horizontal(|ui| {
-                ui.add_space(40.0);
-                self.draw_wizard_form(ui);
+                    // Title area
+                    ui.label(
+                        egui::RichText::new("V.E.L.O.C.I.T.Y.")
+                            .size(28.0)
+                            .strong()
+                            .color(ACCENT),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new("Configure your AI provider to get started")
+                            .color(TEXT_DIM),
+                    );
+                    ui.add_space(20.0);
+                });
+
+                // Card container
+                ui.horizontal(|ui| {
+                    ui.add_space(48.0);
+                    egui::Frame::default()
+                        .fill(SURFACE)
+                        .rounding(8.0)
+                        .inner_margin(20.0)
+                        .outer_margin(egui::Margin::symmetric(48.0, 0.0))
+                        .show(ui, |ui| {
+                            ui.set_min_width(440.0);
+                            ui.set_max_width(520.0);
+                            self.draw_wizard_form(ui);
+                        });
+                });
             });
-        });
     }
 
     fn draw_wizard_form(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_width(420.0);
+        // ── Provider selection ──────────────────────────────────────
+        ui.label(egui::RichText::new("AI Provider").strong());
+        ui.add_space(6.0);
 
-        // Provider selection
-        ui.label("AI Provider:");
-        ui.add_space(4.0);
-        egui::Grid::new("provider_grid")
-            .num_columns(2)
-            .show(ui, |ui| {
+        // Use a ComboBox for the provider list (cleaner than a 6-row grid)
+        egui::ComboBox::from_id_salt("provider_combo")
+            .selected_text(PROVIDER_OPTIONS[self.wizard_provider])
+            .width(260.0)
+            .show_ui(ui, |ui| {
                 for (i, name) in PROVIDER_OPTIONS.iter().enumerate() {
-                    let selected = self.wizard_provider == i;
-                    if ui.selectable_label(selected, *name).clicked() {
+                    let is_selected = self.wizard_provider == i;
+                    if ui.selectable_label(is_selected, *name).clicked() {
                         self.wizard_provider = i;
                         self.wizard_model = Self::default_model_for_provider(i).to_string();
                         if i != CLOUDFLARE_IDX {
@@ -168,35 +201,47 @@ impl VelocityApp {
                             self.wizard_base_url.clear();
                         }
                     }
-                    if (i + 1) % 2 == 0 {
-                        ui.end_row();
-                    }
                 }
             });
+        ui.add_space(16.0);
+
+        // ── Separator ───────────────────────────────────────────────
+        ui.separator();
         ui.add_space(12.0);
 
-        // Custom provider fields
+        // ── Custom provider fields ──────────────────────────────────
         if self.wizard_provider == CUSTOM_IDX {
-            ui.label("Provider Name:");
-            ui.text_edit_singleline(&mut self.wizard_custom_name);
-            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Provider Details").strong());
+            ui.add_space(4.0);
 
-            ui.label("Base URL:");
-            ui.text_edit_singleline(&mut self.wizard_base_url);
-            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Name").color(TEXT_DIM));
+                ui.text_edit_singleline(&mut self.wizard_custom_name);
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Base URL").color(TEXT_DIM));
+                ui.text_edit_singleline(&mut self.wizard_base_url);
+            });
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(12.0);
         }
 
-        // API Key
-        ui.label("API Key:");
+        // ── API Key ─────────────────────────────────────────────────
+        ui.label(egui::RichText::new("API Key").strong());
+        ui.add_space(4.0);
         ui.add(
             egui::TextEdit::singleline(&mut self.wizard_api_key)
                 .password(true)
-                .hint_text("sk-... or bearer token"),
+                .hint_text("sk-... or bearer token")
+                .desired_width(f32::INFINITY),
         );
-        ui.add_space(8.0);
+        ui.add_space(12.0);
 
-        // Model
-        ui.label("Model:");
+        // ── Model ───────────────────────────────────────────────────
+        ui.label(egui::RichText::new("Model").strong());
+        ui.add_space(4.0);
         if self.wizard_model.is_empty() {
             self.wizard_model = Self::default_model_for_provider(self.wizard_provider).to_string();
         }
@@ -247,50 +292,90 @@ impl VelocityApp {
                 } else {
                     format!("Custom: {}", self.wizard_model)
                 })
+                .width(260.0)
                 .show_ui(ui, |ui| {
                     for model in presets {
                         ui.selectable_value(&mut self.wizard_model, model.to_string(), *model);
                     }
                 });
             ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Or type a custom model:")
+                        .color(TEXT_DIM)
+                        .small(),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.wizard_model).desired_width(f32::INFINITY),
+                );
+            });
+        } else {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.wizard_model)
+                    .hint_text("model name")
+                    .desired_width(f32::INFINITY),
+            );
         }
-        ui.label("Model name (or type custom):");
-        ui.text_edit_singleline(&mut self.wizard_model);
-        ui.add_space(8.0);
+        ui.add_space(12.0);
 
-        // Cloudflare Account ID
+        // ── Cloudflare Account ID ───────────────────────────────────
         if self.wizard_provider == CLOUDFLARE_IDX {
-            ui.label("Cloudflare Account ID:");
-            ui.text_edit_singleline(&mut self.wizard_account_id);
+            ui.separator();
             ui.add_space(8.0);
+            ui.label(egui::RichText::new("Cloudflare Account ID").strong());
+            ui.add_space(4.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.wizard_account_id)
+                    .hint_text("account ID")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(12.0);
         }
 
-        // Optional base URL override (for non-custom providers)
+        // ── Optional base URL override ──────────────────────────────
         if self.wizard_provider != CUSTOM_IDX {
-            ui.label("Base URL (optional override):");
-            ui.text_edit_singleline(&mut self.wizard_base_url);
+            ui.collapsing("Advanced: override base URL", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.wizard_base_url)
+                        .hint_text("https://...")
+                        .desired_width(f32::INFINITY),
+                );
+            });
             ui.add_space(8.0);
         }
 
-        // Error
+        // ── Error ───────────────────────────────────────────────────
         if let Some(ref err) = self.wizard_error {
-            ui.colored_label(egui::Color32::from_rgb(255, 100, 100), err);
+            ui.add_space(4.0);
+            egui::Frame::default()
+                .fill(egui::Color32::from_rgb(60, 20, 20))
+                .rounding(4.0)
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(err).color(egui::Color32::from_rgb(255, 120, 120)),
+                    );
+                });
             ui.add_space(8.0);
         }
 
         ui.add_space(12.0);
 
-        // Buttons
+        // ── Buttons ─────────────────────────────────────────────────
         ui.horizontal(|ui| {
-            if ui
-                .add_sized([140.0, 32.0], egui::Button::new("Save & Start"))
-                .clicked()
-            {
+            let save_btn =
+                egui::Button::new(egui::RichText::new("Save & Start").color(egui::Color32::WHITE))
+                    .fill(ACCENT)
+                    .min_size(egui::vec2(140.0, 34.0))
+                    .rounding(4.0);
+
+            if ui.add(save_btn).clicked() {
                 self.save_wizard_config();
             }
+
             if !self.config.providers.is_empty() {
                 if ui
-                    .add_sized([80.0, 32.0], egui::Button::new("Cancel"))
+                    .add_sized([80.0, 34.0], egui::Button::new("Cancel"))
                     .clicked()
                 {
                     self.screen = Screen::Chat;
@@ -381,116 +466,157 @@ impl VelocityApp {
 
     fn show_chat(&mut self, ctx: &egui::Context) {
         // Top bar
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("V.E.L.O.C.I.T.Y.");
-                ui.separator();
-                if let Some(cfg) = self.config.active_provider_config() {
-                    ui.label(format!("{} — {}", cfg.provider, cfg.model));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Settings").clicked() {
-                        if let Some(cfg) = self.config.active_provider_config() {
-                            self.wizard_api_key = cfg.api_key.clone();
-                            self.wizard_model = cfg.model.clone();
-                            self.wizard_base_url = cfg.base_url.clone().unwrap_or_default();
-                            self.wizard_account_id = cfg.account_id.clone().unwrap_or_default();
-                            self.wizard_provider = match &cfg.provider {
-                                Provider::OpenAI => 0,
-                                Provider::Anthropic => 1,
-                                Provider::Cloudflare => 2,
-                                Provider::OpenRouter => 3,
-                                Provider::Moonshot => 4,
-                                Provider::Alibaba => 5,
-                                Provider::Google => 6,
-                                Provider::Mistral => 7,
-                                Provider::Groq => 8,
-                                Provider::Together => 9,
-                                Provider::DeepSeek => 10,
-                                Provider::Custom(name) => {
-                                    self.wizard_custom_name = name.clone();
-                                    CUSTOM_IDX
-                                }
-                            };
-                        }
-                        self.wizard_error = None;
-                        self.screen = Screen::SetupWizard;
+        egui::TopBottomPanel::top("top_bar")
+            .frame(egui::Frame::default().fill(SURFACE).inner_margin(8.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("V.E.L.O.C.I.T.Y.")
+                            .strong()
+                            .color(ACCENT)
+                            .size(18.0),
+                    );
+                    ui.add_space(8.0);
+                    if let Some(cfg) = self.config.active_provider_config() {
+                        ui.label(
+                            egui::RichText::new(format!("{} — {}", cfg.provider, cfg.model))
+                                .color(TEXT_DIM)
+                                .small(),
+                        );
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let settings_btn = egui::Button::new("Settings")
+                            .fill(SURFACE_LIGHT)
+                            .rounding(4.0);
+                        if ui.add(settings_btn).clicked() {
+                            if let Some(cfg) = self.config.active_provider_config() {
+                                self.wizard_api_key = cfg.api_key.clone();
+                                self.wizard_model = cfg.model.clone();
+                                self.wizard_base_url = cfg.base_url.clone().unwrap_or_default();
+                                self.wizard_account_id = cfg.account_id.clone().unwrap_or_default();
+                                self.wizard_provider = match &cfg.provider {
+                                    Provider::OpenAI => 0,
+                                    Provider::Anthropic => 1,
+                                    Provider::Cloudflare => 2,
+                                    Provider::OpenRouter => 3,
+                                    Provider::Moonshot => 4,
+                                    Provider::Alibaba => 5,
+                                    Provider::Google => 6,
+                                    Provider::Mistral => 7,
+                                    Provider::Groq => 8,
+                                    Provider::Together => 9,
+                                    Provider::DeepSeek => 10,
+                                    Provider::Custom(name) => {
+                                        self.wizard_custom_name = name.clone();
+                                        CUSTOM_IDX
+                                    }
+                                };
+                            }
+                            self.wizard_error = None;
+                            self.screen = Screen::SetupWizard;
+                        }
+                    });
                 });
             });
-        });
 
         // Input bar
-        egui::TopBottomPanel::bottom("input_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let text_edit = ui.add(
-                    egui::TextEdit::multiline(&mut self.input_text)
-                        .hint_text("Type a message... (Enter to send)")
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(2),
-                );
+        egui::TopBottomPanel::bottom("input_bar")
+            .frame(egui::Frame::default().fill(SURFACE).inner_margin(8.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let text_edit = ui.add(
+                        egui::TextEdit::multiline(&mut self.input_text)
+                            .hint_text("Type a message... (Enter to send)")
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(2),
+                    );
 
-                let enter_pressed = text_edit.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && !ui.input(|i| i.modifiers.shift);
+                    let enter_pressed = text_edit.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        && !ui.input(|i| i.modifiers.shift);
 
-                let send_btn = ui.add_enabled(
-                    !self.is_loading && !self.input_text.trim().is_empty(),
-                    egui::Button::new("Send").min_size(egui::vec2(60.0, 40.0)),
-                );
+                    let send_btn =
+                        egui::Button::new(egui::RichText::new("Send").color(egui::Color32::WHITE))
+                            .fill(if self.is_loading || self.input_text.trim().is_empty() {
+                                TEXT_DIM
+                            } else {
+                                ACCENT
+                            })
+                            .min_size(egui::vec2(64.0, 40.0))
+                            .rounding(4.0);
 
-                if enter_pressed || send_btn.clicked() {
-                    self.send_message(ctx);
-                }
-            });
-        });
+                    let send_btn = ui.add_enabled(
+                        !self.is_loading && !self.input_text.trim().is_empty(),
+                        send_btn,
+                    );
 
-        // Messages
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for msg in self.messages.iter().skip(1) {
-                        self.show_message_bubble(ui, msg);
-                    }
-                    if self.is_loading {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label("Thinking...");
-                        });
+                    if enter_pressed || send_btn.clicked() {
+                        self.send_message(ctx);
                     }
                 });
-        });
+            });
+
+        // Messages
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(ctx.style().visuals.panel_fill))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        ui.add_space(8.0);
+                        for msg in self.messages.iter().skip(1) {
+                            self.show_message_bubble(ui, msg);
+                        }
+                        if self.is_loading {
+                            ui.horizontal(|ui| {
+                                ui.add_space(16.0);
+                                ui.spinner();
+                                ui.label(egui::RichText::new("Thinking...").color(TEXT_DIM));
+                            });
+                        }
+                        ui.add_space(8.0);
+                    });
+            });
     }
 
     fn show_message_bubble(&self, ui: &mut egui::Ui, msg: &ChatMessage) {
         let is_user = msg.role == "user";
-        let (bg, fg, label) = if is_user {
-            (
-                egui::Color32::from_rgb(50, 80, 140),
-                egui::Color32::WHITE,
-                "You",
-            )
+        let (bg, fg, label, align) = if is_user {
+            (USER_BUBBLE, egui::Color32::WHITE, "You", egui::Align::RIGHT)
         } else {
             (
-                egui::Color32::from_rgb(45, 45, 48),
+                ASSIST_BUBBLE,
                 egui::Color32::from_rgb(220, 220, 220),
                 "V.E.L.O.C.I.T.Y.",
+                egui::Align::LEFT,
             )
         };
 
         ui.add_space(4.0);
-        egui::Frame::default()
-            .fill(bg)
-            .rounding(6.0)
-            .inner_margin(8.0)
-            .outer_margin(egui::Margin::symmetric(8.0, 2.0))
-            .show(ui, |ui: &mut egui::Ui| {
-                ui.label(egui::RichText::new(label).strong().color(fg));
-                ui.add_space(2.0);
-                ui.label(egui::RichText::new(&msg.content).color(fg));
-            });
+
+        // Align user messages right, assistant messages left
+        let available_width = ui.available_width();
+        let max_bubble_width = available_width * 0.75;
+
+        ui.with_layout(egui::Layout::top_down(align), |ui| {
+            ui.add_space(8.0);
+            egui::Frame::default()
+                .fill(bg)
+                .rounding(8.0)
+                .inner_margin(egui::Margin {
+                    left: 12.0,
+                    right: 12.0,
+                    top: 8.0,
+                    bottom: 8.0,
+                })
+                .show(ui, |ui| {
+                    ui.set_max_width(max_bubble_width);
+                    ui.label(egui::RichText::new(label).strong().color(fg).small());
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(&msg.content).color(fg));
+                });
+        });
     }
 
     fn send_message(&mut self, ctx: &egui::Context) {
@@ -546,8 +672,8 @@ pub fn launch() -> anyhow::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([900.0, 700.0])
-            .with_min_inner_size([600.0, 400.0])
+            .with_inner_size([960.0, 720.0])
+            .with_min_inner_size([640.0, 440.0])
             .with_title("V.E.L.O.C.I.T.Y. Cognitive IDE"),
         ..Default::default()
     };
