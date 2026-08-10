@@ -1,0 +1,12 @@
+# cargo-audit configuration
+# See: https://github.com/RustSec/rustsec/tree/main/cargo-audit
+
+[advisories]
+# Transitive dep from wayland-scanner (Linux-only GUI stack).
+# wayland-scanner pins quick-xml <0.40; fix requires upstream release.
+# Not exploitable in our project: wayland-scanner is a build-time code
+# generator, and our targets are Windows-only for the GUI stack.
+ignore = [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
