@@ -1996,15 +1996,10 @@ impl VelocityApp {
 
         ui.label(
             RichText::new(
-                "The precomputation cache pre-indexes scoped files before agent workers spawn,",
+                "Pre-indexes scoped files before agent workers spawn, providing warm context caches that accelerate agent execution.",
             )
             .size(9.0)
-            .color(palette.text),
-        );
-        ui.label(
-            RichText::new("providing warm context caches that accelerate agent execution.")
-                .size(9.0)
-                .color(palette.text),
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
@@ -2074,60 +2069,74 @@ impl VelocityApp {
         );
 
         ui.label(
-            RichText::new("Attach images, documents, or audio files to chat turns. Images are")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("encoded as data: URLs for vision models; documents use OCR fallback.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Attach images, documents, or audio files to chat turns. Images are encoded as data: URLs for vision models; documents use OCR fallback.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if self.multimodal_attachments.is_empty() {
-            ui.label(
-                RichText::new("No attachments yet. Use the Chat panel to attach files.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            for (i, att) in self.multimodal_attachments.iter().enumerate() {
-                let kind_color = match att.kind {
-                    crate::editor::multimodal::AttachmentKind::Image => palette.success,
-                    crate::editor::multimodal::AttachmentKind::Document => palette.accent,
-                    crate::editor::multimodal::AttachmentKind::Audio => palette.warning,
-                };
-                egui::Frame::new()
-                    .fill(palette.bg_tertiary)
-                    .corner_radius(4.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("●").color(kind_color));
-                            ui.label(
-                                RichText::new(att.kind.label())
-                                    .small()
-                                    .strong()
-                                    .color(kind_color),
-                            );
-                            ui.label(RichText::new(&att.mime).small().color(palette.text_muted));
-                        });
+        egui::ScrollArea::vertical()
+            .id_salt("multimodal_scroll")
+            .show(ui, |ui| {
+                if self.multimodal_attachments.is_empty() {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new(att.path.display().to_string())
-                                .size(9.0)
-                                .color(palette.text),
+                            RichText::new("\u{1f4ce}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
                         );
+                        ui.add_space(4.0);
                         ui.label(
-                            RichText::new(format!("{} bytes", att.data.len()))
-                                .small()
-                                .color(palette.text_muted),
+                            RichText::new(
+                                "No attachments yet.\nUse the Chat panel to attach files.",
+                            )
+                            .size(10.0)
+                            .color(palette.text_muted),
                         );
                     });
-                ui.add_space(3.0);
-                let _ = i;
-            }
-        }
+                } else {
+                    for (i, att) in self.multimodal_attachments.iter().enumerate() {
+                        let kind_color = match att.kind {
+                            crate::editor::multimodal::AttachmentKind::Image => palette.success,
+                            crate::editor::multimodal::AttachmentKind::Document => palette.accent,
+                            crate::editor::multimodal::AttachmentKind::Audio => palette.warning,
+                        };
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("\u{25cf}").color(kind_color));
+                                    ui.label(
+                                        RichText::new(att.kind.label())
+                                            .small()
+                                            .strong()
+                                            .color(kind_color),
+                                    );
+                                    ui.label(
+                                        RichText::new(&att.mime).small().color(palette.text_muted),
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(att.path.display().to_string())
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{} bytes", att.data.len()))
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                            });
+                        ui.add_space(3.0);
+                        let _ = i;
+                    }
+                }
+            });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2145,91 +2154,98 @@ impl VelocityApp {
         );
 
         ui.label(
-            RichText::new("The continuation ledger captures mission state, edit journals, and")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("model provenance so a different AI model can seamlessly resume work.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Captures mission state, edit journals, and model provenance so a different AI model can seamlessly resume work.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        match &self.continuation_ledger {
-            None => {
-                ui.label(
-                    RichText::new("No active continuation ledger.")
-                        .size(10.0)
-                        .color(palette.text_muted),
-                );
-                ui.label(
-                    RichText::new("A ledger is created when handing off context between models.")
-                        .size(9.0)
-                        .color(palette.text_muted),
-                );
-            }
-            Some(ledger) => {
-                egui::Frame::new()
-                    .fill(palette.bg_secondary)
-                    .corner_radius(4.0)
-                    .inner_margin(8.0)
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(format!("Ledger: {}", ledger.id))
-                                .strong()
-                                .color(palette.accent),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("Mission: {}", ledger.mission.goal))
-                                .size(9.0)
-                                .color(palette.text),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "Scoped files: {}",
-                                ledger.environment.scoped_files.len()
-                            ))
-                            .size(9.0)
-                            .color(palette.text),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "Edit journal: {} entries",
-                                ledger.journal.completed_edits.len()
-                            ))
-                            .size(9.0)
-                            .color(palette.text),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "Progress: {}/{} steps done",
-                                ledger
-                                    .progress
-                                    .steps
-                                    .iter()
-                                    .filter(|s| matches!(
-                                        s.status,
-                                        crate::editor::continuation_ledger::StepStatus::Done
+        egui::ScrollArea::vertical()
+            .id_salt("continuation_ledger_scroll")
+            .show(ui, |ui| {
+                match &self.continuation_ledger {
+                    None => {
+                        ui.add_space(16.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("\u{1f4cb}")
+                                    .size(24.0)
+                                    .color(palette.text_muted.gamma_multiply(0.5)),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "No active continuation ledger.\nA ledger is created when handing off context between models.",
+                                )
+                                .size(10.0)
+                                .color(palette.text_muted),
+                            );
+                        });
+                    }
+                    Some(ledger) => {
+                        egui::Frame::new()
+                            .fill(palette.bg_secondary)
+                            .corner_radius(4.0)
+                            .inner_margin(8.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!("Ledger: {}", ledger.id))
+                                        .strong()
+                                        .color(palette.accent),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(format!("Mission: {}", ledger.mission.goal))
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Scoped files: {}",
+                                        ledger.environment.scoped_files.len()
                                     ))
-                                    .count(),
-                                ledger.progress.steps.len()
-                            ))
-                            .size(9.0)
-                            .color(palette.success),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "Provenance: {} model attempt(s)",
-                                ledger.provenance.len()
-                            ))
-                            .size(9.0)
-                            .color(palette.text_muted),
-                        );
-                    });
-            }
-        }
+                                    .size(9.0)
+                                    .color(palette.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Edit journal: {} entries",
+                                        ledger.journal.completed_edits.len()
+                                    ))
+                                    .size(9.0)
+                                    .color(palette.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Progress: {}/{} steps done",
+                                        ledger
+                                            .progress
+                                            .steps
+                                            .iter()
+                                            .filter(|s| matches!(
+                                                s.status,
+                                                crate::editor::continuation_ledger::StepStatus::Done
+                                            ))
+                                            .count(),
+                                        ledger.progress.steps.len()
+                                    ))
+                                    .size(9.0)
+                                    .color(palette.success),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Provenance: {} model attempt(s)",
+                                        ledger.provenance.len()
+                                    ))
+                                    .size(9.0)
+                                    .color(palette.text_muted),
+                                );
+                            });
+                    }
+                }
+            });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2252,57 +2268,72 @@ impl VelocityApp {
         ui.label(
             RichText::new("Plugins extend the IDE with additional tools and capabilities.")
                 .size(9.0)
-                .color(palette.text),
+                .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if plugins.is_empty() {
-            ui.label(
-                RichText::new(
-                    "No plugins loaded. Place plugin crates in the workspace to discover them.",
-                )
-                .size(10.0)
-                .color(palette.text_muted),
-            );
-        } else {
-            for info in &plugins {
-                let status_color = if info.enabled {
-                    palette.success
-                } else {
-                    palette.text_muted
-                };
-                egui::Frame::new()
-                    .fill(palette.bg_tertiary)
-                    .corner_radius(4.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("●").color(status_color));
-                            ui.label(RichText::new(&info.name).strong().color(palette.text));
-                            ui.label(
-                                RichText::new(format!("v{}", info.version))
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                        });
+        egui::ScrollArea::vertical()
+            .id_salt("plugin_registry_scroll")
+            .show(ui, |ui| {
+                if plugins.is_empty() {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new(&info.description)
-                                .size(9.0)
-                                .color(palette.text),
+                            RichText::new("\u{1f4e6}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
                         );
+                        ui.add_space(4.0);
                         ui.label(
-                            RichText::new(format!(
-                                "{} tool(s): {}",
-                                info.tool_count,
-                                info.tool_names.join(", ")
-                            ))
-                            .small()
+                            RichText::new(
+                                "No plugins loaded.\nPlace plugin crates in the workspace to discover them.",
+                            )
+                            .size(10.0)
                             .color(palette.text_muted),
                         );
                     });
-                ui.add_space(3.0);
-            }
-        }
+                } else {
+                    for info in &plugins {
+                        let status_color = if info.enabled {
+                            palette.success
+                        } else {
+                            palette.text_muted
+                        };
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("\u{25cf}").color(status_color));
+                                    ui.label(
+                                        RichText::new(&info.name).strong().color(palette.text),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("v{}", info.version))
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(&info.description)
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} tool(s): {}",
+                                        info.tool_count,
+                                        info.tool_names.join(", ")
+                                    ))
+                                    .small()
+                                    .color(palette.text_muted),
+                                );
+                            });
+                        ui.add_space(3.0);
+                    }
+                }
+            });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2320,57 +2351,71 @@ impl VelocityApp {
         );
 
         ui.label(
-            RichText::new("Skills are reusable capability definitions injected into agent")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("system prompts when tasks are routed to team members.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Skills are reusable capability definitions injected into agent system prompts when tasks are routed to team members.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if self.skill_files.is_empty() {
-            ui.label(
-                RichText::new("No skill files loaded. Skills are loaded from .velocity/skills/.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            for skill in &self.skill_files {
-                egui::Frame::new()
-                    .fill(palette.bg_tertiary)
-                    .corner_radius(4.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(&skill.name).strong().color(palette.accent));
-                            ui.label(
-                                RichText::new(format!("[{}]", skill.id))
-                                    .small()
-                                    .color(palette.text_muted),
-                            );
-                        });
+        egui::ScrollArea::vertical()
+            .id_salt("skill_files_scroll")
+            .show(ui, |ui| {
+                if self.skill_files.is_empty() {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new(&skill.description)
-                                .size(9.0)
-                                .color(palette.text),
+                            RichText::new("\u{1f4dc}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        // Show first 120 chars of body as preview
-                        let preview: String = skill.body.chars().take(120).collect();
-                        if preview.len() < skill.body.len() {
-                            ui.label(
-                                RichText::new(format!("{preview}…"))
-                                    .small()
-                                    .monospace()
-                                    .color(palette.text_muted),
-                            );
-                        }
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "No skill files loaded.\nSkills are loaded from .velocity/skills/.",
+                            )
+                            .size(10.0)
+                            .color(palette.text_muted),
+                        );
                     });
-                ui.add_space(3.0);
-            }
-        }
+                } else {
+                    for skill in &self.skill_files {
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&skill.name).strong().color(palette.accent),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("[{}]", skill.id))
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(&skill.description)
+                                        .size(9.0)
+                                        .color(palette.text),
+                                );
+                                // Show first 120 chars of body as preview
+                                let preview: String = skill.body.chars().take(120).collect();
+                                if preview.len() < skill.body.len() {
+                                    ui.label(
+                                        RichText::new(format!("{preview}\u{2026}"))
+                                            .small()
+                                            .monospace()
+                                            .color(palette.text_muted),
+                                    );
+                                }
+                            });
+                        ui.add_space(3.0);
+                    }
+                }
+            });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2400,14 +2445,11 @@ impl VelocityApp {
         );
 
         ui.label(
-            RichText::new("Ghost-text suggestions that appear inline as you type, powered by")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("the completion engine. Press Tab to accept, Escape to dismiss.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Ghost-text suggestions that appear inline as you type, powered by the completion engine. Press Tab to accept, Escape to dismiss.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
@@ -2560,58 +2602,69 @@ impl VelocityApp {
         );
 
         ui.label(
-            RichText::new("Tracks failures during agent execution, classifies them into")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
             RichText::new(
-                "categories, and generates prompt refinements to avoid repeating mistakes.",
+                "Tracks failures during agent execution, classifies them into categories, and generates prompt refinements to avoid repeating mistakes.",
             )
             .size(9.0)
-            .color(palette.text),
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if !has_data {
-            ui.label(
-                RichText::new("No failures recorded this session. The engine is idle.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            ui.label(
-                RichText::new(format!("Generated {} directive(s):", directives.len()))
-                    .small()
-                    .strong()
-                    .color(palette.accent),
-            );
-            for d in &directives {
-                egui::Frame::new()
-                    .fill(palette.bg_tertiary)
-                    .corner_radius(4.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("improvement_engine_scroll")
+            .show(ui, |ui| {
+                if !has_data {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new(format!("{:?}", d.category))
-                                .small()
-                                .strong()
-                                .color(palette.warning),
+                            RichText::new("\u{2699}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
                         );
-                        ui.label(RichText::new(&d.directive).size(9.0).color(palette.text));
+                        ui.add_space(4.0);
                         ui.label(
-                            RichText::new(format!(
-                                "confidence: {:.0}% · {} occurrence(s)",
-                                d.confidence * 100.0,
-                                d.occurrences
-                            ))
-                            .small()
+                            RichText::new(
+                                "No failures recorded this session.\nThe engine is idle.",
+                            )
+                            .size(10.0)
                             .color(palette.text_muted),
                         );
                     });
-                ui.add_space(3.0);
-            }
-        }
+                } else {
+                    ui.label(
+                        RichText::new(format!("Generated {} directive(s):", directives.len()))
+                            .small()
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(4.0);
+                    for d in &directives {
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!("{:?}", d.category))
+                                        .small()
+                                        .strong()
+                                        .color(palette.warning),
+                                );
+                                ui.label(RichText::new(&d.directive).size(9.0).color(palette.text));
+                                ui.label(
+                                    RichText::new(format!(
+                                        "confidence: {:.0}% \u{00b7} {} occurrence(s)",
+                                        d.confidence * 100.0,
+                                        d.occurrences
+                                    ))
+                                    .small()
+                                    .color(palette.text_muted),
+                                );
+                            });
+                        ui.add_space(3.0);
+                    }
+                }
+            });
     }
 
     pub fn render_shared_memory_panel(&mut self, ui: &mut egui::Ui) {
@@ -2622,48 +2675,58 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Shared Memory",
-            &format!("{entry_count} entries · {annotation_count} annotations"),
+            &format!("{entry_count} entries \u{00b7} {annotation_count} annotations"),
             palette.accent,
             palette.text_muted,
         );
 
         ui.label(
-            RichText::new("Shared knowledge base for multi-agent collaboration. Agents can")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("publish and query knowledge entries across team boundaries.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Shared knowledge base for multi-agent collaboration. Agents can publish and query knowledge entries across team boundaries.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if entry_count == 0 {
-            ui.label(
-                RichText::new("No shared knowledge entries yet.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            for (id, entry) in self.shared_memory.entries.iter().take(20) {
-                egui::Frame::new()
-                    .fill(palette.bg_tertiary)
-                    .corner_radius(4.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(&entry.title).strong().color(palette.text));
+        egui::ScrollArea::vertical()
+            .id_salt("shared_memory_scroll")
+            .show(ui, |ui| {
+                if entry_count == 0 {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
                         ui.label(
-                            RichText::new(format!("[{id}] {:?}", entry.category))
-                                .small()
+                            RichText::new("\u{1f4da}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("No shared knowledge entries yet.")
+                                .size(10.0)
                                 .color(palette.text_muted),
                         );
-                        let preview: String = entry.content.chars().take(120).collect();
-                        ui.label(RichText::new(preview).size(9.0).color(palette.text));
                     });
-                ui.add_space(3.0);
-            }
-        }
+                } else {
+                    for (id, entry) in self.shared_memory.entries.iter().take(20) {
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(&entry.title).strong().color(palette.text));
+                                ui.label(
+                                    RichText::new(format!("[{id}] {:?}", entry.category))
+                                        .small()
+                                        .color(palette.text_muted),
+                                );
+                                let preview: String = entry.content.chars().take(120).collect();
+                                ui.label(RichText::new(preview).size(9.0).color(palette.text));
+                            });
+                        ui.add_space(3.0);
+                    }
+                }
+            });
     }
 
     pub fn render_background_agents_panel(&mut self, ui: &mut egui::Ui) {
@@ -2674,7 +2737,7 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Background Agents",
-            &format!("{agent_count} agent(s) · {feed_len} action(s)"),
+            &format!("{agent_count} agent(s) \u{00b7} {feed_len} action(s)"),
             palette.accent,
             palette.text_muted,
         );
@@ -2682,60 +2745,78 @@ impl VelocityApp {
         ui.label(
             RichText::new("Background agents run autonomous tasks without blocking the UI.")
                 .size(9.0)
-                .color(palette.text),
+                .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if agent_count == 0 {
-            ui.label(
-                RichText::new("No background agents registered.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            for (id, agent) in &self.background_agents.agents {
-                let status_color = if agent.enabled {
-                    palette.success
-                } else {
-                    palette.text_muted
-                };
-                egui::Frame::new()
-                    .fill(palette.bg_tertiary)
-                    .corner_radius(4.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("●").color(status_color));
-                            ui.label(RichText::new(&agent.id).strong().color(palette.text));
-                            ui.label(
-                                RichText::new(if agent.enabled { "active" } else { "disabled" })
-                                    .small()
-                                    .color(status_color),
-                            );
-                        });
-                        ui.label(RichText::new(&agent.name).size(9.0).color(palette.text));
+        egui::ScrollArea::vertical()
+            .id_salt("background_agents_scroll")
+            .show(ui, |ui| {
+                if agent_count == 0 {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("\u{1f916}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("No background agents registered.")
+                                .size(10.0)
+                                .color(palette.text_muted),
+                        );
                     });
-                ui.add_space(3.0);
-                let _ = id;
-            }
-        }
+                } else {
+                    for (id, agent) in &self.background_agents.agents {
+                        let status_color = if agent.enabled {
+                            palette.success
+                        } else {
+                            palette.text_muted
+                        };
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("\u{25cf}").color(status_color));
+                                    ui.label(RichText::new(&agent.id).strong().color(palette.text));
+                                    ui.label(
+                                        RichText::new(if agent.enabled {
+                                            "active"
+                                        } else {
+                                            "disabled"
+                                        })
+                                        .small()
+                                        .color(status_color),
+                                    );
+                                });
+                                ui.label(RichText::new(&agent.name).size(9.0).color(palette.text));
+                            });
+                        ui.add_space(3.0);
+                        let _ = id;
+                    }
+                }
 
-        if feed_len > 0 {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new("RECENT ACTIONS")
-                    .small()
-                    .strong()
-                    .color(palette.accent),
-            );
-            for action in self.background_agents.action_feed.iter().rev().take(10) {
-                ui.label(
-                    RichText::new(format!("[{}] {}", action.id, action.title))
-                        .size(9.0)
-                        .color(palette.text),
-                );
-            }
-        }
+                if feed_len > 0 {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("RECENT ACTIONS")
+                            .small()
+                            .strong()
+                            .color(palette.accent),
+                    );
+                    ui.add_space(2.0);
+                    for action in self.background_agents.action_feed.iter().rev().take(10) {
+                        ui.label(
+                            RichText::new(format!("[{}] {}", action.id, action.title))
+                                .size(9.0)
+                                .color(palette.text),
+                        );
+                    }
+                }
+            });
     }
 
     pub fn render_conflict_resolver_panel(&mut self, ui: &mut egui::Ui) {
@@ -2746,19 +2827,14 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Conflict Resolver",
-            &format!("{lock_count} lock(s) · {conflict_count} conflict(s)"),
+            &format!("{lock_count} lock(s) \u{00b7} {conflict_count} conflict(s)"),
             palette.accent,
             palette.text_muted,
         );
 
         ui.label(
-            RichText::new("Manages resource contention between concurrent agent operations.")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
             RichText::new(format!(
-                "Strategy: {:?} · Lock timeout: {}s",
+                "Manages resource contention between concurrent agent operations. Strategy: {:?} \u{00b7} Lock timeout: {}s",
                 self.conflict_resolver.default_resolution, self.conflict_resolver.lock_timeout_secs
             ))
             .size(9.0)
@@ -2766,48 +2842,81 @@ impl VelocityApp {
         );
         ui.add_space(6.0);
 
-        if lock_count == 0 && conflict_count == 0 {
-            ui.label(
-                RichText::new("No active locks or conflicts. All resources are free.")
-                    .size(10.0)
-                    .color(palette.success),
-            );
-        } else {
-            if lock_count > 0 {
-                ui.label(
-                    RichText::new("ACTIVE LOCKS")
-                        .small()
-                        .strong()
-                        .color(palette.warning),
-                );
-                for (resource, locks) in self.conflict_resolver.locks.iter() {
-                    ui.label(
-                        RichText::new(format!("  {} — {} holder(s)", resource, locks.len()))
-                            .size(9.0)
-                            .color(palette.text),
-                    );
+        egui::ScrollArea::vertical()
+            .id_salt("conflict_resolver_scroll")
+            .show(ui, |ui| {
+                if lock_count == 0 && conflict_count == 0 {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("\u{2714}")
+                                .size(24.0)
+                                .color(palette.success.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("No active locks or conflicts.\nAll resources are free.")
+                                .size(10.0)
+                                .color(palette.success),
+                        );
+                    });
+                } else {
+                    if lock_count > 0 {
+                        ui.label(
+                            RichText::new("ACTIVE LOCKS")
+                                .small()
+                                .strong()
+                                .color(palette.warning),
+                        );
+                        ui.add_space(2.0);
+                        for (resource, locks) in self.conflict_resolver.locks.iter() {
+                            egui::Frame::new()
+                                .fill(palette.bg_tertiary)
+                                .corner_radius(4.0)
+                                .inner_margin(4.0)
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} \u{2014} {} holder(s)",
+                                            resource,
+                                            locks.len()
+                                        ))
+                                        .size(9.0)
+                                        .color(palette.text),
+                                    );
+                                });
+                            ui.add_space(2.0);
+                        }
+                        ui.add_space(4.0);
+                    }
+                    if conflict_count > 0 {
+                        ui.label(
+                            RichText::new("RECENT CONFLICTS")
+                                .small()
+                                .strong()
+                                .color(palette.error),
+                        );
+                        ui.add_space(2.0);
+                        for c in self.conflict_resolver.conflicts.iter().rev().take(10) {
+                            egui::Frame::new()
+                                .fill(palette.bg_tertiary)
+                                .corner_radius(4.0)
+                                .inner_margin(4.0)
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} vs {} on {}",
+                                            c.op_a.actor_id, c.op_b.actor_id, c.resource
+                                        ))
+                                        .size(9.0)
+                                        .color(palette.text),
+                                    );
+                                });
+                            ui.add_space(2.0);
+                        }
+                    }
                 }
-                ui.add_space(4.0);
-            }
-            if conflict_count > 0 {
-                ui.label(
-                    RichText::new("RECENT CONFLICTS")
-                        .small()
-                        .strong()
-                        .color(palette.error),
-                );
-                for c in self.conflict_resolver.conflicts.iter().rev().take(10) {
-                    ui.label(
-                        RichText::new(format!(
-                            "  {} vs {} on {}",
-                            c.op_a.actor_id, c.op_b.actor_id, c.resource
-                        ))
-                        .size(9.0)
-                        .color(palette.text),
-                    );
-                }
-            }
-        }
+            });
     }
 
     pub fn render_collaboration_panel(&mut self, ui: &mut egui::Ui) {
@@ -2818,60 +2927,76 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Collaboration",
-            &format!("{user_count} user(s) · {session_count} session(s)"),
+            &format!("{user_count} user(s) \u{00b7} {session_count} session(s)"),
             palette.accent,
             palette.text_muted,
         );
 
         ui.label(
-            RichText::new("Manages shared editing sessions, user presence, and real-time")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("collaboration between team members and remote agents.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Manages shared editing sessions, user presence, and real-time collaboration between team members and remote agents.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        if user_count == 0 {
-            ui.label(
-                RichText::new("No users registered. Collaboration is idle.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            ui.label(
-                RichText::new("USERS")
-                    .small()
-                    .strong()
-                    .color(palette.accent),
-            );
-            for (id, user) in &self.collaboration.users {
-                let online = self
-                    .collaboration
-                    .presence
-                    .get(id)
-                    .map(|_| true)
-                    .unwrap_or(false);
-                ui.horizontal(|ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("collaboration_scroll")
+            .show(ui, |ui| {
+                if user_count == 0 {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("\u{1f465}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("No users registered.\nCollaboration is idle.")
+                                .size(10.0)
+                                .color(palette.text_muted),
+                        );
+                    });
+                } else {
                     ui.label(
-                        RichText::new(if online { "●" } else { "○" }).color(if online {
-                            palette.success
-                        } else {
-                            palette.text_muted
-                        }),
-                    );
-                    ui.label(RichText::new(&user.name).size(10.0).color(palette.text));
-                    ui.label(
-                        RichText::new(format!("[{id}]"))
+                        RichText::new("USERS")
                             .small()
-                            .color(palette.text_muted),
+                            .strong()
+                            .color(palette.accent),
                     );
-                });
-            }
-        }
+                    ui.add_space(2.0);
+                    for (id, user) in &self.collaboration.users {
+                        let online = self.collaboration.presence.contains_key(id);
+                        egui::Frame::new()
+                            .fill(palette.bg_tertiary)
+                            .corner_radius(4.0)
+                            .inner_margin(4.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(if online { "\u{25cf}" } else { "\u{25cb}" })
+                                            .color(if online {
+                                                palette.success
+                                            } else {
+                                                palette.text_muted
+                                            }),
+                                    );
+                                    ui.label(
+                                        RichText::new(&user.name).size(10.0).color(palette.text),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("[{id}]"))
+                                            .small()
+                                            .color(palette.text_muted),
+                                    );
+                                });
+                            });
+                        ui.add_space(2.0);
+                    }
+                }
+            });
     }
 
     pub fn render_persistent_memory_panel(&mut self, ui: &mut egui::Ui) {
@@ -2881,43 +3006,55 @@ impl VelocityApp {
         Self::tier3_header(
             ui,
             "Persistent Memory",
-            &format!("{entry_count} entries · NDA-encrypted at rest"),
+            &format!("{entry_count} entries \u{00b7} NDA-encrypted at rest"),
             palette.accent,
             palette.text_muted,
         );
 
         ui.label(
-            RichText::new("Long-term memory store encrypted with NDA at rest. Agents can")
-                .size(9.0)
-                .color(palette.text),
-        );
-        ui.label(
-            RichText::new("remember, recall, reinforce, and forget entries across sessions.")
-                .size(9.0)
-                .color(palette.text),
+            RichText::new(
+                "Long-term memory store encrypted with NDA at rest. Agents can remember, recall, reinforce, and forget entries across sessions.",
+            )
+            .size(9.0)
+            .color(palette.text_muted),
         );
         ui.add_space(6.0);
 
-        ui.label(
-            RichText::new(format!("Storage: {} / max entries", entry_count))
-                .size(9.0)
-                .color(palette.text_muted),
-        );
-        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("persistent_memory_scroll")
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!("Storage: {} / max entries", entry_count))
+                        .size(9.0)
+                        .color(palette.text_muted),
+                );
+                ui.add_space(4.0);
 
-        if entry_count == 0 {
-            ui.label(
-                RichText::new("Memory is empty. Agents will populate it during execution.")
-                    .size(10.0)
-                    .color(palette.text_muted),
-            );
-        } else {
-            ui.label(
-                RichText::new("Use the Knowledge panel to query persistent memory.")
-                    .size(9.0)
-                    .color(palette.text),
-            );
-        }
+                if entry_count == 0 {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("\u{1f512}")
+                                .size(24.0)
+                                .color(palette.text_muted.gamma_multiply(0.5)),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Memory is empty.\nAgents will populate it during execution.",
+                            )
+                            .size(10.0)
+                            .color(palette.text_muted),
+                        );
+                    });
+                } else {
+                    ui.label(
+                        RichText::new("Use the Knowledge panel to query persistent memory.")
+                            .size(9.0)
+                            .color(palette.text),
+                    );
+                }
+            });
     }
 }
 

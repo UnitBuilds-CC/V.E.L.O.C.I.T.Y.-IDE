@@ -806,183 +806,204 @@ impl eframe::App for VelocityApp {
                 });
 
                 ui.menu_button("View", |ui| {
-                    ui.label(egui::RichText::new("Panels").small().strong());
-                    ui.separator();
-                    if ui.button("Command Palette (Ctrl+Shift+P)").clicked() {
+                    if ui.button("Command Palette  (Ctrl+Shift+P)").clicked() {
                         self.command_palette.open = true;
                         self.command_palette.just_opened = true;
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Chat").clicked() {
-                        self.toggle_panel(TabKind::Chat);
-                        ui.close();
-                    }
-                    if ui.button("Orchestrator").clicked() {
-                        self.toggle_panel(TabKind::Orchestrator);
-                        ui.close();
-                    }
-                    if ui.button("Mission Control").clicked() {
-                        self.toggle_panel(TabKind::MissionControl);
-                        ui.close();
-                    }
-                    if ui.button("Team Studio").clicked() {
-                        self.toggle_panel(TabKind::TeamStudio);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Search").clicked() {
-                        self.toggle_panel(TabKind::Search);
-                        ui.close();
-                    }
-                    if ui.button("Graph View").clicked() {
-                        self.toggle_panel(TabKind::Graph);
-                        ui.close();
-                    }
-                    if ui.button("Wiki").clicked() {
-                        self.toggle_panel(TabKind::Wiki);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Extensions").clicked() {
-                        self.toggle_panel(TabKind::Extensions);
-                        ui.close();
-                    }
-                    if ui.button("Activity").clicked() {
-                        self.toggle_panel(TabKind::Activity);
-                        ui.close();
-                    }
-                    if ui.button("Coverage").clicked() {
-                        self.toggle_panel(TabKind::Coverage);
-                        ui.close();
-                    }
-                    if ui.button("Pipeline").clicked() {
-                        self.toggle_panel(TabKind::Pipeline);
-                        ui.close();
-                    }
-                    if ui.button("Voice Commands").clicked() {
-                        self.toggle_panel(TabKind::Voice);
-                        ui.close();
-                    }
-                    if ui.button("Test Generator").clicked() {
-                        self.toggle_panel(TabKind::TestGenerator);
-                        ui.close();
-                    }
-                    if ui.button("Agent Memory").clicked() {
-                        self.toggle_panel(TabKind::AgentMemory);
-                        ui.close();
-                    }
-                    if ui.button("Live Orchestration").clicked() {
-                        self.toggle_panel(TabKind::LiveOrchestration);
-                        ui.close();
-                    }
-                    if ui.button("Semantic Search").clicked() {
-                        self.toggle_panel(TabKind::SemanticSearch);
-                        ui.close();
-                    }
-                    if ui.button("Snippets").clicked() {
-                        self.toggle_panel(TabKind::Snippets);
-                        ui.close();
-                    }
-                    if ui.button("Language Servers").clicked() {
-                        self.toggle_panel(TabKind::LanguageServers);
-                        ui.close();
-                    }
-                    if ui.button("Debugger").clicked() {
-                        self.toggle_panel(TabKind::Debugger);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Precomp Cache").clicked() {
-                        self.toggle_panel(TabKind::PrecompCache);
-                        ui.close();
-                    }
-                    if ui.button("Multimodal").clicked() {
-                        self.toggle_panel(TabKind::Multimodal);
-                        ui.close();
-                    }
-                    if ui.button("Continuation Ledger").clicked() {
-                        self.toggle_panel(TabKind::ContinuationLedger);
-                        ui.close();
-                    }
-                    if ui.button("Plugin Registry").clicked() {
-                        self.toggle_panel(TabKind::PluginRegistry);
-                        ui.close();
-                    }
-                    if ui.button("Skill Files").clicked() {
-                        self.toggle_panel(TabKind::SkillFiles);
-                        ui.close();
-                    }
-                    if ui.button("Inline Suggestions").clicked() {
-                        self.toggle_panel(TabKind::InlineSuggestions);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Improvement Engine").clicked() {
-                        self.toggle_panel(TabKind::ImprovementEngine);
-                        ui.close();
-                    }
-                    if ui.button("Shared Memory").clicked() {
-                        self.toggle_panel(TabKind::SharedMemory);
-                        ui.close();
-                    }
-                    if ui.button("Background Agents").clicked() {
-                        self.toggle_panel(TabKind::BackgroundAgents);
-                        ui.close();
-                    }
-                    if ui.button("Conflict Resolver").clicked() {
-                        self.toggle_panel(TabKind::ConflictResolver);
-                        ui.close();
-                    }
-                    if ui.button("Collaboration").clicked() {
-                        self.toggle_panel(TabKind::Collaboration);
-                        ui.close();
-                    }
-                    if ui.button("Persistent Memory").clicked() {
-                        self.toggle_panel(TabKind::PersistentMemory);
-                        ui.close();
-                    }
-                    if ui.button("Knowledge Base").clicked() {
-                        self.toggle_panel(TabKind::Knowledge);
-                        ui.close();
-                    }
-                    if ui.button("Triggers").clicked() {
-                        self.toggle_panel(TabKind::Triggers);
-                        ui.close();
-                    }
-                    if ui.button("Workflows").clicked() {
-                        self.toggle_panel(TabKind::Workflows);
-                        ui.close();
-                    }
-                    if ui.button("Governance").clicked() {
-                        self.toggle_panel(TabKind::Governance);
-                        ui.close();
-                    }
-                    if ui.button("Peers").clicked() {
-                        self.toggle_panel(TabKind::Peers);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Favorites").clicked() {
-                        self.toggle_panel(TabKind::Favorites);
-                        ui.close();
-                    }
-                    if ui.button("Bookmarks").clicked() {
-                        self.toggle_panel(TabKind::Bookmarks);
-                        ui.close();
-                    }
-                    if ui.button("Recordings").clicked() {
-                        self.toggle_panel(TabKind::Recordings);
-                        ui.close();
-                    }
-                    if ui.button("Targets").clicked() {
-                        self.toggle_panel(TabKind::Targets);
-                        ui.close();
-                    }
-                    if ui.button("Accessibility Audit").clicked() {
-                        self.toggle_panel(TabKind::AccessibilityAudit);
-                        ui.close();
-                    }
+
+                    // ── Core workspace panels ──
+                    ui.menu_button("Core", |ui| {
+                        if ui.button("Chat").clicked() {
+                            self.toggle_panel(TabKind::Chat);
+                            ui.close();
+                        }
+                        if ui.button("Orchestrator").clicked() {
+                            self.toggle_panel(TabKind::Orchestrator);
+                            ui.close();
+                        }
+                        if ui.button("Mission Control").clicked() {
+                            self.toggle_panel(TabKind::MissionControl);
+                            ui.close();
+                        }
+                        if ui.button("Team Studio").clicked() {
+                            self.toggle_panel(TabKind::TeamStudio);
+                            ui.close();
+                        }
+                    });
+
+                    // ── Development tools ──
+                    ui.menu_button("Dev Tools", |ui| {
+                        if ui.button("Search").clicked() {
+                            self.toggle_panel(TabKind::Search);
+                            ui.close();
+                        }
+                        if ui.button("Graph View").clicked() {
+                            self.toggle_panel(TabKind::Graph);
+                            ui.close();
+                        }
+                        if ui.button("Wiki").clicked() {
+                            self.toggle_panel(TabKind::Wiki);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Extensions").clicked() {
+                            self.toggle_panel(TabKind::Extensions);
+                            ui.close();
+                        }
+                        if ui.button("Activity").clicked() {
+                            self.toggle_panel(TabKind::Activity);
+                            ui.close();
+                        }
+                        if ui.button("Coverage").clicked() {
+                            self.toggle_panel(TabKind::Coverage);
+                            ui.close();
+                        }
+                        if ui.button("Pipeline").clicked() {
+                            self.toggle_panel(TabKind::Pipeline);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Snippets").clicked() {
+                            self.toggle_panel(TabKind::Snippets);
+                            ui.close();
+                        }
+                        if ui.button("Language Servers").clicked() {
+                            self.toggle_panel(TabKind::LanguageServers);
+                            ui.close();
+                        }
+                        if ui.button("Debugger").clicked() {
+                            self.toggle_panel(TabKind::Debugger);
+                            ui.close();
+                        }
+                        if ui.button("Test Generator").clicked() {
+                            self.toggle_panel(TabKind::TestGenerator);
+                            ui.close();
+                        }
+                    });
+
+                    // ── Agent & AI subsystems ──
+                    ui.menu_button("Agent", |ui| {
+                        if ui.button("Agent Memory").clicked() {
+                            self.toggle_panel(TabKind::AgentMemory);
+                            ui.close();
+                        }
+                        if ui.button("Live Orchestration").clicked() {
+                            self.toggle_panel(TabKind::LiveOrchestration);
+                            ui.close();
+                        }
+                        if ui.button("Semantic Search").clicked() {
+                            self.toggle_panel(TabKind::SemanticSearch);
+                            ui.close();
+                        }
+                        if ui.button("Voice Commands").clicked() {
+                            self.toggle_panel(TabKind::Voice);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Improvement Engine").clicked() {
+                            self.toggle_panel(TabKind::ImprovementEngine);
+                            ui.close();
+                        }
+                        if ui.button("Shared Memory").clicked() {
+                            self.toggle_panel(TabKind::SharedMemory);
+                            ui.close();
+                        }
+                        if ui.button("Background Agents").clicked() {
+                            self.toggle_panel(TabKind::BackgroundAgents);
+                            ui.close();
+                        }
+                        if ui.button("Conflict Resolver").clicked() {
+                            self.toggle_panel(TabKind::ConflictResolver);
+                            ui.close();
+                        }
+                        if ui.button("Collaboration").clicked() {
+                            self.toggle_panel(TabKind::Collaboration);
+                            ui.close();
+                        }
+                        if ui.button("Persistent Memory").clicked() {
+                            self.toggle_panel(TabKind::PersistentMemory);
+                            ui.close();
+                        }
+                    });
+
+                    // ── Editor extension modules ──
+                    ui.menu_button("Modules", |ui| {
+                        if ui.button("Precomp Cache").clicked() {
+                            self.toggle_panel(TabKind::PrecompCache);
+                            ui.close();
+                        }
+                        if ui.button("Multimodal").clicked() {
+                            self.toggle_panel(TabKind::Multimodal);
+                            ui.close();
+                        }
+                        if ui.button("Continuation Ledger").clicked() {
+                            self.toggle_panel(TabKind::ContinuationLedger);
+                            ui.close();
+                        }
+                        if ui.button("Plugin Registry").clicked() {
+                            self.toggle_panel(TabKind::PluginRegistry);
+                            ui.close();
+                        }
+                        if ui.button("Skill Files").clicked() {
+                            self.toggle_panel(TabKind::SkillFiles);
+                            ui.close();
+                        }
+                        if ui.button("Inline Suggestions").clicked() {
+                            self.toggle_panel(TabKind::InlineSuggestions);
+                            ui.close();
+                        }
+                    });
+
+                    // ── Knowledge & automation ──
+                    ui.menu_button("Automation", |ui| {
+                        if ui.button("Knowledge Base").clicked() {
+                            self.toggle_panel(TabKind::Knowledge);
+                            ui.close();
+                        }
+                        if ui.button("Triggers").clicked() {
+                            self.toggle_panel(TabKind::Triggers);
+                            ui.close();
+                        }
+                        if ui.button("Workflows").clicked() {
+                            self.toggle_panel(TabKind::Workflows);
+                            ui.close();
+                        }
+                        if ui.button("Governance").clicked() {
+                            self.toggle_panel(TabKind::Governance);
+                            ui.close();
+                        }
+                        if ui.button("Peers").clicked() {
+                            self.toggle_panel(TabKind::Peers);
+                            ui.close();
+                        }
+                    });
+
+                    // ── Navigation / dock panels ──
+                    ui.menu_button("Navigation", |ui| {
+                        if ui.button("Favorites").clicked() {
+                            self.toggle_panel(TabKind::Favorites);
+                            ui.close();
+                        }
+                        if ui.button("Bookmarks").clicked() {
+                            self.toggle_panel(TabKind::Bookmarks);
+                            ui.close();
+                        }
+                        if ui.button("Recordings").clicked() {
+                            self.toggle_panel(TabKind::Recordings);
+                            ui.close();
+                        }
+                        if ui.button("Targets").clicked() {
+                            self.toggle_panel(TabKind::Targets);
+                            ui.close();
+                        }
+                        if ui.button("Accessibility Audit").clicked() {
+                            self.toggle_panel(TabKind::AccessibilityAudit);
+                            ui.close();
+                        }
+                    });
+
                     ui.separator();
                     if ui.button("Settings").clicked() {
                         self.toggle_panel(TabKind::Settings);

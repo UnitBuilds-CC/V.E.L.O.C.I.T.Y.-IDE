@@ -1,4 +1,5 @@
 use super::types::*;
+use super::VelocityApp;
 use crate::automation::AgentTaskKind;
 use crate::editor::chat_panel::render_chat_panel;
 use crate::editor::code_editor::CodeEditor;
@@ -584,64 +585,109 @@ impl<'a> TabViewer for TabViewerImpl<'a> {
                         });
                     }
                     TabKind::Favorites => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(4.0);
-                            let clicked = crate::editor::sidebar_tabs::render_favorites_content(
-                                ui,
-                                &self.app.favorite_files,
-                                &self.app.workspace_root,
-                                palette,
-                            );
-                            if let Some(path) = clicked {
-                                self.app.open_editor(Some(path));
-                            }
-                        });
+                        let count = self.app.favorite_files.len();
+                        VelocityApp::tier3_header(
+                            ui,
+                            "Favorites",
+                            &format!("{count} favorite(s)"),
+                            palette.accent,
+                            palette.text_muted,
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("dock_favorites_scroll")
+                            .show(ui, |ui| {
+                                let clicked = crate::editor::sidebar_tabs::render_favorites_content(
+                                    ui,
+                                    &self.app.favorite_files,
+                                    &self.app.workspace_root,
+                                    palette,
+                                );
+                                if let Some(path) = clicked {
+                                    self.app.open_editor(Some(path));
+                                }
+                            });
                     }
                     TabKind::Bookmarks => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(4.0);
-                            let jump = crate::editor::sidebar_tabs::render_bookmarks_content(
-                                ui,
-                                &self.app.bookmarks,
-                                &self.app.workspace_root,
-                                palette,
-                            );
-                            if let Some((path, line)) = jump {
-                                self.app.push_nav_location();
-                                self.app.pending_cursor_line = Some(line);
-                                self.app.open_editor(Some(path));
-                            }
-                        });
+                        let count = self.app.bookmarks.len();
+                        VelocityApp::tier3_header(
+                            ui,
+                            "Bookmarks",
+                            &format!("{count} bookmark(s)"),
+                            palette.accent,
+                            palette.text_muted,
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("dock_bookmarks_scroll")
+                            .show(ui, |ui| {
+                                let jump = crate::editor::sidebar_tabs::render_bookmarks_content(
+                                    ui,
+                                    &self.app.bookmarks,
+                                    &self.app.workspace_root,
+                                    palette,
+                                );
+                                if let Some((path, line)) = jump {
+                                    self.app.push_nav_location();
+                                    self.app.pending_cursor_line = Some(line);
+                                    self.app.open_editor(Some(path));
+                                }
+                            });
                     }
                     TabKind::Recordings => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(4.0);
-                            crate::editor::sidebar_tabs::render_recordings_content(
-                                ui,
-                                &self.app.recordings,
-                                palette,
-                            );
-                        });
+                        let count = self.app.recordings.len();
+                        VelocityApp::tier3_header(
+                            ui,
+                            "Recordings",
+                            &format!("{count} recording(s)"),
+                            palette.accent,
+                            palette.text_muted,
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("dock_recordings_scroll")
+                            .show(ui, |ui| {
+                                crate::editor::sidebar_tabs::render_recordings_content(
+                                    ui,
+                                    &self.app.recordings,
+                                    palette,
+                                );
+                            });
                     }
                     TabKind::Targets => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(4.0);
-                            crate::editor::sidebar_tabs::render_targets_content(
-                                ui,
-                                &self.app.target_entries,
-                                palette,
-                            );
-                        });
+                        let count = self.app.target_entries.len();
+                        VelocityApp::tier3_header(
+                            ui,
+                            "Targets",
+                            &format!("{count} target(s)"),
+                            palette.accent,
+                            palette.text_muted,
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("dock_targets_scroll")
+                            .show(ui, |ui| {
+                                crate::editor::sidebar_tabs::render_targets_content(
+                                    ui,
+                                    &self.app.target_entries,
+                                    palette,
+                                );
+                            });
                     }
                     TabKind::AccessibilityAudit => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(4.0);
-                            crate::editor::sidebar_tabs::render_audit_content(
-                                ui,
-                                &self.app.audit_findings,
-                                palette,
-                            );
-                        });
+                        let count = self.app.audit_findings.len();
+                        VelocityApp::tier3_header(
+                            ui,
+                            "Accessibility Audit",
+                            &format!("{count} finding(s)"),
+                            palette.accent,
+                            palette.text_muted,
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("dock_audit_scroll")
+                            .show(ui, |ui| {
+                                crate::editor::sidebar_tabs::render_audit_content(
+                                    ui,
+                                    &self.app.audit_findings,
+                                    palette,
+                                );
+                            });
                     }
                     _ => {
                         ui.vertical_centered(|ui| {
