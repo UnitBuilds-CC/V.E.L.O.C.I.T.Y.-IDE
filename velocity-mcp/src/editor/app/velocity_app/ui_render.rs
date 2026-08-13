@@ -697,6 +697,10 @@ impl eframe::App for VelocityApp {
         self.mru_overlay_ui(&ctx);
         // Pick up any inline suggestion produced by the background model call.
         self.inline_suggestions.poll();
+        // Drain incoming LSP diagnostics from language server stdout readers.
+        if let Some(lsp) = self.lsp_manager.as_mut() {
+            lsp.poll_notifications();
+        }
         self.update_diagnostics();
         // Sync diagnostics counts to bottom panel
         self.bottom_panel_state.error_count = self.diagnostics.error_count();
@@ -712,6 +716,24 @@ impl eframe::App for VelocityApp {
         if external_due {
             self.last_external_check = Some(std::time::Instant::now());
             self.check_external_file_changes();
+        }
+
+        // Poll OS-level file watcher for instant external change detection.
+        let watcher_events = if let Some(watcher) = &mut self.file_watcher {
+            let evts = watcher.poll();
+            watcher.cleanup_stale();
+            evts
+        } else {
+            Vec::new()
+        };
+        if !watcher_events.is_empty() {
+            // Force a file tree refresh so new/deleted files appear immediately.
+            self.file_tree = Some(build_file_tree(&self.workspace_root));
+            self.last_tree_update = std::time::Instant::now();
+            // Reload any open buffers that were externally modified.
+            for ev in &watcher_events {
+                self.reload_buffer_if_open(&ev.path);
+            }
         }
 
         let now = std::time::Instant::now();

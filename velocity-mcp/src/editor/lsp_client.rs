@@ -404,6 +404,16 @@ impl Drop for LspServer {
     }
 }
 
+/// Immutable snapshot of a single language server's status for the UI panel.
+#[derive(Debug, Clone)]
+pub struct LspServerStatus {
+    pub language: String,
+    pub command: String,
+    pub alive: bool,
+    pub initialized: bool,
+    pub extensions: Vec<String>,
+}
+
 /// Manager for multiple LSP servers (one per language).
 #[derive(Default)]
 pub struct LspManager {
@@ -490,13 +500,38 @@ impl LspManager {
         }
     }
 
-    // ─── Interactive intelligence (I1) ─────────────────────────────────────
+    /// Snapshot of one registered server's status (language, alive, initialized).
+    pub fn server_snapshot(&mut self) -> Vec<LspServerStatus> {
+        self.servers
+            .iter_mut()
+            .map(|(lang, srv)| {
+                let alive = srv.is_alive();
+                LspServerStatus {
+                    language: lang.clone(),
+                    command: srv.config.command.clone(),
+                    alive,
+                    initialized: srv.initialized,
+                    extensions: srv.config.extensions.clone(),
+                }
+            })
+            .collect()
+    }
+
+    /// Number of registered servers.
+    pub fn server_count(&self) -> usize {
+        self.servers.len()
+    }
+
+    /// Number of diagnostics currently held.
+    pub fn diagnostics_count(&self) -> usize {
+        self.diagnostics.len()
+    }
 
     /// Announce/refresh a document with the matching language server so that
     /// subsequent requests see the current buffer content. Sends `didOpen` the
     /// first time a path is seen and `didChange` afterwards. Never panics when
     /// no server matches the extension.
-    fn sync_document(&mut self, ext: &str, path: &Path, content: &str) {
+    pub fn sync_document(&mut self, ext: &str, path: &Path, content: &str) {
         let already = self.open_docs.contains(path);
         let next_version = self.doc_versions.get(path).copied().unwrap_or(1) + 1;
         // Resolve the language id with a short-lived immutable borrow.

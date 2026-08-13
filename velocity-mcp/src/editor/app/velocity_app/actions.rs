@@ -584,6 +584,45 @@ impl VelocityApp {
         }
     }
 
+    /// Reload a buffer from disk if the given path matches an open editor tab.
+    /// Called by the file watcher when it detects external changes.
+    pub fn reload_buffer_if_open(&mut self, path: &std::path::Path) {
+        // Find the buffer id for this path.
+        let buf_id = self.buffers.iter().find_map(|(id, b)| {
+            if b.path.as_deref() == Some(path) {
+                Some(id.clone())
+            } else {
+                None
+            }
+        });
+        let Some(id) = buf_id else { return };
+
+        let dirty = self.tab_is_dirty(&id);
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+
+        if dirty {
+            // Keep unsaved edits but update mtime so we don't re-warn.
+            if let Some(buf) = self.buffers.get_mut(&id) {
+                buf.disk_mtime = Self::file_mtime(path);
+            }
+            self.toasts.push(crate::editor::toast::Toast::warn(format!(
+                "{filename} changed on disk \u{2014} kept your unsaved edits"
+            )));
+        } else if let Ok(content) = std::fs::read_to_string(path) {
+            if let Some(buf) = self.buffers.get_mut(&id) {
+                buf.load_text(&content);
+                buf.disk_mtime = Self::file_mtime(path);
+            }
+            self.toasts.push(crate::editor::toast::Toast::info(format!(
+                "Reloaded {filename} (changed on disk)"
+            )));
+        }
+    }
+
     pub fn close_tab(&mut self, id: &TabId) {
         if let Some(path) = self.tab_path(id).cloned() {
             self.push_closed_editor_path(path);
@@ -884,6 +923,17 @@ impl VelocityApp {
         }
         self.active_tab = Some(id.clone());
         self.touch_mru(&id);
+
+        // Announce the file to the LSP server so it starts providing diagnostics.
+        if let Some(ref p) = path {
+            if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                if let Some(content) = self.buffers.get(&id).map(|b| b.content().to_string()) {
+                    if let Some(lsp) = self.lsp_manager.as_mut() {
+                        lsp.sync_document(ext, p, &content);
+                    }
+                }
+            }
+        }
     }
 
     /// Split the current editor view: open the same file in a new tab side-by-side.

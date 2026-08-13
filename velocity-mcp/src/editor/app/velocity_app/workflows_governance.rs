@@ -290,7 +290,9 @@ impl VelocityApp {
             } else {
                 let id = format!("wf-{}", crate::editor::triggers::now_secs());
                 self.workflows.add(Workflow::new(id.clone(), name));
-                let _ = self.workflows.save(&ws);
+                if let Err(e) = self.workflows.save(&ws) {
+                    Self::persist_err(&mut self.toasts, "workflows", &e);
+                }
                 self.workflow_selected = Some(id);
                 self.workflow_name_input.clear();
             }
@@ -301,7 +303,9 @@ impl VelocityApp {
         }
         if let Some(id) = remove {
             if self.workflows.remove(&id) {
-                let _ = self.workflows.save(&ws);
+                if let Err(e) = self.workflows.save(&ws) {
+                    Self::persist_err(&mut self.toasts, "workflows", &e);
+                }
                 if self.workflow_selected.as_deref() == Some(id.as_str()) {
                     self.workflow_selected = None;
                 }
@@ -329,7 +333,9 @@ impl VelocityApp {
                         if let Some(wf) = self.workflows.get_mut(&sel) {
                             wf.steps.push(WorkflowStep::Tool { name, args });
                         }
-                        let _ = self.workflows.save(&ws);
+                        if let Err(e) = self.workflows.save(&ws) {
+                            Self::persist_err(&mut self.toasts, "workflows", &e);
+                        }
                         self.workflow_step_tool_input.clear();
                         self.workflow_step_args_input.clear();
                     }
@@ -344,7 +350,9 @@ impl VelocityApp {
                         wf.steps
                             .push(WorkflowStep::AgentTask { prompt, team: None });
                     }
-                    let _ = self.workflows.save(&ws);
+                    if let Err(e) = self.workflows.save(&ws) {
+                        Self::persist_err(&mut self.toasts, "workflows", &e);
+                    }
                     self.workflow_step_prompt_input.clear();
                 }
             }
@@ -376,7 +384,9 @@ impl VelocityApp {
                 }
             }
             if mutated {
-                let _ = self.workflows.save(&ws);
+                if let Err(e) = self.workflows.save(&ws) {
+                    Self::persist_err(&mut self.toasts, "workflows", &e);
+                }
             }
         }
         if let Some(id) = run {
@@ -632,12 +642,12 @@ impl VelocityApp {
                         Decision::Deny => Decision::NeedsApproval,
                         Decision::NeedsApproval => Decision::Allow,
                     };
-                    let _ = self.policy.save(&ws);
+                    if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); }
                 }
-                if let Some(t) = set_tokens { self.policy.budget.max_tokens = t; let _ = self.policy.save(&ws); }
-                if let Some(c) = set_cost { self.policy.budget.max_cost_cents = c; let _ = self.policy.save(&ws); }
+                if let Some(t) = set_tokens { self.policy.budget.max_tokens = t; if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
+                if let Some(c) = set_cost { self.policy.budget.max_cost_cents = c; if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
                 if let Some(i) = remove_rule {
-                    if i < self.policy.rules.len() { self.policy.rules.remove(i); let _ = self.policy.save(&ws); }
+                    if i < self.policy.rules.len() { self.policy.rules.remove(i); if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); } }
                 }
                 if let Some(effect) = add_rule {
                     let tool = self.gov_rule_tool_input.trim().to_string();
@@ -650,14 +660,14 @@ impl VelocityApp {
                             path_prefix: if path.is_empty() { None } else { Some(path.to_string()) },
                             domain: None,
                         });
-                        let _ = self.policy.save(&ws);
+                        if let Err(e) = self.policy.save(&ws) { Self::persist_err(&mut self.toasts, "governance policy", &e); }
                         self.gov_rule_tool_input.clear();
                         self.gov_rule_path_input.clear();
                         self.gov_status = "Rule added.".to_string();
                     }
                 }
-                if let Some(id) = approve { self.approvals.approve(&id); let _ = self.approvals.save(&ws); }
-                if let Some(id) = deny { self.approvals.deny(&id); let _ = self.approvals.save(&ws); }
+                if let Some(id) = approve { self.approvals.approve(&id); if let Err(e) = self.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
+                if let Some(id) = deny { self.approvals.deny(&id); if let Err(e) = self.approvals.save(&ws) { Self::persist_err(&mut self.toasts, "approvals", &e); } }
                 if add_secret {
                     let name = self.gov_secret_name_input.trim().to_string();
                     let value = self.gov_secret_value_input.clone();
@@ -674,7 +684,7 @@ impl VelocityApp {
                         }
                     }
                 }
-                if let Some(name) = remove_secret { if self.secrets.remove(&name) { let _ = self.secrets.save(&ws); } }
+                if let Some(name) = remove_secret { if self.secrets.remove(&name) { if let Err(e) = self.secrets.save(&ws) { Self::persist_err(&mut self.toasts, "secrets", &e); } } }
                 if add_connector {
                     let id = self.gov_connector_id_input.trim().to_string();
                     let url = self.gov_connector_url_input.trim().to_string();
@@ -688,7 +698,7 @@ impl VelocityApp {
                             cfg.auth = crate::connectors::AuthScheme::Bearer;
                         }
                         self.connectors.add(cfg);
-                        let _ = self.connectors.save(&ws);
+                        if let Err(e) = self.connectors.save(&ws) { Self::persist_err(&mut self.toasts, "connectors", &e); }
                         self.gov_connector_id_input.clear();
                         self.gov_connector_url_input.clear();
                         self.gov_connector_secret_input.clear();
@@ -696,7 +706,7 @@ impl VelocityApp {
                     }
                 }
                 if let Some(id) = remove_connector {
-                    if self.connectors.remove(&id) { let _ = self.connectors.save(&ws); }
+                    if self.connectors.remove(&id) { if let Err(e) = self.connectors.save(&ws) { Self::persist_err(&mut self.toasts, "connectors", &e); } }
                 }
                 if let Some(id) = update_secret_connector {
                     let secret = self.gov_connector_secret_input.trim().to_string();

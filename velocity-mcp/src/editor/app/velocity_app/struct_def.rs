@@ -1,4 +1,4 @@
-﻿use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use egui_dock::DockState;
 use serde::{Deserialize, Serialize};
@@ -282,6 +282,8 @@ pub struct VelocityApp {
     pub keybindings_config: crate::editor::keybindings::KeybindingsConfig,
     /// Git integration state.
     pub git_state: crate::editor::git_ui::GitState,
+    /// OS-level file watcher for instant external change detection.
+    pub file_watcher: Option<crate::editor::file_watcher::FileWatcher>,
     /// Extension registry.
     pub extension_registry: crate::editor::extensions::ExtensionRegistry,
     /// Minimap configuration.
@@ -434,6 +436,18 @@ pub struct VelocityApp {
 }
 
 impl VelocityApp {
+    /// Surface a persistence failure as a toast notification.
+    /// Usage: `Self::persist_err(&mut self.toasts, "knowledge_base", &err);`
+    pub(crate) fn persist_err(
+        toasts: &mut crate::editor::toast::ToastQueue,
+        subsystem: &str,
+        err: &str,
+    ) {
+        toasts.push(crate::editor::toast::Toast::error(format!(
+            "Failed to save {subsystem}: {err}"
+        )));
+    }
+
     fn workspace_state_dir(workspace_root: &Path) -> PathBuf {
         workspace_root.join(".velocity")
     }
@@ -945,6 +959,7 @@ impl VelocityApp {
             dap_client: None,
             keybindings_config: crate::editor::keybindings::KeybindingsConfig::default(),
             git_state: crate::editor::git_ui::GitState::default(),
+            file_watcher: None,
             extension_registry: crate::editor::extensions::ExtensionRegistry::default(),
             minimap_config: crate::editor::minimap::MinimapConfig::default(),
             snippet_collection: crate::editor::snippets::SnippetCollection::default(),
@@ -1056,6 +1071,8 @@ impl VelocityApp {
         ));
         // Initialize git state
         app.git_state.refresh(&app.workspace_root);
+        // Start OS-level file watcher for instant external change detection
+        app.file_watcher = crate::editor::file_watcher::FileWatcher::new(&app.workspace_root);
         // Load keybindings from workspace config
         app.keybindings_config =
             crate::editor::keybindings::KeybindingsConfig::load(&app.workspace_root);

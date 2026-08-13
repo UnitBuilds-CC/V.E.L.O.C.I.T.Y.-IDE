@@ -927,14 +927,18 @@ impl VelocityApp {
                 };
                 if path.is_dir() {
                     let (files, chunks) = self.knowledge_base.ingest_dir(&ws, &path);
-                    let _ = self.knowledge_base.save(&ws);
+                    if let Err(e) = self.knowledge_base.save(&ws) {
+                        Self::persist_err(&mut self.toasts, "knowledge_base", &e);
+                    }
                     self.toasts.push(crate::editor::toast::Toast::info(format!(
                         "Ingested {files} file(s), {chunks} chunk(s)"
                     )));
                 } else {
                     match self.knowledge_base.ingest_path(&ws, &path) {
                         Ok(added) => {
-                            let _ = self.knowledge_base.save(&ws);
+                            if let Err(e) = self.knowledge_base.save(&ws) {
+                                Self::persist_err(&mut self.toasts, "knowledge_base", &e);
+                            }
                             self.toasts.push(crate::editor::toast::Toast::info(format!(
                                 "Ingested {added} chunk(s)"
                             )));
@@ -947,7 +951,9 @@ impl VelocityApp {
         if ingest_workspace {
             let ws = self.workspace_root.clone();
             let (files, chunks) = self.knowledge_base.ingest_dir(&ws, &ws);
-            let _ = self.knowledge_base.save(&ws);
+            if let Err(e) = self.knowledge_base.save(&ws) {
+                Self::persist_err(&mut self.toasts, "knowledge_base", &e);
+            }
             self.toasts.push(crate::editor::toast::Toast::info(format!(
                 "Indexed workspace: {files} file(s), {chunks} chunk(s)"
             )));
@@ -960,14 +966,18 @@ impl VelocityApp {
             self.knowledge_base.clear();
             self.knowledge_results.clear();
             let ws = self.workspace_root.clone();
-            let _ = self.knowledge_base.save(&ws);
+            if let Err(e) = self.knowledge_base.save(&ws) {
+                Self::persist_err(&mut self.toasts, "knowledge_base", &e);
+            }
             self.toasts
                 .push(crate::editor::toast::Toast::info("Knowledge base cleared"));
         }
         if let Some(src) = remove {
             if self.knowledge_base.remove_source(&src) {
                 let ws = self.workspace_root.clone();
-                let _ = self.knowledge_base.save(&ws);
+                if let Err(e) = self.knowledge_base.save(&ws) {
+                    Self::persist_err(&mut self.toasts, "knowledge_base", &e);
+                }
                 self.toasts
                     .push(crate::editor::toast::Toast::info(format!("Removed {src}")));
             }
@@ -1128,7 +1138,9 @@ impl VelocityApp {
                     TriggerAction::AgentPrompt { prompt },
                 ));
                 let ws = self.workspace_root.clone();
-                let _ = self.triggers.save(&ws);
+                if let Err(e) = self.triggers.save(&ws) {
+                    Self::persist_err(&mut self.toasts, "triggers", &e);
+                }
                 self.trigger_name_input.clear();
                 self.trigger_interval_input.clear();
                 self.trigger_prompt_input.clear();
@@ -1140,12 +1152,16 @@ impl VelocityApp {
         if let Some(id) = toggle {
             self.triggers.toggle(&id);
             let ws = self.workspace_root.clone();
-            let _ = self.triggers.save(&ws);
+            if let Err(e) = self.triggers.save(&ws) {
+                Self::persist_err(&mut self.toasts, "triggers", &e);
+            }
         }
         if let Some(id) = remove {
             if self.triggers.remove(&id) {
                 let ws = self.workspace_root.clone();
-                let _ = self.triggers.save(&ws);
+                if let Err(e) = self.triggers.save(&ws) {
+                    Self::persist_err(&mut self.toasts, "triggers", &e);
+                }
                 self.toasts
                     .push(crate::editor::toast::Toast::info("Trigger removed"));
             }
@@ -1159,7 +1175,9 @@ impl VelocityApp {
                         .send(crate::agent::UiToAgentMessage::UserPrompt(prompt));
                     self.triggers.mark_run(&id, now_secs());
                     let ws = self.workspace_root.clone();
-                    let _ = self.triggers.save(&ws);
+                    if let Err(e) = self.triggers.save(&ws) {
+                        Self::persist_err(&mut self.toasts, "triggers", &e);
+                    }
                     self.toasts.push(crate::editor::toast::Toast::info(
                         "Trigger dispatched to agent",
                     ));
@@ -1910,71 +1928,136 @@ impl VelocityApp {
     pub fn render_lsp_panel(&mut self, ui: &mut egui::Ui) {
         let palette = self.palette();
 
+        let (server_count, diag_count) = match &self.lsp_manager {
+            Some(mgr) => (mgr.server_count(), mgr.diagnostics_count()),
+            None => (0, 0),
+        };
+
+        let status_label = if server_count > 0 {
+            format!(
+                "{} server{}",
+                server_count,
+                if server_count == 1 { "" } else { "s" }
+            )
+        } else {
+            "Not initialized".to_string()
+        };
+
         Self::tier3_header(
             ui,
             "Language Servers",
-            if self.lsp_manager.is_some() {
-                "Active"
-            } else {
-                "Not initialized"
-            },
+            &status_label,
             palette.accent,
             palette.text_muted,
         );
 
-        if self.lsp_manager.is_none() {
-            ui.add_space(16.0);
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("\u{25c7}")
-                        .size(26.0)
-                        .color(palette.text_muted),
-                );
-                ui.label(
-                    RichText::new("LSP not initialized. LSP servers are configured per-language.")
-                        .size(10.0)
-                        .color(palette.text_muted),
-                );
+        egui::ScrollArea::vertical()
+            .id_salt("lsp_scroll")
+            .show(ui, |ui| {
+                if let Some(mgr) = &mut self.lsp_manager {
+                    let snapshot = mgr.server_snapshot();
+
+                    if snapshot.is_empty() {
+                        ui.add_space(12.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("\u{25c7}")
+                                    .size(26.0)
+                                    .color(palette.text_muted),
+                            );
+                            ui.label(
+                                RichText::new(
+                                    "No language servers detected for this workspace.\n\
+                                     Add Cargo.toml or package.json to auto-start servers.",
+                                )
+                                .size(10.0)
+                                .color(palette.text_muted),
+                            );
+                        });
+                    } else {
+                        // Diagnostics summary
+                        ui.label(
+                            RichText::new(format!(
+                                "{} diagnostic{} across all files",
+                                diag_count,
+                                if diag_count == 1 { "" } else { "s" }
+                            ))
+                            .size(9.0)
+                            .color(if diag_count > 0 {
+                                palette.warning
+                            } else {
+                                palette.text_muted
+                            }),
+                        );
+                        ui.add_space(8.0);
+
+                        // Per-server cards
+                        for srv in &snapshot {
+                            let alive_color = if srv.alive {
+                                palette.success
+                            } else {
+                                palette.error
+                            };
+                            let init_label = if srv.initialized {
+                                "initialized"
+                            } else {
+                                "starting..."
+                            };
+
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    // Status dot
+                                    ui.label(
+                                        RichText::new("\u{25cf}").size(10.0).color(alive_color),
+                                    );
+                                    ui.label(
+                                        RichText::new(&srv.language)
+                                            .size(11.0)
+                                            .strong()
+                                            .color(palette.text),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(init_label)
+                                                    .size(9.0)
+                                                    .color(palette.text_muted),
+                                            );
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(format!(
+                                        "command: {}  \u{00b7}  extensions: {}",
+                                        srv.command,
+                                        srv.extensions.join(", ")
+                                    ))
+                                    .size(8.0)
+                                    .color(palette.text_muted),
+                                );
+                            });
+                            ui.add_space(4.0);
+                        }
+                    }
+                } else {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("\u{25c7}")
+                                .size(26.0)
+                                .color(palette.text_muted),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "LSP not initialized. LSP servers are configured per-language.",
+                            )
+                            .size(10.0)
+                            .color(palette.text_muted),
+                        );
+                    });
+                }
             });
-        } else {
-            ui.label(
-                RichText::new("LSP servers are running and providing diagnostics, completions, and navigation.")
-                .size(9.0)
-                .color(palette.text_muted),
-            );
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Features provided:")
-                    .size(9.0)
-                    .strong()
-                    .color(palette.text_muted),
-            );
-            ui.label(
-                RichText::new("  \u{2022} Real-time diagnostics")
-                    .size(9.0)
-                    .color(palette.text),
-            );
-            ui.label(
-                RichText::new("  \u{2022} Code completions")
-                    .size(9.0)
-                    .color(palette.text),
-            );
-            ui.label(
-                RichText::new("  \u{2022} Go to definition")
-                    .size(9.0)
-                    .color(palette.text),
-            );
-            ui.label(
-                RichText::new("  \u{2022} Find references")
-                    .size(9.0)
-                    .color(palette.text),
-            );
-            ui.label(
-                RichText::new("  \u{2022} Hover information")
-                    .size(9.0)
-                    .color(palette.text),
-            );
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════

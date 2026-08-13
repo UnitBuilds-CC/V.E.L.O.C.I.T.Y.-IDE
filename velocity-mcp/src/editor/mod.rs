@@ -51,6 +51,7 @@ pub mod debugger;
 pub mod deploy_pipeline;
 pub mod diagnostics;
 pub mod extensions;
+pub mod file_watcher;
 pub mod find_replace;
 pub mod git_ui;
 pub mod governance;
